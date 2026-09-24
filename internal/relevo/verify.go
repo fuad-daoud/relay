@@ -170,7 +170,9 @@ func removeVerifyWorktree(ctx context.Context, rt Runtime, b store.Binding, roun
 	}
 	if err := rt.Git.RemoveWorktree(ctx, b.CWD, rt.Store.VerifyWorktreePath(b.Name, round), true); err != nil {
 		slog.Warn("verify worktree not removed", "binding", b.Name, "round", round, "err", err)
+		return
 	}
+	rt.Store.PruneWorktreeDirs()
 }
 
 // startVerifyConsult starts this round's read-only reviewer at round close
