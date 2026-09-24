@@ -366,6 +366,37 @@ func chatResolver() chatlabel.Resolver {
 	return chatlabel.Resolver{Exec: binExec{}, OpencodeDB: opencodeDBPath()}
 }
 
+// annotatePlannerChat fills each binding row's PlannerChatLabel and
+// PlannerChatLink (#386) from the planner record the row names. It runs only
+// from cmd/relevo, inside the command a person ran, and fills only fields that
+// are printed: internal/relevo.Status itself never computes a label, because it
+// also serves relevo serve. The label is resolved at most once per planner id,
+// every lookup failure ends in the empty label, and the function never returns
+// an error and never prints.
+func annotatePlannerChat(rt relevo.Runtime, rep *relevo.Report, res chatlabel.Resolver) {
+	if rt.Planners == nil {
+		return
+	}
+	labels := make(map[string]chatlabel.Label)
+	for i := range rep.Bindings {
+		b := &rep.Bindings[i]
+		if b.PlannerID == "" {
+			continue
+		}
+		lbl, ok := labels[b.PlannerID]
+		if !ok {
+			if rec, err := rt.Planners.Get(b.PlannerID); err != nil {
+				lbl = chatlabel.Label{}
+			} else {
+				lbl = res.Resolve(context.Background(), rec.HarnessKind, rec.SessionID, rec.TranscriptLocator)
+			}
+			labels[b.PlannerID] = lbl
+		}
+		b.PlannerChatLabel = lbl.Text
+		b.PlannerChatLink = lbl.Link
+	}
+}
+
 func cmdPlannerRename(args []string) error {
 	fs := flag.NewFlagSet("rename", flag.ContinueOnError)
 	if err := parseFlags(fs, args); err != nil {

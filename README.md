@@ -253,7 +253,8 @@ process the `relevo mcp` server shares with the session. Run
 Its `chat` column names each planner as a person sees it: a Claude Code chat's
 title, or its last prompt, plus the claude.ai link when the session is bridged;
 an opencode session's title; and `-` when nothing can be read. The label is read
-from the harness's own files when the command runs and is never stored.
+from the harness's own files when the command runs and is never stored. The same
+label follows the planner's name in `relevo status` and `relevo doctor`.
 `relevo planner rename <id|name> <new-name>` gives a planner a name of your own.
 
 ## Command surface
@@ -1218,6 +1219,8 @@ that is not `DONE` asks first -- `mark webshop done? it is ACTIVE in round 5`
 
 `relevo statusline` shows this planner's live bindings, one row each, under
 the Claude Code prompt; it shows nothing on error and never probes a builder.
+The first line names the planner (`planner architect-14`), so each terminal
+shows which planner it is; `relevo planner list` maps that name to its chat.
 
 Add this to `~/.claude/settings.json`:
 

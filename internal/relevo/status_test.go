@@ -69,6 +69,42 @@ func TestRenderStatusShowsDetailLine(t *testing.T) {
 	}
 }
 
+// TestRenderStatusPlannerChat is #386's status surface: a row whose planner
+// carries a chat label and a link shows them after its route, and a row that
+// carries neither is byte-identical to the line before these fields existed.
+func TestRenderStatusPlannerChat(t *testing.T) {
+	out := RenderStatus(Report{Bindings: []BindingStatus{
+		{
+			Name: "one", CWD: "/a", Round: 1, Display: "ACTIVE",
+			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "pull",
+			PlannerChatLabel: `"fix the flake"`, PlannerChatLink: "https://claude.ai/code/session_01TEST",
+		},
+		{
+			Name: "two", CWD: "/b", Round: 1, Display: "ACTIVE",
+			PlannerName: "architect-2", PlannerKind: "claude", PlannerRoute: "pull",
+		},
+	}})
+
+	var plannerLines []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "  planner  ") {
+			plannerLines = append(plannerLines, line)
+		}
+	}
+	if len(plannerLines) != 2 {
+		t.Fatalf("got %d planner lines, want 2:\n%s", len(plannerLines), out)
+	}
+
+	wantFirst := `route pull · "fix the flake" · https://claude.ai/code/session_01TEST`
+	if !strings.HasSuffix(plannerLines[0], wantFirst) {
+		t.Errorf("planner line %q does not end with %q", plannerLines[0], wantFirst)
+	}
+	// Row two has neither field set, so nothing follows its route.
+	if !strings.HasSuffix(plannerLines[1], "route pull") {
+		t.Errorf("planner line %q does not end with %q", plannerLines[1], "route pull")
+	}
+}
+
 func TestRenderStatusOmitsEmptyDetail(t *testing.T) {
 	out := RenderStatus(Report{Bindings: []BindingStatus{{
 		Name: "ok", CWD: "/repo", Round: 1, Display: "ACTIVE",

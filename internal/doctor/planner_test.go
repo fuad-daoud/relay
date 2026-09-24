@@ -139,6 +139,40 @@ func TestDoctorPlannerRow(t *testing.T) {
 	})
 }
 
+// TestPlannerRowNamesChat is #386's doctor surface: the planner row names the
+// planner's chat after its name and id, and an empty chat leaves the detail
+// byte-identical to the string the code produced before the field existed.
+func TestPlannerRowNamesChat(t *testing.T) {
+	rec := &planner.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
+
+	t.Run("chat follows the planner's name", func(t *testing.T) {
+		checks := PlannerChecks(PlannerCheckInput{
+			Detected: true, Resolved: rec, MCPChild: true, ClaimLive: false,
+			Chat: "relevo-planner · https://claude.ai/code/session_01TEST",
+		})
+		c := findCheck(Report{Checks: checks}, "", "planner")
+		if c == nil {
+			t.Fatal("the planner row is missing")
+		}
+		want := "planner architect-1 (pl_aaaaaaaabbbb) · relevo-planner · https://claude.ai/code/session_01TEST: tools mode"
+		if !strings.Contains(c.Detail, want) {
+			t.Errorf("planner row detail %q does not contain %q", c.Detail, want)
+		}
+	})
+
+	t.Run("empty chat is byte-identical", func(t *testing.T) {
+		checks := PlannerChecks(PlannerCheckInput{Detected: true, Resolved: rec, MCPChild: true, ClaimLive: false})
+		c := findCheck(Report{Checks: checks}, "", "planner")
+		if c == nil {
+			t.Fatal("the planner row is missing")
+		}
+		want := "planner architect-1 (pl_aaaaaaaabbbb): tools mode: reports arrive by background wait. For push, launch with `--dangerously-load-development-channels plugin:relevo@relevo`, or have an org admin add relevo to `allowedChannelPlugins`"
+		if c.Detail != want {
+			t.Errorf("planner row detail = %q, want %q", c.Detail, want)
+		}
+	})
+}
+
 // TestDoctorPluginHookRow pins the "not checked, never FAIL" rule: an install
 // relevo cannot find is a fact relevo could not establish, not a broken one.
 func TestDoctorPluginHookRow(t *testing.T) {

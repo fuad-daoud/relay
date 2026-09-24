@@ -107,6 +107,22 @@ func RenderStatusLine(r Report, now time.Time, columns int) string {
 	return sb.String()
 }
 
+// RenderPlannerLine is the statusline's first line: the planner's own name,
+// dim, so each terminal shows which planner it is (#386). An empty name renders
+// nothing -- a session relevo did not identify keeps the statusline it had. When
+// columns > 0 and the line would overflow it, the visible text is cut with the
+// same truncate the binding rows use, before the colour codes wrap it.
+func RenderPlannerLine(name string, columns int) string {
+	if name == "" {
+		return ""
+	}
+	text := "planner " + name
+	if columns > 0 && utf8.RuneCountInString(text) > columns {
+		text = truncate(text, columns)
+	}
+	return ansiDim + text + ansiReset + "\n"
+}
+
 func waiting(b BindingStatus) string {
 	if b.Detail != "" {
 		return b.Detail

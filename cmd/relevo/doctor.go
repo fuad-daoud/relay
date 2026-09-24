@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -635,6 +636,12 @@ func plannerCheckInput(rt relevo.Runtime, kinds []string) doctor.PlannerCheckInp
 			})
 			if err == nil {
 				in.Resolved = &rec
+				// #386: the planner's chat label, read here so the row can
+				// name the planner as the harness does. An empty label
+				// leaves the detail byte-identical.
+				if lbl := chatResolver().Resolve(context.Background(), rec.HarnessKind, rec.SessionID, rec.TranscriptLocator); lbl != (chatlabel.Label{}) {
+					in.Chat = lbl.String()
+				}
 				if rt.Channels != nil {
 					if c, cerr := rt.Channels.Live(rec.ID, rt.Now()); cerr == nil && c != nil {
 						in.ClaimLive = true

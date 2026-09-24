@@ -59,6 +59,29 @@ func TestRenderStatusLineEmpty(t *testing.T) {
 	}
 }
 
+// TestRenderPlannerLine is #386's statusline surface: the first line names the
+// planner, an empty name renders nothing, and a narrow terminal cuts the
+// visible text to the column budget.
+func TestRenderPlannerLine(t *testing.T) {
+	got := RenderPlannerLine("architect-14", 80)
+	if !strings.Contains(got, "planner architect-14") {
+		t.Errorf("RenderPlannerLine(%q, 80) = %q, want it to contain %q", "architect-14", got, "planner architect-14")
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Errorf("RenderPlannerLine(%q, 80) = %q, want it to end in a newline", "architect-14", got)
+	}
+
+	if got := RenderPlannerLine("", 80); got != "" {
+		t.Errorf("RenderPlannerLine(%q, 80) = %q, want empty", "", got)
+	}
+
+	narrow := RenderPlannerLine("architect-14", 10)
+	visible := strings.TrimSuffix(stripSGR(narrow), "\n")
+	if w := utf8.RuneCountInString(visible); w > 10 {
+		t.Errorf("RenderPlannerLine(%q, 10) visible text is %d runes, want at most 10: %q", "architect-14", w, visible)
+	}
+}
+
 func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 	now := baseTime
 	tests := []struct {

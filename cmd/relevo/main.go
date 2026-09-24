@@ -1785,6 +1785,11 @@ func cmdStatus(args []string) error {
 	}
 	rep = scopeReport(rep, target, *all)
 
+	// #386: the planner's chat label is computed here, in the command a
+	// person ran, and only printed. internal/relevo.Status leaves it empty,
+	// so no label is ever computed on, or sent to, a server.
+	annotatePlannerChat(rt, &rep, chatResolver())
+
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -1847,6 +1852,11 @@ func cmdStatusline(args []string) error {
 	if !ok {
 		return nil
 	}
+	// #386: the first line names the planner, so each terminal shows which
+	// planner it is. It is printed before PlannerStatus and survives a
+	// PlannerStatus failure: the line is the planner's identity, not a
+	// binding row.
+	fmt.Print(relevo.RenderPlannerLine(rec.Name, columns))
 	rep, err := relevo.PlannerStatus(context.Background(), rt, rec.ID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo statusline: %v\n", err)

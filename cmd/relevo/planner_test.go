@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -277,6 +279,58 @@ func TestPlannerVerbsListRenameForget(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "planners", id+".json")); !os.IsNotExist(err) {
 		t.Errorf("record file still there after forget: %v", err)
+	}
+}
+
+// TestAnnotatePlannerChat is #386's CLI surface: annotatePlannerChat fills a
+// row's chat label and link from the planner record it names, resolves a
+// repeated id once, and leaves a row naming an unknown planner empty. It writes
+// a synthetic claude transcript and names claude records only, so the test
+// spawns nothing and reaches no network.
+func TestAnnotatePlannerChat(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	reg := &planner.FileRegistry{Root: filepath.Join(root, "planners")}
+
+	transcript := filepath.Join(t.TempDir(), "session.jsonl")
+	content := "{\"type\":\"custom-title\",\"customTitle\":\"my chat\"}\n" +
+		"{\"type\":\"bridge-session\",\"bridgeSessionId\":\"cse_01ABCDEF\"}\n"
+	if err := os.WriteFile(transcript, []byte(content), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	const knownID = "pl_aaaaaaaaaaaa"
+	if _, err := reg.Create(planner.Record{
+		ID: knownID, Name: "alpha", HarnessKind: "claude",
+		SessionID: "sess-alpha", CWD: t.TempDir(), TranscriptLocator: transcript,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	rt := relevo.Runtime{Planners: reg}
+	rep := relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: "one", PlannerID: knownID},
+		{Name: "two", PlannerID: knownID},
+		{Name: "three", PlannerID: "pl_zzzzzzzzzzzz"},
+	}}
+
+	annotatePlannerChat(rt, &rep, chatlabel.Resolver{})
+
+	const wantText = "my chat"
+	const wantLink = "https://claude.ai/code/session_01ABCDEF"
+	for i := 0; i < 2; i++ {
+		if rep.Bindings[i].PlannerChatLabel != wantText || rep.Bindings[i].PlannerChatLink != wantLink {
+			t.Errorf("row %d carries label %q / link %q, want %q / %q",
+				i, rep.Bindings[i].PlannerChatLabel, rep.Bindings[i].PlannerChatLink, wantText, wantLink)
+		}
+	}
+	if rep.Bindings[2].PlannerChatLabel != "" || rep.Bindings[2].PlannerChatLink != "" {
+		t.Errorf("the unknown planner's row carries label %q / link %q, want neither",
+			rep.Bindings[2].PlannerChatLabel, rep.Bindings[2].PlannerChatLink)
 	}
 }
 
