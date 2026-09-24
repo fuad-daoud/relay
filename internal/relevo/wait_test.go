@@ -3,6 +3,9 @@ package relevo
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -518,5 +521,92 @@ func TestWaitPeekLeavesTheReportPending(t *testing.T) {
 	}
 	if _, still, err := rt.Store.PendingForPlanner("webshop"); err != nil || !still {
 		t.Errorf("--peek must leave the entry pending (still pending=%v err=%v)", still, err)
+	}
+}
+
+// seedTwoRounds seeds an active binding with an undelivered round-1 report, a
+// sent round 2 and its report. It is the fixture #433 is about: round 1's
+// delivery failed, so it is still pending when round 2 closes.
+func seedTwoRounds(t *testing.T, rt Runtime) (round1Path, round2Path string) {
+	t.Helper()
+	dir := t.TempDir()
+	round1Path = filepath.Join(dir, "001-report.md")
+	round2Path = filepath.Join(dir, "002-report.md")
+	if err := os.WriteFile(round1Path, []byte("round 1 body\n"), 0o644); err != nil {
+		t.Fatalf("write round 1 report: %v", err)
+	}
+	if err := os.WriteFile(round2Path, []byte("round 2 body\n"), 0o644); err != nil {
+		t.Fatalf("write round 2 report: %v", err)
+	}
+
+	b := store.Binding{
+		Name: "webshop", CWD: "/repo/webshop", Round: 2, State: store.StateActive,
+		Planner: store.Endpoint{Kind: "claude", SessionID: "sess"}, PlannerID: "pl_aaaaaaaabbbb",
+		Builder: store.Endpoint{Mode: store.ModeHeadless},
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		if err := tx.Save(b); err != nil {
+			return err
+		}
+		for _, e := range []store.LogEntry{
+			{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: rt.Store.PlanPath("webshop", 1), Confirmed: true},
+			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "round 1 report", Path: round1Path, Confirmed: false},
+			{Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: rt.Store.PlanPath("webshop", 2), Confirmed: true},
+			{Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "round 2 report", Path: round2Path, Confirmed: false},
+		} {
+			if err := tx.AppendLog("webshop", e); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed two rounds: %v", err)
+	}
+	return round1Path, round2Path
+}
+
+// TestWaitDeliversTheWaitedRoundAfterAFailedOne is #433's regression: round 1's
+// report was never delivered, round 2 then closed. Wait must print round 2's
+// outcome line and round 2's report text last, carry round 1's under its own
+// header, name round 2 in Round, and leave nothing pending.
+func TestWaitDeliversTheWaitedRoundAfterAFailedOne(t *testing.T) {
+	rt := routeRuntime(t)
+	round1Path, round2Path := seedTwoRounds(t, rt)
+
+	name, res, err := Wait(context.Background(), rt, WaitOptions{
+		Names: []string{"webshop"}, Timeout: time.Minute, Interval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if name != "webshop" || res.Code != WaitClosed || !res.Done {
+		t.Fatalf("Wait = (%q, %+v), want the seeded round closed", name, res)
+	}
+	if res.Line != round2Path {
+		t.Errorf("Line = %q, want round 2's report path %q", res.Line, round2Path)
+	}
+	if res.Round != 2 {
+		t.Errorf("Round = %d, want 2", res.Round)
+	}
+	if !strings.HasSuffix(res.Payload, "round 2 body\n") {
+		t.Errorf("Payload does not end with round 2's report text:\n%s", res.Payload)
+	}
+	header := fmt.Sprintf("── round 1: not delivered earlier (%s) ──", round1Path)
+	if !strings.Contains(res.Payload, header) {
+		t.Errorf("Payload does not carry round 1's header %q:\n%s", header, res.Payload)
+	}
+	if !strings.Contains(res.Payload, "round 1 body") {
+		t.Errorf("Payload does not carry round 1's report text:\n%s", res.Payload)
+	}
+	if _, still, err := rt.Store.PendingForPlanner("webshop"); err != nil || still {
+		t.Errorf("a following pullPending must find nothing (still pending=%v err=%v)", still, err)
+	}
+
+	payload, found, err := pullPending(context.Background(), rt, "webshop", "wait")
+	if err != nil {
+		t.Fatalf("pullPending: %v", err)
+	}
+	if found || payload != "" {
+		t.Errorf("pullPending after Wait = (%q, %v), want nothing pending", payload, found)
 	}
 }

@@ -329,6 +329,56 @@ func TestPendingForPlannerReturnsArrivalOrder(t *testing.T) {
 	}
 }
 
+func TestPendingForPlannerThrough(t *testing.T) {
+	s, name := seedBinding(t)
+
+	for _, e := range []LogEntry{
+		{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "report r1"},
+		{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Payload: "plan r1", Confirmed: true},
+		{Round: 2, Direction: DirToPlanner, Kind: KindReport, Payload: "report r2"},
+		{Round: 3, Direction: DirToPlanner, Kind: KindReport, Payload: "report r3"},
+		{Round: 1, Direction: DirToPlanner, Kind: KindQuestion, Payload: "question r1", Confirmed: true},
+	} {
+		if err := s.AppendLog(name, e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+
+	through := func(round int) []PendingEntry {
+		t.Helper()
+		var got []PendingEntry
+		if err := s.WithLock(func(tx *Tx) error {
+			var err error
+			got, err = tx.PendingForPlannerThrough(name, round)
+			return err
+		}); err != nil {
+			t.Fatalf("PendingForPlannerThrough(%d): %v", round, err)
+		}
+		return got
+	}
+
+	got := through(2)
+	if len(got) != 2 {
+		t.Fatalf("Through(2) returned %d entries, want 2: %+v", len(got), got)
+	}
+	if got[0].Entry.Payload != "report r1" || got[0].Idx != 0 {
+		t.Errorf("Through(2)[0] = (idx %d, %q), want (0, report r1)", got[0].Idx, got[0].Entry.Payload)
+	}
+	if got[1].Entry.Payload != "report r2" || got[1].Idx != 2 {
+		t.Errorf("Through(2)[1] = (idx %d, %q), want (2, report r2)", got[1].Idx, got[1].Entry.Payload)
+	}
+
+	got = through(0)
+	if len(got) != 3 {
+		t.Fatalf("Through(0) returned %d entries, want 3: %+v", len(got), got)
+	}
+	for i, want := range []string{"report r1", "report r2", "report r3"} {
+		if got[i].Entry.Payload != want {
+			t.Errorf("Through(0)[%d] = %q, want %q", i, got[i].Entry.Payload, want)
+		}
+	}
+}
+
 func TestConfirmIndexConfirmsOnlyTheNamedEntry(t *testing.T) {
 	s, name := seedBinding(t)
 

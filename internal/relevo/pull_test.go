@@ -2,12 +2,15 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -194,5 +197,209 @@ func TestPullPendingUnreadableReportFallsBackToPayload(t *testing.T) {
 	last := entries[len(entries)-1]
 	if !last.Confirmed || last.Route != "wait" {
 		t.Errorf("entry = confirmed:%v route:%q, want confirmed with route=wait", last.Confirmed, last.Route)
+	}
+}
+
+// TestRetryBusy pins retryBusy's contract (#433): a busy error is retried with
+// the delays it was given, a non-busy error is not retried, and a cancelled
+// context stops before the next sleep. The sleep function is injected, so no
+// test really sleeps.
+func TestRetryBusy(t *testing.T) {
+	busy := fmt.Errorf("tx begin: %w", db.ErrBusy)
+
+	t.Run("busy twice then nil retries with the delays", func(t *testing.T) {
+		calls := 0
+		var slept []time.Duration
+		err := retryBusy(context.Background(), busyRetryDelays, func(d time.Duration) { slept = append(slept, d) }, func() error {
+			calls++
+			if calls <= 2 {
+				return busy
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("retryBusy: %v", err)
+		}
+		if calls != 3 {
+			t.Errorf("fn called %d times, want 3", calls)
+		}
+		if len(slept) != 2 || slept[0] != 250*time.Millisecond || slept[1] != time.Second {
+			t.Errorf("slept = %v, want [250ms 1s]", slept)
+		}
+	})
+
+	t.Run("always busy returns an error that wraps db.ErrBusy", func(t *testing.T) {
+		calls := 0
+		err := retryBusy(context.Background(), busyRetryDelays, func(time.Duration) {}, func() error {
+			calls++
+			return busy
+		})
+		if calls != 4 {
+			t.Errorf("fn called %d times, want 4", calls)
+		}
+		if !errors.Is(err, db.ErrBusy) {
+			t.Errorf("err = %v, want it to wrap db.ErrBusy", err)
+		}
+	})
+
+	t.Run("a non-busy error returns at once", func(t *testing.T) {
+		calls := 0
+		sentinel := errors.New("boom")
+		err := retryBusy(context.Background(), busyRetryDelays, func(time.Duration) {}, func() error {
+			calls++
+			return sentinel
+		})
+		if !errors.Is(err, sentinel) {
+			t.Errorf("err = %v, want %v", err, sentinel)
+		}
+		if calls != 1 {
+			t.Errorf("fn called %d times, want 1", calls)
+		}
+	})
+
+	t.Run("a cancelled context stops before the first sleep", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		calls := 0
+		slept := false
+		err := retryBusy(ctx, busyRetryDelays, func(time.Duration) { slept = true }, func() error {
+			calls++
+			return busy
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("err = %v, want context.Canceled", err)
+		}
+		if calls != 1 {
+			t.Errorf("fn called %d times, want 1", calls)
+		}
+		if slept {
+			t.Error("sleep ran once ctx was done")
+		}
+	})
+}
+
+// seedPendingRounds saves an active binding and one unconfirmed planner-bound
+// report per round and path, in the order given: seedPendingReport generalized
+// from one round to several, each entry's payload naming its round.
+func seedPendingRounds(t *testing.T, rt Runtime, name string, rounds []int, paths []string) store.Binding {
+	t.Helper()
+	if len(rounds) != len(paths) {
+		t.Fatalf("seedPendingRounds: %d rounds for %d paths", len(rounds), len(paths))
+	}
+	b := store.Binding{
+		Name:      name,
+		CWD:       "/repo/" + name,
+		Round:     rounds[len(rounds)-1],
+		State:     store.StateActive,
+		Planner:   store.Endpoint{Kind: "claude", SessionID: "sess"},
+		PlannerID: "pl_aaaaaaaabbbb",
+		Builder:   store.Endpoint{Mode: store.ModeHeadless},
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		if err := tx.Save(b); err != nil {
+			return err
+		}
+		for i, round := range rounds {
+			if err := tx.AppendLog(name, store.LogEntry{
+				TS: rt.Now().UTC(), Round: round, Direction: store.DirToPlanner, Kind: store.KindReport,
+				Payload: fmt.Sprintf("round %d report", round), Path: paths[i], Confirmed: false,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed %s: %v", name, err)
+	}
+	return b
+}
+
+// TestPullPendingThroughDeliversEarlierAndWaited: with rounds 1 and 2 both
+// pending, pullPendingThrough returns round 1's text under a header naming its
+// round, then round 2's text last, and confirms both with route "wait" (#433).
+func TestPullPendingThroughDeliversEarlierAndWaited(t *testing.T) {
+	rt := routeRuntime(t)
+	dir := t.TempDir()
+	r1 := filepath.Join(dir, "001-report.md")
+	r2 := filepath.Join(dir, "002-report.md")
+	if err := os.WriteFile(r1, []byte("round 1 body\n"), 0o644); err != nil {
+		t.Fatalf("write round 1 report: %v", err)
+	}
+	if err := os.WriteFile(r2, []byte("round 2 body\n"), 0o644); err != nil {
+		t.Fatalf("write round 2 report: %v", err)
+	}
+	seedPendingRounds(t, rt, "webshop", []int{1, 2}, []string{r1, r2})
+
+	text, found, err := pullPendingThrough(context.Background(), rt, "webshop", "wait", 2)
+	if err != nil {
+		t.Fatalf("pullPendingThrough: %v", err)
+	}
+	if !found {
+		t.Fatal("pullPendingThrough found nothing, want both pending reports")
+	}
+
+	header := fmt.Sprintf("── round 1: not delivered earlier (%s) ──", r1)
+	if !strings.Contains(text, header) {
+		t.Errorf("text does not carry the earlier round's header %q:\n%s", header, text)
+	}
+	if !strings.Contains(text, "round 1 body") {
+		t.Errorf("text does not carry round 1's report text:\n%s", text)
+	}
+	if !strings.HasSuffix(text, "round 2 body\n") {
+		t.Errorf("text does not end with round 2's report text:\n%s", text)
+	}
+	if strings.Index(text, "round 1 body") > strings.Index(text, "round 2 body") {
+		t.Errorf("round 1's report came after round 2's:\n%s", text)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for i, e := range entries {
+		if e.Direction != store.DirToPlanner {
+			continue
+		}
+		if !e.Confirmed || e.Route != "wait" {
+			t.Errorf("entry %d = confirmed:%v route:%q, want confirmed with route=wait", i, e.Confirmed, e.Route)
+		}
+	}
+}
+
+// TestPullPendingThroughSingleIsUnchanged: with only one pending report,
+// pullPendingThrough returns exactly what pullPending returns for the same
+// fixture -- a single delivery is untouched by the through-round path (#433).
+func TestPullPendingThroughSingleIsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "002-report.md")
+	if err := os.WriteFile(path, []byte("round 2 body\n"), 0o644); err != nil {
+		t.Fatalf("write round 2 report: %v", err)
+	}
+
+	// The same fixture twice, so neither call sees the other's confirmation.
+	throughRT := routeRuntime(t)
+	seedPendingRounds(t, throughRT, "webshop", []int{2}, []string{path})
+	pullRT := routeRuntime(t)
+	seedPendingRounds(t, pullRT, "webshop", []int{2}, []string{path})
+
+	through, found, err := pullPendingThrough(context.Background(), throughRT, "webshop", "wait", 2)
+	if err != nil {
+		t.Fatalf("pullPendingThrough: %v", err)
+	}
+	if !found {
+		t.Fatal("pullPendingThrough found nothing, want the single pending report")
+	}
+
+	pulled, found, err := pullPending(context.Background(), pullRT, "webshop", "wait")
+	if err != nil {
+		t.Fatalf("pullPending: %v", err)
+	}
+	if !found {
+		t.Fatal("pullPending found nothing, want the same pending report")
+	}
+
+	if through != pulled {
+		t.Errorf("pullPendingThrough = %q, want it to equal pullPending's %q", through, pulled)
 	}
 }

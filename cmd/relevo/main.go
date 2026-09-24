@@ -2316,7 +2316,7 @@ func cmdWait(args []string) error {
 	// gone binding. A delivery failure is printed and never changes the exit
 	// code (§6).
 	if res.DeliverErr != nil {
-		fmt.Fprintf(os.Stderr, "relevo wait: %v\n", res.DeliverErr)
+		fmt.Fprintf(os.Stderr, "relevo wait: round %d not delivered, it stays pending (the next relevo wait prints it): %v\n", res.Round, res.DeliverErr)
 	}
 	if res.Payload != "" {
 		fmt.Println()
