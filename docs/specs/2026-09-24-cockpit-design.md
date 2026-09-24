@@ -316,11 +316,25 @@ over `db.RoundRow` and the gate records, and shared with `relevo history --stats
   `Bind`, `Probe`, gate, the draft operations, rollback). The TUI never shells out to
   `relevo`, and results print through the same `…Text` formatters.
 - `serve ui` passes a nil `Actions`, so action keys are hidden there.
-- Every action runs as a `tea.Cmd`. Shell and `$EDITOR` open with `tea.ExecProcess`.
+- Every action runs as a `tea.Cmd`. Shell and `$EDITOR` open with `tea.ExecProcess`
+  (bubbletea v1.3.4 has it).
+- Some `internal/relevo` paths write straight to `os.Stderr`: ledger read errors,
+  spawn-failure notes, and slog's default logger. A full-screen TUI must not let those
+  bytes corrupt the screen. For its lifetime the cockpit points `os.Stderr` and the
+  default slog handler at a buffer, and shows the last line in the footer.
+- `Stop` and `Done` hold the state lock through the kill grace (about 5s), so the
+  footer shows the action as running until its message arrives.
 
 ### 6.3 The human planner
 
-TUI actions run as a planner record `you@<host>` (kind `human`).
+TUI actions run as a planner record named `you`, of a new harness kind `human`, with
+session id `tui`.
+
+- Planner names must match `^[a-z][a-z0-9-]{0,31}$`, so `you@<host>` is not possible.
+- relevo.db is per machine, so one `you` per machine is enough.
+- A `human` record has no host pid, so it is never pruned.
+- A human planner has no deliverer and no channel. Its pending reports are delivered by
+  the TUI itself when opened, with confirm route `tui`.
 
 - Bindings bound from the TUI belong to it.
 - Their reports surface in `:fleet` as NEEDS YOU `report ready`, and are marked
@@ -411,7 +425,7 @@ Two tracks run in parallel on separate worktrees, then join. Each item is one pl
 | A4 | State rename | §3.7: the binding `actor` + round `candidate`; `--candidate`; artifact dirs for writers (`report.md`, `summary.md`); `wait` output, MCP tools, the plugin and `architect.*.md` "Handing off" in the new words; the A4 migration | A2 |
 | A5 | Reader rounds | §3.4: any actor can be bound; scratch worktrees; reader artifact dirs; the size cap; the e2e reader round | A4 |
 | B1 | Shell | §4.1, §4.2: the frame, `:` command line, view stack, keymap, `?` help; `fleet`, `rounds` and round detail moved onto it, still read-only; bare `relevo` and `relevo ui :view` | — |
-| B2 | Round actions | §6.2, §6.3: `ui.Actions`, the human planner, confirms; send, bind, stop, done, unbind, gate, retry-on, shell | B1 |
+| B2 | Round actions | §6.2, §6.3: `ui.Actions`, the human planner (`you`, kind `human`), confirms; send, bind, stop, done, unbind, gate, retry-on, shell | B1 |
 | C1 | Config views | §4.3 config rows, §4.4: `:candidates`, `:actors`, `:agents`, `:settings`, `:gates`, `:planners`, `:servers`, `:draft`, `:audit`, save and rollback; `relevo config` on a terminal | A3, B1 |
 | C2 | Stats | §5: `internal/stats`, `:stats`, the new `history --stats` | A1, B1 |
 | C3 | Site | relevo-site: herdr, statusline, `policy` and `unavailable` removed; the new vocabulary; TUI specimens from the golden renders; "What relevo refuses to do" updated now that the TUI acts | all above |
