@@ -284,7 +284,7 @@ func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 		return nil, err
 	}
 	if err := s.db.Tx(func(t *db.Tx) error {
-		before, err := readDoc(t)
+		before, err := readSnapshot(t)
 		if err != nil {
 			return err
 		}
@@ -303,7 +303,7 @@ func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 // count of stored sections.
 func (s *Store) Delete(sec Section) error {
 	return s.db.Tx(func(t *db.Tx) error {
-		before, err := readDoc(t)
+		before, err := readSnapshot(t)
 		if err != nil {
 			return err
 		}
@@ -346,7 +346,7 @@ func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 
 	now := s.now().UTC()
 	if err := s.db.Tx(func(t *db.Tx) error {
-		before, err := readDoc(t)
+		before, err := readSnapshot(t)
 		if err != nil {
 			return err
 		}
@@ -386,7 +386,7 @@ func (s *Store) PutSecret(name string, value []byte) error {
 		}
 	}
 	return s.db.Tx(func(t *db.Tx) error {
-		before, err := readDoc(t)
+		before, err := readSnapshot(t)
 		if err != nil {
 			return err
 		}
@@ -401,7 +401,7 @@ func (s *Store) PutSecret(name string, value []byte) error {
 // writes nothing: there is no change to record.
 func (s *Store) SecretDelete(name string) error {
 	return s.db.Tx(func(t *db.Tx) error {
-		before, err := readDoc(t)
+		before, err := readSnapshot(t)
 		if err != nil {
 			return err
 		}

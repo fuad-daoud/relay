@@ -99,7 +99,7 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 	}
 
 	err = s.db.Tx(func(t *db.Tx) error {
-		before, err := readDoc(t)
+		before, err := readSnapshot(t)
 		if err != nil {
 			return err
 		}

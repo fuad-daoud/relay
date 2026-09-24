@@ -101,8 +101,12 @@ func TestIdenticalPutRecordsNothing(t *testing.T) {
 func TestFirstRevisionAddsBaseline(t *testing.T) {
 	s := openStore(t).WithClock(atTime(revAt))
 
-	// Seed the section with a raw Tx: no Store, so no revision.
+	// Seed the section with raw Txs: no Store, so no revision. Two writes put
+	// the config version at 2.
 	if err := s.db.Tx(func(t *db.Tx) error {
+		if err := t.ConfigPut(string(Policy), []byte(`{"max_switches":0}`), revAt); err != nil {
+			return err
+		}
 		return t.ConfigPut(string(Policy), []byte(`{"max_switches":1}`), revAt)
 	}); err != nil {
 		t.Fatalf("seed ConfigPut: %v", err)
@@ -122,9 +126,15 @@ func TestFirstRevisionAddsBaseline(t *testing.T) {
 	if rows[0].Source != "cli" {
 		t.Errorf("newest revision source = %q, want cli", rows[0].Source)
 	}
+	if rows[0].Version != 3 {
+		t.Errorf("new revision version = %d, want 3 (the version after the write)", rows[0].Version)
+	}
 	baseline := rows[1]
 	if baseline.Source != "baseline" || baseline.Message != "config before revisions" {
 		t.Errorf("baseline = %q / %q", baseline.Source, baseline.Message)
+	}
+	if baseline.Version != 2 {
+		t.Errorf("baseline version = %d, want 2 (the version before the write)", baseline.Version)
 	}
 	if string(baseline.Changes) != "[]" {
 		t.Errorf("baseline changes = %q, want []", baseline.Changes)

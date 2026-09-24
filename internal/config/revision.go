@@ -57,20 +57,43 @@ func readDoc(t *db.Tx) (Doc, error) {
 	return doc, nil
 }
 
+// snapshot is a document together with the config version it was read at. A
+// baseline records the version the config had before the write, which a bare
+// Doc cannot carry.
+type snapshot struct {
+	doc     Doc
+	version int64
+}
+
+// readSnapshot reads the stored document and the config version, both at the
+// start of the same Tx.
+func readSnapshot(t *db.Tx) (snapshot, error) {
+	doc, err := readDoc(t)
+	if err != nil {
+		return snapshot{}, err
+	}
+	version, err := t.ConfigVersion()
+	if err != nil {
+		return snapshot{}, err
+	}
+	return snapshot{doc: doc, version: version}, nil
+}
+
 // record appends one revision for a write that changed something. It is the
 // last statement of every write transaction, so a failure here aborts the
 // write with it: the config change and its revision commit together or not at
 // all (§4.2 step 6).
 //
-// before is the document read at the start of the same Tx. extra carries
-// changes that never appear in a document: secret puts and deletes.
-func (s *Store) record(t *db.Tx, before Doc, extra []Change) error {
+// before is the document and config version read at the start of the same Tx.
+// extra carries changes that never appear in a document: secret puts and
+// deletes.
+func (s *Store) record(t *db.Tx, before snapshot, extra []Change) error {
 	after, err := readDoc(t)
 	if err != nil {
 		return err
 	}
 
-	changes := append(DiffDocs(before, after), extra...)
+	changes := append(DiffDocs(before.doc, after), extra...)
 	if len(changes) == 0 {
 		return nil
 	}
@@ -82,13 +105,14 @@ func (s *Store) record(t *db.Tx, before Doc, extra []Change) error {
 
 	// The first revision ever written on a machine that already has config is
 	// preceded by a baseline, so the pre-revision state can be rolled back to.
-	if len(before) > 0 {
+	// The baseline carries the version the config had before the write.
+	if len(before.doc) > 0 {
 		exists, err := t.RevisionsExist()
 		if err != nil {
 			return err
 		}
 		if !exists {
-			snapshot, err := EncodeDoc(before)
+			snapshot, err := EncodeDoc(before.doc)
 			if err != nil {
 				return err
 			}
@@ -96,7 +120,7 @@ func (s *Store) record(t *db.Tx, before Doc, extra []Change) error {
 				At:       s.now(),
 				Source:   "baseline",
 				Message:  "config before revisions",
-				Version:  version,
+				Version:  before.version,
 				Changes:  []byte("[]"),
 				Snapshot: snapshot,
 			}); err != nil {
@@ -203,11 +227,11 @@ func (s *Store) Rollback(rev int64) (db.RevisionRow, error) {
 
 	noChange := false
 	if err := s.db.Tx(func(t *db.Tx) error {
-		before, err := readDoc(t)
+		before, err := readSnapshot(t)
 		if err != nil {
 			return err
 		}
-		if len(DiffDocs(before, snapshot)) == 0 {
+		if len(DiffDocs(before.doc, snapshot)) == 0 {
 			noChange = true
 			return nil
 		}
@@ -218,7 +242,7 @@ func (s *Store) Rollback(rev int64) (db.RevisionRow, error) {
 			if !ok {
 				continue
 			}
-			if current, present := before[sec]; present && len(diffRaw(string(sec), current, body)) == 0 {
+			if current, present := before.doc[sec]; present && len(diffRaw(string(sec), current, body)) == 0 {
 				continue
 			}
 			if err := t.ConfigPut(string(sec), body, now); err != nil {
@@ -229,7 +253,7 @@ func (s *Store) Rollback(rev int64) (db.RevisionRow, error) {
 			if _, ok := snapshot[sec]; ok {
 				continue
 			}
-			if _, present := before[sec]; !present {
+			if _, present := before.doc[sec]; !present {
 				continue
 			}
 			if err := t.ConfigDelete(string(sec)); err != nil {
