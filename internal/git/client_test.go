@@ -2011,6 +2011,174 @@ func TestAddDetachedWorktree(t *testing.T) {
 	}
 }
 
+// TestMaterializeTreeCarriesWorkingState pins the scratch worktree primitive
+// (2026-09-24-cockpit-design.md §3.4): a fresh detached worktree receives the
+// source's whole working state -- uncommitted edits, staged edits, deletions
+// and untracked files, ignored files excluded -- as UNSTAGED changes, and the
+// source's own index, status and branches are untouched.
+func TestMaterializeTreeCarriesWorkingState(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+
+	repoDir := initRepo(t)
+	writeGitFile(t, repoDir, "a.txt", "a1\n")
+	writeGitFile(t, repoDir, "b.txt", "b1\n")
+	writeGitFile(t, repoDir, "c.txt", "c1\n")
+	writeGitFile(t, repoDir, ".gitignore", "*.log\n")
+	runGit(t, repoDir, "add", "a.txt", "b.txt", "c.txt", ".gitignore")
+	runGit(t, repoDir, "commit", "-m", "first")
+
+	// The binding's working state, uncommitted: an unstaged edit, a staged
+	// edit, a deletion, an untracked file and an ignored one.
+	writeGitFile(t, repoDir, "a.txt", "a2\n")
+	writeGitFile(t, repoDir, "b.txt", "b2\n")
+	runGit(t, repoDir, "add", "b.txt")
+	if err := os.Remove(filepath.Join(repoDir, "c.txt")); err != nil {
+		t.Fatal(err)
+	}
+	writeGitFile(t, repoDir, "d.txt", "d1\n")
+	writeGitFile(t, repoDir, "e.log", "ignored\n")
+
+	statusBefore := runGit(t, repoDir, "status", "--porcelain")
+	branchesBefore := runGit(t, repoDir, "branch", "--list")
+	indexBefore, err := os.ReadFile(filepath.Join(repoDir, ".git", "index"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	head, err := client.HeadCommit(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("HeadCommit: %v", err)
+	}
+	tree, err := client.SnapshotTree(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("SnapshotTree: %v", err)
+	}
+
+	scratch := filepath.Join(t.TempDir(), "scratch")
+	if err := client.AddDetachedWorktree(ctx, repoDir, scratch, head); err != nil {
+		t.Fatalf("AddDetachedWorktree: %v", err)
+	}
+	if err := client.MaterializeTree(ctx, scratch, tree); err != nil {
+		t.Fatalf("MaterializeTree: %v", err)
+	}
+
+	// The scratch worktree holds the snapshot.
+	for _, c := range []struct{ name, want string }{
+		{"a.txt", "a2\n"},
+		{"b.txt", "b2\n"},
+		{"d.txt", "d1\n"},
+	} {
+		got, err := os.ReadFile(filepath.Join(scratch, c.name))
+		if err != nil {
+			t.Fatalf("scratch %s: %v", c.name, err)
+		}
+		if string(got) != c.want {
+			t.Errorf("scratch %s = %q, want %q", c.name, got, c.want)
+		}
+	}
+	for _, name := range []string{"c.txt", "e.log"} {
+		if _, err := os.Stat(filepath.Join(scratch, name)); !os.IsNotExist(err) {
+			t.Errorf("scratch %s should be absent, stat err = %v", name, err)
+		}
+	}
+
+	if got := strings.TrimSpace(runGit(t, scratch, "rev-parse", "HEAD")); got != head {
+		t.Errorf("scratch HEAD = %s, want %s", got, head)
+	}
+
+	// Every difference is unstaged, and the untracked file stays untracked.
+	wantStatus := " M a.txt\n M b.txt\n D c.txt\n?? d.txt\n"
+	if got := runGit(t, scratch, "status", "--porcelain"); got != wantStatus {
+		t.Errorf("scratch status --porcelain =\n%q\nwant\n%q", got, wantStatus)
+	}
+
+	// The source is untouched.
+	if got := runGit(t, repoDir, "status", "--porcelain"); got != statusBefore {
+		t.Errorf("source status changed: got %q, want %q", got, statusBefore)
+	}
+	indexAfter, err := os.ReadFile(filepath.Join(repoDir, ".git", "index"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(indexAfter, indexBefore) {
+		t.Error("source index changed")
+	}
+	if got := runGit(t, repoDir, "branch", "--list"); got != branchesBefore {
+		t.Errorf("source branches changed: got %q, want %q", got, branchesBefore)
+	}
+}
+
+// TestScratchWritesNeverReachTheSource pins the other half of the primitive
+// (2026-09-24-cockpit-design.md §3.4): writes in the scratch worktree stay
+// there, and removing it leaves the source's worktree list clean.
+func TestScratchWritesNeverReachTheSource(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+
+	repoDir := initRepo(t)
+	writeGitFile(t, repoDir, "a.txt", "a1\n")
+	writeGitFile(t, repoDir, "b.txt", "b1\n")
+	writeGitFile(t, repoDir, "c.txt", "c1\n")
+	writeGitFile(t, repoDir, ".gitignore", "*.log\n")
+	runGit(t, repoDir, "add", "a.txt", "b.txt", "c.txt", ".gitignore")
+	runGit(t, repoDir, "commit", "-m", "first")
+
+	writeGitFile(t, repoDir, "a.txt", "a2\n")
+	writeGitFile(t, repoDir, "b.txt", "b2\n")
+	runGit(t, repoDir, "add", "b.txt")
+	if err := os.Remove(filepath.Join(repoDir, "c.txt")); err != nil {
+		t.Fatal(err)
+	}
+	writeGitFile(t, repoDir, "d.txt", "d1\n")
+	writeGitFile(t, repoDir, "e.log", "ignored\n")
+
+	statusBefore := runGit(t, repoDir, "status", "--porcelain")
+
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	head, err := client.HeadCommit(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("HeadCommit: %v", err)
+	}
+	tree, err := client.SnapshotTree(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("SnapshotTree: %v", err)
+	}
+
+	scratch := filepath.Join(t.TempDir(), "scratch")
+	if err := client.AddDetachedWorktree(ctx, repoDir, scratch, head); err != nil {
+		t.Fatalf("AddDetachedWorktree: %v", err)
+	}
+	if err := client.MaterializeTree(ctx, scratch, tree); err != nil {
+		t.Fatalf("MaterializeTree: %v", err)
+	}
+
+	// Write in the scratch: nothing of it reaches the source.
+	writeGitFile(t, scratch, "z.txt", "z\n")
+	writeGitFile(t, scratch, "a.txt", "scratch\n")
+
+	if got := runGit(t, repoDir, "status", "--porcelain"); got != statusBefore {
+		t.Errorf("source status changed: got %q, want %q", got, statusBefore)
+	}
+	if got, err := os.ReadFile(filepath.Join(repoDir, "a.txt")); err != nil || string(got) != "a2\n" {
+		t.Errorf("source a.txt = %q (err %v), want %q", got, err, "a2\n")
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, "z.txt")); !os.IsNotExist(err) {
+		t.Errorf("source gained z.txt: %v", err)
+	}
+
+	if err := client.RemoveWorktree(ctx, repoDir, scratch, true); err != nil {
+		t.Fatalf("RemoveWorktree: %v", err)
+	}
+	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+		t.Fatalf("scratch still present after removal: %v", err)
+	}
+	if list := runGit(t, repoDir, "worktree", "list", "--porcelain"); strings.Contains(list, scratch) {
+		t.Errorf("worktree list still names the scratch:\n%s", list)
+	}
+}
+
 // writeGitFile writes one fixture file into dir, failing the test on error.
 func writeGitFile(t *testing.T, dir, name, body string) {
 	t.Helper()

@@ -548,6 +548,28 @@ func (c *Client) AddDetachedWorktree(ctx context.Context, dir, path, commit stri
 	return nil
 }
 
+// MaterializeTree writes tree into dir's working files without committing:
+// `git read-tree --reset -u <tree>` and then `git reset -q`. It is what puts a
+// binding's whole working state into a reader round's scratch worktree (§1 of
+// the Cockpit A5a plan; 2026-09-24-cockpit-design.md §3.4): files missing from
+// the tree are deleted, and the mixed reset leaves the index equal to HEAD, so
+// every difference is an unstaged change and files not in HEAD are untracked.
+//
+// Preconditions:  dir is a worktree whose index matches its HEAD, such as a
+// fresh AddDetachedWorktree; tree is a tree id in the same object store.
+// Postconditions: dir's files equal tree; HEAD is unchanged; the index equals
+// HEAD.
+// Errors: those of run (ErrNotRepo, ErrGitUnavailable, or the wrapped git
+// failure with stderr). On an error dir may be partly written, and the caller
+// removes it.
+func (c *Client) MaterializeTree(ctx context.Context, dir, tree string) error {
+	if _, err := c.run(ctx, dir, nil, "read-tree", "--reset", "-u", tree); err != nil {
+		return err
+	}
+	_, err := c.run(ctx, dir, nil, "reset", "-q")
+	return err
+}
+
 // CheckoutWorktree adds a worktree at path on an existing branch.
 //
 // Preconditions:  path does not exist; branch exists.

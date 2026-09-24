@@ -22,6 +22,7 @@ func orphanWorktrees(base string) []string {
 	for _, dir := range worktreeDirs(base) {
 		found = append(found, linkedWorktrees(dir)...)
 		found = append(found, linkedWorktrees(filepath.Join(dir, ".verify"))...)
+		found = append(found, linkedWorktrees(filepath.Join(dir, ".scratch"))...)
 	}
 	sort.Strings(found)
 	return found

@@ -701,6 +701,22 @@ func (s *Store) VerifyWorktreePath(name string, round int) string {
 	return filepath.Join(s.WorktreeDir(), ".verify", fmt.Sprintf("%s-%03d", name, round))
 }
 
+// ScratchWorktreeDir is where a reader round's throwaway worktree lives:
+// <WorktreeDir()>/.scratch, beside .verify. It is dot-prefixed, so ListFiles
+// and importAll skip it, and ValidName forbids "." in binding names, so a
+// binding's worktree can never collide with it (2026-09-24-cockpit-design.md
+// §3.4).
+func (s *Store) ScratchWorktreeDir() string {
+	return filepath.Join(s.WorktreeDir(), ".scratch")
+}
+
+// ScratchWorktreePath is the throwaway worktree a reader round runs in:
+// <ScratchWorktreeDir()>/<name>-<NNN>, the shape a binding's verify worktree
+// has (2026-09-24-cockpit-design.md §3.4).
+func (s *Store) ScratchWorktreePath(name string, round int) string {
+	return filepath.Join(s.ScratchWorktreeDir(), fmt.Sprintf("%s-%03d", name, round))
+}
+
 // archive marks a binding's record archived and removes its directory, so the
 // name frees for a fresh bind while its log and every round file survive as
 // rows. Every round's NNN-* files are sealed into round_file first, ignoring
