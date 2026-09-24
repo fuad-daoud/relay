@@ -84,17 +84,17 @@ func TestGateSignatureIgnoresNoise(t *testing.T) {
 		}
 	}
 
-	sigA, sigOther := gateSignature(a), gateSignature(other)
+	sigA, sigOther := gateSignature(os.ReadFile, a), gateSignature(os.ReadFile, other)
 	if sigA == "" {
 		t.Fatalf("gateSignature(%s) = \"\", want a hash", a)
 	}
 	if sigA != sigOther {
 		t.Errorf("logs differing only in noise hashed differently: %q vs %q", sigA, sigOther)
 	}
-	if sigA == gateSignature(word) {
+	if sigA == gateSignature(os.ReadFile, word) {
 		t.Errorf("logs differing in a real word hashed equal: %q", sigA)
 	}
-	if got := gateSignature(filepath.Join(dir, "missing.log")); got != "" {
+	if got := gateSignature(os.ReadFile, filepath.Join(dir, "missing.log")); got != "" {
 		t.Errorf("gateSignature(missing) = %q, want \"\"", got)
 	}
 }

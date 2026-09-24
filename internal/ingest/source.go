@@ -101,8 +101,9 @@ type storeSource struct {
 
 // StoreSource returns a Source over a live binding held in the store's
 // database. bind.json is Load's binding re-indented, log.jsonl is ReadLog's
-// entries one JSON object per line, and every other member is read from the
-// binding directory, which still holds the round files.
+// entries one JSON object per line, and every other member is read through
+// Store.ReadFile: from the binding directory while the round is open, from
+// the sealed round_file row once it is not (P3c §4.4).
 func StoreSource(st *store.Store, name string) Source {
 	return storeSource{st: st, name: name}
 }
@@ -146,12 +147,37 @@ func (s storeSource) Open(member string) (io.ReadCloser, int64, error) {
 		data := buf.Bytes()
 		return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
 	default:
+		if roundMember(member) {
+			// A round file may have been sealed into the store's database
+			// (P3c §4.4): ReadFile answers from disk or from the sealed row.
+			path := filepath.Join(s.st.Dir(s.name), member)
+			data, err := s.st.ReadFile(path)
+			if err != nil {
+				return nil, 0, err
+			}
+			return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
+		}
 		return dirSource{dir: s.st.Dir(s.name)}.Open(member)
 	}
 }
 
+// roundMember reports whether member is a round file's basename: the NNN-
+// prefix every file relevo writes for a round carries. Only those can be
+// sealed into the database, so only those are read through Store.ReadFile.
+func roundMember(member string) bool {
+	if len(member) < 4 || member[3] != '-' {
+		return false
+	}
+	for i := 0; i < 3; i++ {
+		if member[i] < '0' || member[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func (s storeSource) List() ([]string, error) {
-	names, err := dirSource{dir: s.st.Dir(s.name)}.List()
+	names, err := s.st.RoundFiles(s.name)
 	if err != nil {
 		return nil, err
 	}

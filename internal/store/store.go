@@ -798,6 +798,12 @@ func (s *Store) archive(name string) (string, error) {
 		return "", err
 	}
 
+	// A sealed round's files are rows, not files (P3c §4.4): write them back
+	// into the directory so the tarball keeps today's layout.
+	if err := materialiseSealed(d, s.Dir(name), rec.ID); err != nil {
+		return "", err
+	}
+
 	dest := filepath.Join(s.ArchiveDir(),
 		fmt.Sprintf("%s-%s.tar.gz", name, time.Now().UTC().Format("20060102-150405")))
 
@@ -816,6 +822,46 @@ func (s *Store) archive(name string) (string, error) {
 	}
 
 	return dest, nil
+}
+
+// materialiseSealed writes back into dir every sealed round file of recordID
+// that is not already there, with its body and its own mtime. It is what
+// keeps archive()'s tarball at the layout it has always had once a round's
+// files became rows (P3c §4.4). A file present on disk is left exactly as it
+// is; a file with no row is skipped.
+func materialiseSealed(d *db.DB, dir, recordID string) error {
+	names, err := d.RoundFileList(recordID)
+	if err != nil {
+		return err
+	}
+	for _, base := range names {
+		dst := filepath.Join(dir, base)
+		if _, err := os.Stat(dst); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("stat %s: %w", base, err)
+		}
+
+		body, mtime, ok, err := d.RoundFileGet(recordID, base)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		if err := os.WriteFile(dst, body, bindingFileMode); err != nil {
+			return fmt.Errorf("materialise %s: %w", base, err)
+		}
+		if err := os.Chmod(dst, bindingFileMode); err != nil {
+			return fmt.Errorf("materialise %s: %w", base, err)
+		}
+		if !mtime.IsZero() {
+			if err := os.Chtimes(dst, mtime, mtime); err != nil {
+				return fmt.Errorf("materialise %s: %w", base, err)
+			}
+		}
+	}
+	return nil
 }
 
 // tarGzDir writes the flat contents of dir into a gzipped tar at dest, under

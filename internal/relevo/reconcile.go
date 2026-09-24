@@ -348,7 +348,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		note = joinNotes(note, "gate="+rec.Result)
 		var tail []string
 		if rec.Result == "fail" {
-			tail = tailLines(rec.LogPath, gateTailLines)
+			tail = tailLines(rt.Store.ReadFile, rec.LogPath, gateTailLines)
 		}
 		gateSuffix = "\n" + gateLine(*rec, tail)
 	}

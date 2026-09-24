@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -190,8 +189,8 @@ func gateLine(rec store.GateRecord, tail []string) string {
 // carrying the rusage trailer are skipped (#313): any scoped spawn prints one
 // before its exit trailer, and it is not gate output. A pre-rename log's
 // relay-rusage: line is skipped the same way (#292 §1). // name-guard: legacy
-func tailLines(path string, n int) []string {
-	data, err := os.ReadFile(path)
+func tailLines(read func(string) ([]byte, error), path string, n int) []string {
+	data, err := read(path)
 	if err != nil {
 		return nil
 	}

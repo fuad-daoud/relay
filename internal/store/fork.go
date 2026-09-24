@@ -115,24 +115,29 @@ func (t *Tx) ForkState(src, dst string, throughRound int) error {
 	}
 
 	srcDir := t.s.Dir(src)
-	dirEntries, err := os.ReadDir(srcDir)
+	// RoundFiles unions what is in src's directory with what a seal pass
+	// already moved into the database (P3c §4.4), so a fork cut from a
+	// closed round copies its files either way.
+	names, err := t.s.RoundFiles(src)
 	if err != nil {
-		return fmt.Errorf("read binding dir %q: %w", src, err)
+		return fmt.Errorf("list round files %q: %w", src, err)
 	}
 
-	for _, de := range dirEntries {
-		if de.IsDir() {
-			continue
-		}
-		base := de.Name()
+	for _, base := range names {
 		r, ok := roundOfFile(base)
 		if !ok || r > throughRound {
 			continue
 		}
-		srcFile := filepath.Join(srcDir, base)
-		dstFile := filepath.Join(dstDir, base)
-		if err := copyFile(srcFile, dstFile, bindingFileMode); err != nil {
+		data, err := t.s.ReadFile(filepath.Join(srcDir, base))
+		if err != nil {
 			return fmt.Errorf("copy %s: %w", base, err)
+		}
+		dstFile := filepath.Join(dstDir, base)
+		if err := os.WriteFile(dstFile, data, bindingFileMode); err != nil {
+			return fmt.Errorf("write %s: %w", base, err)
+		}
+		if err := os.Chmod(dstFile, bindingFileMode); err != nil {
+			return fmt.Errorf("chmod %s: %w", base, err)
 		}
 	}
 

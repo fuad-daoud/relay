@@ -62,7 +62,7 @@ func TestTailLines(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := []string{"four", "five", "six"}
-		got := tailLines(path, 3)
+		got := tailLines(os.ReadFile, path, 3)
 		if len(got) != len(want) {
 			t.Fatalf("tailLines() = %v, want %v", got, want)
 		}
@@ -79,14 +79,14 @@ func TestTailLines(t *testing.T) {
 		if err := os.WriteFile(path, []byte("only\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		got := tailLines(path, 5)
+		got := tailLines(os.ReadFile, path, 5)
 		if len(got) != 1 || got[0] != "only" {
 			t.Fatalf("tailLines() = %v, want [only]", got)
 		}
 	})
 
 	t.Run("missing file returns nil", func(t *testing.T) {
-		got := tailLines(filepath.Join(t.TempDir(), "absent.log"), 5)
+		got := tailLines(os.ReadFile, filepath.Join(t.TempDir(), "absent.log"), 5)
 		if got != nil {
 			t.Fatalf("tailLines() = %v, want nil", got)
 		}
@@ -100,7 +100,7 @@ func TestTailLines(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := []string{"a", "b", "relevo-exit:2"}
-		got := tailLines(path, 3)
+		got := tailLines(os.ReadFile, path, 3)
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("tailLines() = %v, want %v", got, want)
 		}
@@ -116,7 +116,7 @@ func TestTailLines(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := []string{"a", "b", legacy.ExitTrailer + "2"}
-		got := tailLines(path, 3)
+		got := tailLines(os.ReadFile, path, 3)
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("tailLines() = %v, want %v", got, want)
 		}

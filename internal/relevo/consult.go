@@ -140,7 +140,7 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 				continue
 			}
 			codeText := strconv.Itoa(code)
-			stream, _ := os.ReadFile(c.Endpoint.LogPath)
+			stream, _ := rt.Store.ReadFile(c.Endpoint.LogPath)
 			text := transcript.FinalText(c.Endpoint.Kind, stream)
 
 			if text == "" {
@@ -209,7 +209,7 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	// throwaway worktree is removed whatever the terminal state is.
 	if c.Role == verifyRole {
 		if state == store.ConsultDone {
-			body, readErr := os.ReadFile(c.FindingsPath)
+			body, readErr := rt.Store.ReadFile(c.FindingsPath)
 			if readErr != nil {
 				body = nil
 			}
