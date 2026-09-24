@@ -219,13 +219,20 @@ func (s *Store) RoundsOnDisk(name string) ([]int, error) {
 //   - a consult of that round that has not finished: its own stream, ask and
 //     findings are still readable (the state predicate is the consult
 //     reconciler's);
-//   - a gate run for that round.
+//   - a gate run for that round;
+//   - the round is the binding's latest closed round (b.Round-1) and the
+//     binding is not DONE: the planner was handed its report path, and a
+//     repair round's plan points at its plan and gate log, so it stays on
+//     disk until the next round closes (file-writes spike D2/A1).
 //
 // A DONE binding seals too: done is not a blocker. Round-naming fields a
 // decision does not depend on (HaltNotifiedRound, ForkedAtRound, Serve's
 // rounds) are deliberately not consulted.
 func Sealable(b Binding, round int, streamDrained bool) bool {
 	if round >= b.Round {
+		return false
+	}
+	if round == b.Round-1 && b.State != StateDone {
 		return false
 	}
 	if b.Builder.StreamRound == round && !streamDrained {

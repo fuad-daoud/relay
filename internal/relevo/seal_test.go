@@ -17,13 +17,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestClosedRoundSealsAfterTwoTicks is the P3c seal's end-to-end contract
-// (§4.3, §4.4): the tick that closes round 1 leaves its files alone, the next
-// tick moves them into the store's database and deletes them -- and every
-// reader that used to open them still returns the same content: Show,
-// ReadDiff, Pull's PushText, ingest's StoreSource, a fork cut through the
-// round, and gc's tarball.
-func TestClosedRoundSealsAfterTwoTicks(t *testing.T) {
+// TestClosedRoundSealsOnceTheNextRoundCloses is the P3c seal's end-to-end
+// contract (§4.3, §4.4): the tick that closes round 1 leaves its files alone,
+// and they stay on disk while round 1 is the binding's latest closed round --
+// the planner and a repair round still read them (D2/A1). Once the round after
+// it closes, the following tick moves them into the store's database and
+// deletes them -- and every reader that used to open them still returns the
+// same content: Show, ReadDiff, Pull's PushText, ingest's StoreSource, a fork
+// cut through the round, and gc's tarball.
+func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	rt, _ := sentBinding(t)
 
 	report := []byte("round 1's report\n")
@@ -65,9 +67,31 @@ func TestClosedRoundSealsAfterTwoTicks(t *testing.T) {
 		t.Fatalf("round 1's files must survive the tick that closed it: %v", err)
 	}
 
-	// Tick 2 seals it: the files are gone from the directory.
+	// Tick 2 keeps round 1 on disk: it is now the binding's latest closed
+	// round, and the planner and a repair round still read its files (D2/A1).
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("second Tick: %v", err)
+	}
+	for _, base := range []string{"001-report.md", "001-plan.md"} {
+		if _, err := os.Stat(filepath.Join(rt.Store.Dir("webshop"), base)); err != nil {
+			t.Errorf("%s was deleted while it is still the latest closed round (D2): %v", base, err)
+		}
+	}
+
+	// Advance the binding as though round 2 had also closed: round 1 is two
+	// behind now, so nothing keeps it on disk.
+	b, err = rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	b.Round = 3
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Tick 3 seals it: the files are gone from the directory.
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("third Tick: %v", err)
 	}
 	for _, base := range []string{"001-plan.md", "001-report.md", "001-diff.patch", "001-builder.log", "001-done"} {
 		if _, err := os.Stat(filepath.Join(rt.Store.Dir("webshop"), base)); !errors.Is(err, os.ErrNotExist) {
@@ -178,7 +202,7 @@ func TestSealPassEmptiesADoneDirOnly(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			st := store.New(root)
-			b := store.Binding{Name: "webshop", CWD: "/repo", Round: 2, State: tc.state}
+			b := store.Binding{Name: "webshop", CWD: "/repo", Round: 3, State: tc.state}
 			if err := st.Save(b); err != nil {
 				t.Fatalf("Save: %v", err)
 			}
