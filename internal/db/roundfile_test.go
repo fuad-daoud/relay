@@ -108,7 +108,7 @@ func TestRoundFileListScopedToRecord(t *testing.T) {
 		t.Fatalf("RoundFileList(keep) = %v, want one row", names)
 	}
 
-	if err := d.RecordDelete("gone"); err != nil {
+	if err := d.RecordDelete("", "gone"); err != nil {
 		t.Fatalf("RecordDelete(gone): %v", err)
 	}
 	if names, err = d.RoundFileList(goneID); err != nil || len(names) != 0 {

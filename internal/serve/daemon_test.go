@@ -18,7 +18,7 @@ import (
 // Mutation check: drop context.WithoutCancel from Run's tick call and the tick
 // sees a cancelled context, failing this test.
 func TestRunFinishesInFlightTickWithoutCancel(t *testing.T) {
-	srv, err := New(Config{Root: t.TempDir(), Now: time.Now, Interval: time.Millisecond})
+	srv, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now, Interval: time.Millisecond})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

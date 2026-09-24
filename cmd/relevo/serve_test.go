@@ -244,7 +244,7 @@ func TestServeTierRuntimeHasClock(t *testing.T) {
 		t.Fatalf("policy.Load: %v", err)
 	}
 
-	rt := serveTierRuntime(candidates, pol, root)
+	rt := serveTierRuntime(candidates, pol, root, nil)
 	if rt.Now == nil {
 		t.Fatal("serveTierRuntime returned a Runtime without a clock")
 	}
@@ -255,7 +255,7 @@ func TestServeTierRuntimeHasClock(t *testing.T) {
 }
 
 func TestServeAdminConfigHasRunnerAndClock(t *testing.T) {
-	cfg := serveAdminConfig("/x")
+	cfg := serveAdminConfig("/x", nil)
 	if cfg.Root != "/x" {
 		t.Errorf("Root = %q, want /x", cfg.Root)
 	}

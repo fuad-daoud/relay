@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/history"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -40,7 +41,7 @@ func (aliveRunner) Rusage(context.Context, relevo.ProcHandle, string) (relevo.Pr
 // Key() distinct across two owners that share a binding name, and the
 // server-wide ledger gate appearing once, not once per owner.
 func TestOwnerRuntimeMalformedID(t *testing.T) {
-	s, err := New(Config{Root: t.TempDir(), Now: time.Now})
+	s, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -54,6 +55,7 @@ func TestAdminStatusAllOwners(t *testing.T) {
 	now := time.Now()
 
 	s, err := New(Config{
+		DB:   testServeDB(t),
 		Root: root,
 		Now:  func() time.Time { return now },
 	})
@@ -170,9 +172,10 @@ func TestAdminStatusReportsHeadlessLivenessThroughRunner(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()
 
+	d := testServeDB(t)
 	newServer := func(r relevo.Runner) *Server {
 		t.Helper()
-		s, err := New(Config{Root: root, Now: func() time.Time { return now }, Runner: r})
+		s, err := New(Config{DB: d, Root: root, Now: func() time.Time { return now }, Runner: r})
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
@@ -269,6 +272,7 @@ func TestGCAbandonedArchivesOnlyIdleOld(t *testing.T) {
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 
 	s, err := New(Config{
+		DB:   testServeDB(t),
 		Root: root,
 		Now:  func() time.Time { return now },
 	})
@@ -406,6 +410,7 @@ func TestAdminUnbindByLabelAndId(t *testing.T) {
 	now := time.Now()
 
 	s, err := New(Config{
+		DB:   testServeDB(t),
 		Root: root,
 		Now:  func() time.Time { return now },
 	})
@@ -477,7 +482,7 @@ func TestAdminOwnerRuntimeAndTabEntries(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()
 
-	s, err := New(Config{Root: root, Now: func() time.Time { return now }})
+	s, err := New(Config{DB: testServeDB(t), Root: root, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -622,6 +627,7 @@ func TestAdminUnbindRefusesRunningUnlessForce(t *testing.T) {
 	now := time.Now()
 
 	s, err := New(Config{
+		DB:   testServeDB(t),
 		Root: root,
 		Now:  func() time.Time { return now },
 	})
@@ -685,6 +691,7 @@ func TestAdminUnbindAmbiguousLabel(t *testing.T) {
 	now := time.Now()
 
 	s, err := New(Config{
+		DB:   testServeDB(t),
 		Root: root,
 		Now:  func() time.Time { return now },
 	})
@@ -796,12 +803,12 @@ func TestAdminGatesAvailableUnavailable(t *testing.T) {
 		t.Fatalf("candidate.Load: %v", err)
 	}
 
-	s, err := New(Config{Root: root, Candidates: candidates, Now: func() time.Time { return now }})
+	s, err := New(Config{DB: testServeDB(t), Root: root, Candidates: candidates, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	initialisedBefore, err := Initialised(root)
+	initialisedBefore, err := Initialised(root, s.DB())
 	if err != nil {
 		t.Fatalf("Initialised: %v", err)
 	}
@@ -848,7 +855,7 @@ func TestAdminGatesAvailableUnavailable(t *testing.T) {
 		t.Errorf("AdminGates = %v, want none after AdminAvailable", gates)
 	}
 
-	initialisedAfter, err := Initialised(root)
+	initialisedAfter, err := Initialised(root, s.DB())
 	if err != nil {
 		t.Fatalf("Initialised: %v", err)
 	}
@@ -873,7 +880,7 @@ func TestAdminAvailableRecordsServerClear(t *testing.T) {
 		t.Fatalf("candidate.Load: %v", err)
 	}
 
-	s, err := New(Config{Root: root, Candidates: candidates, Now: func() time.Time { return now }})
+	s, err := New(Config{DB: testServeDB(t), Root: root, Candidates: candidates, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -887,7 +894,7 @@ func TestAdminAvailableRecordsServerClear(t *testing.T) {
 		t.Errorf("removed = %d, want 1", removed)
 	}
 
-	h, err := history.LoadKV(s.DB(), "")
+	h, err := history.LoadKV(db.PrefixKV{KV: s.DB(), Prefix: "serve."}, "")
 	if err != nil {
 		t.Fatalf("history.LoadKV: %v", err)
 	}
@@ -923,7 +930,7 @@ func TestFlatStatusStampsOwnersAndDedupsGates(t *testing.T) {
 		t.Fatalf("candidate.Load: %v", err)
 	}
 
-	s, err := New(Config{Root: root, Candidates: candidates, Now: func() time.Time { return now }})
+	s, err := New(Config{DB: testServeDB(t), Root: root, Candidates: candidates, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

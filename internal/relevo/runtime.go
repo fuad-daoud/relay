@@ -58,6 +58,12 @@ type Git interface {
 	Dirty(ctx context.Context, dir string) (bool, error)
 	RefSHA(ctx context.Context, dir, ref string) (string, bool, error)
 	UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string) error
+	// DeleteRef removes ref; a missing ref is success, so the server's
+	// settled-binding cleanup deletes the refs it listed without racing.
+	DeleteRef(ctx context.Context, dir, ref string) error
+	// ListRefs returns every ref in dir beginning with prefix, the server
+	// cleanup's worklist of a binding's refs/relevo/<name>/* refs.
+	ListRefs(ctx context.Context, dir, prefix string) ([]string, error)
 	CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error)
 	// CommitAll stages the whole working tree (git add -A) and commits it
 	// with relevo's fixed identity, returning the new HEAD sha, or ("", nil)

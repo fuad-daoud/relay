@@ -25,7 +25,12 @@ import (
 )
 
 type Config struct {
-	Root           string // <state>/serve
+	Root string // <state>/serve
+	// DB is the machine database (store.DefaultRoot()/relevo.db), which the
+	// caller opens and closes (P5 §4.3). The server reads and writes every
+	// binding record, client, secret and gate through it and no longer opens a
+	// database of its own under Root.
+	DB             *db.DB
 	Candidates     *candidate.Set
 	Policy         policy.Policy
 	Runner         relevo.Runner
@@ -64,11 +69,15 @@ type Server struct {
 	addr         net.Addr
 	insecureHTTP bool
 	mu           sync.Mutex // §6.3 of the spec: every store/ledger mutation and every tick
-	// gates is the serve-root database (P3b plan §4.5): the server-wide gate
-	// and availability records live in its kv rows, and phase 5 merges it into
-	// the one machine DB. It is opened once here and shared by every runtime
-	// the server builds, so an owner's rounds do not each open their own.
-	gates *db.DB
+	// gates is the server-wide gate and availability store: a `serve.`-prefixed
+	// view of the machine database (P5 §4.3), so a server-wide gate never
+	// collides with this machine's own `ledger` and `availability` rows. It is
+	// built once here and shared by every runtime the server builds.
+	gates db.KV
+	// stores is one Store per owner root (P5 §4.3): every record call goes
+	// through the machine database, so a tick opens no per-owner handle. It is
+	// guarded by s.mu, which every caller of ownerStore holds.
+	stores map[string]*store.Store
 	// tickFn, when non-nil, replaces Tick in Run (#373): the drain and
 	// WithoutCancel tests need a tick they can hold open. Production leaves
 	// it nil.
@@ -96,34 +105,47 @@ func New(cfg Config) (*Server, error) {
 		slog.Warn("temp sweep failed", "dir", tmpDir, "removed", removed, "err", err)
 	}
 	clientsPath := filepath.Join(cfg.Root, "clients.json")
-	clients, err := LoadClients(clientsPath)
+	clients, err := LoadClients(cfg.DB, clientsPath)
 	if err != nil {
 		return nil, err
 	}
 	nonces := remote.NewNonceWindow(remote.MaxClockSkew)
 	transport := remote.NewBundleTransport(cfg.Git, tmpDir)
 
-	// The serve-root database is opened once here (P3b plan §4.5): it holds
-	// the server-wide gate and availability records, so every runtime the
-	// server builds shares one handle.
-	gates, err := store.New(cfg.Root).DB()
-	if err != nil {
-		return nil, err
-	}
-
 	return &Server{
 		cfg:       cfg,
 		clients:   clients,
 		nonces:    nonces,
 		transport: transport,
-		gates:     gates,
+		gates:     db.PrefixKV{KV: cfg.DB, Prefix: "serve."},
+		stores:    map[string]*store.Store{},
 	}, nil
 }
 
-// DB returns the serve-root database the server holds (P3b plan §4.5). It is
-// the store served rounds and the admin verbs share, and the one the serve ui
-// keeps its own preferences in.
-func (s *Server) DB() *db.DB { return s.gates }
+// DB returns the machine database the server holds (P5 §4.3): the store served
+// rounds and the admin verbs share, and the one the serve ui keeps its own
+// preferences in.
+func (s *Server) DB() *db.DB { return s.cfg.DB }
+
+// ownerIDOf is the enrolled client id a bindings directory names: its basename
+// is the id's hex form (remote.ClientID.Dir), and IDFromDir turns it back.
+func ownerIDOf(root string) remote.ClientID {
+	id, _ := remote.IDFromDir(filepath.Base(root))
+	return id
+}
+
+// ownerStore returns the one Store for an owner root, creating it on first use
+// (P5 §4.3). Every record call goes through the machine database, scoped to the
+// owner the root names, so the server opens no per-owner handle and no file
+// under the owner's directory. The caller holds s.mu.
+func (s *Server) ownerStore(root string) *store.Store {
+	if st, ok := s.stores[root]; ok {
+		return st
+	}
+	st := store.NewShared(root, string(ownerIDOf(root)), s.cfg.DB)
+	s.stores[root] = st
+	return st
+}
 
 // sweepTmp removes the stale request temp files in dir (#373 §4.3): the
 // req-body-* and plan-* files relevo serve creates while a request is in
@@ -188,21 +210,30 @@ func (s *Server) repoRoot(owner remote.ClientID) (string, error) {
 }
 
 // OwnerRuntime resolves owner's runtime: the same store-over-owner-dir
-// runtime every server verb uses, exported for the ui's server source.
+// runtime every server verb uses, exported for the ui's server source. It
+// takes s.mu itself, because the ui reaches it without a lock; a caller that
+// already holds s.mu calls runtimeAt directly.
 func (s *Server) OwnerRuntime(owner remote.ClientID) (relevo.Runtime, error) {
 	root, err := s.ownerRoot(owner)
+	if err != nil {
+		return relevo.Runtime{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.runtimeAt(root), nil
+}
+
+// runtime is OwnerRuntime for a caller that already holds s.mu.
+func (s *Server) runtime(id remote.ClientID) (relevo.Runtime, error) {
+	root, err := s.ownerRoot(id)
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
 	return s.runtimeAt(root), nil
 }
 
-func (s *Server) runtime(id remote.ClientID) (relevo.Runtime, error) {
-	return s.OwnerRuntime(id)
-}
-
 func (s *Server) runtimeAt(root string) relevo.Runtime {
-	st := store.New(root)
+	st := s.ownerStore(root)
 	return relevo.Runtime{
 		Git:        s.cfg.Git,
 		Runner:     s.cfg.Runner,
@@ -267,7 +298,7 @@ func (s *Server) heldCPUs(root string, tx *store.Tx, self string) ([]int, error)
 			held = append(held, relevo.HeldIn(bindings, self)...)
 			continue
 		}
-		bindings, err := store.New(ownerPath).List()
+		bindings, err := s.ownerStore(ownerPath).List()
 		if err != nil {
 			slog.Warn("cpu census: list owner bindings failed", "owner", id, "err", err)
 			if firstErr == nil {

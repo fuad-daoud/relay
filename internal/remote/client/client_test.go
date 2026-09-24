@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -122,17 +123,23 @@ type testServerFixture struct {
 	gitClient   *git.Client
 	transport   *remote.BundleTransport
 	serverRoot  string
+	machineDB   *db.DB
 }
 
 func startTestServer(t *testing.T) (*client.Client, *testServerFixture) {
 	t.Helper()
 	serverRoot := t.TempDir()
-	tlsDir := filepath.Join(serverRoot, "tls")
-	fp, err := serve.InitTLS(tlsDir, []string{"127.0.0.1"}, time.Now())
+	machineDB, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("open machine db: %v", err)
+	}
+	t.Cleanup(func() { _ = machineDB.Close() })
+	secrets := serve.SecretStore{DB: machineDB, Root: serverRoot}
+	fp, err := serve.InitTLS(secrets, []string{"127.0.0.1"}, time.Now())
 	if err != nil {
 		t.Fatalf("InitTLS: %v", err)
 	}
-	cert, err := serve.LoadTLS(tlsDir)
+	cert, err := serve.LoadTLS(secrets)
 	if err != nil {
 		t.Fatalf("LoadTLS: %v", err)
 	}
@@ -156,7 +163,7 @@ func startTestServer(t *testing.T) (*client.Client, *testServerFixture) {
 	}
 
 	clientsPath := filepath.Join(serverRoot, "clients.json")
-	cls, err := serve.LoadClients(clientsPath)
+	cls, err := serve.LoadClients(machineDB, clientsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,6 +173,7 @@ func startTestServer(t *testing.T) (*client.Client, *testServerFixture) {
 
 	srv, err := serve.New(serve.Config{
 		Root:       serverRoot,
+		DB:         machineDB,
 		Candidates: cSet,
 		Runner:     runner,
 		Git:        gitClient,
@@ -201,6 +209,7 @@ func startTestServer(t *testing.T) (*client.Client, *testServerFixture) {
 		gitClient:   gitClient,
 		transport:   transport,
 		serverRoot:  serverRoot,
+		machineDB:   machineDB,
 	}
 	return cl, fix
 }
@@ -374,7 +383,7 @@ func TestCreateStartFilesBundleAck(t *testing.T) {
 	if !ok {
 		t.Fatal("failed to get dir from client ID")
 	}
-	st := store.New(filepath.Join(fix.serverRoot, "bindings", idDir))
+	st := store.NewShared(filepath.Join(fix.serverRoot, "bindings", idDir), string(remote.IDOf(fix.kp.Public)), fix.machineDB)
 	b, err := st.Load("api")
 	if err != nil {
 		t.Fatalf("st.Load(api): %v", err)

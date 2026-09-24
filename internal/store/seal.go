@@ -113,12 +113,12 @@ func (s *Store) sealedLookup(path string) (d *db.DB, recordID, base string, foun
 	if err != nil || d == nil {
 		return nil, "", "", false, err
 	}
-	rec, ok, err := d.RecordGet(filepath.Base(dir))
+	rec, ok, err := d.RecordGet(s.owner, filepath.Base(dir))
 	if err != nil {
 		return nil, "", "", false, err
 	}
 	if !ok {
-		rec, ok, err = d.RecordGetArchivedByName(filepath.Base(dir))
+		rec, ok, err = d.RecordGetArchivedByName(s.owner, filepath.Base(dir))
 		if err != nil || !ok {
 			return nil, "", "", false, err
 		}
@@ -149,7 +149,7 @@ func (s *Store) RoundFiles(name string) ([]string, error) {
 		return nil, err
 	}
 	if d != nil {
-		rec, ok, err := d.RecordGet(name)
+		rec, ok, err := d.RecordGet(s.owner, name)
 		if err != nil {
 			return nil, err
 		}
@@ -315,7 +315,7 @@ func (t *Tx) SealRound(name string, round int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	rec, ok, err := d.RecordGet(name)
+	rec, ok, err := d.RecordGet(t.s.owner, name)
 	if err != nil {
 		return 0, err
 	}

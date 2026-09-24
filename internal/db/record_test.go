@@ -45,7 +45,7 @@ func TestRecordPutGetList(t *testing.T) {
 		t.Fatalf("RecordPut(alpha): %v", err)
 	}
 
-	got, found, err := d.RecordGet("beta")
+	got, found, err := d.RecordGet("", "beta")
 	if err != nil {
 		t.Fatalf("RecordGet: %v", err)
 	}
@@ -56,11 +56,11 @@ func TestRecordPutGetList(t *testing.T) {
 		t.Errorf("RecordGet(beta) = %+v, want id %s name beta state active round 1 cwd /tmp/beta", got, betaID)
 	}
 
-	if _, found, err := d.RecordGet("missing"); err != nil || found {
+	if _, found, err := d.RecordGet("", "missing"); err != nil || found {
 		t.Errorf("RecordGet(missing) = (found %v, err %v), want (false, nil)", found, err)
 	}
 
-	list, err := d.RecordList()
+	list, err := d.RecordList("")
 	if err != nil {
 		t.Fatalf("RecordList: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestRecordPutGetList(t *testing.T) {
 	}
 
 	viewed := time.Now().UTC().Truncate(time.Millisecond)
-	if err := d.RecordSetViewed("beta", viewed); err != nil {
+	if err := d.RecordSetViewed("", "beta", viewed); err != nil {
 		t.Fatalf("RecordSetViewed: %v", err)
 	}
 
@@ -87,7 +87,7 @@ func TestRecordPutGetList(t *testing.T) {
 		t.Errorf("second RecordPut id = %s, want the existing id %s", againID, betaID)
 	}
 
-	got, found, err = d.RecordGet("beta")
+	got, found, err = d.RecordGet("", "beta")
 	if err != nil || !found {
 		t.Fatalf("RecordGet(beta) after put = (found %v, err %v)", found, err)
 	}
@@ -102,53 +102,68 @@ func TestRecordPutGetList(t *testing.T) {
 	}
 
 	// SetViewed on a name with no row is a no-op, not an error.
-	if err := d.RecordSetViewed("missing", viewed); err != nil {
+	if err := d.RecordSetViewed("", "missing", viewed); err != nil {
 		t.Errorf("RecordSetViewed(missing) = %v, want nil", err)
 	}
 }
 
-// TestRecordPutUpdatesOwner pins the keying (P3a round 3, B2): the live record
-// is keyed by name alone -- one store root holds one owner until phase 5 -- so
-// a Put with a new owner updates the same row, owner included, and leaves one
-// live row behind.
-func TestRecordPutUpdatesOwner(t *testing.T) {
+// TestRecordPutScopesByOwner pins the (owner, name) keying (P5 §4.1): the same
+// name may be live under two owners, each Put keys its own row, and neither
+// owner's read sees the other's.
+func TestRecordPutScopesByOwner(t *testing.T) {
 	d := openTestDB(t)
 
-	rec := testRecord("api")
-	rec.Owner = "abcdef0123456789"
-	firstID, err := d.RecordPut(rec)
+	first := testRecord("api")
+	first.Owner = "abcdef0123456789"
+	firstID, err := d.RecordPut(first)
 	if err != nil {
-		t.Fatalf("RecordPut(owner): %v", err)
+		t.Fatalf("RecordPut(owner A): %v", err)
 	}
 
-	next := testRecord("api")
-	next.Owner = "0011223344556677"
-	next.Round = 3
-	againID, err := d.RecordPut(next)
+	second := testRecord("api")
+	second.Owner = "0011223344556677"
+	second.Round = 3
+	secondID, err := d.RecordPut(second)
 	if err != nil {
-		t.Fatalf("RecordPut(new owner): %v", err)
+		t.Fatalf("RecordPut(owner B): %v", err)
 	}
-	if againID != firstID {
-		t.Errorf("a Put with a new owner made a new row (id %s, want the existing %s)", againID, firstID)
+	if secondID == firstID {
+		t.Errorf("a Put under a new owner reused row %s, want a row of its own", firstID)
 	}
 
-	got, found, err := d.RecordGet("api")
+	gotA, found, err := d.RecordGet("abcdef0123456789", "api")
 	if err != nil || !found {
-		t.Fatalf("RecordGet(api) = (found %v, err %v), want (true, nil)", found, err)
+		t.Fatalf("RecordGet(owner A, api) = (found %v, err %v), want (true, nil)", found, err)
 	}
-	if got.Owner != "0011223344556677" {
-		t.Errorf("owner = %q, want the new owner (a Put updates it)", got.Owner)
-	}
-	if got.Round != 3 {
-		t.Errorf("round = %d, want 3", got.Round)
+	if gotA.ID != firstID || gotA.Owner != "abcdef0123456789" || gotA.Round != 1 {
+		t.Errorf("owner A row = %+v, want id %s owner abcdef0123456789 round 1", gotA, firstID)
 	}
 
-	list, err := d.RecordList()
-	if err != nil {
-		t.Fatalf("RecordList: %v", err)
+	gotB, found, err := d.RecordGet("0011223344556677", "api")
+	if err != nil || !found {
+		t.Fatalf("RecordGet(owner B, api) = (found %v, err %v), want (true, nil)", found, err)
 	}
-	if len(list) != 1 {
-		t.Fatalf("RecordList = %v, want one live row", recordNames(list))
+	if gotB.ID != secondID || gotB.Owner != "0011223344556677" || gotB.Round != 3 {
+		t.Errorf("owner B row = %+v, want id %s owner 0011223344556677 round 3", gotB, secondID)
+	}
+
+	// Each owner's List sees only its own row, and the local owner "" sees none.
+	listA, err := d.RecordList("abcdef0123456789")
+	if err != nil {
+		t.Fatalf("RecordList(owner A): %v", err)
+	}
+	if len(listA) != 1 || listA[0].Name != "api" {
+		t.Fatalf("RecordList(owner A) = %v, want [api]", recordNames(listA))
+	}
+	listB, err := d.RecordList("0011223344556677")
+	if err != nil {
+		t.Fatalf("RecordList(owner B): %v", err)
+	}
+	if len(listB) != 1 || listB[0].Name != "api" {
+		t.Fatalf("RecordList(owner B) = %v, want [api]", recordNames(listB))
+	}
+	if none, err := d.RecordList(""); err != nil || len(none) != 0 {
+		t.Fatalf("RecordList(local) = %v (err %v), want none", recordNames(none), err)
 	}
 }
 
@@ -162,14 +177,14 @@ func TestRecordArchiveFreesName(t *testing.T) {
 		t.Fatalf("RecordPut: %v", err)
 	}
 	at := time.Now().UTC().Truncate(time.Millisecond)
-	if err := d.RecordArchive("alpha", at); err != nil {
+	if err := d.RecordArchive("", "alpha", at); err != nil {
 		t.Fatalf("RecordArchive: %v", err)
 	}
 
-	if _, found, err := d.RecordGet("alpha"); err != nil || found {
+	if _, found, err := d.RecordGet("", "alpha"); err != nil || found {
 		t.Errorf("RecordGet(archived) = (found %v, err %v), want (false, nil)", found, err)
 	}
-	list, err := d.RecordList()
+	list, err := d.RecordList("")
 	if err != nil {
 		t.Fatalf("RecordList: %v", err)
 	}
@@ -196,7 +211,7 @@ func TestRecordArchiveFreesName(t *testing.T) {
 	}
 
 	// Archiving a name with no live row is a no-op.
-	if err := d.RecordArchive("missing", at); err != nil {
+	if err := d.RecordArchive("", "missing", at); err != nil {
 		t.Errorf("RecordArchive(missing) = %v, want nil", err)
 	}
 }
@@ -217,10 +232,10 @@ func TestRecordDeleteCascadesEvents(t *testing.T) {
 		t.Fatalf("EventAppend: %v", err)
 	}
 
-	if err := d.RecordDelete("alpha"); err != nil {
+	if err := d.RecordDelete("", "alpha"); err != nil {
 		t.Fatalf("RecordDelete: %v", err)
 	}
-	if _, found, err := d.RecordGet("alpha"); err != nil || found {
+	if _, found, err := d.RecordGet("", "alpha"); err != nil || found {
 		t.Errorf("RecordGet after delete = (found %v, err %v), want (false, nil)", found, err)
 	}
 

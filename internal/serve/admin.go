@@ -329,11 +329,7 @@ func AdminOwnerRuntime(s *Server, owner string) (relevo.Runtime, string, error) 
 		return relevo.Runtime{}, "", err
 	}
 
-	rt, err := s.OwnerRuntime(id)
-	if err != nil {
-		return relevo.Runtime{}, "", err
-	}
-	return rt, s.clients.LabelOf(id), nil
+	return s.runtimeAt(root), s.clients.LabelOf(id), nil
 }
 
 // AdminTabEntries gathers every TabEntry `relevo serve tab` sums. With an
@@ -425,10 +421,10 @@ func (s *Server) resolveOwner(owner string) (remote.ClientID, error) {
 }
 
 // ledgerRuntime is the runtime the server-side gate verbs run on: the one
-// server-wide gate record, not any owner's. Gates is the serve-root database
-// the Server opened (P3b plan §4.5). Its store is over the serve root only
-// because relevo's ledger mutation takes its lock through rt.Store; these verbs
-// never list bindings from it.
+// server-wide gate record, not any owner's. Gates is the Server's
+// `serve.`-prefixed view of the machine database (P5 §4.3). Its store is over
+// the serve root only because relevo's ledger mutation takes its lock through
+// rt.Store; these verbs never list bindings from it.
 //
 // store.New creates nothing on its own -- the root and its .lock file appear
 // only once WithLock runs -- and neither is one of Initialised's markers

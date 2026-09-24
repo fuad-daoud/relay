@@ -6,7 +6,9 @@ Date: 2026-09-04
 Status: **historical record.** This is the design as approved before relevo was
 built, kept because it explains *why* the pieces are shaped the way they are.
 It is not maintained against the code — where the two disagree, the code and
-the README are right.
+the README are right. Its interface and state sections were refreshed to
+today's command names and storage during the 2026-09 housekeeping; the rest is
+the design as it was approved then.
 
 ## Problem
 
@@ -78,15 +80,15 @@ Three pieces, deliberately thin.
 relevo CLI      Invoked by the PLANNER through its Bash tool. Harness-agnostic, so it
                works whether the planner is claude, opencode or agy.
 
-                 relevo bind --builder <candidate|pane> [--name <n>]
+                 relevo bind --builder <candidate> [--name <n>]
                  relevo bind --resume <name>
                  relevo send --file <path>
-                 relevo answer (--keys <k> | --choice <n> | --text <s>)
-                 relevo pull [<name>]
-                 relevo done
-                 relevo unbind [<name>]
-                 relevo status [--json]
-                 relevo log <name>
+                 relevo wait [<name>]
+                 relevo ask --role reviewer --file <path>
+                 relevo done <name>
+                 relevo unbind <name>
+                 relevo status [--json] [--line]
+                 relevo show <name> [--report|--diff|--log]
                  relevo ui
 
 relayd         One daemon per herdr session. Watches herdr agent state. Three jobs only:
@@ -94,12 +96,12 @@ relayd         One daemon per herdr session. Watches herdr agent state. Three jo
                  2. builder -> blocked : deliver the dialog question to the planner
                  3. round accounting, timeouts, runaway cap
 
-state          ~/.local/state/relevo/<binding-name>/
-                 bind.json         the binding
-                 log.jsonl         append-only round log
-                 NNN-plan.md       planner -> builder
-                 NNN-report.md     builder -> planner
-                 NNN-question.md   blocked dialog capture
+state          ~/.local/state/relevo/
+                 relevo.db           0600: the record (bindings, round log,
+                                     rounds, config, secrets; see the README)
+                 .worktrees/<name>/  git worktrees (local builders)
+                 <name>/NNN-*        a round's files while it is open
+                 .daemon.lock        the daemon's lifetime flock
 ```
 
 **Why the CLI and the daemon are separate.** The outbound leg (planner → builder) happens
@@ -109,7 +111,10 @@ is running to notice. That is the only reason a daemon exists.
 
 ## Data structures
 
-### `bind.json`
+### The binding record
+
+Today this record is a row in `relevo.db`, not a `bind.json` file; the fields
+are the ones designed here.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -158,7 +163,8 @@ session survives the move and `refreshEndpoint` updates the pane ID normally.
 
 ### Candidates (config)
 
-Candidates are configured in `~/.config/relevo/candidates.json`; see [Candidates](../README.md#candidates) and the design spec (`docs/specs/2026-09-11-candidates-design.md`) for configuration format and semantics. Relevo renders harness launch arguments per kind:
+Candidates are the `candidates` section of `relevo.db`, edited with
+`relevo config`; see [Candidates](../README.md#candidates) and the design spec (`docs/specs/2026-09-11-candidates-design.md`) for configuration format and semantics. Relevo renders harness launch arguments per kind:
 
 | kind | args |
 | --- | --- |
@@ -168,14 +174,16 @@ Candidates are configured in `~/.config/relevo/candidates.json`; see [Candidates
 
 then `extra_args` are appended.
 
-Which candidate an omitted token resolves to is decided by
-`~/.config/relevo/policy.json` (`order[role]`) together with the
+Which candidate an omitted token resolves to is decided by the `policy`
+section (`order[role]`) together with the
 availability ledger: the first ungated candidate in the order, refusing
 when nothing ungated serves the role or when several serve it and
 nothing is ordered. Each resolution is a `pick` entry in the binding's
-`log.jsonl`. See `docs/specs/2026-09-11-policy-order-design.md`.
+round log. See `docs/specs/2026-09-11-policy-order-design.md`.
 
-### `log.jsonl` entry
+### The round log entry
+
+Today each entry is an `event` row in `relevo.db`, not a line of `log.jsonl`.
 
 `{ ts, round, direction: "to_builder"|"to_planner", kind: "plan"|"report"|"question"|"answer"|"pick"|"switch",
    path, delivered_at, confirmed: bool, note }`
@@ -297,13 +305,12 @@ money   /home/dev/money/ai                      wF   round 7   HELD
 Three display states cover everything: **ACTIVE** (someone is working), **NEEDS YOU**
 (stalled on a human), **HELD** (ready, but the human is in the pane).
 
-- `relevo pull [<name>]` — prints any held payload to stdout instead of injecting it. This is
-  what the planner runs when the human says "go"; it is the only delivery path that works
-  while the planner is mid-turn.
-- `relevo log <name>` — every relayed message: round, direction, file, timestamp. The audit
-  trail for "what did the planner actually tell the builder".
+- `relevo wait [<name>]` — blocks until a round closes or needs the planner, then prints
+  the pending report.
+- `relevo show <name> --log` — every relayed message: round, direction, file, timestamp. The
+  audit trail for "what did the planner actually tell the builder".
 - `relevo ui` — interactive reader over the same: report, terminal, diff and log tabs.
-- `relevo statusline` — one row per binding this planner owns, for Claude Code's `statusLine` setting; store-only, never probes herdr (spec `docs/specs/2026-09-13-statusline-design.md`).
+- `relevo status --line` — one row per binding this planner owns, for Claude Code's `statusLine` setting; store-only, never probes the harness (spec `docs/specs/2026-09-13-statusline-design.md`).
 
 All agent rows are derived live from herdr on each call. Relevo holds no truth herdr already
 has, except bindings and the round log, so `status` cannot disagree with reality.

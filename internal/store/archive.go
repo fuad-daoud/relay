@@ -70,7 +70,7 @@ func (s *Store) ListArchived() ([]ArchivedBinding, error) {
 	if d == nil {
 		return nil, nil
 	}
-	recs, err := d.RecordListArchived()
+	recs, err := d.RecordListArchived(s.owner)
 	if err != nil {
 		return nil, fmt.Errorf("read archived records: %w", err)
 	}
@@ -252,12 +252,12 @@ func (s *Store) importTarball(path string) error {
 	// so when a live binding already holds the name the archived record is
 	// inserted directly instead -- the import must never touch a live
 	// binding's row.
-	live, _, err := d.RecordGet(name)
+	live, _, err := d.RecordGet(s.owner, name)
 	if err != nil {
 		return err
 	}
 	rec := db.Record{
-		Owner:     b.Owner,
+		Owner:     s.owner,
 		Name:      name,
 		State:     string(b.State),
 		Round:     b.Round,
@@ -276,7 +276,7 @@ func (s *Store) importTarball(path string) error {
 			if id, perr = dtx.RecordPut(rec); perr != nil {
 				return perr
 			}
-			perr = dtx.RecordArchive(name, stamp)
+			perr = dtx.RecordArchive(s.owner, name, stamp)
 		}
 		if perr != nil {
 			return perr

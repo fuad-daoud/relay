@@ -62,11 +62,18 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 	root := filepath.Join(t.TempDir(), "serve")
 	now := time.Now()
 
-	fp, err := serve.InitTLS(root, []string{"localhost", "127.0.0.1"}, now)
+	machineDB, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("open machine db: %v", err)
+	}
+	t.Cleanup(func() { _ = machineDB.Close() })
+	secrets := serve.SecretStore{DB: machineDB, Root: root}
+
+	fp, err := serve.InitTLS(secrets, []string{"localhost", "127.0.0.1"}, now)
 	if err != nil {
 		t.Fatalf("InitTLS: %v", err)
 	}
-	cert, err := serve.LoadTLS(root)
+	cert, err := serve.LoadTLS(secrets)
 	if err != nil {
 		t.Fatalf("LoadTLS: %v", err)
 	}
@@ -87,6 +94,7 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 
 	cfg := serve.Config{
 		Root:           root,
+		DB:             machineDB,
 		Candidates:     cSet,
 		Policy:         pol,
 		Runner:         runner,
@@ -98,7 +106,7 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 
 	clientsPath := filepath.Join(root, "clients.json")
 	enroll := func(pub string) remote.ClientID {
-		cls, err := serve.LoadClients(clientsPath)
+		cls, err := serve.LoadClients(machineDB, clientsPath)
 		if err != nil {
 			t.Fatalf("LoadClients: %v", err)
 		}
@@ -143,7 +151,7 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 	url := "https://" + addr.String()
 	srvStore := func(owner remote.ClientID) *store.Store {
 		dir, _ := owner.Dir()
-		return store.New(filepath.Join(root, "bindings", dir))
+		return store.NewShared(filepath.Join(root, "bindings", dir), string(owner), machineDB)
 	}
 
 	return srv, url, fp, enroll, srvStore, runner

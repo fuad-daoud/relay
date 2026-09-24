@@ -534,7 +534,7 @@ func TestKeyAToggleWithoutDBNotices(t *testing.T) {
 // database (serverSource.Base().DB == nil), the toggle refuses -- scope
 // stays live and the sticky notice names the missing database.
 func TestScopeAllRefusedOnServer(t *testing.T) {
-	srv, err := serve.New(serve.Config{Root: t.TempDir(), Now: time.Now})
+	srv, err := serve.New(serve.Config{Root: t.TempDir(), DB: serverTestDB(t), Now: time.Now})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -43,6 +43,14 @@ func (s *Server) Tick(ctx context.Context) error {
 	// Every owner has been reconciled (pids of exited builders cleared,
 	// closed rounds released), so admit can start queued rounds into the
 	// slots that freed up this tick (#285). Still under s.mu.
+	//
+	// Before admit reuses a slot, collect the bindings that are done with the
+	// server: a settled served binding is archived and its worktree, branch
+	// and refs released (§7). Failures are logged per binding inside and never
+	// fail the tick.
+	if _, err := s.collectSettled(ctx); err != nil {
+		slog.Warn("collect settled failed", "err", err)
+	}
 	if err := s.admit(ctx); err != nil {
 		slog.Warn("admit failed", "err", err)
 	}

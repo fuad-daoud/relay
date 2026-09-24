@@ -106,32 +106,32 @@ func scanRecord(s rowScanner) (Record, error) {
 	return r, nil
 }
 
-// RecordGet returns the live row for name, and whether it was found.
+// RecordGet returns owner's live row for name, and whether it was found.
 //
-// The live row is keyed by name alone: one store root holds one owner's
-// bindings until phase 5, and load() addresses a binding by name, so owner is
-// not part of the lookup (P3a round 3, B2).
-func (d *DB) RecordGet(name string) (Record, bool, error) {
-	return getRecord(context.Background(), d.sqlDB, name)
+// The live row is keyed by (owner, name) (P5 §4.1): the one machine database
+// holds every owner's bindings, and the local store's owner is "". load()
+// addresses a binding by name within its own store's owner.
+func (d *DB) RecordGet(owner, name string) (Record, bool, error) {
+	return getRecord(context.Background(), d.sqlDB, owner, name)
 }
 
-func getRecord(ctx context.Context, q queryer, name string) (Record, bool, error) {
+func getRecord(ctx context.Context, q queryer, owner, name string) (Record, bool, error) {
 	r, err := scanRecord(q.QueryRowContext(ctx,
-		`SELECT `+recordCols+` FROM binding_record WHERE name = ? AND archived_at IS NULL`, name))
+		`SELECT `+recordCols+` FROM binding_record WHERE owner = ? AND name = ? AND archived_at IS NULL`, owner, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, false, nil
 	}
 	if err != nil {
-		return Record{}, false, fmt.Errorf("db: record get %q: %w", name, mapBusy(err))
+		return Record{}, false, fmt.Errorf("db: record get %s/%q: %w", owner, name, mapBusy(err))
 	}
 	return r, true, nil
 }
 
-// RecordList returns every live row, ordered by name. Today's file-based list
-// reads the root with ReadDir, which is also name order.
-func (d *DB) RecordList() ([]Record, error) {
+// RecordList returns owner's every live row, ordered by name. Today's
+// file-based list reads the root with ReadDir, which is also name order.
+func (d *DB) RecordList(owner string) ([]Record, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
-		`SELECT `+recordCols+` FROM binding_record WHERE archived_at IS NULL ORDER BY name ASC`)
+		`SELECT `+recordCols+` FROM binding_record WHERE owner = ? AND archived_at IS NULL ORDER BY name ASC`, owner)
 	if err != nil {
 		return nil, fmt.Errorf("db: record list: %w", mapBusy(err))
 	}
@@ -155,10 +155,10 @@ func (d *DB) RecordList() ([]Record, error) {
 // by name within one stamp. A record archived by RecordArchive is invisible to
 // RecordGet and RecordList; this is the reader that brings it back for
 // `relevo tab`, `relevo stats` and the daemon's mirror feed (P3d §4.1).
-func (d *DB) RecordListArchived() ([]Record, error) {
+func (d *DB) RecordListArchived(owner string) ([]Record, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
-		`SELECT `+recordCols+` FROM binding_record WHERE archived_at IS NOT NULL
-			ORDER BY archived_at ASC, name ASC`)
+		`SELECT `+recordCols+` FROM binding_record WHERE owner = ? AND archived_at IS NOT NULL
+			ORDER BY archived_at ASC, name ASC`, owner)
 	if err != nil {
 		return nil, fmt.Errorf("db: record list archived: %w", mapBusy(err))
 	}
@@ -210,17 +210,19 @@ func (d *DB) RecordCounts() (live, archived int, err error) {
 // and whether one exists. A name may be archived more than once -- the name is
 // reused after each archive -- and this is the one whose sealed round files a
 // path under the old binding directory names (internal/store.sealedLookup,
-// P3d §4.1).
-func (d *DB) RecordGetArchivedByName(name string) (Record, bool, error) {
+// P3d §4.1). Two archives of one name can share a millisecond archived_at, and a
+// ULID is random within a millisecond, so the tie-break is rowid: insertion
+// order, i.e. the later archive.
+func (d *DB) RecordGetArchivedByName(owner, name string) (Record, bool, error) {
 	r, err := scanRecord(d.sqlDB.QueryRowContext(context.Background(),
 		`SELECT `+recordCols+` FROM binding_record
-			WHERE name = ? AND archived_at IS NOT NULL
-			ORDER BY archived_at DESC, id ASC LIMIT 1`, name))
+			WHERE owner = ? AND name = ? AND archived_at IS NOT NULL
+			ORDER BY archived_at DESC, rowid DESC LIMIT 1`, owner, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, false, nil
 	}
 	if err != nil {
-		return Record{}, false, fmt.Errorf("db: record get archived %q: %w", name, mapBusy(err))
+		return Record{}, false, fmt.Errorf("db: record get archived %s/%q: %w", owner, name, mapBusy(err))
 	}
 	return r, true, nil
 }
@@ -253,11 +255,12 @@ func (t *Tx) RecordPutArchived(r Record, at time.Time) (string, error) {
 	return id, nil
 }
 
-// RecordPut inserts or updates the live row for r.Name. A hit keeps the row's
-// id and its viewed_at -- and its created_at, which is the binding's own
-// creation stamp, not this write's -- and takes r's owner with the other
-// columns, because the live row is keyed by name alone (P3a round 3, B2). A
-// miss mints a ULID unless r.ID is set.
+// RecordPut inserts or updates the live row for r.Owner and r.Name. A hit
+// keeps the row's id and its viewed_at -- and its created_at, which is the
+// binding's own creation stamp, not this write's -- and takes r's owner with
+// the other columns. The live row is keyed by (owner, name) (P5 §4.1), so a
+// store never writes a row outside its own scope, and the same name may be
+// live under a different owner. A miss mints a ULID unless r.ID is set.
 func (t *Tx) RecordPut(r Record) (string, error) {
 	updatedAt := r.UpdatedAt
 	if updatedAt.IsZero() {
@@ -265,8 +268,8 @@ func (t *Tx) RecordPut(r Record) (string, error) {
 	}
 
 	var id string
-	err := t.queryRow(`SELECT id FROM binding_record WHERE name = ? AND archived_at IS NULL`,
-		r.Name).Scan(&id)
+	err := t.queryRow(`SELECT id FROM binding_record WHERE owner = ? AND name = ? AND archived_at IS NULL`,
+		r.Owner, r.Name).Scan(&id)
 	switch {
 	case err == nil:
 		if _, uerr := t.exec(`UPDATE binding_record SET owner = ?, state = ?, round = ?, cwd = ?, record_json = ?, updated_at = ? WHERE id = ?`,
@@ -296,38 +299,38 @@ func (t *Tx) RecordPut(r Record) (string, error) {
 	}
 }
 
-// RecordArchive stamps archived_at on the live row for name, which takes it
-// out of RecordGet and RecordList. The live row is keyed by name alone (P3a
-// round 4, C2). No live row is a no-op: the caller load()s first, so a missing
+// RecordArchive stamps archived_at on owner's live row for name, which takes
+// it out of RecordGet and RecordList. The live row is keyed by (owner, name)
+// (P5 §4.1). No live row is a no-op: the caller load()s first, so a missing
 // row there is already an error.
-func (t *Tx) RecordArchive(name string, at time.Time) error {
-	if _, err := t.exec(`UPDATE binding_record SET archived_at = ? WHERE name = ? AND archived_at IS NULL`,
-		formatTime(at), name); err != nil {
-		return fmt.Errorf("db: record archive %q: %w", name, mapBusy(err))
+func (t *Tx) RecordArchive(owner, name string, at time.Time) error {
+	if _, err := t.exec(`UPDATE binding_record SET archived_at = ? WHERE owner = ? AND name = ? AND archived_at IS NULL`,
+		formatTime(at), owner, name); err != nil {
+		return fmt.Errorf("db: record archive %s/%q: %w", owner, name, mapBusy(err))
 	}
 	return nil
 }
 
-// RecordDelete removes the live row for name; its events go with it through the
-// foreign key's ON DELETE CASCADE. The live row is keyed by name alone (P3a
-// round 4, C2). Archived rows are kept: they are the record of a name that was
+// RecordDelete removes owner's live row for name; its events go with it through
+// the foreign key's ON DELETE CASCADE. The live row is keyed by (owner, name)
+// (P5 §4.1). Archived rows are kept: they are the record of a name that was
 // already archived and freed, so deleting a later binding of the same name must
 // not destroy that history.
-func (t *Tx) RecordDelete(name string) error {
-	if _, err := t.exec(`DELETE FROM binding_record WHERE name = ? AND archived_at IS NULL`,
-		name); err != nil {
-		return fmt.Errorf("db: record delete %q: %w", name, mapBusy(err))
+func (t *Tx) RecordDelete(owner, name string) error {
+	if _, err := t.exec(`DELETE FROM binding_record WHERE owner = ? AND name = ? AND archived_at IS NULL`,
+		owner, name); err != nil {
+		return fmt.Errorf("db: record delete %s/%q: %w", owner, name, mapBusy(err))
 	}
 	return nil
 }
 
-// RecordSetViewed stamps viewed_at on the live row for name, which is keyed by
-// name alone (P3a round 4, C2). No row is a no-op: a read verb must not fail
+// RecordSetViewed stamps viewed_at on owner's live row for name, which is keyed
+// by (owner, name) (P5 §4.1). No row is a no-op: a read verb must not fail
 // because a stamp could not be written.
-func (t *Tx) RecordSetViewed(name string, at time.Time) error {
-	if _, err := t.exec(`UPDATE binding_record SET viewed_at = ? WHERE name = ? AND archived_at IS NULL`,
-		formatTime(at), name); err != nil {
-		return fmt.Errorf("db: record set viewed %q: %w", name, mapBusy(err))
+func (t *Tx) RecordSetViewed(owner, name string, at time.Time) error {
+	if _, err := t.exec(`UPDATE binding_record SET viewed_at = ? WHERE owner = ? AND name = ? AND archived_at IS NULL`,
+		formatTime(at), owner, name); err != nil {
+		return fmt.Errorf("db: record set viewed %s/%q: %w", owner, name, mapBusy(err))
 	}
 	return nil
 }
@@ -447,16 +450,16 @@ func (d *DB) RecordPut(r Record) (string, error) {
 	return id, err
 }
 
-func (d *DB) RecordArchive(name string, at time.Time) error {
-	return d.Tx(func(t *Tx) error { return t.RecordArchive(name, at) })
+func (d *DB) RecordArchive(owner, name string, at time.Time) error {
+	return d.Tx(func(t *Tx) error { return t.RecordArchive(owner, name, at) })
 }
 
-func (d *DB) RecordDelete(name string) error {
-	return d.Tx(func(t *Tx) error { return t.RecordDelete(name) })
+func (d *DB) RecordDelete(owner, name string) error {
+	return d.Tx(func(t *Tx) error { return t.RecordDelete(owner, name) })
 }
 
-func (d *DB) RecordSetViewed(name string, at time.Time) error {
-	return d.Tx(func(t *Tx) error { return t.RecordSetViewed(name, at) })
+func (d *DB) RecordSetViewed(owner, name string, at time.Time) error {
+	return d.Tx(func(t *Tx) error { return t.RecordSetViewed(owner, name, at) })
 }
 
 func (d *DB) EventAppend(recordID string, e RecordEvent) error {
