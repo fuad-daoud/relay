@@ -299,6 +299,21 @@ func TestSwitchesForRound(t *testing.T) {
 	}
 }
 
+// TestSwitchesSkipRelaunch pins §4.2: a switch entry that replaced a lost
+// process with the same candidate -- a relaunch or a resumed session -- is not
+// counted as a switch, while a real switch is.
+func TestSwitchesSkipRelaunch(t *testing.T) {
+	events := []store.LogEntry{
+		{Round: 1, Kind: store.KindSwitch, Note: "switched builder (rate-limited): picked agy/google/x for builder: order #1"},
+		{Round: 1, Kind: store.KindSwitch, Note: "relaunched builder (lost to a daemon restart at 2026-09-24T10:00:00Z): picked agy/google/x for builder: same candidate, not counted"},
+		{Round: 1, Kind: store.KindSwitch, Note: "resumed session sess-1 builder (lost to a daemon restart at 2026-09-24T10:00:00Z): picked agy/google/x for builder: same candidate, not counted"},
+	}
+
+	if got := switchesForRound(events, 1); got != 1 {
+		t.Errorf("switchesForRound(round 1) = %d, want 1", got)
+	}
+}
+
 func candidateRef(t *testing.T, harness, provider, model string) candidate.Ref {
 	t.Helper()
 	return candidate.Ref{Harness: harness, Provider: provider, Model: model}

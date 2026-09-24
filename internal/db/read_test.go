@@ -114,6 +114,7 @@ func seedDB(t *testing.T) seeded {
 			BuilderCandidate: ptr("claude/anthropic/sonnet"), BuilderHarness: ptr("agy"),
 			BuilderProvider: ptr("anthropic"), BuilderModel: ptr("sonnet"),
 			CostBasis: ptr("exact"), CostUSD: ptr(1.5),
+			Switches: 2,
 		},
 		{
 			BindingID: webshopID, Number: 2, StartedAt: day2, Outcome: OutcomeOpen,
@@ -303,6 +304,22 @@ func TestQueryByRound(t *testing.T) {
 		t.Fatalf("Query: %v", err)
 	}
 	assertPairs(t, got, []pair{{"webshop", 2}, {"api", 2}, {"docs", 2}})
+}
+
+// TestQueryReturnsSwitches pins §4.1: RoundRow carries the round's stored
+// switch count.
+func TestQueryReturnsSwitches(t *testing.T) {
+	s := seedDB(t)
+	got, err := s.d.Query(Filter{Binding: "webshop", Round: 1})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want 1", len(got))
+	}
+	if got[0].Switches != 2 {
+		t.Errorf("Switches = %d, want 2", got[0].Switches)
+	}
 }
 
 func TestQuerySince(t *testing.T) {
