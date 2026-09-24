@@ -124,8 +124,16 @@ const ReapFragment = `relevo_reap_scope() {
 // exactly this case -- inherits that cgroup too, so matching the shape
 // alone would make a plain spawn started from inside a round wrongly emit
 // a rusage line for the round's cgroup, not its own.
+//
+// A TERM (Runner.Kill's first step, or a scope stop) ends the supervisor with
+// 143 before it can print the exit trailer: a pending trap runs before the
+// next command in every POSIX shell, so "a killed supervisor writes no
+// trailer" holds whichever shell /bin/sh is and whichever of the group dies
+// first. Without the trap, bash (macOS /bin/sh) could reap the TERM-ed child
+// first and print the trailer.
 const supervisorScript = ReapFragment + `want=$1
 shift
+trap 'exit 143' TERM
 { echo 500 >/proc/self/oom_score_adj; } 2>/dev/null || true
 "$@" </dev/null; rc=$?
 if [ -n "$want" ]; then
