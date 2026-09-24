@@ -211,6 +211,10 @@ type Binding struct {
 	// started from (#80); empty for an adopted builder and for any binding
 	// written before the field existed.
 	BuilderCandidate string `json:"builder_candidate,omitempty"`
+	// Role is the writer role this binding runs (#382). "" means builder, and a
+	// builder binding stores "", so its JSON is byte-identical to one written
+	// before the field existed.
+	Role string `json:"role,omitempty"`
 	// Tier is the effective permission tier the binding's builder launches at
 	// (#141), resolved once at bind/add/fork. "" on bindings written before the
 	// field existed and means harness.

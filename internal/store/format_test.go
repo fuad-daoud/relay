@@ -196,8 +196,8 @@ func TestGoldenDecision(t *testing.T) {
 }
 
 func TestStoredFormat(t *testing.T) {
-	if got := storedFormat(BindingFormat); got != 0 {
-		t.Errorf("storedFormat(%d) = %d, want 0: format 1 is absent on disk", BindingFormat, got)
+	if got := storedFormat(1); got != 0 {
+		t.Errorf("storedFormat(1) = %d, want 0: format 1 is absent on disk", got)
 	}
 	if got := storedFormat(2); got != 2 {
 		t.Errorf("storedFormat(2) = %d, want 2", got)
@@ -240,8 +240,8 @@ func TestSaveRefusesANewerFormat(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(raw, []byte(`"format": 2`)) {
-		t.Fatalf("the fixture must carry format 2, got:\n%s", raw)
+	if !bytes.Contains(raw, []byte(fmt.Sprintf(`"format": %d`, BindingFormat+1))) {
+		t.Fatalf("the fixture must carry format %d, got:\n%s", BindingFormat+1, raw)
 	}
 
 	got, err := s.Load(b.Name)
@@ -263,7 +263,7 @@ func TestSaveRefusesANewerFormat(t *testing.T) {
 	if newer.Kind != "binding" || newer.Name != b.Name || newer.Have != BindingFormat+1 || newer.Know != BindingFormat {
 		t.Errorf("ErrNewerFormat = %+v", newer)
 	}
-	wantText := `binding "webshop" was written by a newer relevo (format 2; this relevo knows 1): upgrade relevo; a planner session reconnects relevo mcp with /mcp`
+	wantText := fmt.Sprintf(`binding "webshop" was written by a newer relevo (format %d; this relevo knows %d): upgrade relevo; a planner session reconnects relevo mcp with /mcp`, BindingFormat+1, BindingFormat)
 	if err.Error() != wantText {
 		t.Errorf("ErrNewerFormat text = %q, want %q", err.Error(), wantText)
 	}

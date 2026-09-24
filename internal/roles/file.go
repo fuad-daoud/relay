@@ -146,7 +146,9 @@ func validate(path string, f *File) error {
 					return badField("shape", "built-in role is "+shapeWord(builtin.Shape))
 				}
 			} else if word == "writer" {
-				return badField("shape", "a new writer role needs relevo send --role, not yet available")
+				// #382 §4: a new writer row is accepted. Shape is what the
+				// gate check below reads, so record the writer word as one.
+				shape = harness.ShapeBuilder
 			}
 		} else if !isBuiltin {
 			return badField("shape", "required for a new role")

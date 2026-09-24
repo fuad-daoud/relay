@@ -98,7 +98,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 			b.Name, reason, b.BuilderCandidate, b.RoundSwitches, limit))
 	}
 
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, append(Gates(rt), roundExclusionGates(b)...), "", "builder")
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, append(Gates(rt), roundExclusionGates(b)...), "", bindingRole(b))
 	if err != nil {
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
 			"%s: builder %s (%s); cannot switch: %v",
@@ -128,6 +128,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		CWD:       b.CWD,
 		Headless:  b.Builder.Headless(),
 		Tier:      string(effectiveTier(b)),
+		Role:      b.Role,
 	}, b.Name)
 	if err != nil {
 		// resolveBuilder already recorded spawn_failed for the pick, which

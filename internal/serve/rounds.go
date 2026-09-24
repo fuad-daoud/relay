@@ -150,7 +150,7 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	// token refuses with nothing absorbed and no ref touched (#318 §5.4). Send
 	// re-resolves it under its own lock as a backstop.
 	if candidate != "" {
-		if _, err := relevo.ResolveSendBuilder(rt, b.BuilderCandidate, candidate); err != nil {
+		if _, err := relevo.ResolveSendBuilderFor(rt, relevo.BindingRole(b), b.BuilderCandidate, candidate); err != nil {
 			s.mu.Unlock()
 			writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
 			return

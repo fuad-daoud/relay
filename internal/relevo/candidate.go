@@ -357,11 +357,18 @@ func pickEntry(now time.Time, round int, role string, res Resolution) store.LogE
 	}
 }
 
-// CandidateKind returns the harness kind a bind with this token would start,
-// for advisory preflight only; every error is reported as "" because the real
-// resolution happens inside Bind and says why.
+// CandidateKind is CandidateKindFor with the built-in builder's role, so its
+// existing callers and tests stay unchanged.
 func CandidateKind(rt Runtime, token string) string {
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, "builder")
+	return CandidateKindFor(rt, token, "builder")
+}
+
+// CandidateKindFor returns the harness kind a bind with this token would start
+// for a binding whose writer role is role, for advisory preflight only; every
+// error is reported as "" because the real resolution happens inside Bind and
+// says why.
+func CandidateKindFor(rt Runtime, token, role string) string {
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, role)
 	if err != nil {
 		return ""
 	}

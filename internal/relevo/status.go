@@ -77,6 +77,9 @@ type BindingStatus struct {
 	State            string `json:"state"`
 	Display          string `json:"display"`
 	BuilderCandidate string `json:"builder_candidate"`
+	// Role is the binding's stored writer role (#382); empty for builder, so a
+	// builder row's JSON omits the key and is unchanged.
+	Role string `json:"role,omitempty"`
 	// PlannerID and PlannerName name the relevo planner record this binding
 	// belongs to (#303 §3.2).
 	PlannerID   string `json:"planner_id,omitempty"`
@@ -325,6 +328,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus,
 		Name: b.Name, CWD: b.CWD, Round: b.Round,
 		State: string(b.State), Display: displayState(b.State),
 		BuilderCandidate: b.BuilderCandidate,
+		Role:             b.Role,
 		ForkedFrom:       b.ForkedFrom,
 		ForkedAtRound:    b.ForkedAtRound,
 		Consults:         runningConsults(b),
@@ -337,8 +341,9 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus,
 
 	// #374: a custom builder definition is named on the row -- and so in
 	// `status --json` -- while a shipped one leaves today's document alone.
+	// #382: the definition named is the binding's own role's.
 	if kind := b.Builder.Kind; kind != "" {
-		if role, ok := rt.RoleRegistry().Role("builder"); ok {
+		if role, ok := rt.RoleRegistry().Role(bindingRole(b)); ok {
 			if d, ok := role.Definitions[kind]; ok && d.Custom {
 				row.BuilderDefinition = d.Agent
 				row.BuilderDefinitionCustom = true
@@ -723,6 +728,9 @@ func RenderStatus(r Report) string {
 		} else {
 			fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s `%s`",
 				"remote", b.BuilderKind, b.BuilderStatus, b.BuilderCandidate)
+		}
+		if b.Role != "" {
+			fmt.Fprintf(&sb, "   role %s", b.Role)
 		}
 		if b.Switches > 0 {
 			fmt.Fprintf(&sb, "   switched %dx", b.Switches)

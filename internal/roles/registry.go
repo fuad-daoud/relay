@@ -165,10 +165,18 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 		row := f.Rows[name]
 		base, ok := byName[name]
 		if !ok {
+			// #382 §4: a new row's shape comes from the file. A writer
+			// defaults its gate to on -- a writer changes the tree, so the
+			// project's own check applies, exactly as for the built-in
+			// builder -- and a reader has no gate.
+			shape := harness.ShapeConsult
+			if row.Shape != nil && *row.Shape == "writer" {
+				shape = harness.ShapeBuilder
+			}
 			base = Role{
 				Name:        name,
-				Shape:       harness.ShapeConsult,
-				Gate:        false,
+				Shape:       shape,
+				Gate:        shape == harness.ShapeBuilder,
 				Builtin:     false,
 				Definitions: make(map[string]Definition),
 			}

@@ -404,7 +404,7 @@ func (s *Store) save(b Binding) error {
 	if b.Format > BindingFormat {
 		return &ErrNewerFormat{Kind: "binding", Name: b.Name, Have: b.Format, Know: BindingFormat}
 	}
-	b.Format = storedFormat(BindingFormat)
+	b.Format = storedFormat(recordFormat(b))
 
 	if err := ValidName(b.Name); err != nil {
 		return err
