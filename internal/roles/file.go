@@ -43,8 +43,9 @@ type File struct {
 // keeps what the role already had, while an empty list means "none".
 type Row struct {
 	// Shape is "writer" or "reader". A built-in row may give it only to
-	// repeat the built-in shape; a new role must give it and must be a
-	// reader (writer rows need `relevo send --role`, S2).
+	// repeat the built-in shape; a new role must give it. A new writer runs
+	// as a binding's role (`relevo add --role` / `relevo bind --role`); a
+	// new reader runs through `relevo ask --role`.
 	Shape *string `json:"shape"`
 
 	// Gate marks a writer role whose round closes on a gate. true is

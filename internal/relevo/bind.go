@@ -453,13 +453,6 @@ func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, plannerEP s
 	return out, Resolution{}, nil
 }
 
-// resolveGate applies the gate resolution rule (#132) as it stood before a
-// binding's role could gate: an unset flag takes policy.json's gate.default.
-// It is resolveGateFor with roleGates true.
-func resolveGate(gate string, noGate bool, pol policy.Policy) string {
-	return resolveGateFor(gate, noGate, pol, true)
-}
-
 // resolveGateFor applies the gate resolution rule (#132, #382): --no-gate wins
 // over everything, an explicit --gate is used as given, and an unset flag takes
 // policy.json's gate.default only when the binding's role gates. A writer role

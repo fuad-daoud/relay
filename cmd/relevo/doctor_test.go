@@ -723,3 +723,33 @@ func TestAssembleRoleDefinitionsFileMode(t *testing.T) {
 		t.Errorf("assembleRoleDefinitions = %v, want %v", got, want)
 	}
 }
+
+// TestDoctorChecksCustomWriterDefinition pins #382 §5.4: a custom writer role's
+// definition is in the doctor scope for its kind, so the on-disk check covers
+// it the same way it covers a custom reader's. Pure: no harness runs.
+func TestDoctorChecksCustomWriterDefinition(t *testing.T) {
+	set := testSet(t, `[{"harness":"claude","provider":"t","model":"m","roles":["builder"]}]`)
+	writerShape := "writer"
+	reg, err := roles.Build(&roles.File{Rows: map[string]roles.Row{
+		"builder": {Candidates: []string{"claude/t/m"}},
+		"ui-builder": {
+			Shape:       &writerShape,
+			Candidates:  []string{"claude/t/m"},
+			Definitions: map[string]roles.DefRow{"claude": {Agent: "my-ui"}},
+		},
+	}}, set, policy.Policy{})
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+
+	got := assembleRoleDefinitions(reg, set, []string{"claude"})
+	found := false
+	for _, d := range got["claude"] {
+		if d == "my-ui" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("assembleRoleDefinitions[claude] = %v, want the custom writer definition my-ui", got["claude"])
+	}
+}

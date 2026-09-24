@@ -79,6 +79,30 @@ func TestCheckWriterRole(t *testing.T) {
 	}
 }
 
+// TestBindUnknownRoleRefused pins #382 §6: an unknown role is refused before
+// any candidate resolution or launch. The plan asked for this through the
+// cmd/relevo CLI, but cmdBind resolves this session's planner (in BindResolved)
+// before create runs checkWriterRole, so a CLI run without a planner stops on
+// ErrNoPlannerSession -- the role refusal is only reachable through
+// relevo.Bind, which is what this test drives (the plan's §7 test 3 fallback).
+func TestBindUnknownRoleRefused(t *testing.T) {
+	rt := newRuntime(t)
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
+		"builder": {Candidates: []string{testClaudeRef}},
+	})
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "n", Role: "nope", Candidate: testClaudeRef,
+		PlannerID: testPlannerName, CWD: "/nope-repo",
+	})
+	if err == nil {
+		t.Fatal("Bind(--role nope) = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), `unknown role "nope"`) {
+		t.Errorf("err = %q, want it to name unknown role \"nope\"", err.Error())
+	}
+}
+
 // TestBindCustomWriterLaunchesItsDefinition pins #382 §2: a binding's round
 // runs its own role's definition, and the role is persisted.
 func TestBindCustomWriterLaunchesItsDefinition(t *testing.T) {

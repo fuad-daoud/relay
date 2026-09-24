@@ -979,6 +979,19 @@ func TestBindRebindNeedsResume(t *testing.T) {
 	}
 }
 
+// TestBindRoleWithResumeRefused pins #382 §4: a resume keeps the binding's
+// stored role, so --role is refused. The check runs before newRuntime, so no
+// harness is reached and nothing is spawned.
+func TestBindRoleWithResumeRefused(t *testing.T) {
+	err := run([]string{"bind", "--resume", "--role", "x", "--name", "n"})
+	if err == nil {
+		t.Fatal("bind --resume --role = nil, want the drop --role refusal")
+	}
+	if !strings.Contains(err.Error(), "drop --role") {
+		t.Fatalf("got %v, want an error naming --role and the resume's stored role", err)
+	}
+}
+
 // TestPickRejectsAName pins spec §3: --pick chooses the binding, so naming
 // one as well is a usage error. Each case fails before newRuntime, so no
 // a harness is reached.

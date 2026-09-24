@@ -259,9 +259,10 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
 
 ## Command surface
 
-- `relevo bind [--name N] [--builder CANDIDATE] [--resume [--rebind]] [--timeout D] [--feature LABEL]`
+- `relevo bind [--name N] [--builder CANDIDATE] [--role R] [--resume [--rebind]] [--timeout D] [--feature LABEL]`
   — start a binding between the calling planner and a builder. `--builder` is
-  a candidate token. A name that already exists is refused rather than reused:
+  a candidate token; `--role R` is the writer role the binding runs (default
+  `builder`). A name that already exists is refused rather than reused:
   only `bind.json` would be rewritten, so a fresh round 1 would collide with
   the previous session's round log. `--resume --name N` re-points that
   existing binding's planner side at the calling planner without touching the
@@ -351,9 +352,10 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   report, terminal, diff or log; narrower terminals get the list-then-detail
   flow. `--dashboard` opens on the dashboard screen (`d` reaches it from the
   fleet).
-- `relevo add --name N [--builder CANDIDATE] [--cwd DIR] [--feature LABEL]` — attach an
+- `relevo add --name N [--builder CANDIDATE] [--role R] [--cwd DIR] [--feature LABEL]` — attach an
   additional builder to this planner on its own git worktree, starting at
   round 1. This is how one planner drives several builders at once.
+  `--role R` is the writer role the binding runs (default `builder`).
   `--headless` is accepted and ignored, as for `bind`.
   `relevo add --name N --server S [--base REF]` runs that builder on a
   configured remote server instead (see "Remote builders: the client" below);
@@ -1473,14 +1475,23 @@ Roles live in `$XDG_CONFIG_HOME/relevo/roles.json` (default
     "shape": "reader",
     "candidates": ["claude/anthropic/haiku"],
     "definitions": { "claude": { "agent": "my-scout" } }
+  },
+  "ui-builder": {
+    "shape": "writer",
+    "candidates": ["claude/anthropic/sonnet"],
+    "definitions": { "claude": { "agent": "my-ui-builder" } }
   }
 }
 ```
 
 - `shape` -- `writer` or `reader`. The built-in rows have one already; a new
-  role must give it, and must be a `reader` for now: it runs with `relevo ask
-  --role <name>`.
-- `gate` -- for a writer, whether its round closes on a gate.
+  role must give it. A new **reader** runs with `relevo ask --role <name>`; a
+  new **writer** runs as a binding's role: `relevo add --role <name>` or
+  `relevo bind --role <name>`. Every round of that binding runs it, and
+  `relevo fork` keeps it.
+- `gate` -- for a writer, whether its round closes on a gate. true takes
+  `policy.json`'s `gate.default`; false takes none. It defaults to true for
+  every writer; an explicit `--gate` still wins.
 - `definitions.<kind>.agent` -- the definition relevo launches for that harness
   kind; `requires` names the definitions that agent dispatches to.
 - `candidates` -- the role's own candidate tokens, most preferred first.
@@ -1516,7 +1527,8 @@ older relevo does not know `roles.json`.
 
 **Seeing it.** `relevo roles` lists each role's shape, candidates, tier and
 definitions; `relevo policy` adds `(roles.json)` per role; `relevo status --json`
-has `builder_definition` for a custom builder.
+has `builder_definition` for a custom builder. `relevo status` shows `role <r>`
+on a non-builder binding's builder line, and `status --json` has `role`.
 
 **Remote builders.** A server resolves roles from its *own* config, not the
 client's.
