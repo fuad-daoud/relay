@@ -132,7 +132,7 @@ func TestEnterRunsUnbindWithArchive(t *testing.T) {
 	if m.result.err != nil {
 		t.Fatalf("unbind: %v", m.result.err)
 	}
-	if !contains(m.result.text, "archived webshop to ") {
+	if !contains(m.result.text, "archived webshop") {
 		t.Fatalf("text = %q, want the archive line", m.result.text)
 	}
 	if _, err := rt.Store.Load("webshop"); err == nil {

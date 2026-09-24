@@ -361,8 +361,8 @@ func TestGCAbandonedArchivesOnlyIdleOld(t *testing.T) {
 	if dryResults[0].Name != "old-idle" {
 		t.Errorf("dry run result name = %q, want old-idle", dryResults[0].Name)
 	}
-	if dryResults[0].Archive != "" {
-		t.Errorf("dry run archive path = %q, want empty", dryResults[0].Archive)
+	if dryResults[0].Archive {
+		t.Errorf("dry run Archive = true, want false")
 	}
 
 	// Verify old-idle still exists in store
@@ -381,8 +381,8 @@ func TestGCAbandonedArchivesOnlyIdleOld(t *testing.T) {
 	if results[0].Name != "old-idle" {
 		t.Errorf("result name = %q, want old-idle", results[0].Name)
 	}
-	if results[0].Archive == "" {
-		t.Errorf("result archive path is empty, want archive destination")
+	if !results[0].Archive {
+		t.Errorf("result Archive is false, want the binding archived")
 	}
 
 	// Verify old-idle is gone from active store

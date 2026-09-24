@@ -329,6 +329,10 @@ func cmdDoctor(args []string) error {
 	// cgroup every running local process actually sits in. One call, placed
 	// directly after the daemon row.
 	rep.Checks = insertRestartRow(rep.Checks, restartCheck(rt))
+	// #P3d §4.7: one `database` row replaces `relevo db path` and
+	// `relevo db stats`. Every open migrates, so there is no separate
+	// migrate row.
+	rep.Checks = insertGlobalCheck(rep.Checks, databaseCheck(rt.Store))
 	if storeErr != nil {
 		rep.Checks = insertGlobalCheck(rep.Checks, doctor.Check{
 			Name:        "bindings",
@@ -425,6 +429,43 @@ func cmdDoctor(args []string) error {
 		return exitCodeErr{code: 1}
 	}
 	return nil
+}
+
+// databaseCheck is doctor's `database` row (P3d §4.7): the path, the file
+// size, the schema version and the binding_record live/archived counts. It is
+// OK unless the open fails; there is no migrate row, because every open
+// migrates.
+func databaseCheck(st *store.Store) doctor.Check {
+	path := st.DBPath()
+	c := doctor.Check{Name: "database", Severity: doctor.SevOK}
+
+	d, err := st.DB()
+	if err != nil {
+		c.Severity = doctor.SevFail
+		c.Detail = fmt.Sprintf("%s · %v", path, err)
+		c.Fix = "fix the state root, or move the database aside"
+		return c
+	}
+	version, err := d.Version()
+	if err != nil {
+		c.Severity = doctor.SevFail
+		c.Detail = fmt.Sprintf("%s · %v", path, err)
+		return c
+	}
+	live, archived, err := d.RecordCounts()
+	if err != nil {
+		c.Severity = doctor.SevFail
+		c.Detail = fmt.Sprintf("%s · %v", path, err)
+		return c
+	}
+
+	size := int64(0)
+	if info, serr := os.Stat(path); serr == nil {
+		size = info.Size()
+	}
+	c.Detail = fmt.Sprintf("%s · %s · schema v%d · %d live, %d archived",
+		path, relevo.HumanBytes(size), version, live, archived)
+	return c
 }
 
 // ledgerChecks turns live gates into doctor rows under the candidate's

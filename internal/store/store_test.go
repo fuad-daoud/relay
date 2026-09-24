@@ -1,14 +1,10 @@
 package store
 
 import (
-	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -488,16 +484,25 @@ func TestArchiveMovesBindingAsideAndFreesTheName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
-
-	// The round log survives the archive -- that is the whole point.
-	if !filepath.IsAbs(dest) || !strings.HasSuffix(dest, ".tar.gz") {
-		t.Errorf("archive path = %q, want an absolute .tar.gz", dest)
+	if dest != "" {
+		t.Errorf("Archive path = %q, want \"\" (nothing is tarred any more)", dest)
 	}
-	if got := archiveEntries(t, dest); !slices.Contains(got, "webshop/log.jsonl") {
-		t.Errorf("archived tarball entries = %v, want it to contain webshop/log.jsonl", got)
+
+	// The round log survives the archive as the record's events -- that is
+	// the whole point.
+	archived, err := s.ListArchived()
+	if err != nil || len(archived) != 1 {
+		t.Fatalf("ListArchived = %+v, %v, want exactly one", archived, err)
+	}
+	events, err := s.ArchivedLog(archived[0].RecordID)
+	if err != nil || len(events) != 1 || events[0].Kind != KindPlan {
+		t.Errorf("ArchivedLog = %+v, %v, want the plan entry", events, err)
 	}
 	if _, err := s.Load("webshop"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("archived binding must be gone from the live set, got %v", err)
+	}
+	if _, err := os.Stat(s.Dir("webshop")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the binding directory must be gone after an archive, got %v", err)
 	}
 
 	// And the name is free for a fresh bind on the same tree.
@@ -531,64 +536,10 @@ func TestArchiveRefusesAnUnknownBinding(t *testing.T) {
 	}
 }
 
-// archiveEntries lists the paths inside a gzipped tar, so tests can assert on
-// what an archive preserved without shelling out.
-func archiveEntries(t *testing.T, path string) []string {
-	t.Helper()
-
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer f.Close()
-
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		t.Fatalf("gunzip archive: %v", err)
-	}
-	defer gz.Close()
-
-	var names []string
-	tr := tar.NewReader(gz)
-	for {
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			t.Fatalf("read tar: %v", err)
-		}
-		names = append(names, hdr.Name)
-	}
-
-	return names
-}
-
-func TestArchiveIsCompressed(t *testing.T) {
-	s := New(t.TempDir())
-	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	// Highly compressible content, as relevo's own state files are.
-	big := strings.Repeat("the planner told the builder to read the plan file\n", 2000)
-	if err := os.WriteFile(s.PlanPath("webshop", 1), []byte(big), 0o644); err != nil {
-		t.Fatalf("write plan: %v", err)
-	}
-
-	dest, err := s.Archive("webshop")
-	if err != nil {
-		t.Fatalf("Archive: %v", err)
-	}
-
-	info, err := os.Stat(dest)
-	if err != nil {
-		t.Fatalf("stat archive: %v", err)
-	}
-	if info.Size() >= int64(len(big)) {
-		t.Errorf("archive is %d bytes for %d bytes of input; compression is not happening",
-			info.Size(), len(big))
-	}
-}
+// archiveEntries listed the paths inside a gzipped tar, so tests could assert
+// on what an archive preserved. It went with the tarball (P3d D1): a binding's
+// files are round_file rows now, and ListArchived/ArchivedLog/ReadFile are how
+// a test reads them back.
 
 func TestDiffPath(t *testing.T) {
 	s := New("/state")

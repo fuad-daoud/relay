@@ -75,9 +75,9 @@ Commands:
   review    turn a path:line comments file into a follow-up plan quoting each anchored hunk [--round N] [--out path] [--send]
   status    one row per binding: round, state, live pane status, what is pending [--all] [--line]
   history   one line per round across every binding, live or archived, newest first [--here] [--since 7d] [--json]
+              --tab   tokens and cost across bindings, archived ones included [--since 7d] [--by binding|model|provider] [--json]
+              --stats rounds, outcomes, switches, gate and consults across bindings, archived ones included; provider blocks from the last 30d [--since 7d] [--json]
   show      one round's plan, report, diff, drift, gate, findings, log or transcript, live or archived [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--json]
-  tab       tokens and cost across bindings, archived ones included [--since 7d] [--by binding|model|provider] [--json]
-  stats     rounds, outcomes, switches, gate and consults across bindings, archived ones included; provider blocks from the last 30d [--since 7d] [--json]
   wait      block until a round closes or needs you, then print the pending report; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout [--peek]
   ui        interactive reader: report, terminal, diff and log tabs
   done      mark a binding done; relaying stops (--pick to choose it on screen)
@@ -105,7 +105,6 @@ Commands:
   gate      list this machine's active gates; gate a provider: relevo gate <token> [--for D] [--reason S];
             clear one: relevo gate --clear <provider|token>; relevo gate --serve [--state DIR] acts on the
             local serve daemon's gates instead
-  db        path|migrate|stats for relevo's sqlite database
 
   serve                     run the remote-builder server (listener + daemon)
   serve init|enroll|clients|revoke|fingerprint|status|gc|unbind|ui
@@ -332,10 +331,6 @@ func run(args []string) error {
 		return cmdHistory(args[1:])
 	case "show":
 		return cmdShow(args[1:])
-	case "tab":
-		return cmdTab(args[1:])
-	case "stats":
-		return cmdStats(args[1:])
 	case "wait":
 		return cmdWait(args[1:])
 	case "ui":
@@ -362,8 +357,6 @@ func run(args []string) error {
 		return cmdPlanner(args[1:])
 	case "gate":
 		return cmdGate(args[1:])
-	case "db":
-		return cmdDB(args[1:])
 	case "serve":
 		return cmdServe(args[1:])
 	default:
@@ -380,8 +373,9 @@ func run(args []string) error {
 
 // removedVerbs names each removed verb and the form that replaces it: the
 // seven P2b folded into `relevo config` (§4.4), the seven P4a merged into
-// bind, show, unbind and status (§4.6), and the P4a round 2 verbs folded into
-// wait and gate (§4.1, §4.3).
+// bind, show, unbind and status (§4.6), the P4a round 2 verbs folded into
+// wait and gate (§4.1, §4.3), and the three P3d folded into history and
+// doctor (P3d §4.6).
 var removedVerbs = map[string]string{
 	"init":       "relevo config init",
 	"candidates": "relevo config",
@@ -402,6 +396,9 @@ var removedVerbs = map[string]string{
 	"pull":        "relevo wait (it prints the report)",
 	"unavailable": "relevo gate <token>",
 	"available":   "relevo gate --clear <provider>",
+	"tab":         "relevo history --tab",
+	"stats":       "relevo history --stats",
+	"db":          "relevo doctor (the database row)",
 }
 
 // userConfigRoot resolves $XDG_CONFIG_HOME, falling back to ~/.config.
@@ -582,6 +579,16 @@ func newRuntime() (relevo.Runtime, error) {
 	}
 	rt.Config = cs
 	return rt, nil
+}
+
+// openDB ensures path's directory exists (Open's precondition) and opens
+// it, migrating as needed. It was `relevo db`'s helper and stays here for
+// every other verb that opens the machine database directly (P3d D3).
+func openDB(path string) (*db.DB, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
+	}
+	return db.Open(path)
 }
 
 // newRuntimePeek constructs the runtime `relevo daemon --preflight` and
@@ -1631,8 +1638,8 @@ func runGC(delete, dryRun bool) error {
 				wtMsg = fmt.Sprintf(" (worktree %s already gone)", r.WorktreeGone)
 			}
 			fmt.Printf("would clear %-10s %s (%d rounds)%s\n", r.Name, r.CWD, r.Rounds, wtMsg)
-		case r.ArchivedTo != "":
-			fmt.Printf("archived    %-10s -> %s\n", r.Name, r.ArchivedTo)
+		case r.Archived:
+			fmt.Printf("archived    %-10s\n", r.Name)
 			if r.WorktreeRemoved != "" {
 				fmt.Printf("            removed worktree %s\n", r.WorktreeRemoved)
 			} else if r.WorktreeKept != "" {

@@ -76,12 +76,11 @@ func TestDirSourceMissingBindIsErrSource(t *testing.T) {
 	}
 }
 
-// buildArchive saves a binding through store.Store the normal way, adds
-// extra round files to its directory, then archives it -- producing a real
-// gc tarball with exactly the layout production writes
-// (internal/store/store.go archive/tarGzDir), rather than one hand-rolled
-// in the test.
-func buildArchive(t *testing.T, root, name string) string {
+// buildArchivedSource saves a binding through store.Store the normal way,
+// adds a round file to its directory, then archives it, returning the store
+// and the archived record's id (P3d §4.1). It is ArchivedSource's fixture, the
+// way DirSource's tests build a directory.
+func buildArchivedSource(t *testing.T, root, name string) (*store.Store, string) {
 	t.Helper()
 	s := store.New(root)
 	if err := s.Save(store.Binding{Name: name, CWD: "/work/" + name, State: store.StateDone}); err != nil {
@@ -90,26 +89,26 @@ func buildArchive(t *testing.T, root, name string) string {
 	writeFile(t, filepath.Join(s.Dir(name), "001-plan.md"), "plan text")
 	writeFile(t, filepath.Join(s.Dir(name), "log.jsonl"), `{"round":1}`+"\n")
 
-	path, err := s.Archive(name)
-	if err != nil {
+	if _, err := s.Archive(name); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
-	return path
+	archived, err := s.ListArchived()
+	if err != nil || len(archived) != 1 {
+		t.Fatalf("ListArchived = %+v, %v, want exactly one record", archived, err)
+	}
+	return s, archived[0].RecordID
 }
 
-func TestTarSourceReadsMembersWithoutExtracting(t *testing.T) {
+func TestArchivedSourceReadsMembersWithoutExtracting(t *testing.T) {
 	root := t.TempDir()
-	path := buildArchive(t, root, "fixture")
+	s, recordID := buildArchivedSource(t, root, "fixture")
 
 	before, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
 
-	src, err := TarSource(path)
-	if err != nil {
-		t.Fatalf("TarSource: %v", err)
-	}
+	src := ArchivedSource(s, recordID)
 
 	if got := src.Name(); got != "fixture" {
 		t.Errorf("Name() = %q, want fixture", got)
@@ -152,35 +151,31 @@ func TestTarSourceReadsMembersWithoutExtracting(t *testing.T) {
 		t.Errorf("Open(missing) err = %v, want os.ErrNotExist", err)
 	}
 
-	// The archive directory (a sibling of root's binding dirs) is the only
-	// place a file was created; nothing was extracted anywhere else under
-	// root's own top level.
+	// Reading an archived record extracts nothing: the record is in the
+	// database, and no round file reappears under the root.
 	after, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
 	if len(after) != len(before) {
-		t.Errorf("root directory gained entries reading the tarball: before %v, after %v", before, after)
+		t.Errorf("root directory gained entries reading the archived record: before %v, after %v", before, after)
 	}
 }
 
-func TestTarSourceOriginStamp(t *testing.T) {
+func TestArchivedSourceOriginAndStamp(t *testing.T) {
 	root := t.TempDir()
-	path := buildArchive(t, root, "fixture")
+	s, recordID := buildArchivedSource(t, root, "fixture")
 
-	src, err := TarSource(path)
-	if err != nil {
-		t.Fatalf("TarSource: %v", err)
-	}
+	src := ArchivedSource(s, recordID)
 
 	kind, gotPath := src.Origin()
-	if kind != "archive" || gotPath != path {
-		t.Errorf("Origin() = %q, %q, want archive, %q", kind, gotPath, path)
+	if kind != "archive" || gotPath != "" {
+		t.Errorf("Origin() = %q, %q, want archive, \"\"", kind, gotPath)
 	}
 
-	ts, ok := src.(*tarSource)
+	ts, ok := src.(archivedAtter)
 	if !ok {
-		t.Fatalf("TarSource() did not return *tarSource, got %T", src)
+		t.Fatalf("ArchivedSource() did not return an archivedAtter, got %T", src)
 	}
 	at, found := ts.ArchivedAt()
 	if !found {

@@ -23,7 +23,7 @@ type GCResult struct {
 	Name            string `json:"name"`
 	CWD             string `json:"cwd"`
 	Rounds          int    `json:"rounds"`
-	ArchivedTo      string `json:"archived_to,omitempty"`
+	Archived        bool   `json:"archived"`
 	Deleted         bool   `json:"deleted"`
 	WorktreeRemoved string `json:"worktree_removed,omitempty"`
 	WorktreeKept    string `json:"worktree_kept,omitempty"`
@@ -73,11 +73,10 @@ func GC(ctx context.Context, rt Runtime, opts GCOptions) ([]GCResult, error) {
 				}
 				res.Deleted = true
 			} else {
-				dest, err := tx.Archive(b.Name)
-				if err != nil {
+				if _, err := tx.Archive(b.Name); err != nil {
 					return fmt.Errorf("archive %q: %w", b.Name, err)
 				}
-				res.ArchivedTo = dest
+				res.Archived = true
 			}
 
 			out = append(out, res)

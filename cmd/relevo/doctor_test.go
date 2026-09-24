@@ -753,3 +753,38 @@ func TestDoctorChecksCustomWriterDefinition(t *testing.T) {
 		t.Errorf("assembleRoleDefinitions[claude] = %v, want the custom writer definition my-ui", got["claude"])
 	}
 }
+
+// TestDatabaseCheckRow pins doctor's `database` row (P3d §4.7): the path, the
+// file size, the schema version and the binding_record live/archived counts,
+// OK on a database that opens. It replaces `relevo db path` and
+// `relevo db stats`, and there is no migrate row because every open migrates.
+func TestDatabaseCheckRow(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "relevo")
+	st := store.New(root)
+
+	if err := st.Save(store.Binding{Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive}); err != nil {
+		t.Fatalf("Save live: %v", err)
+	}
+	if err := st.Save(store.Binding{Name: "oldsite", CWD: "/old", Round: 1, State: store.StateDone}); err != nil {
+		t.Fatalf("Save archived: %v", err)
+	}
+	if _, err := st.Archive("oldsite"); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	c := databaseCheck(st)
+	if c.Name != "database" || c.Group != "" {
+		t.Fatalf("check = %+v, want the global `database` row", c)
+	}
+	if c.Severity != doctor.SevOK {
+		t.Errorf("severity = %v, want ok", c.Severity)
+	}
+	for _, want := range []string{st.DBPath(), "schema v", "1 live, 1 archived"} {
+		if !strings.Contains(c.Detail, want) {
+			t.Errorf("detail = %q, want it to contain %q", c.Detail, want)
+		}
+	}
+	if got := strings.Count(c.Detail, " · "); got != 3 {
+		t.Errorf("detail = %q, want four ` · `-separated parts, got %d separators", c.Detail, got)
+	}
+}

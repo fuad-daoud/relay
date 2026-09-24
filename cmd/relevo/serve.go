@@ -1089,7 +1089,7 @@ func cmdServeGC(args []string) error {
 		if *dryRun {
 			fmt.Printf("%s  %s  abandoned (last seen %s)\n", r.Label, r.Name, r.LastSeen.Format("2006-01-02 15:04:05"))
 		} else {
-			fmt.Printf("%s  %s  archived to %s\n", r.Label, r.Name, r.Archive)
+			fmt.Printf("%s  %s  archived\n", r.Label, r.Name)
 		}
 	}
 	return nil

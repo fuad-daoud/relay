@@ -396,7 +396,8 @@ func (s *Store) readLogAfter(name string, after int) ([]LogEntry, error) {
 // decodeLog scans a log.jsonl stream, one LogEntry per line, refusing to
 // read past maxLogEntries rather than silently truncating: since a log is
 // append-only, truncating would drop the newest entries. Shared by readLog
-// (the live file) and ReadArchivedLog (a tarball member).
+// and the tarball import, which decodes the log.jsonl member of a pre-P3d
+// archive (P3d §4.2).
 //
 // A file written before Seq existed has no seq key: each decoded entry's Seq
 // is then its 1-based position among the decoded entries, so such a file

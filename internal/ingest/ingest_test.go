@@ -296,9 +296,10 @@ func assertArtifact(t *testing.T, d *db.DB, roundID, kind string, wantFound bool
 }
 
 // archiveFixtureAs packs the golden fixture, with bindFile standing in for
-// bind.json, into a tarball under a fresh temp state root and returns its
-// path -- the archive-source counterpart of copyFixtureAs.
-func archiveFixtureAs(t *testing.T, bindFile string) string {
+// bind.json, into an archived record under a fresh temp state root and returns
+// the store and that record's id -- the archive-source counterpart of
+// copyFixtureAs (P3d §4.1: an archived binding is a record, not a tarball).
+func archiveFixtureAs(t *testing.T, bindFile string) (*store.Store, string) {
 	t.Helper()
 	root := t.TempDir()
 	s := store.New(root)
@@ -328,11 +329,14 @@ func archiveFixtureAs(t *testing.T, bindFile string) string {
 	if err := os.WriteFile(filepath.Join(s.Dir("fixture"), "bind.json"), bindData, 0o644); err != nil {
 		t.Fatalf("write bind.json: %v", err)
 	}
-	archivePath, err := s.Archive("fixture")
-	if err != nil {
+	if _, err := s.Archive("fixture"); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
-	return archivePath
+	archived, err := s.ListArchived()
+	if err != nil || len(archived) != 1 {
+		t.Fatalf("ListArchived = %+v, %v, want exactly one record", archived, err)
+	}
+	return s, archived[0].RecordID
 }
 
 func TestIngestFixtureArchiveEqualsLive(t *testing.T) {
@@ -345,14 +349,10 @@ func TestIngestFixtureArchiveEqualsLive(t *testing.T) {
 		t.Fatalf("live Ingest: %v", err)
 	}
 
-	archivePath := archiveFixtureAs(t, "bind.json")
+	archiveStore, recordID := archiveFixtureAs(t, "bind.json")
 
 	archiveDB := openTestDB(t)
-	archiveSrc, err := TarSource(archivePath)
-	if err != nil {
-		t.Fatalf("TarSource: %v", err)
-	}
-	if _, err := Ingest(context.Background(), archiveSrc, archiveDB, deps); err != nil {
+	if _, err := Ingest(context.Background(), ArchivedSource(archiveStore, recordID), archiveDB, deps); err != nil {
 		t.Fatalf("archive Ingest: %v", err)
 	}
 
@@ -378,11 +378,10 @@ func TestIngestFixtureArchiveEqualsLive(t *testing.T) {
 		t.Errorf("archive IngestSource = %q, want archive", archB.IngestSource)
 	}
 	if archB.ArchivedAt == nil {
-		t.Error("archive ArchivedAt is nil, want the tarball's stamp")
+		t.Error("archive ArchivedAt is nil, want the archive stamp")
 	}
-	if archB.ArchivePath == nil || *archB.ArchivePath != archivePath {
-		t.Errorf("archive ArchivePath = %v, want %s", archB.ArchivePath, archivePath)
-	}
+	// An archived record has no tarball behind it any more (P3d §4.5), so
+	// ArchivePath carries no path.
 
 	liveRounds := normalizeRounds(mustRounds(t, liveDB, liveB.ID))
 	archRounds := normalizeRounds(mustRounds(t, archiveDB, archB.ID))
@@ -411,9 +410,27 @@ func TestIngestFixtureArchiveEqualsLive(t *testing.T) {
 	if len(liveEvents) != len(archEvents) {
 		t.Fatalf("event count live=%d archive=%d", len(liveEvents), len(archEvents))
 	}
+	// Compared as decoded entries, not as raw entry_json: the live source
+	// here is a directory, whose log.jsonl lines are kept verbatim, while an
+	// archived record's log.jsonl is re-encoded from its event rows exactly
+	// as StoreSource re-encodes a live one's. The mirror rows are what must
+	// agree.
 	for i := range liveEvents {
-		if liveEvents[i].EntryJSON != archEvents[i].EntryJSON || liveEvents[i].Seq != archEvents[i].Seq {
-			t.Errorf("event %d mismatch: live=%+v archive=%+v", i, liveEvents[i], archEvents[i])
+		var le, ae store.LogEntry
+		if err := json.Unmarshal([]byte(liveEvents[i].EntryJSON), &le); err != nil {
+			t.Fatalf("decode live event %d: %v", i, err)
+		}
+		if err := json.Unmarshal([]byte(archEvents[i].EntryJSON), &ae); err != nil {
+			t.Fatalf("decode archive event %d: %v", i, err)
+		}
+		if le.Kind != ae.Kind || le.Round != ae.Round || le.Direction != ae.Direction ||
+			le.Confirmed != ae.Confirmed || !le.TS.Equal(ae.TS) || le.Path != ae.Path ||
+			le.Payload != ae.Payload || le.Outcome != ae.Outcome || le.Tier != ae.Tier ||
+			le.Note != ae.Note {
+			t.Errorf("event %d mismatch: live=%+v archive=%+v", i, le, ae)
+		}
+		if liveEvents[i].Seq != archEvents[i].Seq {
+			t.Errorf("event %d seq live=%d archive=%d", i, liveEvents[i].Seq, archEvents[i].Seq)
 		}
 	}
 
@@ -605,13 +622,9 @@ func TestIngestRepoFromSourceCheckoutWhenCWDGone(t *testing.T) {
 		t.Errorf("live: RepoOrigin = %v, want https://github.com/o/r", b.RepoOrigin)
 	}
 
-	archivePath := archiveFixtureAs(t, "bind-cwd-gone.json")
+	archiveStore, recordID := archiveFixtureAs(t, "bind-cwd-gone.json")
 	archiveDB := openTestDB(t)
-	archiveSrc, err := TarSource(archivePath)
-	if err != nil {
-		t.Fatalf("TarSource: %v", err)
-	}
-	if _, err := Ingest(context.Background(), archiveSrc, archiveDB, deps); err != nil {
+	if _, err := Ingest(context.Background(), ArchivedSource(archiveStore, recordID), archiveDB, deps); err != nil {
 		t.Fatalf("archive Ingest: %v", err)
 	}
 	archB := mustBinding(t, archiveDB, "fixture")

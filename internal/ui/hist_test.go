@@ -28,7 +28,7 @@ var histFixtureBindFiles = map[string]bool{
 	"bind-cwd-gone.json": true,
 }
 
-// seedArchivedHistBinding packs the golden fixture into a tarball and
+// seedArchivedHistBinding archives the golden fixture into a record and
 // ingests it as an archive source, so the binding it produces carries
 // ArchivedAt and is never in a live report -- fetchShow and relevo.Show
 // fall through to the db for it by construction. It returns a runtime
@@ -57,9 +57,12 @@ func seedArchivedHistBinding(t *testing.T) (relevo.Runtime, relevo.HistoryBindin
 			t.Fatalf("write %s: %v", e.Name(), err)
 		}
 	}
-	archivePath, err := s.Archive("fixture")
-	if err != nil {
+	if _, err := s.Archive("fixture"); err != nil {
 		t.Fatalf("Archive: %v", err)
+	}
+	archived, err := s.ListArchived()
+	if err != nil || len(archived) != 1 {
+		t.Fatalf("ListArchived = %+v, %v, want exactly one record", archived, err)
 	}
 
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -68,11 +71,7 @@ func seedArchivedHistBinding(t *testing.T) (relevo.Runtime, relevo.HistoryBindin
 	}
 	t.Cleanup(func() { d.Close() })
 
-	src, err := ingest.TarSource(archivePath)
-	if err != nil {
-		t.Fatalf("TarSource: %v", err)
-	}
-	if _, err := ingest.Ingest(context.Background(), src, d, ingest.Deps{}); err != nil {
+	if _, err := ingest.Ingest(context.Background(), ingest.ArchivedSource(s, archived[0].RecordID), d, ingest.Deps{}); err != nil {
 		t.Fatalf("archive Ingest: %v", err)
 	}
 

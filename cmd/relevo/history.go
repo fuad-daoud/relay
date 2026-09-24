@@ -18,7 +18,9 @@ import (
 const historyUsage = `usage: relevo history [--here|--repo <url|dir>] [--feature L] [--binding N] [--planner S]
                      [--harness K] [--provider P] [--model M] [--candidate T]
                      [--outcome O] [--since D] [--until D] [--archived|--live]
-                     [--limit N] [--json] [-q "<query>"] [--by <axis>] [--rows]`
+                     [--limit N] [--json] [-q "<query>"] [--by <axis>] [--rows]
+       relevo history --tab [--since D] [--by binding|model|provider] [--json]
+       relevo history --stats [--since D] [--json]`
 
 // historyOutcomeValues lists the round.Outcome enum in the order
 // docs/specs/2026-09-20-persistence-design.md §3 decision 8 states it, for
@@ -51,6 +53,41 @@ func validateHistoryBy(by string) error {
 	}
 	if _, ok := histq.ParseAxis(by); !ok {
 		return fmt.Errorf("--by %q: want one of %s", by, strings.Join(historyAxisNames(), ", "))
+	}
+	return nil
+}
+
+// historyTabAllowed and historyStatsAllowed are the flags `relevo history
+// --tab` and `relevo history --stats` may be combined with. Nothing else on
+// history's flag set is: a tab total is not a round filter (P3d §4.6).
+var (
+	historyTabAllowed   = map[string]bool{"tab": true, "stats": true, "since": true, "json": true, "by": true}
+	historyStatsAllowed = map[string]bool{"tab": true, "stats": true, "since": true, "json": true}
+)
+
+// validateHistoryTabStats rejects --tab and --stats together, and either of
+// them beside any history flag the form does not document, naming the flag. It
+// is a pure function, so a cmd/relevo test can pin the rule without executing
+// the subcommand (CI launches no harness).
+func validateHistoryTabStats(fs *flag.FlagSet, tab, stats bool) error {
+	if !tab && !stats {
+		return nil
+	}
+	if tab && stats {
+		return fmt.Errorf("--tab and --stats are mutually exclusive")
+	}
+	allowed, form := historyTabAllowed, "--tab"
+	if stats {
+		allowed, form = historyStatsAllowed, "--stats"
+	}
+	bad := ""
+	fs.Visit(func(f *flag.Flag) {
+		if bad == "" && !allowed[f.Name] {
+			bad = f.Name
+		}
+	})
+	if bad != "" {
+		return fmt.Errorf("--%s cannot be combined with %s", bad, form)
 	}
 	return nil
 }
@@ -125,6 +162,8 @@ func cmdHistory(args []string) error {
 	query := fs.String("q", "", "a query: harness:agy outcome:halted since:30d cost>1 by:builder")
 	by := fs.String("by", "", "regroup the result by one of: "+strings.Join(historyAxisNames(), ", "))
 	withRows := fs.Bool("rows", false, "with --json --by, include each group's rows")
+	tab := fs.Bool("tab", false, "tokens and cost across bindings, archived ones included")
+	stats := fs.Bool("stats", false, "rounds, outcomes, switches, gate and consults, plus provider blocks")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), historyUsage)
 		fs.PrintDefaults()
@@ -135,6 +174,30 @@ func cmdHistory(args []string) error {
 	if len(fs.Args()) != 0 {
 		fmt.Fprintln(os.Stderr, historyUsage)
 		return exitCodeErr{code: 2}
+	}
+	// --tab and --stats are the two old verbs: their output is exactly what
+	// `relevo tab` and `relevo stats` printed (P3d §4.6).
+	if *tab || *stats {
+		if err := validateHistoryTabStats(fs, *tab, *stats); err != nil {
+			fmt.Fprintln(os.Stderr, "relevo history: "+err.Error())
+			fmt.Fprintln(os.Stderr, historyUsage)
+			return exitCodeErr{code: 2}
+		}
+		if *stats {
+			return historyStats(*since, *asJSON)
+		}
+		by := *by
+		if by == "" {
+			by = "binding"
+		}
+		switch by {
+		case "binding", "model", "provider", "owner":
+		default:
+			fmt.Fprintf(os.Stderr, "relevo history: --by %q: want one of binding, model, provider\n", by)
+			fmt.Fprintln(os.Stderr, historyUsage)
+			return exitCodeErr{code: 2}
+		}
+		return historyTab(*since, by, *asJSON)
 	}
 	if err := validateHistoryFlags(*archived, *live, *outcome); err != nil {
 		fmt.Fprintln(os.Stderr, "relevo history: "+err.Error())
@@ -229,5 +292,86 @@ func cmdHistory(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(rows)
 	}
 	fmt.Print(relevo.FormatHistory(rows, time.Local))
+	return nil
+}
+
+// historyTab is `relevo history --tab`: exactly what `relevo tab` printed
+// (P3d §4.6). The body is cmdTab's, moved here because the `tab` verb is gone.
+func historyTab(since, by string, asJSON bool) error {
+	// --by owner is the server-side grouping (`relevo serve tab --by owner`):
+	// a client's entries have no owner to group by (#216).
+	if by == "owner" {
+		fmt.Fprintln(os.Stderr, `"owner": --by owner is for relevo serve tab`)
+		return exitCodeErr{code: 1}
+	}
+	now := time.Now().UTC()
+	cut, err := relevo.ParseSince(since, now)
+	if err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+	entries, err := relevo.TabEntries(rt, cut, func(msg string) {
+		fmt.Fprintf(os.Stderr, "relevo tab: skip %s\n", msg)
+	})
+	if err != nil {
+		return err
+	}
+	return renderTabReport(entries, by, cut, asJSON)
+}
+
+// historyStats is `relevo history --stats`: exactly what `relevo stats`
+// printed (P3d §4.6). The body is cmdStats's, moved here because the `stats`
+// verb is gone.
+func historyStats(since string, asJSON bool) error {
+	now := time.Now().UTC()
+	cut, err := relevo.ParseSince(since, now)
+	if err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+	entries, err := relevo.TabEntries(rt, cut, func(msg string) {
+		fmt.Fprintf(os.Stderr, "relevo stats: skip %s\n", msg)
+	})
+	if err != nil {
+		return err
+	}
+	hist := loadHistory(rt)
+	rep := relevo.BuildStats(entries, hist, cut, rt.Now().UTC())
+
+	if asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(rep)
+	}
+	fmt.Print(relevo.RenderStats(rep))
+	return nil
+}
+
+// renderTabReport is cmdTab's tail: it sums the gathered entries through
+// relevo.TabRows and prints the report, as JSON when asJSON is set. The server
+// verb `relevo serve tab` renders through the same tail.
+func renderTabReport(entries []relevo.TabEntry, by string, cut time.Time, asJSON bool) error {
+	rows, total, err := relevo.TabRows(entries, by, cut)
+	if err != nil {
+		return err
+	}
+	rep := relevo.TabReport{By: by, Rows: rows, Total: total}
+	if !cut.IsZero() {
+		rep.Since = &cut
+	}
+	if asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(rep)
+	}
+	fmt.Print(relevo.RenderTab(rep))
 	return nil
 }

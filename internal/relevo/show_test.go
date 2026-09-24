@@ -67,7 +67,7 @@ func seedShowDB(t *testing.T) *db.DB {
 	return d
 }
 
-// seedShowArchiveDB packs the golden fixture into a tarball and ingests it
+// seedShowArchiveDB archives the golden fixture into a record and ingests it
 // as an archive source, so the binding it produces carries ArchivedAt.
 func seedShowArchiveDB(t *testing.T) *db.DB {
 	t.Helper()
@@ -92,9 +92,12 @@ func seedShowArchiveDB(t *testing.T) *db.DB {
 			t.Fatalf("write %s: %v", e.Name(), err)
 		}
 	}
-	archivePath, err := s.Archive("fixture")
-	if err != nil {
+	if _, err := s.Archive("fixture"); err != nil {
 		t.Fatalf("Archive: %v", err)
+	}
+	archived, err := s.ListArchived()
+	if err != nil || len(archived) != 1 {
+		t.Fatalf("ListArchived = %+v, %v, want exactly one record", archived, err)
 	}
 
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -103,11 +106,7 @@ func seedShowArchiveDB(t *testing.T) *db.DB {
 	}
 	t.Cleanup(func() { d.Close() })
 
-	src, err := ingest.TarSource(archivePath)
-	if err != nil {
-		t.Fatalf("TarSource: %v", err)
-	}
-	if _, err := ingest.Ingest(context.Background(), src, d, ingest.Deps{}); err != nil {
+	if _, err := ingest.Ingest(context.Background(), ingest.ArchivedSource(s, archived[0].RecordID), d, ingest.Deps{}); err != nil {
 		t.Fatalf("archive Ingest: %v", err)
 	}
 	return d

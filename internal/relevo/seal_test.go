@@ -1,9 +1,7 @@
 package relevo
 
 import (
-	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -149,46 +147,16 @@ func TestClosedRoundSealsAfterTwoTicks(t *testing.T) {
 		t.Errorf("forked report = %q (err %v), want %q", forked, err, report)
 	}
 
-	// gc's tarball holds them too.
-	dest, err := rt.Store.Archive("webshop")
-	if err != nil {
+	// The archive keeps the sealed files as rows of the archived record.
+	if _, err := rt.Store.Archive("webshop"); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
-	if tarBody := tarMember(t, dest, "001-report.md"); !bytes.Equal(tarBody, report) {
-		t.Errorf("archived report = %q, want %q", tarBody, report)
+	archived, err := rt.Store.ListArchived()
+	if err != nil || len(archived) != 1 {
+		t.Fatalf("ListArchived = %+v, %v, want exactly one record", archived, err)
 	}
-}
-
-// tarMember returns the contents of the basename member of a gzipped tarball,
-// or fails the test when the member is absent.
-func tarMember(t *testing.T, path, base string) []byte {
-	t.Helper()
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatalf("open archive: %v", err)
-	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		t.Fatalf("gzip: %v", err)
-	}
-	defer gz.Close()
-	tr := tar.NewReader(gz)
-	for {
-		h, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			t.Fatalf("archive %s has no member %s", path, base)
-		}
-		if err != nil {
-			t.Fatalf("tar: %v", err)
-		}
-		if filepath.Base(h.Name) != base {
-			continue
-		}
-		body, err := io.ReadAll(tr)
-		if err != nil {
-			t.Fatalf("read %s: %v", base, err)
-		}
-		return body
+	sealed, found, aerr := rt.Store.ArchivedFile(archived[0].RecordID, "001-report.md")
+	if aerr != nil || !found || !bytes.Equal(sealed, report) {
+		t.Errorf("archived report = %q (%v, ok=%v), want %q", sealed, aerr, found, report)
 	}
 }

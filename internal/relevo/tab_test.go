@@ -364,13 +364,13 @@ func TestTabEntriesLiveAndArchived(t *testing.T) {
 		t.Errorf("warnings = %v, want none", warnings)
 	}
 
-	archives, err := s.ListArchives()
-	if err != nil || len(archives) != 1 {
-		t.Fatalf("ListArchives = %v, %v, want exactly one archive", archives, err)
+	archived, err := s.ListArchived()
+	if err != nil || len(archived) != 1 {
+		t.Fatalf("ListArchived = %v, %v, want exactly one archived record", archived, err)
 	}
 	// A cut past the archive's stamp skips it: every entry in it predates
 	// the archive itself.
-	entries, err = TabEntries(rt, archives[0].At.Add(time.Second), warn)
+	entries, err = TabEntries(rt, archived[0].ArchivedAt.Add(time.Second), warn)
 	if err != nil {
 		t.Fatalf("TabEntries with cut: %v", err)
 	}
