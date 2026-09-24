@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // ErrNotFound reports a binding name with no state on disk.
@@ -73,6 +75,14 @@ type Store struct {
 	root string
 
 	mu sync.Mutex // serialises WithLock within this process
+
+	// The database at <root>/relevo.db holds the bindings and their logs.
+	// It opens lazily on the first data-method call: path helpers, WithLock
+	// alone, DaemonRunning and the daemon-info methods never open it (P3a
+	// plan §3.2, §4.2).
+	dbOnce sync.Once
+	dbh    *db.DB
+	dbErr  error
 }
 
 // Tx is a locked view of the store. Every method on it assumes the state lock
@@ -196,44 +206,50 @@ func (s *Store) DriftPath(name string, round int) string {
 	return s.roundFile(name, round, "drift", ".patch")
 }
 
-// ViewedPath is the sidecar stamped when a human last looked at a binding's
-// live diff, log or show output (#143): its mtime is the "viewed" instant.
-// `relevo diff`/`log`/`show` write it after a successful print; `relevo ui`
-// never writes it directly (it stamps through the same MarkViewed call), so
-// it stays read-only of everything else in the binding's directory.
+// ViewedPath is where the "viewed" sidecar lived before viewed_at became a
+// binding_record column (#143). Nothing writes it any more; it stays as a
+// helper for callers that only need the path.
 // Layout: <binding dir>/.viewed
 func (s *Store) ViewedPath(name string) string {
 	return filepath.Join(s.Dir(name), ".viewed")
 }
 
-// MarkViewed stamps name's .viewed sidecar with mtime at, creating the file
-// first if it does not exist yet (touch semantics). Errors are the caller's
-// to ignore: a read verb must not fail because a stamp could not be written.
+// MarkViewed records that a human looked at name's live diff, log or show
+// output (#143) at at. It is a no-op when the binding has no record: a read
+// verb must not fail because a stamp could not be written.
 func (s *Store) MarkViewed(name string, at time.Time) error {
-	path := s.ViewedPath(name)
-	if _, err := os.Stat(path); err != nil {
-		if !os.IsNotExist(err) {
-			return err
-		}
-		f, ferr := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, bindingFileMode)
-		if ferr != nil {
-			return ferr
-		}
-		if cerr := f.Close(); cerr != nil {
-			return cerr
-		}
+	if err := s.importPresent(name); err != nil {
+		return err
 	}
-	return os.Chtimes(path, at, at)
+	d, err := s.dbForWrite()
+	if err != nil {
+		return err
+	}
+	_, ok, err := d.RecordGet(name)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	return d.RecordSetViewed(name, at)
 }
 
-// ViewedAt returns name's .viewed mtime and true, or the zero time and false
-// when the binding has never been viewed.
+// ViewedAt returns when name was last viewed and true, or the zero time and
+// false when it has never been viewed or has no record.
 func (s *Store) ViewedAt(name string) (time.Time, bool) {
-	fi, err := os.Stat(s.ViewedPath(name))
-	if err != nil {
+	if err := s.importPresent(name); err != nil {
 		return time.Time{}, false
 	}
-	return fi.ModTime(), true
+	d, err := s.dbForRead()
+	if err != nil || d == nil {
+		return time.Time{}, false
+	}
+	rec, ok, err := d.RecordGet(name)
+	if err != nil || !ok || rec.ViewedAt == nil {
+		return time.Time{}, false
+	}
+	return *rec.ViewedAt, true
 }
 
 // AskPath is where a consult's question is staged.
@@ -433,12 +449,30 @@ func (s *Store) save(b Binding) error {
 		return fmt.Errorf("create binding dir: %w", err)
 	}
 
-	raw, err := json.MarshalIndent(b, "", "  ")
+	d, err := s.dbForWrite()
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(b)
 	if err != nil {
 		return fmt.Errorf("marshal binding %q: %w", b.Name, err)
 	}
+	if _, err := d.RecordPut(db.Record{
+		Owner:     b.Owner,
+		Name:      b.Name,
+		State:     string(b.State),
+		Round:     b.Round,
+		CWD:       b.CWD,
+		JSON:      string(raw),
+		CreatedAt: b.CreatedAt,
+		UpdatedAt: b.UpdatedAt,
+	}); err != nil {
+		return fmt.Errorf("save binding %q: %w", b.Name, err)
+	}
 
-	return writeFileAtomic(s.bindingPath(b.Name), raw, bindingFileMode)
+	// A dst/log.jsonl ForkState left waiting is adopted now that the record
+	// exists (§4.3, §4.6).
+	return s.importPresent(b.Name)
 }
 
 // assertCWDFree refuses a second active binding on the same working tree.
@@ -469,17 +503,39 @@ func (s *Store) assertCWDFree(b Binding) error {
 }
 
 func (s *Store) load(name string) (Binding, error) {
-	raw, err := os.ReadFile(s.bindingPath(name))
-	if errors.Is(err, os.ErrNotExist) {
+	if err := s.importPresent(name); err != nil {
+		return Binding{}, err
+	}
+	d, err := s.dbForRead()
+	if err != nil {
+		return Binding{}, err
+	}
+	if d == nil {
 		return Binding{}, fmt.Errorf("%s: %w", name, ErrNotFound)
 	}
+	rec, ok, err := d.RecordGet(name)
 	if err != nil {
 		return Binding{}, fmt.Errorf("read binding %q: %w", name, err)
 	}
+	if !ok {
+		return Binding{}, fmt.Errorf("%s: %w", name, ErrNotFound)
+	}
+	return decodeBinding([]byte(rec.JSON), name)
+}
 
+// decodeBinding turns a binding's JSON into a Binding, mapping the legacy
+// states this version no longer has and refusing one written by a newer
+// relevo. It is shared by load (a record_json) and ListFiles (a bind.json).
+func decodeBinding(raw []byte, name string) (Binding, error) {
 	var b Binding
 	if err := json.Unmarshal(raw, &b); err != nil {
 		return Binding{}, fmt.Errorf("decode binding %q: %w", name, err)
+	}
+
+	// A binding written by a newer relevo is read-only for this binary: its
+	// rewrite would erase every field this relevo does not know (#372).
+	if b.Format > BindingFormat {
+		return Binding{}, &ErrNewerFormat{Kind: "binding", Name: name, Have: b.Format, Know: BindingFormat}
 	}
 
 	// States this version no longer has still load (#303 §1): a held payload
@@ -497,7 +553,39 @@ func (s *Store) load(name string) (Binding, error) {
 }
 
 func (s *Store) list() ([]Binding, error) {
-	entries, err := os.ReadDir(s.root)
+	if err := s.importAll(); err != nil {
+		return nil, err
+	}
+	d, err := s.dbForRead()
+	if err != nil {
+		return nil, err
+	}
+	if d == nil {
+		return nil, nil
+	}
+	recs, err := d.RecordList()
+	if err != nil {
+		return nil, fmt.Errorf("read state root: %w", err)
+	}
+
+	bindings := make([]Binding, 0, len(recs))
+	for _, rec := range recs {
+		b, err := decodeBinding([]byte(rec.JSON), rec.Name)
+		if err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, b)
+	}
+
+	return bindings, nil
+}
+
+// ListFiles reads the bindings under root the way this store read them before
+// the database: one <name>/bind.json per directory. It is read-only, opens no
+// database and writes nothing, so internal/migrate can list a pre-DB root
+// (P3a plan §4.4, §4.8).
+func ListFiles(root string) ([]Binding, error) {
+	entries, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -510,7 +598,7 @@ func (s *Store) list() ([]Binding, error) {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		b, err := s.load(e.Name())
+		b, err := loadBindingFile(root, e.Name())
 		if errors.Is(err, ErrNotFound) {
 			continue
 		}
@@ -521,6 +609,19 @@ func (s *Store) list() ([]Binding, error) {
 	}
 
 	return bindings, nil
+}
+
+// loadBindingFile reads one binding's bind.json, the way load did before the
+// database.
+func loadBindingFile(root, name string) (Binding, error) {
+	raw, err := os.ReadFile(filepath.Join(root, name, "bind.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return Binding{}, fmt.Errorf("%s: %w", name, ErrNotFound)
+	}
+	if err != nil {
+		return Binding{}, fmt.Errorf("read binding %q: %w", name, err)
+	}
+	return decodeBinding(raw, name)
 }
 
 // ArchiveDir is where archived bindings are kept. It lives inside the state
@@ -662,18 +763,62 @@ func (s *Store) archive(name string) (string, error) {
 	if err := ValidName(name); err != nil {
 		return "", err
 	}
-	if _, err := s.load(name); err != nil {
+	// The import runs before the files below are written, so nothing
+	// archive itself materialises can be imported (§4.4).
+	if err := s.importPresent(name); err != nil {
 		return "", err
+	}
+	b, err := s.load(name)
+	if err != nil {
+		return "", err
+	}
+	d, err := s.dbForWrite()
+	if err != nil {
+		return "", err
+	}
+	rec, ok, err := d.RecordGet(name)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("%s: %w", name, ErrNotFound)
 	}
 
 	if err := os.MkdirAll(s.ArchiveDir(), bindingDirMode); err != nil {
 		return "", fmt.Errorf("create archive dir: %w", err)
 	}
 
+	// Materialise the record as the files the tarball has always held, so
+	// TarSource, ReadArchivedLog, TabEntries and `db backfill` are unchanged
+	// (§4.4).
+	rawBinding, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal binding %q: %w", name, err)
+	}
+	if err := writeFileAtomic(s.bindingPath(name), rawBinding, bindingFileMode); err != nil {
+		return "", err
+	}
+	events, err := d.EventsOf(rec.ID, 0)
+	if err != nil {
+		return "", fmt.Errorf("read log for %q: %w", name, err)
+	}
+	var logBuf []byte
+	for _, ev := range events {
+		logBuf = append(logBuf, ev.JSON...)
+		logBuf = append(logBuf, '\n')
+	}
+	if err := writeFileAtomic(s.logPath(name), logBuf, bindingFileMode); err != nil {
+		return "", err
+	}
+
 	dest := filepath.Join(s.ArchiveDir(),
 		fmt.Sprintf("%s-%s.tar.gz", name, time.Now().UTC().Format("20060102-150405")))
 
 	if err := tarGzDir(s.Dir(name), name, dest); err != nil {
+		return "", err
+	}
+
+	if err := d.RecordArchive(name, time.Now().UTC()); err != nil {
 		return "", err
 	}
 
@@ -771,6 +916,23 @@ func addArchiveFile(tw *tar.Writer, dir, prefix string, e os.DirEntry) error {
 func (s *Store) remove(name string) error {
 	if err := ValidName(name); err != nil {
 		return err
+	}
+	if err := s.importPresent(name); err != nil {
+		return err
+	}
+	d, err := s.dbForWrite()
+	if err != nil {
+		return err
+	}
+	_, ok, err := d.RecordGet(name)
+	if err != nil {
+		return err
+	}
+	if ok {
+		// The events go with the row, through ON DELETE CASCADE (§4.4).
+		if err := d.RecordDelete(name); err != nil {
+			return err
+		}
 	}
 	if err := os.RemoveAll(s.Dir(name)); err != nil {
 		return fmt.Errorf("delete binding %q: %w", name, err)

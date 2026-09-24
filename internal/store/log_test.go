@@ -257,7 +257,7 @@ func TestReadLogAfter(t *testing.T) {
 }
 
 func TestLogEntryUsageRoundTrip(t *testing.T) {
-	s := New(t.TempDir())
+	s, name := seedBinding(t)
 	with := LogEntry{
 		TS: time.Unix(1, 0).UTC(), Round: 3, Direction: DirToPlanner, Kind: KindReport, Payload: "p",
 		Usage: &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 4200,
@@ -265,13 +265,13 @@ func TestLogEntryUsageRoundTrip(t *testing.T) {
 			Cost:   usage.Cost{USD: 0.5, Basis: usage.Measured}, Samples: 1},
 	}
 	without := LogEntry{TS: time.Unix(2, 0).UTC(), Round: 3, Direction: DirToPlanner, Kind: KindReport, Payload: "q"}
-	if err := s.AppendLog("b", with); err != nil {
+	if err := s.AppendLog(name, with); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AppendLog("b", without); err != nil {
+	if err := s.AppendLog(name, without); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.ReadLog("b")
+	got, err := s.ReadLog(name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,17 +415,14 @@ func TestConfirmIndexKeepsSeq(t *testing.T) {
 		}
 	}
 
-	// The rewrite writes Seq through: the second line now carries "seq":2.
-	data, err := os.ReadFile(s.logPath(name))
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
+	// The rewrite writes Seq through: the second entry's entry_json now
+	// carries "seq":2 (D2: the log is a DB row, not a file).
+	stored := bindingEvents(t, s, name)
+	if len(stored) != 3 {
+		t.Fatalf("stored events = %d, want 3", len(stored))
 	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("rewritten file has %d lines, want 3", len(lines))
-	}
-	if !strings.Contains(lines[1], `"seq":2`) {
-		t.Errorf("second line = %s, want it to contain %q", lines[1], `"seq":2`)
+	if !strings.Contains(stored[1].JSON, `"seq":2`) {
+		t.Errorf("second entry_json = %s, want it to contain %q", stored[1].JSON, `"seq":2`)
 	}
 }
 
@@ -450,29 +447,25 @@ func TestConfirmIndexPreservesUnknownKeys(t *testing.T) {
 		t.Fatalf("ConfirmIndex: %v", err)
 	}
 
-	data, err := os.ReadFile(s.logPath(name))
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
+	stored := bindingEvents(t, s, name)
+	if len(stored) != len(before) {
+		t.Fatalf("stored events = %d, want %d", len(stored), len(before))
 	}
-	after := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-	if len(after) != len(before) {
-		t.Fatalf("rewritten file has %d lines, want %d", len(after), len(before))
+	if stored[0].JSON != before[0] {
+		t.Errorf("unchanged entry 0 changed:\n got %s\nwant %s", stored[0].JSON, before[0])
 	}
-	if after[0] != before[0] {
-		t.Errorf("unchanged line 0 changed:\n got %s\nwant %s", after[0], before[0])
+	if stored[2].JSON != before[2] {
+		t.Errorf("unchanged entry 2 changed:\n got %s\nwant %s", stored[2].JSON, before[2])
 	}
-	if after[2] != before[2] {
-		t.Errorf("unchanged line 2 changed:\n got %s\nwant %s", after[2], before[2])
-	}
-	for i, line := range after {
-		if !strings.Contains(line, `"future_key":1`) {
-			t.Errorf("line %d lost future_key: %s", i, line)
+	for i, ev := range stored {
+		if !strings.Contains(ev.JSON, `"future_key":1`) {
+			t.Errorf("entry %d lost future_key: %s", i, ev.JSON)
 		}
 	}
-	if !strings.Contains(after[1], `"confirmed":true`) {
-		t.Errorf("confirmed line = %s, want it confirmed", after[1])
+	if !strings.Contains(stored[1].JSON, `"confirmed":true`) {
+		t.Errorf("confirmed entry = %s, want it confirmed", stored[1].JSON)
 	}
-	if !strings.Contains(after[1], `"route":"channel"`) {
-		t.Errorf("confirmed line = %s, want the route recorded", after[1])
+	if !strings.Contains(stored[1].JSON, `"route":"channel"`) {
+		t.Errorf("confirmed entry = %s, want the route recorded", stored[1].JSON)
 	}
 }

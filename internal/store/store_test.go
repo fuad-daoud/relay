@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 func newBinding(name, cwd string) Binding {
@@ -28,6 +30,40 @@ func newBinding(name, cwd string) Binding {
 		RoundCap:         20,
 		RoundTimeoutMS:   1800000,
 	}
+}
+
+// bindingRecordJSON returns the record_json a saved binding is stored as, the
+// DB equivalent of the bind.json bytes the file-backed store wrote (D1).
+func bindingRecordJSON(t *testing.T, s *Store, name string) []byte {
+	t.Helper()
+	d, err := s.dbForWrite()
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	rec, ok, err := d.RecordGet(name)
+	if err != nil || !ok {
+		t.Fatalf("RecordGet(%q): ok=%v err=%v", name, ok, err)
+	}
+	return []byte(rec.JSON)
+}
+
+// bindingEvents returns the stored binding_event rows for name, so a test can
+// assert on entry_json, the DB equivalent of a log.jsonl line (D2).
+func bindingEvents(t *testing.T, s *Store, name string) []db.RecordEvent {
+	t.Helper()
+	d, err := s.dbForWrite()
+	if err != nil {
+		t.Fatalf("db: %v", err)
+	}
+	rec, ok, err := d.RecordGet(name)
+	if err != nil || !ok {
+		t.Fatalf("RecordGet(%q): ok=%v err=%v", name, ok, err)
+	}
+	evs, err := d.EventsOf(rec.ID, 0)
+	if err != nil {
+		t.Fatalf("EventsOf: %v", err)
+	}
+	return evs
 }
 
 func TestSaveLoadRoundTrip(t *testing.T) {
@@ -313,28 +349,6 @@ func TestNestedAccessDoesNotDeadlock(t *testing.T) {
 	}
 	if final.Round != 2 {
 		t.Errorf("Round = %d, want 2", final.Round)
-	}
-}
-
-func TestAtomicWriteCleanupTempFile(t *testing.T) {
-	s := New(t.TempDir())
-	b := newBinding("cleanup", "/repo")
-
-	if err := s.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	// Check that binding dir contains only bind.json, no temp files
-	entries, err := os.ReadDir(s.Dir("cleanup"))
-	if err != nil {
-		t.Fatalf("ReadDir: %v", err)
-	}
-
-	if len(entries) != 1 {
-		t.Errorf("binding dir has %d entries, want 1", len(entries))
-	}
-	if entries[0].Name() != "bind.json" {
-		t.Errorf("expected bind.json, got %q", entries[0].Name())
 	}
 }
 
@@ -683,10 +697,7 @@ func TestLoadIgnoresLegacyPreamblePending(t *testing.T) {
 	if err := s.Save(got); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "bind.json"))
-	if err != nil {
-		t.Fatalf("read back: %v", err)
-	}
+	raw := bindingRecordJSON(t, s, "old")
 	if strings.Contains(string(raw), "preamble_pending") {
 		t.Errorf("round-trip must drop preamble_pending, got:\n%s", raw)
 	}
@@ -707,13 +718,10 @@ func TestLegacyPaneBindingReSavesByteIdentical(t *testing.T) {
 	if err := s.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	before, err := os.ReadFile(filepath.Join(s.Dir("webshop"), "bind.json"))
-	if err != nil {
-		t.Fatalf("read bind.json: %v", err)
-	}
+	before := bindingRecordJSON(t, s, "webshop")
 	for _, key := range []string{`"mode"`, `"pid"`, `"started_at"`, `"log_path"`} {
 		if bytes.Contains(before, []byte(key)) {
-			t.Errorf("a pane binding's bind.json must not carry %s:\n%s", key, before)
+			t.Errorf("a pane binding's record must not carry %s:\n%s", key, before)
 		}
 	}
 	got, err := s.Load("webshop")

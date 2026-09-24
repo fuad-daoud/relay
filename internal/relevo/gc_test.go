@@ -216,6 +216,25 @@ func TestGCAfterDoneReportsGone(t *testing.T) {
 	}
 }
 
+// rootNames lists a state root's entry names, ignoring the database files the
+// store itself owns: relevo.db and its WAL sidecars (P3a: the record lives
+// there, so a raw ReadDir sees more than the bindings).
+func rootNames(t *testing.T, root string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "relevo.db") {
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	return names
+}
+
 func TestGCWorktreeDryRun(t *testing.T) {
 	fg := &fakeGit{}
 	rt := newRuntime(t)
@@ -235,10 +254,7 @@ func TestGCWorktreeDryRun(t *testing.T) {
 	}
 
 	// Read state root before
-	entriesBefore, err := os.ReadDir(rt.Store.Dir(""))
-	if err != nil {
-		t.Fatal(err)
-	}
+	entriesBefore := rootNames(t, rt.Store.Dir(""))
 
 	res, err := GC(context.Background(), rt, GCOptions{DryRun: true})
 	if err != nil {
@@ -255,16 +271,14 @@ func TestGCWorktreeDryRun(t *testing.T) {
 	}
 
 	// Verify disk state unchanged
-	entriesAfter, err := os.ReadDir(rt.Store.Dir(""))
-	if err != nil {
-		t.Fatal(err)
-	}
+	entriesAfter := rootNames(t, rt.Store.Dir(""))
 	if len(entriesBefore) != len(entriesAfter) {
-		t.Errorf("entries changed: before=%d, after=%d", len(entriesBefore), len(entriesAfter))
+		t.Errorf("entries changed: before=%v, after=%v", entriesBefore, entriesAfter)
+		return
 	}
 	for i := range entriesBefore {
-		if entriesBefore[i].Name() != entriesAfter[i].Name() {
-			t.Errorf("entry mismatch at %d: %s != %s", i, entriesBefore[i].Name(), entriesAfter[i].Name())
+		if entriesBefore[i] != entriesAfter[i] {
+			t.Errorf("entry mismatch at %d: %s != %s", i, entriesBefore[i], entriesAfter[i])
 		}
 	}
 }

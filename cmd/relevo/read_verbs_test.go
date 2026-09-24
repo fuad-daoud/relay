@@ -44,6 +44,38 @@ func seedReadVerbStore(t *testing.T) (*store.Store, relevo.Runtime, []store.LogE
 	return s, relevo.Runtime{Store: s, Now: time.Now}, log
 }
 
+// assertIngestMirrorEmpty asserts that the database at path holds no ingest
+// mirror rows: binding, event and round are all empty. A database that does
+// not exist passes too, which is what makes this a port of the old "must not
+// create a database" stat: relevo.db is now the store's own record file, which
+// the fixture's Save creates, and these read verbs must still write nothing
+// into the ingest mirror (P3a round 3, B3).
+func assertIngestMirrorEmpty(t *testing.T, path string) {
+	t.Helper()
+
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	d, err := openDB(path)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer d.Close()
+
+	stats, err := d.Stats()
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	for _, tbl := range []string{"binding", "event", "round"} {
+		if n := stats.Rows[tbl]; n != 0 {
+			t.Errorf("ingest mirror %s has %d rows, want 0", tbl, n)
+		}
+	}
+}
+
 // TestPrintLogAndPrintShowWriteNothing is `relevo serve log`/`show`'s
 // read-only contract (#216) at the helper level: with markViewed=false the
 // same text a client verb prints comes out, no .viewed sidecar appears, and
@@ -82,9 +114,7 @@ func TestPrintLogAndPrintShowWriteNothing(t *testing.T) {
 	if _, ok := s.ViewedAt("api"); ok {
 		t.Error("printShow with markViewed=false must not stamp .viewed")
 	}
-	if _, err := os.Stat(s.DBPath()); !os.IsNotExist(err) {
-		t.Errorf("printShow must not create a database: stat err %v", err)
-	}
+	assertIngestMirrorEmpty(t, s.DBPath())
 
 	// Control: markViewed=true does stamp, so the assertion above is not
 	// passing for want of a sidecar either way.
@@ -108,7 +138,5 @@ func TestPrintShowAllowDBFalseRefusesAnUnknownName(t *testing.T) {
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("printShow(allowDB=false) on an unknown name = %v, want store.ErrNotFound", err)
 	}
-	if _, err := os.Stat(s.DBPath()); !os.IsNotExist(err) {
-		t.Errorf("printShow must not create a database: stat err %v", err)
-	}
+	assertIngestMirrorEmpty(t, s.DBPath())
 }

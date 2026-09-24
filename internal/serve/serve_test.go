@@ -716,17 +716,10 @@ func TestOwnerDirIsFlatHex(t *testing.T) {
 		t.Logf("  %s", sub.Name())
 	}
 
-	bindingJSONPath := filepath.Join(ownerSubDir, "api", "bind.json")
-	if _, err := os.Stat(bindingJSONPath); err != nil {
-		t.Fatalf("bind.json missing at %s: %v", bindingJSONPath, err)
-	}
-	apiEntries, err := os.ReadDir(filepath.Join(ownerSubDir, "api"))
-	if err != nil {
-		t.Fatalf("ReadDir api: %v", err)
-	}
-	t.Logf("ls %s/api:", ownerSubDir)
-	for _, a := range apiEntries {
-		t.Logf("  %s", a.Name())
+	// The binding's record lives in the owner store's database now, so the
+	// assertion is that the owner store can load it (D1).
+	if _, err := store.New(ownerSubDir).Load("api"); err != nil {
+		t.Fatalf("owner store Load(api): %v", err)
 	}
 }
 

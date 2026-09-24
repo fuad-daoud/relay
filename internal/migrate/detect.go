@@ -79,7 +79,7 @@ func (r *runner) refusals(d detection) []string {
 
 	if d.stateOld {
 		for _, root := range storeRoots(o.StateFrom) {
-			bindings, err := store.New(root).List()
+			bindings, err := store.ListFiles(root)
 			if err != nil {
 				reasons = append(reasons, fmt.Sprintf("cannot read bindings in %s: %v", root, err))
 				continue

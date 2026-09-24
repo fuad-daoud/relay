@@ -3,6 +3,7 @@ package migrate
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -65,8 +66,8 @@ func TestRunHappyPath(t *testing.T) {
 	mustMkdir(t, wt)
 	saveBinding(t, stateFrom, "one", wt, repo, store.StateDone)
 
-	mustWrite(t, filepath.Join(stateFrom, legacy.DBFile), "db")
-	mustWrite(t, filepath.Join(stateFrom, legacy.DBFile+"-wal"), "wal")
+	mustWrite(t, filepath.Join(stateFrom, legacy.DBFile), "")
+	mustWrite(t, filepath.Join(stateFrom, legacy.DBFile+"-wal"), "")
 	mustWrite(t, filepath.Join(configFrom, "candidates.json"), "{}")
 
 	f := newFakes()
@@ -558,11 +559,22 @@ func mustWrite(t *testing.T, path, data string) {
 	}
 }
 
+// saveBinding seeds what stands for an old, pre-DB legacy root: it writes the
+// pre-P3a layout directly, <root>/<name>/bind.json, rather than going through
+// the now DB-backed store (P3a round 4, C1).
 func saveBinding(t *testing.T, root, name, cwd, repo string, state store.State) {
 	t.Helper()
 	b := store.Binding{Name: name, CWD: cwd, Worktree: cwd, Repo: repo, State: state}
-	if err := store.New(root).Save(b); err != nil {
-		t.Fatalf("save binding %s: %v", name, err)
+	dir := filepath.Join(root, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create binding dir %s: %v", name, err)
+	}
+	raw, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal binding %s: %v", name, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bind.json"), raw, 0o644); err != nil {
+		t.Fatalf("write binding %s: %v", name, err)
 	}
 }
 

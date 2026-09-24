@@ -90,6 +90,78 @@ func (d dirSource) List() ([]string, error) {
 
 func (d dirSource) Origin() (string, string) { return "live", d.dir }
 
+// storeSource is a live binding read through store.Store instead of its
+// directory: after P3a the binding and its log live in the store's database,
+// so bind.json and log.jsonl are synthesized from Load and ReadLog while every
+// other member still comes from the binding directory (P3a plan §4.7).
+type storeSource struct {
+	st   *store.Store
+	name string
+}
+
+// StoreSource returns a Source over a live binding held in the store's
+// database. bind.json is Load's binding re-indented, log.jsonl is ReadLog's
+// entries one JSON object per line, and every other member is read from the
+// binding directory, which still holds the round files.
+func StoreSource(st *store.Store, name string) Source {
+	return storeSource{st: st, name: name}
+}
+
+func (s storeSource) Name() string { return s.name }
+
+func (s storeSource) Bind() (store.Binding, error) {
+	b, err := s.st.Load(s.name)
+	if err != nil {
+		return store.Binding{}, fmt.Errorf("%w: %s: %v", ErrSource, s.st.Dir(s.name), err)
+	}
+	return b, nil
+}
+
+func (s storeSource) Open(member string) (io.ReadCloser, int64, error) {
+	switch member {
+	case "bind.json":
+		b, err := s.st.Load(s.name)
+		if err != nil {
+			return nil, 0, err
+		}
+		data, err := json.MarshalIndent(b, "", "  ")
+		if err != nil {
+			return nil, 0, err
+		}
+		return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
+	case "log.jsonl":
+		entries, err := s.st.ReadLog(s.name)
+		if err != nil {
+			return nil, 0, err
+		}
+		var buf bytes.Buffer
+		for _, e := range entries {
+			line, err := json.Marshal(e)
+			if err != nil {
+				return nil, 0, err
+			}
+			buf.Write(line)
+			buf.WriteByte('\n')
+		}
+		data := buf.Bytes()
+		return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
+	default:
+		return dirSource{dir: s.st.Dir(s.name)}.Open(member)
+	}
+}
+
+func (s storeSource) List() ([]string, error) {
+	names, err := dirSource{dir: s.st.Dir(s.name)}.List()
+	if err != nil {
+		return nil, err
+	}
+	names = append(names, "bind.json", "log.jsonl")
+	sort.Strings(names)
+	return names, nil
+}
+
+func (s storeSource) Origin() (string, string) { return "live", s.st.Dir(s.name) }
+
 // maxCachedTarMember is how large a tar member TarSource caches in memory at
 // index time; larger members stream on demand by re-reading the tarball,
 // since a tar has no random-access index.

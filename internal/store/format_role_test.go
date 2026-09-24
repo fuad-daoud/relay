@@ -2,8 +2,6 @@ package store
 
 import (
 	"bytes"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -19,10 +17,7 @@ func TestSaveFormatFollowsRole(t *testing.T) {
 	if err := s.Save(builder); err != nil {
 		t.Fatalf("Save(builder): %v", err)
 	}
-	raw, err := os.ReadFile(filepath.Join(s.Dir(builder.Name), "bind.json"))
-	if err != nil {
-		t.Fatalf("read bind.json: %v", err)
-	}
+	raw := bindingRecordJSON(t, s, builder.Name)
 	if bytes.Contains(raw, []byte(`"format"`)) {
 		t.Errorf("a builder binding must carry no format key:\n%s", raw)
 	}
@@ -42,14 +37,11 @@ func TestSaveFormatFollowsRole(t *testing.T) {
 	if err := s.Save(custom); err != nil {
 		t.Fatalf("Save(ui-builder): %v", err)
 	}
-	raw, err = os.ReadFile(filepath.Join(s.Dir(custom.Name), "bind.json"))
-	if err != nil {
-		t.Fatalf("read bind.json: %v", err)
-	}
-	if !bytes.Contains(raw, []byte(`"format": 2`)) {
+	raw = bindingRecordJSON(t, s, custom.Name)
+	if !bytes.Contains(raw, []byte(`"format":2`)) {
 		t.Errorf("a custom-role binding must be format 2:\n%s", raw)
 	}
-	if !bytes.Contains(raw, []byte(`"role": "ui-builder"`)) {
+	if !bytes.Contains(raw, []byte(`"role":"ui-builder"`)) {
 		t.Errorf("a custom-role binding must carry its role:\n%s", raw)
 	}
 	gotCustom, err := s.Load(custom.Name)

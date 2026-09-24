@@ -517,7 +517,7 @@ func (r *runner) repairWorktrees(ctx context.Context, d detection) {
 	repairedPaths := map[string]bool{}
 	var warnings []string
 	for _, root := range storeRoots(base) {
-		bindings, err := store.New(root).List()
+		bindings, err := store.ListFiles(root)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("cannot read bindings in %s: %v", root, err))
 			continue
