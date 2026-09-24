@@ -52,6 +52,10 @@ type Git interface {
 	// AddDetachedWorktree is AddWorktree without a branch: a throwaway tree
 	// at commit with a detached HEAD (#144).
 	AddDetachedWorktree(ctx context.Context, dir, path, commit string) error
+	// MaterializeTree writes tree into dir's files without committing, the
+	// step that fills a reader round's scratch worktree with the binding's
+	// whole working state (2026-09-24-cockpit-design.md §3.4).
+	MaterializeTree(ctx context.Context, dir, tree string) error
 	// CheckoutWorktree is the existing-branch form of git worktree add; AddWorktree creates the branch, this one checks it out.
 	CheckoutWorktree(ctx context.Context, dir, path, branch string) error
 	RemoveWorktree(ctx context.Context, dir, path string, force bool) error

@@ -694,14 +694,32 @@ func (s *Store) VerifyWorktreePath(name string, round int) string {
 	return filepath.Join(s.WorktreeDir(), ".verify", fmt.Sprintf("%s-%03d", name, round))
 }
 
+// ScratchWorktreeDir is where a reader round's throwaway worktree lives:
+// <WorktreeDir()>/.scratch, beside .verify. It is dot-prefixed, so ListFiles
+// and importAll skip it, and ValidName forbids "." in binding names, so a
+// binding's worktree can never collide with it (2026-09-24-cockpit-design.md
+// §3.4).
+func (s *Store) ScratchWorktreeDir() string {
+	return filepath.Join(s.WorktreeDir(), ".scratch")
+}
+
+// ScratchWorktreePath is the throwaway worktree a reader round runs in:
+// <ScratchWorktreeDir()>/<name>-<NNN>, the shape a binding's verify worktree
+// has (2026-09-24-cockpit-design.md §3.4).
+func (s *Store) ScratchWorktreePath(name string, round int) string {
+	return filepath.Join(s.ScratchWorktreeDir(), fmt.Sprintf("%s-%03d", name, round))
+}
+
 // PruneWorktreeDirs removes the parents of relevo's worktrees once they are
-// empty: .worktrees/.verify first, then .worktrees. os.Remove never removes a
-// non-empty directory, so a sibling worktree keeps its parent; every error --
+// empty: .worktrees/.verify and .worktrees/.scratch first, then .worktrees.
+// os.Remove never removes a non-empty directory, so a sibling worktree keeps
+// its parent; every error --
 // not-exist, not-empty -- is ignored. It never logs: the parents of relevo's
 // worktrees go once they are empty; a racing `git worktree add` recreates its
 // parent itself.
 func (s *Store) PruneWorktreeDirs() {
 	_ = os.Remove(filepath.Join(s.WorktreeDir(), ".verify"))
+	_ = os.Remove(s.ScratchWorktreeDir())
 	_ = os.Remove(s.WorktreeDir())
 }
 

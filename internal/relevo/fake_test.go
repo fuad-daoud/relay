@@ -151,6 +151,12 @@ type fakeGit struct {
 	removeWorktreeErr   error
 	removeWorktreeCalls []removeWorktreeCall
 
+	// materializeCalls records every MaterializeTree call; materializeErr
+	// makes each one fail. Both are the scratch worktree's two hooks
+	// (2026-09-24-cockpit-design.md §3.4).
+	materializeCalls []struct{ dir, tree string }
+	materializeErr   error
+
 	dirtyResult  bool
 	dirtyErr     error
 	dirtyCalls   int
@@ -346,6 +352,13 @@ func (f *fakeGit) AddDetachedWorktree(ctx context.Context, dir, path, commit str
 		return f.addDetachedWorktreeErr
 	}
 	return nil
+}
+
+// MaterializeTree records the call and touches no disk, like the other
+// worktree methods here (2026-09-24-cockpit-design.md §3.4).
+func (f *fakeGit) MaterializeTree(ctx context.Context, dir, tree string) error {
+	f.materializeCalls = append(f.materializeCalls, struct{ dir, tree string }{dir, tree})
+	return f.materializeErr
 }
 
 func (f *fakeGit) CheckoutWorktree(ctx context.Context, dir, path, branch string) error {

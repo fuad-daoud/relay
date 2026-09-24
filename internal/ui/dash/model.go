@@ -67,6 +67,16 @@ type Model struct {
 	// dashboard has no footer, and §6 needs a notice on screen for a jump
 	// whose name vanished. "" when there is none.
 	Notice string
+
+	// Names resolves a candidate token to its display name (§5). A nil value
+	// means identity.
+	Names func(token string) string
+
+	// Embedded is true when the dashboard is hosted as a view inside the
+	// cockpit shell rather than owning the whole screen (B1 round 2). The
+	// shell draws the identity line itself, so View omits headerLine and
+	// gridHeight reclaims its row.
+	Embedded bool
 }
 
 // Styles is the handful of internal/ui styles the dashboard borrows rather
@@ -159,6 +169,16 @@ func (m Model) SortKey() string {
 // Editing reports whether the / editor has the keyboard, so the host knows
 // whether d/esc leave the screen or belong to the input.
 func (m Model) Editing() bool { return m.editing }
+
+// GroupAxis is the applied query's regroup axis when it regroups at all, and
+// "" otherwise. The host's context line names it; the screen's own header
+// line is omitted when embedded.
+func (m Model) GroupAxis() string {
+	if !m.grouped() {
+		return ""
+	}
+	return string(m.query.By)
+}
 
 // SetSize fits the screen to the terminal. The three fixed lines are the
 // header, the tiles and the editor/column header; the rest is the grid.
@@ -318,9 +338,15 @@ func (m Model) pageSize() int {
 	return n
 }
 
-// gridHeight is the rows left for the grid under the three fixed lines.
+// gridHeight is the rows left for the grid under the fixed lines: three
+// when the screen owns its identity line, two when it is embedded and the
+// host draws that line.
 func (m Model) gridHeight() int {
-	h := m.height - dashHeaderRows
+	header := dashHeaderRows
+	if m.Embedded {
+		header--
+	}
+	h := m.height - header
 	if h < 0 {
 		return 0
 	}
@@ -376,5 +402,9 @@ func (m Model) View() string {
 	m.vp.Height = m.gridHeight()
 	m.vp.SetContent(m.gridContent())
 	m.vp.SetYOffset(m.windowTop())
-	return m.headerLine() + "\n" + m.tilesLine() + "\n" + m.thirdLine() + "\n" + m.vp.View()
+	body := m.tilesLine() + "\n" + m.thirdLine() + "\n" + m.vp.View()
+	if m.Embedded {
+		return body
+	}
+	return m.headerLine() + "\n" + body
 }

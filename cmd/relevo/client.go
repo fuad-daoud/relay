@@ -85,7 +85,7 @@ func cmdClientAddServer(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := rt.Config.Put(config.Servers, body); err != nil {
+	if _, err := rt.Config.As("cli", "config server add "+name).Put(config.Servers, body); err != nil {
 		return err
 	}
 	fmt.Printf("added server %s (%s)\n", name, rawURL)
@@ -157,7 +157,7 @@ func cmdClientRmServer(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := rt.Config.Put(config.Servers, body); err != nil {
+	if _, err := rt.Config.As("cli", "config server rm "+name).Put(config.Servers, body); err != nil {
 		return err
 	}
 	fmt.Printf("removed server %s\n", name)

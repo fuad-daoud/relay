@@ -837,8 +837,11 @@ func TestAdminGatesAvailableUnavailable(t *testing.T) {
 		t.Errorf("gate kind = %q, want %q", gates[0].Kind, ledger.RateLimited)
 	}
 	out := RenderGates(gates, now)
-	if !strings.Contains(out, "claude/t/m") {
-		t.Errorf("RenderGates = %q, want it naming claude/t/m", out)
+	if !strings.Contains(out, "m  rate-limited") {
+		t.Errorf("RenderGates = %q, want it naming the candidate's short name m", out)
+	}
+	if strings.Contains(out, "claude/t/m") {
+		t.Errorf("RenderGates = %q, want the short name, not the token", out)
 	}
 	if !strings.Contains(out, "quota") {
 		t.Errorf("RenderGates = %q, want it naming quota", out)

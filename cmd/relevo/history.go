@@ -10,17 +10,43 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/histq"
+	"github.com/fuad-daoud/relevo/internal/latency"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/stats"
 )
+
+// historyJSONRow is one `relevo history --json` row: db.RoundRow's fields
+// plus the candidate's short name beside the token (A1 §4.4). The embedded
+// struct keeps every token field where it always was.
+type historyJSONRow struct {
+	db.RoundRow
+	BuilderName string `json:"BuilderName,omitempty"`
+}
+
+// historyJSONRows wraps each row with its candidate's short name as set
+// resolves it. A token the set no longer holds stays as the name, exactly as
+// the text listing renders it (Set.NameOf never errors).
+func historyJSONRows(rows []db.RoundRow, set *candidate.Set) []historyJSONRow {
+	out := make([]historyJSONRow, len(rows))
+	for i, r := range rows {
+		row := historyJSONRow{RoundRow: r}
+		if r.BuilderCandidate != nil {
+			row.BuilderName = set.NameOf(*r.BuilderCandidate)
+		}
+		out[i] = row
+	}
+	return out
+}
 
 const historyUsage = `usage: relevo history [--here|--repo <url|dir>] [--feature L] [--binding N] [--planner S]
                      [--harness K] [--provider P] [--model M] [--candidate T]
                      [--outcome O] [--since D] [--until D] [--archived|--live]
                      [--limit N] [--json] [-q "<query>"] [--by <axis>] [--rows]
        relevo history --tab [--owner <label|id|all>] [--since D] [--by binding|model|provider|owner] [--json] [--state <dir>]
-       relevo history --stats [--since D] [--json]`
+       relevo history --stats [--since D|all] [--json]`
 
 // historyOutcomeValues lists the round.Outcome enum in the order
 // docs/specs/2026-09-20-persistence-design.md §3 decision 8 states it, for
@@ -151,7 +177,7 @@ func cmdHistory(args []string) error {
 	harness := fs.String("harness", "", "filter to this builder harness")
 	provider := fs.String("provider", "", "filter to this builder provider")
 	model := fs.String("model", "", "filter to this builder model")
-	candidateTok := fs.String("candidate", "", "filter to this harness/provider/model candidate token")
+	candidateTok := fs.String("candidate", "", "filter to this candidate name or harness/provider/model token")
 	outcome := fs.String("outcome", "", "filter to this round outcome: "+strings.Join(historyOutcomeValues, ", "))
 	since := fs.String("since", "", "only rounds started after this: 24h, 7d, or YYYY-MM-DD")
 	until := fs.String("until", "", "only rounds started before this: 24h, 7d, or YYYY-MM-DD")
@@ -163,7 +189,7 @@ func cmdHistory(args []string) error {
 	by := fs.String("by", "", "regroup the result by one of: "+strings.Join(historyAxisNames(), ", "))
 	withRows := fs.Bool("rows", false, "with --json --by, include each group's rows")
 	tab := fs.Bool("tab", false, "tokens and cost across bindings, archived ones included")
-	stats := fs.Bool("stats", false, "rounds, outcomes, switches, gate and consults, plus provider blocks")
+	stats := fs.Bool("stats", false, "per-candidate scorecard, spend per day, reliability, repos and outcomes (default window 30d; --since all for everything)")
 	owner := fs.String("owner", "", "with --tab: the server's owner, a client label or id (all = every owner)")
 	state := fs.String("state", "", "with --owner: the serve state directory")
 	fs.Usage = func() {
@@ -261,6 +287,7 @@ func cmdHistory(args []string) error {
 		Provider:  *provider,
 		Model:     *model,
 		Candidate: *candidateTok,
+		Names:     rt.Candidates,
 		Outcome:   *outcome,
 		Since:     *since,
 		Until:     *until,
@@ -311,7 +338,7 @@ func cmdHistory(args []string) error {
 		if *asJSON {
 			return json.NewEncoder(os.Stdout).Encode(groupJSON(groups, *withRows))
 		}
-		fmt.Print(relevo.FormatGroups(groups, axis, time.Local))
+		fmt.Print(relevo.FormatGroups(groups, axis, time.Local, rt.Candidates.NameOf))
 		return nil
 	}
 
@@ -319,9 +346,9 @@ func cmdHistory(args []string) error {
 		if rows == nil {
 			rows = []db.RoundRow{}
 		}
-		return json.NewEncoder(os.Stdout).Encode(rows)
+		return json.NewEncoder(os.Stdout).Encode(historyJSONRows(rows, rt.Candidates))
 	}
-	fmt.Print(relevo.FormatHistory(rows, time.Local))
+	fmt.Print(relevo.FormatHistory(rows, time.Local, rt.Candidates.NameOf))
 	return nil
 }
 
@@ -349,35 +376,97 @@ func historyTab(since, by string, asJSON bool) error {
 	return renderTabReport(entries, by, cut, asJSON)
 }
 
-// historyStats is `relevo history --stats`: exactly what `relevo stats`
-// printed (P3d §4.6). The body is cmdStats's, moved here because the `stats`
-// verb is gone.
+// historyStats is `relevo history --stats`: the stats report computed from
+// relevo.db's rounds, the availability history and the active gates (C2a plan
+// §4.5). The window is --since, which defaults to 30 days; the literal `all`
+// means every recorded round. No harness is spawned and no network is reached.
 func historyStats(since string, asJSON bool) error {
 	now := time.Now().UTC()
-	cut, err := relevo.ParseSince(since, now)
-	if err != nil {
-		return err
+
+	var cut time.Time
+	if since != "all" {
+		if since == "" {
+			since = "30d"
+		}
+		c, err := relevo.ParseSince(since, now)
+		if err != nil {
+			return err
+		}
+		cut = c
 	}
 
 	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
-	entries, err := relevo.TabEntries(rt, cut, func(msg string) {
-		fmt.Fprintf(os.Stderr, "relevo stats: skip %s\n", msg)
-	})
+	d, err := openDB(rt.Store.DBPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v: %v\n", relevo.ErrNoDatabase, err)
+		return exitCodeErr{code: 1}
+	}
+	defer d.Close()
+	rt.DB = d
+
+	rows, err := rt.DB.Query(db.Filter{Since: cut})
 	if err != nil {
 		return err
 	}
-	hist := loadHistory(rt)
-	rep := relevo.BuildStats(entries, hist, cut, rt.Now().UTC())
+	landed := map[string]bool{}
+	done, err := rt.DB.Bindings(db.Filter{State: "done"})
+	if err != nil {
+		return err
+	}
+	for _, b := range done {
+		landed[b.ID] = true
+	}
+
+	// Latency is read exactly as formatCandidates reads it: a failure warns
+	// and leaves the report without ttft values.
+	var lat latency.History
+	if rt.Latency != nil {
+		loaded, lerr := latency.LoadKV(rt.Latency, legacyGatesPath(rt.GatesDir, "latency.json"))
+		if lerr != nil {
+			fmt.Fprintf(os.Stderr, "relevo: could not read latency: %v\n", lerr)
+		} else {
+			lat = loaded
+		}
+	}
+	lat = lat.Prune(rt.Now())
+
+	rep := stats.Build(stats.Inputs{
+		Rows:    rows,
+		Landed:  landed,
+		History: loadHistory(rt),
+		Gates:   relevo.Gates(rt),
+		TTFT: func(token string) (int64, bool) {
+			s := lat.Summary(token)
+			return s.TTFTP50MS, s.N > 0
+		},
+		IsPlan: func(token string) bool {
+			if rt.Candidates == nil {
+				return false
+			}
+			ref, rerr := candidate.ParseRef(token)
+			if rerr != nil {
+				return false
+			}
+			c, lerr := rt.Candidates.Lookup(ref)
+			if lerr != nil {
+				return false
+			}
+			return c.Plan
+		},
+		Since: cut,
+		Until: now,
+		Loc:   time.Local,
+	})
 
 	if asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(rep)
 	}
-	fmt.Print(relevo.RenderStats(rep))
+	fmt.Print(stats.Render(rep, rt.Candidates.NameOf))
 	return nil
 }
 

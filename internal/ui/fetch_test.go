@@ -78,7 +78,7 @@ func TestFetchStatusReturnsExactlyOneMessage(t *testing.T) {
 		Store: st,
 	}
 
-	cmd := fetchStatus(context.Background(), plannerSource{rt}, scopeLive, "")
+	cmd := fetchStatus(context.Background(), plannerSource{rt})
 	if cmd == nil {
 		t.Fatal("fetchStatus returned nil command")
 	}

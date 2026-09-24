@@ -55,7 +55,7 @@ func cmdRolesInit(args []string) error {
 	if exists && !*force {
 		return errors.New("roles section exists; pass --force to overwrite it")
 	}
-	if _, err := rt.Config.Put(config.Roles, data); err != nil {
+	if _, err := rt.Config.As("init", "config roles-init").Put(config.Roles, data); err != nil {
 		return err
 	}
 

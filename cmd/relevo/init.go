@@ -54,10 +54,10 @@ func cmdInit(args []string) error {
 		return errors.New("candidates or policy already configured; pass --force to overwrite")
 	}
 
-	if _, err := rt.Config.Put(config.Candidates, files.Candidates); err != nil {
+	if _, err := rt.Config.As("init", "config init").Put(config.Candidates, files.Candidates); err != nil {
 		return err
 	}
-	if _, err := rt.Config.Put(config.Policy, files.Policy); err != nil {
+	if _, err := rt.Config.As("init", "config init").Put(config.Policy, files.Policy); err != nil {
 		return err
 	}
 

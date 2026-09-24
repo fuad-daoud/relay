@@ -178,10 +178,11 @@ type AvailableResponse struct {
 }
 
 type CandidateView struct {
-	Token string `json:"token"` // canonical harness/provider/model token
-	Kind  string `json:"kind"`  // harness kind: agy | claude | opencode
-	Gated bool   `json:"gated"` // a live limit gate on the ledger
-	Pick  bool   `json:"pick"`  // what the policy order would pick right now for the builder role
+	Token string `json:"token"`          // canonical harness/provider/model token
+	Name  string `json:"name,omitempty"` // the candidate's short name, when the server knows one
+	Kind  string `json:"kind"`           // harness kind: agy | claude | opencode
+	Gated bool   `json:"gated"`          // a live limit gate on the ledger
+	Pick  bool   `json:"pick"`           // what the policy order would pick right now for the builder role
 }
 
 type CandidatesResponse struct {

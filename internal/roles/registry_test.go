@@ -572,3 +572,61 @@ func TestRoleCopies(t *testing.T) {
 		t.Error("second Definitions lost opencode: the map was shared with a caller")
 	}
 }
+
+// TestFileCandidatesByName pins A1 §4.2 for roles.json: an entry may be a
+// candidate name, buildFile ranks the canonical token, and Serves is true for
+// it.
+func TestFileCandidatesByName(t *testing.T) {
+	f := fileFromJSON(t, `{"builder": {"candidates": ["sonnet", "gpt-5.6-terra"]}}`)
+	set := setFromFile(t, "testdata/legacy-candidates.json")
+	pol := policyFromFile(t, "testdata/legacy-policy.json")
+
+	reg, err := Build(f, set, pol)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	wantRanked := []Ranked{
+		{Token: "claude/anthropic/sonnet", Position: 1},
+		{Token: "codex/openai/gpt-5.6-terra:high", Position: 2},
+	}
+	builder, ok := reg.Role("builder")
+	if !ok {
+		t.Fatal("Role(\"builder\") not found")
+	}
+	if !reflect.DeepEqual(builder.Ranked, wantRanked) {
+		t.Errorf("builder.Ranked = %v, want %v", builder.Ranked, wantRanked)
+	}
+	if !reg.Serves("builder", candidate.Ref{Harness: "claude", Provider: "anthropic", Model: "sonnet"}) {
+		t.Error("Serves(builder, claude/anthropic/sonnet) = false, want true: the file names it by name")
+	}
+	if reg.Serves("builder", candidate.Ref{Harness: "claude", Provider: "anthropic", Model: "haiku"}) {
+		t.Error("Serves(builder, claude/anthropic/haiku) = true, want false: it is not in the row's list")
+	}
+}
+
+// TestCandidateEntriesAcceptNames pins A1 §4.2's validation rule for a role's
+// candidates: an entry is a candidate name or a harness/provider/model token.
+func TestCandidateEntriesAcceptNames(t *testing.T) {
+	for _, body := range []string{
+		`{"builder": {"candidates": ["sonnet"]}}`,
+		`{"builder": {"candidates": ["a"]}}`,
+		`{"builder": {"candidates": ["claude/anthropic/sonnet"]}}`,
+	} {
+		if _, err := Load(writeRoles(t, body)); err != nil {
+			t.Errorf("Load(%s) = %v, want no error", body, err)
+		}
+	}
+
+	_, err := Load(writeRoles(t, `{"builder": {"candidates": ["A/b"]}}`))
+	if err == nil {
+		t.Fatal("Load accepted A/b, want the bad-roles error")
+	}
+	want := `builder.candidates[0]: "A/b": want a candidate name or harness/provider/model`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("Load(A/b) err = %q, want it containing %q", err.Error(), want)
+	}
+	if !errors.Is(err, ErrBadRoles) {
+		t.Errorf("Load(A/b) err = %v, want ErrBadRoles", err)
+	}
+}

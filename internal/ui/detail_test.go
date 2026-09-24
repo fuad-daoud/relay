@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -18,80 +17,55 @@ import (
 
 func TestEnteringDetailFetchesPlanTabAndNoOther(t *testing.T) {
 	st := store.New(t.TempDir())
-	rt := relevo.Runtime{Store: st}
 	name := "webshop"
 
-	b := newTestBinding(name)
-	if err := st.Save(b); err != nil {
+	if err := st.Save(newTestBinding(name)); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.width = 80
-	m.height = 24
-	m.ready = true
+	m := splitModel(t, 140, 40, relevo.BindingStatus{Name: name, Round: 2, Display: "ACTIVE"})
 
-	rep := relevo.Report{
-		Bindings: []relevo.BindingStatus{
-			{Name: name, Round: 2, Display: "ACTIVE"},
-		},
-	}
-	res, _ := m.Update(statusMsg{report: rep})
-	m = res.(Model)
-
-	// Enter detail screen
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = res.(Model)
+	m = drain(t, m, cmd)
 
-	if m.screen != screenDetail {
-		t.Fatalf("expected screenDetail, got %v", m.screen)
-	}
-	if m.detail.name != name {
-		t.Fatalf("expected detail.name %s, got %s", name, m.detail.name)
-	}
-	if m.detail.active != tabPlan {
-		t.Fatalf("expected active tabPlan, got %v", m.detail.active)
-	}
-	if !m.tabInFlight {
-		t.Fatal("expected tabInFlight to be true on enter")
-	}
-
-	if cmd == nil {
-		t.Fatal("expected non-nil cmd on entering detail")
-	}
-	msg := cmd()
-	tMsg, ok := msg.(tabMsg)
+	rv, ok := m.top().(roundView)
 	if !ok {
-		t.Fatalf("expected tabMsg from enter, got %T", msg)
+		t.Fatalf("enter must push a round view, got %T", m.top())
 	}
-	if tMsg.t != tabPlan {
-		t.Fatalf("expected tabPlan fetch, got tab %v", tMsg.t)
+	if rv.pane.detail.name != name {
+		t.Fatalf("expected detail.name %s, got %s", name, rv.pane.detail.name)
+	}
+	if rv.pane.detail.active != tabPlan {
+		t.Fatalf("expected active tabPlan, got %v", rv.pane.detail.active)
+	}
+	if !rv.pane.detail.cache[tabPlan].loaded {
+		t.Fatal("the plan tab's reply must have landed")
 	}
 }
 
 func TestSwitchingToUnloadedTabFetchesOnlyThatOne(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.active = tabReport
-	m.detail.vp = viewport.New(80, 20)
+	if err := st.Save(newTestBinding("webshop")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv.pane.detail.active = tabReport
+	rv.pane.tabInFlight = false
+	rv.pane.detail.cache[tabReport] = tabContent{loaded: true, body: "x"}
 
-	// Switch to diff tab via key '4'
-	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
-	m = res.(Model)
-
-	if m.detail.active != tabDiff {
-		t.Fatalf("expected active tabDiff, got %v", m.detail.active)
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}}, testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+	got := next.(roundView)
+	if got.pane.detail.active != tabDiff {
+		t.Fatalf("expected active tabDiff, got %v", got.pane.detail.active)
 	}
 	if cmd == nil {
 		t.Fatal("expected non-nil fetch command for unloaded tab")
 	}
-	msg := cmd()
-	tMsg, ok := msg.(tabMsg)
+	tMsg, ok := cmd().(tabMsg)
 	if !ok {
-		t.Fatalf("expected tabMsg, got %T", msg)
+		t.Fatalf("expected tabMsg, got %T", cmd())
 	}
 	if tMsg.t != tabDiff {
 		t.Fatalf("expected tabDiff fetch, got %v", tMsg.t)
@@ -101,44 +75,35 @@ func TestSwitchingToUnloadedTabFetchesOnlyThatOne(t *testing.T) {
 func TestScrollParkAndRestore(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.active = tabReport
-	m.detail.vp = viewport.New(80, 20)
-
-	// Populate caches so switching doesn't trigger unloaded fetch
-	m.detail.cache[tabReport] = tabContent{loaded: true, body: strings.Repeat("report line\n", 50)}
-	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("terminal line\n", 50)}
-	m.detail.vp.SetContent(m.detail.cache[tabReport].body)
-
-	// Set scroll offset on report tab
-	m.detail.vp.YOffset = 18
-
-	// Switch to terminal tab ('3')
-	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
-	m = res.(Model)
-	if m.detail.active != tabTerminal {
-		t.Fatalf("expected active tabTerminal, got %v", m.detail.active)
+	if err := st.Save(newTestBinding("webshop")); err != nil {
+		t.Fatalf("Save: %v", err)
 	}
-	if m.detail.scroll[tabReport] != 18 {
-		t.Fatalf("expected parked scroll for tabReport to be 18, got %d", m.detail.scroll[tabReport])
+	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv.pane.detail.active = tabReport
+	rv.pane.detail.vp = viewport.New(140, 20)
+	rv.pane.detail.cache[tabReport] = tabContent{loaded: true, body: strings.Repeat("report line\n", 50)}
+	rv.pane.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("terminal line\n", 50)}
+	rv.pane.detail.vp.SetContent(rv.pane.detail.cache[tabReport].body)
+	rv.pane.detail.vp.YOffset = 18
+
+	rv = roundKey(rv, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	if rv.pane.detail.active != tabTerminal {
+		t.Fatalf("expected active tabTerminal, got %v", rv.pane.detail.active)
+	}
+	if rv.pane.detail.scroll[tabReport] != 18 {
+		t.Fatalf("expected parked scroll for tabReport to be 18, got %d", rv.pane.detail.scroll[tabReport])
 	}
 
-	// Change offset on terminal tab
-	m.detail.vp.YOffset = 7
-
-	// Switch back to report tab ('2')
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m = res.(Model)
-	if m.detail.active != tabReport {
-		t.Fatalf("expected active tabReport, got %v", m.detail.active)
+	rv.pane.detail.vp.YOffset = 7
+	rv = roundKey(rv, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if rv.pane.detail.active != tabReport {
+		t.Fatalf("expected active tabReport, got %v", rv.pane.detail.active)
 	}
-	if m.detail.vp.YOffset != 18 {
-		t.Fatalf("expected restored YOffset on tabReport to be 18, got %d", m.detail.vp.YOffset)
+	if rv.pane.detail.vp.YOffset != 18 {
+		t.Fatalf("expected restored YOffset on tabReport to be 18, got %d", rv.pane.detail.vp.YOffset)
 	}
-	if m.detail.scroll[tabTerminal] != 7 {
-		t.Fatalf("expected parked scroll for tabTerminal to be 7, got %d", m.detail.scroll[tabTerminal])
+	if rv.pane.detail.scroll[tabTerminal] != 7 {
+		t.Fatalf("expected parked scroll for tabTerminal to be 7, got %d", rv.pane.detail.scroll[tabTerminal])
 	}
 }
 
@@ -169,96 +134,74 @@ func TestEmptyContentNotStyledAsError(t *testing.T) {
 func TestTabErrorDoesNotCorruptOtherTabs(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.vp = viewport.New(80, 20)
-
-	m.detail.cache[tabDiff] = tabContent{
-		loaded: true,
-		err:    errors.New("disk read failed"),
+	if err := st.Save(newTestBinding("webshop")); err != nil {
+		t.Fatalf("Save: %v", err)
 	}
-	m.detail.cache[tabReport] = tabContent{
-		loaded: true,
-		body:   "## Successful report content",
-	}
+	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv.pane.detail.vp = viewport.New(80, 20)
 
-	// Active tab diff shows error
-	m.detail.active = tabDiff
-	m.detail.vp.SetContent(bodyOf(tabDiff, m.detail.cache[tabDiff], false))
-	if !strings.Contains(m.detail.vp.View(), "error: disk read failed") {
-		t.Fatalf("expected error text in diff tab, got %q", m.detail.vp.View())
+	rv.pane.detail.cache[tabDiff] = tabContent{loaded: true, err: errors.New("disk read failed")}
+	rv.pane.detail.cache[tabReport] = tabContent{loaded: true, body: "## Successful report content"}
+
+	rv.pane.detail.active = tabDiff
+	rv.pane.detail.vp.SetContent(bodyOf(tabDiff, rv.pane.detail.cache[tabDiff], false))
+	if !strings.Contains(rv.pane.detail.vp.View(), "error: disk read failed") {
+		t.Fatalf("expected error text in diff tab, got %q", rv.pane.detail.vp.View())
 	}
 
-	// Switch to report tab: it stays readable
-	res, _ := m.switchTab(tabReport)
-	m = res.(Model)
-	if !strings.Contains(m.detail.vp.View(), "Successful report content") {
-		t.Fatalf("expected report content in report tab, got %q", m.detail.vp.View())
+	rv = roundKey(rv, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if !strings.Contains(rv.pane.detail.vp.View(), "Successful report content") {
+		t.Fatalf("expected report content in report tab, got %q", rv.pane.detail.vp.View())
 	}
 }
 
 func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.active = tabDiff
-	m.detail.vp = viewport.New(80, 20)
-
-	// Width 100 keeps this in the stack layout (< splitMinWidth): the point
-	// of this test is that a resize reflows the viewport without losing
-	// the active tab, which holds in either layout, and a stack-layout
-	// width keeps paneWidth() equal to the terminal width for a simple
-	// assertion.
-	res, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 60})
-	m = res.(Model)
-
-	if m.detail.active != tabDiff {
-		t.Fatalf("expected active tab to remain tabDiff, got %v", m.detail.active)
+	if err := st.Save(newTestBinding("webshop")); err != nil {
+		t.Fatalf("Save: %v", err)
 	}
-	if m.detail.vp.Width != 100 {
-		t.Fatalf("expected vp.Width 100, got %d", m.detail.vp.Width)
+	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv.pane.detail.active = tabDiff
+	rv.pane.detail.vp = viewport.New(80, 20)
+
+	next, _ := rv.Update(tea.WindowSizeMsg{Width: 100, Height: 60}, Env{Width: 100, Height: 60, Now: railNow, Report: rv.pane.report})
+	got := next.(roundView)
+
+	if got.pane.detail.active != tabDiff {
+		t.Fatalf("expected active tab to remain tabDiff, got %v", got.pane.detail.active)
 	}
-	if want := m.viewportHeight(); m.detail.vp.Height != want {
-		t.Fatalf("expected vp.Height %d, got %d", want, m.detail.vp.Height)
+	if got.pane.detail.vp.Width != 100 {
+		t.Fatalf("expected vp.Width 100, got %d", got.pane.detail.vp.Width)
+	}
+	if got.pane.detail.vp.Height != got.pane.viewportHeight() {
+		t.Fatalf("expected vp.Height %d, got %d", got.pane.viewportHeight(), got.pane.detail.vp.Height)
 	}
 }
 
 func TestPanicOnShrinkingContent(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.screen = screenDetail
-	m.ready = true
-	m.width = 80
-	m.height = 24
-	m.detail.name = "webshop"
-	m.detail.round = 2
-	m.detail.active = tabDiff
-	m.detail.vp = viewport.New(80, 20)
+	if err := st.Save(newTestBinding("webshop")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
+	rv.pane.detail.active = tabDiff
+	rv.pane.detail.vp = viewport.New(80, 20)
+	rv.pane.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
+	rv.pane.detail.vp.SetYOffset(120)
 
-	// Set content of 200 lines and scroll to offset 120
-	m.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
-	m.detail.vp.SetYOffset(120)
-
-	// New tabMsg delivers 3 lines
-	msg := tabMsg{
+	rv = roundMsg(rv, tabMsg{
 		name:  "webshop",
-		round: 2,
+		round: rv.pane.detail.round,
 		t:     tabDiff,
 		content: tabContent{
 			loaded: true,
 			body:   "line 1\nline 2\nline 3",
 		},
-	}
+	})
 
-	res, _ := m.Update(msg)
-	m = res.(Model)
-
-	// View() must render without panicking
-	view := m.View()
+	view := rv.Body(testEnv(plannerSource{rt}, rv.pane.report, 80, 24), 80, 20)
 	if view == "" {
 		t.Fatal("expected non-empty view")
 	}
@@ -267,34 +210,20 @@ func TestPanicOnShrinkingContent(t *testing.T) {
 func TestSwitchTabBackIntoInvalidatedTabNoPanic(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.screen = screenDetail
-	m.ready = true
-	m.width = 80
-	m.height = 24
-	m.detail.name = "webshop"
-	m.detail.round = 2
-	m.detail.active = tabDiff
-	m.detail.vp = viewport.New(80, 20)
+	if err := st.Save(newTestBinding("webshop")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
+	rv.pane.detail.active = tabDiff
+	rv.pane.detail.vp = viewport.New(80, 20)
+	rv.pane.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
+	rv.pane.detail.vp.SetYOffset(120)
 
-	// Scroll deep on diff tab
-	m.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
-	m.detail.vp.SetYOffset(120)
+	rv = roundKey(rv, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	rv.pane.detail.cache[tabDiff] = tabContent{}
+	rv = roundKey(rv, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 
-	// Switch away to terminal tab
-	res, _ := m.switchTab(tabTerminal)
-	m = res.(Model)
-
-	// Invalidate diff tab cache (e.g. round bump)
-	m.detail.cache[tabDiff] = tabContent{} // unloaded -> bodyOf returns "loading…"
-
-	// Switch back to diff tab
-	res, _ = m.switchTab(tabDiff)
-	m = res.(Model)
-
-	// View() must render without panicking
-	view := m.View()
-	if view == "" {
+	if view := rv.Body(testEnv(plannerSource{rt}, rv.pane.report, 80, 24), 80, 20); view == "" {
 		t.Fatal("expected non-empty view")
 	}
 }
@@ -302,80 +231,60 @@ func TestSwitchTabBackIntoInvalidatedTabNoPanic(t *testing.T) {
 func TestRefreshActiveTabPreservesLiveScroll(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.round = 2
-	m.detail.active = tabTerminal
-	m.detail.vp = viewport.New(80, 20)
+	if err := st.Save(newTestBinding("webshop")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
+	rv.pane.detail.active = tabTerminal
+	rv.pane.detail.follow = false
+	rv.pane.detail.vp = viewport.New(80, 20)
+	rv.pane.detail.vp.SetContent(strings.Repeat("line\n", 100))
+	rv.pane.detail.vp.SetYOffset(42)
 
-	// Initial terminal content with 100 lines
-	m.detail.vp.SetContent(strings.Repeat("line\n", 100))
-	m.detail.vp.SetYOffset(42)
-
-	// Active tabMsg refresh with 100 lines
-	msg := tabMsg{
+	rv = roundMsg(rv, tabMsg{
 		name:  "webshop",
-		round: 2,
+		round: rv.pane.detail.round,
 		t:     tabTerminal,
 		content: tabContent{
 			loaded: true,
 			body:   strings.Repeat("line\n", 100),
 		},
-	}
+	})
 
-	res, _ := m.Update(msg)
-	m = res.(Model)
-
-	if m.detail.vp.YOffset != 42 {
-		t.Fatalf("scroll discarded by a refresh of the active tab: YOffset = %d, want 42", m.detail.vp.YOffset)
+	if rv.pane.detail.vp.YOffset != 42 {
+		t.Fatalf("scroll discarded by a refresh of the active tab: YOffset = %d, want 42", rv.pane.detail.vp.YOffset)
 	}
 }
 
 func TestInvalidationResetsParkedOffset(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.round = 2
-	m.detail.live = true
-	m.detail.active = tabTerminal
-	m.detail.scroll[tabDiff] = 85
-	m.detail.scroll[tabReport] = 40
-	m.detail.scroll[tabLog] = 15
-	m.detail.scroll[tabTerminal] = 10
-
+	if err := st.Save(newTestBinding("webshop")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
 	ts := time.Now()
-	m.detail.lastLogTS = ts
+	rep := relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: "webshop", Round: 3, Display: "ACTIVE", Last: &relevo.LastEvent{TS: ts, Round: 3}},
+	}}
+	rv := newTestRound(t, rt, rep, "webshop", 0)
+	rv.pane.detail.active = tabTerminal
+	rv.pane.detail.lastLogTS = ts
+	rv.pane.detail.scroll[tabDiff] = 85
+	rv.pane.detail.scroll[tabReport] = 40
+	rv.pane.detail.scroll[tabLog] = 15
+	rv.pane.detail.scroll[tabTerminal] = 10
 
-	rep := relevo.Report{
-		Bindings: []relevo.BindingStatus{
-			{
-				Name:  "webshop",
-				Round: 3,
-				Last: &relevo.LastEvent{
-					TS:    ts.Add(5 * time.Second),
-					Round: 3,
-				},
-			},
-		},
-	}
+	newRep := relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: "webshop", Round: 3, Display: "ACTIVE", Last: &relevo.LastEvent{TS: ts.Add(5 * time.Second), Round: 3}},
+	}}
+	next, _ := rv.Update(statusMsg{report: newRep}, testEnv(plannerSource{rt}, newRep, 140, 40))
+	got := next.(roundView)
 
-	res, _ := m.Update(statusMsg{report: rep})
-	m = res.(Model)
-
-	if m.detail.scroll[tabDiff] != 0 {
-		t.Errorf("expected tabDiff scroll reset to 0, got %d", m.detail.scroll[tabDiff])
+	if got.pane.detail.scroll[tabDiff] != 0 || got.pane.detail.scroll[tabReport] != 0 || got.pane.detail.scroll[tabLog] != 0 {
+		t.Errorf("file-backed parked offsets must reset: %+v", got.pane.detail.scroll)
 	}
-	if m.detail.scroll[tabReport] != 0 {
-		t.Errorf("expected tabReport scroll reset to 0, got %d", m.detail.scroll[tabReport])
-	}
-	if m.detail.scroll[tabLog] != 0 {
-		t.Errorf("expected tabLog scroll reset to 0, got %d", m.detail.scroll[tabLog])
-	}
-	if m.detail.scroll[tabTerminal] != 10 {
-		t.Errorf("expected tabTerminal scroll preserved, got %d", m.detail.scroll[tabTerminal])
+	if got.pane.detail.scroll[tabTerminal] != 10 {
+		t.Errorf("expected tabTerminal scroll preserved, got %d", got.pane.detail.scroll[tabTerminal])
 	}
 }
 
@@ -383,7 +292,6 @@ func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
-
 	b := newTestBinding(name)
 	b.Round = 4
 	if err := st.Save(b); err != nil {
@@ -398,27 +306,21 @@ func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 		{name: "log", key: "5", tab: tabLog},
 		{name: "terminal", key: "3", tab: tabTerminal},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-			m.screen = screenDetail
-			m.detail.name = name
-			m.detail.round = 3
-			m.detail.active = tabReport
-			m.detail.vp = viewport.New(80, 20)
+			rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: name, Round: 4, Display: "ACTIVE"}}}, name, 0)
+			rv.pane.detail.round = 3
+			rv.pane.detail.active = tabReport
+			rv.pane.tabInFlight = false
 
-			res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tc.key)})
-			m = res.(Model)
+			next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tc.key)}, testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+			got := next.(roundView)
 			if cmd == nil {
 				t.Fatalf("%s: expected non-nil cmd from switchTab", tc.name)
 			}
-			msg := cmd()
-			res, _ = m.Update(msg)
-			m = res.(Model)
-
-			if !m.detail.cache[tc.tab].loaded {
-				t.Fatalf("%s reply discarded: tab stays on %q forever", tc.name, bodyOf(tc.tab, m.detail.cache[tc.tab], false))
+			got = roundMsg(got, cmd())
+			if !got.pane.detail.cache[tc.tab].loaded {
+				t.Fatalf("%s reply discarded: tab stays on %q forever", tc.name, bodyOf(tc.tab, got.pane.detail.cache[tc.tab], false))
 			}
 		})
 	}
@@ -428,19 +330,16 @@ func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 	name := "webshop"
-
 	b := newTestBinding(name)
 	b.Round = 4
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
-	m.screen = screenDetail
-	m.detail.name = name
-	m.detail.round = 3
-	m.detail.active = tabReport
-	m.detail.vp = viewport.New(80, 20)
+	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: name, Round: 4, Display: "ACTIVE"}}}, name, 0)
+	rv.pane.detail.round = 3
+	rv.pane.detail.active = tabReport
+	rv.pane.tabInFlight = false
 
 	tabKeys := []struct {
 		key string
@@ -452,18 +351,18 @@ func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 		{"4", tabDiff},
 		{"5", tabLog},
 	}
-
 	for _, tk := range tabKeys {
-		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tk.key)})
-		m = res.(Model)
+		rv.pane.detail.cache[tk.t] = tabContent{}
+		rv.pane.tabInFlight = false
+		next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tk.key)}, testEnv(plannerSource{rt}, rv.pane.report, 140, 40))
+		rv = next.(roundView)
 		if cmd == nil {
 			t.Fatalf("tab %v: expected non-nil cmd from switchTab", tk.t)
 		}
-		msg := cmd()
-		res, _ = m.Update(msg)
-		m = res.(Model)
+		rv = roundMsg(rv, cmd())
+		rv.pane.tabInFlight = false
 
-		if !m.detail.cache[tk.t].loaded {
+		if !rv.pane.detail.cache[tk.t].loaded {
 			t.Fatalf("tab %v reply discarded: cache not loaded", tk.t)
 		}
 	}

@@ -37,6 +37,15 @@ func TestOrphanWorktrees(t *testing.T) {
 		}
 	})
 
+	t.Run("finds scratch worktrees beside verify", func(t *testing.T) {
+		base := t.TempDir()
+		scratch := gitFileTree(t, filepath.Join(base, ".worktrees", ".scratch", "api-001"))
+
+		if got := orphanWorktrees(base); !reflect.DeepEqual(got, []string{scratch}) {
+			t.Errorf("orphanWorktrees = %v, want [%s]", got, scratch)
+		}
+	})
+
 	t.Run("works with no binding at all", func(t *testing.T) {
 		base := t.TempDir()
 		a := gitFileTree(t, filepath.Join(base, ".worktrees", "a"))

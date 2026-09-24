@@ -56,10 +56,14 @@ func deriveOutcome(events []store.LogEntry, n int, b store.Binding, members map[
 }
 
 // switchesForRound counts switch entries for round n, regardless of outcome.
+// A relaunch replaces a lost process with the same candidate, so it is not a
+// switch: entries whose note starts with "relaunched " or "resumed session "
+// are skipped.
 func switchesForRound(events []store.LogEntry, n int) int {
 	count := 0
 	for _, e := range events {
-		if e.Round == n && e.Kind == store.KindSwitch {
+		if e.Round == n && e.Kind == store.KindSwitch &&
+			!strings.HasPrefix(e.Note, "relaunched ") && !strings.HasPrefix(e.Note, "resumed session ") {
 			count++
 		}
 	}

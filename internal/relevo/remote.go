@@ -180,8 +180,9 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		return AddResult{}, fmt.Errorf("%w for %s: a remote builder commits as you; set git config user.name and git config user.email (in the repo or --global)", ErrNoGitIdentity, opts.Repo)
 	}
 
-	// 4. candidate := opts.Candidate; if non-empty, rt.Remote.Candidates(server) must list it (else error naming the
-	// server's tokens); if empty, leave "" and let the server pick.
+	// 4. candidate := opts.Candidate; if non-empty, rt.Remote.Candidates(server) must list it, by canonical
+	// token or by name (else error naming the server's candidates); if empty, leave "" and let the server pick.
+	// The canonical token is what travels.
 	candidateStr := opts.Candidate
 	if candidateStr != "" {
 		candResp, err := rt.Remote.Candidates(ctx, opts.Server)
@@ -189,15 +190,26 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 			return AddResult{}, fmt.Errorf("list remote candidates: %w", err)
 		}
 		found := false
-		tokens := make([]string, len(candResp.Candidates))
-		for i, c := range candResp.Candidates {
-			tokens[i] = c.Token
-			if c.Token == candidateStr {
-				found = true
+		if view, ok := matchCandidateView(candResp.Candidates, candidateStr); ok {
+			candidateStr, found = view.Token, true
+		} else if !strings.Contains(candidateStr, "/") {
+			// A name this client knows resolves to its canonical token,
+			// which the server may list under that token.
+			if c, rerr := rt.Candidates.Resolve(candidateStr); rerr == nil {
+				if view, ok := matchCandidateView(candResp.Candidates, c.Ref().String()); ok {
+					candidateStr, found = view.Token, true
+				}
 			}
 		}
 		if !found {
-			return AddResult{}, fmt.Errorf("candidate %q not available on %s (available: %s)", candidateStr, opts.Server, strings.Join(tokens, ", "))
+			available := make([]string, len(candResp.Candidates))
+			for i, c := range candResp.Candidates {
+				available[i] = c.Token
+				if c.Name != "" {
+					available[i] = fmt.Sprintf("%s (%s)", c.Name, c.Token)
+				}
+			}
+			return AddResult{}, fmt.Errorf("candidate %q not available on %s (available: %s)", opts.Candidate, opts.Server, strings.Join(available, ", "))
 		}
 	}
 
@@ -1323,6 +1335,15 @@ func ForwardAvailable(ctx context.Context, rt Runtime, subject string) []string 
 		return nil
 	}
 
+	// A candidate name or token is forwarded as its canonical token, so the
+	// server's own ledger clears the same provider; a bare provider is
+	// forwarded as itself (A1 §4.2).
+	if rt.Candidates != nil {
+		if c, err := rt.Candidates.Resolve(subject); err == nil {
+			subject = c.Ref().String()
+		}
+	}
+
 	bindings, err := rt.Store.List()
 	if err != nil {
 		return []string{fmt.Sprintf("list bindings: %v", err)}
@@ -1369,4 +1390,16 @@ func ServerInUse(bindings []store.Binding, server string) []string {
 		}
 	}
 	return names
+}
+
+// matchCandidateView returns the server view v names, by its canonical Token
+// or by its Name. Pure, so `addRemote`'s name matching is testable without a
+// server (A1 §4.2).
+func matchCandidateView(views []remote.CandidateView, v string) (remote.CandidateView, bool) {
+	for _, view := range views {
+		if view.Token == v || (view.Name != "" && view.Name == v) {
+			return view, true
+		}
+	}
+	return remote.CandidateView{}, false
 }

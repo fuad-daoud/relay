@@ -21,11 +21,6 @@ type Options struct {
 	// nothing saved.
 	Prefs PrefsStore
 
-	// Here is the cwd scope all resolves into a repo filter for
-	// relevo.Bindings, exactly as `relevo history --here` does; "" means
-	// every binding (docs/specs/2026-09-20-persistence-design.md §5.8).
-	Here string
-
 	// Notice is shown once, on the first frame, and cleared on the first
 	// keypress like any other notice -- cmdUI's own db-open failure
 	// ("no database: <err>") lands here so the ui still runs, in live
@@ -37,11 +32,9 @@ type Options struct {
 	// which names `relevo status`.
 	PipeHint string
 
-	// Dashboard starts the reader on the dashboard screen instead of the
-	// fleet (`relevo ui --dashboard`), once the first statusMsg has given
-	// the rail rows to jump to
-	// (docs/specs/2026-09-21-dashboard-design.md §6).
-	Dashboard bool
+	// Start is the command line to run once the first status has arrived,
+	// e.g. `rounds harness:agy`. "" starts at :fleet.
+	Start string
 }
 
 const minInterval = 500 * time.Millisecond

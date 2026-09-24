@@ -308,8 +308,15 @@ func loadConfig(d *db.DB) (config.Loaded, error) {
 		return config.Loaded{}, err
 	}
 	if !d.Newer() {
-		if _, err := cs.ImportFiles(filepath.Join(configDir, "relevo"), time.Now().UTC()); err != nil {
+		dir := filepath.Join(configDir, "relevo")
+		if _, err := cs.As("import", "imported "+dir).ImportFiles(dir, time.Now().UTC()); err != nil {
 			return config.Loaded{}, err
+		}
+		// A1's migration: write a name for every stored candidate. Names are
+		// derived in memory by candidate.Parse either way, so a failure here
+		// is a warning, never a refusal to serve.
+		if _, err := cs.EnsureCandidateNames(); err != nil {
+			slog.Warn("candidate names not written to config", "err", err)
 		}
 	} else {
 		slog.Warn("relevo.db schema is newer; config import skipped")

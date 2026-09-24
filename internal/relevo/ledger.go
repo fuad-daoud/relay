@@ -153,16 +153,15 @@ func recordSpawnFailureLocked(rt Runtime, token, binding string, cause error) {
 
 // Unavailable records that token's provider is rate-limited, so every
 // candidate sharing that provider shows as gated -- a quota is enforced per
-// subscription or key, not per model (spec §1). token must resolve to a
-// configured candidate: a typo is refused rather than recorded.
+// subscription or key, not per model (spec §1). token (a candidate name or a
+// canonical token) must resolve to a configured candidate: a typo is refused
+// rather than recorded.
 func Unavailable(rt Runtime, token string, until time.Time, reason string) (provider string, err error) {
-	ref, err := candidate.ParseRef(token)
+	c, err := rt.Candidates.Resolve(token)
 	if err != nil {
 		return "", err
 	}
-	if _, err := rt.Candidates.Lookup(ref); err != nil {
-		return "", err
-	}
+	ref := c.Ref()
 
 	now := rt.Now()
 	entry := ledger.Entry{
@@ -272,7 +271,19 @@ func Gates(rt Runtime) []ledger.Gate {
 	}
 
 	gates := ledger.Gated(l, rt.Candidates.Refs(), providerOf, rt.Now())
-	return append(gates, rolesMissingGates(rt)...)
+	gates = append(gates, rolesMissingGates(rt)...)
+
+	// A1 §4.4, round 3 F3: every gate carries the candidate's short name
+	// when the set holds its token, so the gates block and `relevo serve
+	// gates` can print it. A token no longer configured leaves Name empty
+	// and the renderers fall back to printing the token. The token stays the
+	// gate's identity.
+	for i := range gates {
+		if name, ok := rt.Candidates.NameFor(gates[i].Token); ok {
+			gates[i].Name = name
+		}
+	}
+	return gates
 }
 
 // rolesMissingGates synthesises an in-memory ledger.RolesMissing gate for
@@ -446,7 +457,9 @@ func gatedNote(rt Runtime, token string) string {
 		return ""
 	}
 
-	return fmt.Sprintf("note: %s is gated: %s; proceeding", token, strings.Join(parts, "; "))
+	// A1 §4.4: the note names the candidate by its short name; a token no
+	// longer configured reads as itself (NameOf returns it unchanged).
+	return fmt.Sprintf("note: %s is gated: %s; proceeding", rt.Candidates.NameOf(token), strings.Join(parts, "; "))
 }
 
 // GatedNote is gatedNote exported for cmd/relevo, which prints it to stderr

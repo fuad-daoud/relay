@@ -38,6 +38,7 @@ func (s *Server) handleCandidates(w http.ResponseWriter, r *http.Request) {
 			token := c.Ref().String()
 			views = append(views, remote.CandidateView{
 				Token: token,
+				Name:  c.Name,
 				Kind:  c.Harness,
 				Gated: gatedMap[token],
 				Pick:  token == pickedToken && pickedToken != "",

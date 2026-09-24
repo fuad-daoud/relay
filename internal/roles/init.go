@@ -99,16 +99,13 @@ func legacyTier(name string, tokens []string, set *candidate.Set, pol policy.Pol
 }
 
 // candidateTier returns the tier tok's configured candidate carries, or "" when
-// tok is not a configured candidate or sets no tier.
+// tok (a candidate name or a token) is not a configured candidate or sets no
+// tier.
 func candidateTier(set *candidate.Set, tok string) string {
 	if set == nil {
 		return ""
 	}
-	ref, err := candidate.ParseRef(tok)
-	if err != nil {
-		return ""
-	}
-	c, err := set.Lookup(ref)
+	c, err := set.Resolve(tok)
 	if err != nil {
 		return ""
 	}

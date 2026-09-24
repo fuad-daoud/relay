@@ -2307,7 +2307,7 @@ func TestStatusHeadlessWorkingShowsPidAndLogTail(t *testing.T) {
 	}
 
 	text := RenderStatus(rep)
-	for _, want := range []string{"  builder  headless       agy      working", fmt.Sprintf("pid %d since", b.Builder.PID), "`" + testAgyRef + "`", "  log      l2\n  log      l3\n  log      l4\n"} {
+	for _, want := range []string{"  builder  headless       agy      working", fmt.Sprintf("pid %d since", b.Builder.PID), "`agy-m`", "  log      l2\n  log      l3\n  log      l4\n"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("RenderStatus lacks %q:\n%s", want, text)
 		}
