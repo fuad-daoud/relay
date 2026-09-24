@@ -237,7 +237,9 @@ func (m Model) updateKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.stack) > 1 {
 			return m, pop()
 		}
-		return m, nil
+		// At the root the top view still gets esc: the fleet clears an
+		// applied filter with it (A4), and every other view ignores it.
+		return m.updateTop(k)
 	case "q":
 		if len(m.stack) == 1 {
 			return m, tea.Quit

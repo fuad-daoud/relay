@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -13,8 +14,8 @@ import (
 )
 
 // fit pads or truncates s to width cells. Truncation is by cell, no
-// ellipsis: at a narrow width an ellipsis costs more than it says. Moved
-// here from rail.go (X2).
+// ellipsis: at a narrow width an ellipsis costs more than it says. It moved
+// into the fleet view in round 2 (X2).
 func fit(s string, width int) string {
 	w := lipgloss.Width(s)
 	if w == width {
@@ -27,8 +28,8 @@ func fit(s string, width int) string {
 }
 
 // ago is a coarse age: minutes under an hour, hours under a day, then days.
-// "" for a zero time, so a caller can omit the fact. Moved here from
-// rail.go (X2).
+// "" for a zero time, so a caller can omit the fact. It moved into the
+// fleet view in round 2 (X2).
 func ago(since, now time.Time) string {
 	if since.IsZero() {
 		return ""
@@ -46,7 +47,8 @@ func ago(since, now time.Time) string {
 }
 
 // whatAge is a row's NOW cell: what the binding is on, and for how long,
-// from the fields Status has today. Moved here from rail.go (X2).
+// from the fields Status has today. It moved into the fleet view in round 2
+// (X2).
 func whatAge(b relevo.BindingStatus, now time.Time) (what, age string) {
 	switch b.Display {
 	case "NEEDS YOU":
@@ -118,19 +120,69 @@ type fleetView struct {
 	sticky    string // the selected row's Key(), so the selection survives reordering
 	top       int    // first visible line index
 	attention bool   // sort order: attention (SortRows true) or name; from the sort pref
+
+	filtering  bool            // the '/' filter input is open and owns every key (A4)
+	filter     textinput.Model // the filter input: the same widget as the cmdline (A4)
+	filterText string          // the applied filter text, kept after the input closes (A4)
 }
 
 // newFleetView builds the table, sorted by attention or by name.
-func newFleetView(attention bool) fleetView { return fleetView{attention: attention} }
+func newFleetView(attention bool) fleetView {
+	return fleetView{attention: attention, filter: newFilterInput()}
+}
 
-// rows is the report's bindings in display order.
+// newFilterInput is the fleet's one-line filter input: the same textinput the
+// command line uses, with a '/' prompt (A4).
+func newFilterInput() textinput.Model {
+	in := textinput.New()
+	in.Prompt = "/"
+	return in
+}
+
+// rows is the report's bindings in display order, with the applied filter
+// (A4).
 func (f fleetView) rows(env Env) []relevo.BindingStatus {
-	return relevo.SortRows(env.Report.Bindings, f.attention)
+	sorted := relevo.SortRows(env.Report.Bindings, f.attention)
+	q := f.activeFilter()
+	if q == "" {
+		return sorted
+	}
+	out := make([]relevo.BindingStatus, 0, len(sorted))
+	for _, b := range sorted {
+		if fleetRowMatches(b, q) {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// activeFilter is the filter in force: the input's text while the input is
+// open, the applied text once it has closed (A4).
+func (f fleetView) activeFilter() string {
+	if f.filtering {
+		return f.filter.Value()
+	}
+	return f.filterText
+}
+
+// fleetRowMatches reports whether text is a case-insensitive substring of any
+// of the row's shown fields: its key, actor, candidate, planner, repo or
+// state (A4).
+func fleetRowMatches(b relevo.BindingStatus, text string) bool {
+	q := strings.ToLower(text)
+	for _, s := range []string{b.Key(), actorCell(b), candidateText(b), b.PlannerName, b.CWD, b.Display} {
+		if strings.Contains(strings.ToLower(s), q) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f fleetView) Crumbs() []string { return []string{"fleet"} }
 
-func (f fleetView) Capturing() bool { return false }
+// Capturing is true while the filter input is open: the shell then forwards
+// ':', '?', 'q' and 'esc' to it (A4).
+func (f fleetView) Capturing() bool { return f.filtering }
 
 func (f fleetView) Keys() []KeyHelp {
 	return []KeyHelp{
@@ -138,11 +190,12 @@ func (f fleetView) Keys() []KeyHelp {
 		{"home/end", "first/last"},
 		{"enter", "open"},
 		{"s", "sort"},
+		{"/", "filter"},
 	}
 }
 
-// Context is the counts line on the left and the sort/refresh state on the
-// right (§5.4).
+// Context is the counts line on the left and the sort, filter and refresh
+// state on the right (§5.4, A3, A4).
 func (f fleetView) Context(env Env) (string, string) {
 	rows := f.rows(env)
 	need, active := 0, 0
@@ -154,12 +207,15 @@ func (f fleetView) Context(env Env) (string, string) {
 			active++
 		}
 	}
-	left := fmt.Sprintf("%d bindings · %d need you · %d active", len(rows), need, active)
+	left := fmt.Sprintf("%d bindings · %s · %d active", len(rows), needsYouCount(need), active)
 	order := "attention"
 	if !f.attention {
 		order = "name"
 	}
 	right := "sort " + order
+	if q := f.activeFilter(); q != "" {
+		right = fmt.Sprintf("filter %q · ", q) + right
+	}
 	if !env.StatusAt.IsZero() {
 		right += faintStyle.Render(" · refreshed " + ago(env.StatusAt, env.Now) + " ago")
 	}
@@ -208,7 +264,7 @@ func (f *fleetView) moveCursor(rows []relevo.BindingStatus, delta int) {
 	f.sticky = rows[c].Key()
 }
 
-// Update handles the fleet's own keys (§5.4).
+// Update handles the fleet's own keys (§5.4, A4).
 func (f fleetView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case statusMsg:
@@ -217,8 +273,25 @@ func (f fleetView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		f.top = f.windowTop(rows, env)
 		return f, nil
 	case tea.KeyMsg:
+		if f.filtering {
+			return f.updateFilter(msg, env)
+		}
 		rows := f.rows(env)
 		switch msg.String() {
+		case "/":
+			f.filtering = true
+			f.filter = newFilterInput()
+			f.filter.Focus()
+			return f, nil
+		case "esc":
+			// esc clears an applied filter before anything else (A4).
+			if f.filterText != "" {
+				f.filterText = ""
+				rows = f.rows(env)
+				f.resolveSticky(rows)
+				f.top = f.windowTop(rows, env)
+			}
+			return f, nil
 		case "up", "k":
 			f.moveCursor(rows, -1)
 		case "down", "j":
@@ -254,6 +327,36 @@ func (f fleetView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	return f, nil
 }
 
+// updateFilter owns every key while the filter input is open: enter keeps the
+// filter and closes the input, esc clears it and closes, everything else goes
+// to the input (A4).
+func (f fleetView) updateFilter(msg tea.KeyMsg, env Env) (View, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		f.filterText = f.filter.Value()
+		f.filtering = false
+		f.filter.Blur()
+		return f.repointed(env), nil
+	case "esc":
+		f.filterText = ""
+		f.filter.SetValue("")
+		f.filtering = false
+		f.filter.Blur()
+		return f.repointed(env), nil
+	}
+	var cmd tea.Cmd
+	f.filter, cmd = f.filter.Update(msg)
+	return f.repointed(env), cmd
+}
+
+// repointed re-resolves the cursor and the window after the filter changed.
+func (f fleetView) repointed(env Env) fleetView {
+	rows := f.rows(env)
+	f.resolveSticky(rows)
+	f.top = f.windowTop(rows, env)
+	return f
+}
+
 func clampCursor(c, n int) int {
 	if c < 0 {
 		return 0
@@ -277,6 +380,23 @@ const (
 	colRepoMin   = 10
 	fleetGutterW = 3
 )
+
+// fleetColumns is the table's fixed columns in order, each with the header
+// name it draws. The header and every row are built from the same plan, so
+// they always show the same columns (A1).
+var fleetColumns = []struct {
+	name  string
+	width int
+}{
+	{"NAME", colNameW},
+	{"ACTOR", colActorW},
+	{"ON", colOnW},
+	{"RND", colRndW},
+	{"STATE", colStateW},
+	{"NOW", colNowW},
+	{"SPEND", colSpendW},
+	{"PLANNER", colPlannerW},
+}
 
 type fleetCell struct {
 	width int
@@ -315,11 +435,32 @@ func nowCell(b relevo.BindingStatus, now time.Time) string {
 	return what + " · " + age
 }
 
+// spendText is the SPEND cell: money only (A2). The measured and estimated
+// dollars sum, a '~' marks a sum with estimated dollars in it, a plan lane
+// reads "plan", and a sub-cent sum reads "<$0.01".
+func spendText(s usage.Spend) string {
+	sum := s.Measured + s.Estimated
+	if sum > 0 {
+		text := fmt.Sprintf("$%.2f", sum)
+		if sum < 0.01 {
+			text = "<$0.01"
+		}
+		if s.Estimated > 0 {
+			text = "~" + text
+		}
+		return text
+	}
+	if s.Plan > 0 {
+		return "plan"
+	}
+	return ""
+}
+
 func spendCell(b relevo.BindingStatus) string {
 	if b.Spend == nil {
 		return ""
 	}
-	return usage.MoneyShort(*b.Spend)
+	return spendText(*b.Spend)
 }
 
 func plannerCell(b relevo.BindingStatus) string {
@@ -348,18 +489,18 @@ func pad(s string, width int) string {
 	return clipName(s, width)
 }
 
-// fleetLineWidth is the drawn width of cells plus a repo cell of repoW
-// columns (0 for none), gutter and two-space joins included.
-func fleetLineWidth(cells []fleetCell, repoW int) int {
+// fleetLineWidth is the drawn width of the columns at idx plus a repo cell of
+// repoW columns (0 for none), gutter and two-space joins included.
+func fleetLineWidth(idx []int, repoW int) int {
 	w := fleetGutterW
-	for i, c := range cells {
+	for i, ci := range idx {
 		if i > 0 {
 			w += 2
 		}
-		w += c.width
+		w += fleetColumns[ci].width
 	}
 	if repoW > 0 {
-		if len(cells) > 0 {
+		if len(idx) > 0 {
 			w += 2
 		}
 		w += repoW
@@ -367,48 +508,73 @@ func fleetLineWidth(cells []fleetCell, repoW int) int {
 	return w
 }
 
-// fleetCells renders one row's cells for width, dropping REPO, then
-// PLANNER, then SPEND, then ACTOR until the fixed columns fit (§4.3).
-func fleetCells(b relevo.BindingStatus, now time.Time, width int) []string {
-	name := fleetCell{colNameW, clipName(b.Key(), colNameW), fgStyle.Bold(true)}
-	actor := fleetCell{colActorW, actorCell(b), dimStyle}
-	on := fleetCell{colOnW, clipName(candidateText(b), colOnW), fgStyle}
-	rnd := fleetCell{colRndW, fmt.Sprintf("r%d", b.Round), dimStyle}
-	state := fleetCell{colStateW, b.Display, stateStyle(b.Display)}
-	nowc := fleetCell{colNowW, nowCell(b, now), dimStyle}
-	spend := fleetCell{colSpendW, spendCell(b), dimStyle}
-	planner := fleetCell{colPlannerW, plannerCell(b), dimStyle}
-
-	repo := repoCell(b)
-
-	// Attempts in drop order: keep all; drop REPO; drop PLANNER too; drop
-	// SPEND too; drop ACTOR too.
-	attempts := [][]fleetCell{
-		{name, actor, on, rnd, state, nowc, spend, planner},
-		{name, actor, on, rnd, state, nowc, spend, planner},
-		{name, actor, on, rnd, state, nowc, spend},
-		{name, actor, on, rnd, state, nowc},
-		{name, on, rnd, state, nowc},
+// fleetColumnPlan is the columns to draw at width: the kept columns' indices
+// and the REPO column's width, 0 when REPO is dropped. REPO drops first,
+// then PLANNER, then SPEND, then ACTOR, until the fixed columns fit (§4.3).
+// The header and every row share it (A1).
+func fleetColumnPlan(width int) (idx []int, repoW int) {
+	all := []int{0, 1, 2, 3, 4, 5, 6, 7}
+	// Attempts in drop order: keep all with REPO; drop REPO; drop PLANNER
+	// too; drop SPEND too; drop ACTOR too.
+	attempts := [][]int{
+		all,
+		all,
+		{0, 1, 2, 3, 4, 5, 6},
+		{0, 1, 2, 3, 4, 5},
+		{0, 2, 3, 4, 5},
 	}
-	repoW := 0
-	for i, cells := range attempts {
+	for i, cols := range attempts {
 		if i == 0 {
 			// With REPO: it takes the rest, at least colRepoMin.
-			w := width - fleetLineWidth(cells, 0) - 2
+			w := width - fleetLineWidth(cols, 0) - 2
 			if w >= colRepoMin {
-				repoW = w
-				break
+				return cols, w
 			}
 			continue
 		}
-		if fleetLineWidth(cells, 0) <= width {
-			return renderFleetCells(cells, "", 0)
+		if fleetLineWidth(cols, 0) <= width {
+			return cols, 0
 		}
 	}
-	if repoW > 0 {
-		return renderFleetCells(attempts[0], repo, repoW)
+	return attempts[len(attempts)-1], 0
+}
+
+// fleetCells renders one row's cells for width, dropping REPO, then
+// PLANNER, then SPEND, then ACTOR until the fixed columns fit (§4.3).
+func fleetCells(b relevo.BindingStatus, now time.Time, width int) []string {
+	values := []fleetCell{
+		{colNameW, clipName(b.Key(), colNameW), fgStyle.Bold(true)},
+		{colActorW, actorCell(b), dimStyle},
+		{colOnW, clipName(candidateText(b), colOnW), fgStyle},
+		{colRndW, fmt.Sprintf("r%d", b.Round), dimStyle},
+		{colStateW, b.Display, stateStyle(b.Display)},
+		{colNowW, nowCell(b, now), dimStyle},
+		{colSpendW, spendCell(b), dimStyle},
+		{colPlannerW, plannerCell(b), dimStyle},
 	}
-	return renderFleetCells(attempts[len(attempts)-1], "", 0)
+	idx, repoW := fleetColumnPlan(width)
+	cells := make([]fleetCell, 0, len(idx))
+	for _, ci := range idx {
+		cells = append(cells, values[ci])
+	}
+	return renderFleetCells(cells, repoCell(b), repoW)
+}
+
+// fleetHeaderCells is the header's cells, in the same columns the rows use
+// at width (A1).
+func fleetHeaderCells(width int) []string {
+	idx, repoW := fleetColumnPlan(width)
+	cells := make([]fleetCell, 0, len(idx))
+	for _, ci := range idx {
+		cells = append(cells, fleetCell{fleetColumns[ci].width, fleetColumns[ci].name, faintStyle.Bold(true)})
+	}
+	return renderFleetCells(cells, "REPO", repoW)
+}
+
+// fleetHeaderLine is the table's header body line: the same 3-cell gutter,
+// the column names and REPO, fitted to width (A1).
+func fleetHeaderLine(width int) string {
+	return fit("   "+strings.Join(fleetHeaderCells(width), "  "), width)
 }
 
 func renderFleetCells(cells []fleetCell, repo string, repoW int) []string {
@@ -464,6 +630,25 @@ func (f fleetView) fleetLines(env Env, width int) []fleetLine {
 	return out
 }
 
+// fixedRows is the body lines above the table's rows that never scroll: the
+// header, and the filter input while it is open (A1, A4).
+func (f fleetView) fixedRows() int {
+	n := 1
+	if f.filtering {
+		n++
+	}
+	return n
+}
+
+// tableHeight is the rows' window height: the body box less the fixed lines.
+func (f fleetView) tableHeight(env Env) int {
+	h := bodyHeight(env) - f.fixedRows()
+	if h < 0 {
+		return 0
+	}
+	return h
+}
+
 // windowTop is the first line to draw so every line of the cursor's row is
 // visible in height lines, moving top as little as possible.
 func (f fleetView) windowTopLines(lines []fleetLine, height int) int {
@@ -499,24 +684,37 @@ func (f fleetView) windowTopLines(lines []fleetLine, height int) int {
 }
 
 func (f fleetView) windowTop(rows []relevo.BindingStatus, env Env) int {
-	return f.windowTopLines(f.fleetLines(env, env.Width), bodyHeight(env))
+	return f.windowTopLines(f.fleetLines(env, env.Width), f.tableHeight(env))
 }
 
-// Body is the table, loading prose, or the empty block (§5.4).
+// Body is the header and the table, the loading prose, or the empty block
+// (§5.4, A1). The header does not scroll and neither the loading nor the
+// empty body has one.
 func (f fleetView) Body(env Env, width, height int) string {
 	if !env.Loaded {
 		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
 	}
-	if len(f.rows(env)) == 0 {
+	if len(env.Report.Bindings) == 0 {
 		return strings.Join(emptyPaneBlock(width, height), "\n")
 	}
-	lines := f.fleetLines(env, width)
-	start := f.windowTopLines(lines, height)
-	end := len(lines)
-	if height > 0 && start+height < end {
-		end = start + height
+	var fixed []string
+	if f.filtering {
+		fixed = append(fixed, fit(f.filter.View(), width))
 	}
-	var out []string
+	fixed = append(fixed, fleetHeaderLine(width))
+
+	rowsH := height - len(fixed)
+	if rowsH < 0 {
+		rowsH = 0
+	}
+	lines := f.fleetLines(env, width)
+	start := f.windowTopLines(lines, rowsH)
+	end := len(lines)
+	if rowsH > 0 && start+rowsH < end {
+		end = start + rowsH
+	}
+	out := make([]string, 0, height)
+	out = append(out, fixed...)
 	for _, l := range lines[start:end] {
 		out = append(out, l.text)
 	}

@@ -171,9 +171,9 @@ func (p *roundPane) fillViewport() {
 // invalidate re-reads the row: when the newest log timestamp moved it drops
 // the caches, re-points the round and re-fetches the active tab. gone is
 // true when the row is no longer in the report; the pane is then left
-// untouched and Model handles the screen, the notice and the split
-// re-point. This is the part of Model.maybeInvalidate after its first
-// guard; Model keeps that guard and the gone branch.
+// untouched and Model handles the screen, the notice and the re-point. This
+// is the part of Model.maybeInvalidate after its first guard; Model keeps
+// that guard and the gone branch.
 func (p roundPane) invalidate() (roundPane, tea.Cmd, bool) {
 	r := row(p.report, p.detail.name)
 	if r == nil {

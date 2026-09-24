@@ -125,6 +125,16 @@ func bodyHeight(env Env) int {
 	return h
 }
 
+// needsYouCount is the needs-you phrase the header and the fleet's context
+// line share, so the two can never drift: "1 needs you" for one, "N need
+// you" otherwise (A3).
+func needsYouCount(n int) string {
+	if n == 1 {
+		return "1 needs you"
+	}
+	return fmt.Sprintf("%d need you", n)
+}
+
 // headerView is row 1: the breadcrumb on the left, attention and the clock
 // on the right, on the header bar (§5.3).
 func (m Model) headerView(env Env) string {
@@ -142,10 +152,8 @@ func (m Model) headerView(env Env) string {
 			n++
 		}
 	}
-	if n == 1 {
-		right = append(right, stateNeedsYouStyle.Render("● 1 needs you"))
-	} else if n > 1 {
-		right = append(right, stateNeedsYouStyle.Render(fmt.Sprintf("● %d need you", n)))
+	if n > 0 {
+		right = append(right, stateNeedsYouStyle.Render("● "+needsYouCount(n)))
 	}
 	for _, g := range env.Report.Gated {
 		right = append(right, stateNeedsYouStyle.Render(fmt.Sprintf("%s gated %s", g.Token, relevo.GateUntilText(g.Until))))

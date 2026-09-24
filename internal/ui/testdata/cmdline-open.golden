@@ -1,11 +1,12 @@
  relevo › fleet                                                                         ● 1 needs you  ·  codex gated until 15:30  ·  14:02 
-6 bindings · 1 need you · 3 active                                                                         sort attention · refreshed 0s ago
+6 bindings · 1 needs you · 3 active                                                                        sort attention · refreshed 0s ago
 :a                                                                                                                                          
 ▸ round api  open api                                                                                                                       
   round atlas  open atlas                                                                                                                   
                                                                                                                                             
+   atlas           builder       -                       r4    ACTIVE      working                   $0.16     architect-1                  
    worker          builder       opencode-1              r2    ACTIVE      working                             architect-1                  
-   ledger          builder       -                       r3    PAUSED      paused                    $1.23 ·…  architect-1                  
+   ledger          builder       -                       r3    PAUSED      paused                    ~$1.63    architect-1                  
    docs            builder       -                       r1    DONE        done · 3h                           architect-1     /home/x/docs 
                                                                                                                                             
                                                                                                                                             
@@ -35,6 +36,5 @@
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
-                                                                                                                                            
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-↑↓ move   home/end first/last   enter open   s sort   : command   ? help   q quit                                                           
+↑↓ move   home/end first/last   enter open   s sort   / filter   : command   ? help   q quit                                                

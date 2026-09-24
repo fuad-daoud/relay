@@ -347,11 +347,10 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   background command and ends its turn: Claude Code wakes the session when the
   command exits, with the report in its output (see
   [Claude Code plugin](#claude-code-plugin)).
-- `relevo ui [--interval D] [--dashboard]` — interactive reader: at 110 columns or more, a rail
-  of bindings grouped by state beside a pane showing the selected binding's
-  report, terminal, diff or log; narrower terminals get the list-then-detail
-  flow. `--dashboard` opens on the dashboard screen (`d` reaches it from the
-  fleet).
+- `relevo ui [--interval D] [:view [args]]` — the cockpit: `:fleet`, `:rounds [query]`,
+  `:round <binding> [N]`. `:fleet` is the root table of bindings; `enter` opens its round
+  detail, `esc` goes back, `:` the command line, `?` the key list. `relevo ui :rounds`
+  opens the rounds grid directly (`:rounds` reaches it from the fleet).
 - `relevo bind --worktree --name N [--builder CANDIDATE] [--role R] [--cwd DIR] [--feature LABEL]` — attach an
   additional builder to this planner on its own git worktree, starting at
   round 1. This is how one planner drives several builders at once.
@@ -531,21 +530,24 @@ not_done: []            # adjacent work you deliberately left
 
 The four valid statuses are `done`, `halted`, `blocked`, and `deferred`. A missing or malformed block closes the round as `unstructured` without error or refusal. When `changed_paths` does not match git's count of changed files, relevo notes the discrepancy as `paths: report N, diff M` on the diff entry.
 
-### Interactive reader: relevo ui
+### The cockpit: relevo ui
 
-`relevo ui` is a full-screen terminal reader for live bindings. `relevo status`
-remains the tool for shell pipes and scripts (`watch -n2 relevo status` for a
-ticker); `relevo ui` is the interactive sibling that lets you inspect substance
-instead of just state.
+`relevo ui [:view [args]]` is the cockpit: a full-screen terminal reader for
+live bindings. `relevo status` remains the tool for shell pipes and scripts
+(`watch -n2 relevo status` for a ticker); `relevo ui` is the interactive
+sibling that lets you inspect substance instead of just state.
 
-It is strictly **read-only**: it never mutates state and never appends to
-round logs. It holds the state lock only for the duration of a read, exactly
-as `relevo status` does.
+It is **read-only** until B2 of the cockpit plan
+(`docs/specs/2026-09-24-cockpit-design.md`): it never mutates state and never
+appends to round logs. It holds the state lock only for the duration of a
+read, exactly as `relevo status` does.
 
-At 110 columns or more, a rail of bindings grouped by state sits beside a
-pane showing the selected binding's plan, report, terminal, diff or log
-(`⏎` focuses the pane, `s` toggles attention and name order); narrower
-terminals get the list-then-detail flow. The pane's five tabs:
+`:fleet` is the root: every binding as a table row (name, actor, candidate,
+round, state, age, spend, planner, repo). `s` toggles attention and name
+order and `/` filters the rows; `enter` opens the selected binding's round
+detail, `esc` goes back to it, `:` opens the command line (`:fleet`,
+`:rounds [query]`, `:round <binding> [N]`), `?` lists every key, and `q`
+quits at the root. The pane's five tabs:
 - **plan** — the round's own plan file, first in the order (#183).
 - **report** — that round's planner-bound report or question payload.
 - **terminal** — recent live terminal output from the builder's log.
@@ -560,13 +562,13 @@ when it closes", "diff is captured when round N closes") rather than
 showing stale content.
 
 
-### `relevo ui`'s dashboard: every round, filtered and regrouped
+### `relevo ui`'s `:rounds` view: every round, filtered and regrouped
 
-`d` opens a second screen: every round relevo's database has recorded, live or
-archived, as a grid. It is the same data `relevo history` reads, with the query
-language as a filter line and the sums of `--by` above the rows. `d` or `esc`
-returns to the fleet with the query intact; `relevo ui --dashboard` opens here
-directly.
+`:rounds` opens a second view: every round relevo's database has recorded, live
+or archived, as a grid. It is the same data `relevo history` reads, with the
+query language as a filter line and the sums of `--by` above the rows. `esc`
+returns to the fleet with the query intact; `relevo ui :rounds` opens here
+directly, and `relevo ui :rounds harness:agy` opens it with a query.
 
 The first line is the applied query and the regroup axis; under it a tiles
 line — `rounds 57   cost $14.20 (3 unknown)   tokens 41.2M   halted 4 · exited
@@ -594,34 +596,23 @@ rounds beneath it. `s` cycles the sort column for the level under the cursor
 (rounds: started, cost, tokens, duration, commits; groups: cost, rounds,
 halted, last) and `S` flips the direction; `r` re-queries now, and the fleet's
 tick re-queries at most every 10 seconds while the screen is up. `enter` on a
-round row opens the fleet pointed at that binding and round -- scope `all` is
-turned on first when the binding is not live. The query text and the sort
-column are remembered in `ui.json`.
+round row opens that binding's round detail, live or archived. The query text
+and the sort column are remembered in the machine database.
 
 Below 140 columns the grid drops `gate`, below 120 `tree` and `commits`, below
 100 `tokens`; `cost` always stays. A round's cost reads `unknown` as `?`, a
 round with no usage at all as `-`; archived rounds are dim; the same filter
 grammar is documented in full under `relevo history`.
 
-### `relevo ui`'s `all` scope: every binding, not just today's
+### `relevo ui`'s archived bindings: every binding, not just today's
 
-`a` toggles the rail between `live` (today's bindings, the default) and
-`all` -- every binding the database has ever recorded (#172), read through
-the same `relevo.Bindings` query `relevo history --here` uses: inside a git
-repo, only that repo's bindings; otherwise every one. `all` is persisted in
-`ui.json`, so the ui reopens in whichever scope you left it.
-
-In `all` scope the rail is the live rows exactly as `live` shows them,
-followed by every database row not already live, dimmed and never
-reordered by attention: a name, `archived <date>` where the state word
-goes (or `done` for a binding the database recorded but no tarball ever
-archived), and a second line `rN · <age> · feature <label>` (the feature
-clause only when one is set). Selecting an archived row opens the same
-five tabs, reading the database instead of files -- `terminal` renders the
-round's stored transcript rows and does not follow a tail, since nothing
-about an archived round is still moving. A database relevo cannot open
-shows `no database: <err>` in the rail and the scope stays on `live`;
-`relevo ui` never exits over it.
+The fleet lists live bindings only. Every binding the database has ever
+recorded stays reachable through `:rounds`: its grid carries archived rounds
+too, and `enter` on one opens the same five tabs, reading the database instead
+of files -- `terminal` renders the round's stored transcript rows and does not
+follow a tail, since nothing about an archived round is still moving. A
+database relevo cannot open shows `no database: <err>` as a sticky notice and
+refuses `:rounds`; `relevo ui` never exits over it.
 
 ### Headless builders
 
@@ -744,7 +735,7 @@ most once every `progress_interval_ms` (default thirty seconds).
 - **`stale <age>`** -- a `NEEDS YOU` binding has sat unacted for
   `stale_after_ms` (default four hours). The age is measured from the halt, or
   from the newest log entry when the binding has none. The word follows the
-  state word in `relevo status`, joins the card in `relevo ui`, and puts the row
+  state word in `relevo status`, joins the row in `relevo ui`, and puts the row
   first inside its attention group; the daemon fires one `binding_stale` hook
   event per episode.
 
@@ -1963,8 +1954,8 @@ Where you see it: `relevo show --log` prints the round line under each report
 (`⎿ opencode/cline-pass/glm-5.3-flash  14m  in 2k  cache 166k (91%)  write 14k  out 12k  $0.41`);
 `relevo status` adds a `usage` row (newest round) and a `spend` row
 (the binding's total: `4 rounds +2c · $1.23 · ~$0.40 · 2 unknown · 2.1M tok`), both
-on `--json` as `last_usage` and `spend`; `relevo ui` shows the total on
-the card and in the header.
+on `--json` as `last_usage` and `spend`; `relevo ui` shows the total in
+the fleet's SPEND column and in the round pane's `spend` row.
 
 A remote builder's round is measured on the server, from the builder's
 own stream there, and shipped with the round: the client keeps the

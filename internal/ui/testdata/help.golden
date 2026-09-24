@@ -1,5 +1,5 @@
  relevo › fleet                                                                         ● 1 needs you  ·  codex gated until 15:30  ·  14:02 
-6 bindings · 1 need you · 3 active                                                                         sort attention · refreshed 0s ago
+6 bindings · 1 needs you · 3 active                                                                        sort attention · refreshed 0s ago
 global                                                                                                                                      
 :            command                                                                                                                        
 /            filter                                                                                                                         
@@ -12,7 +12,7 @@ view
 home/end     first/last                                                                                                                     
 enter        open                                                                                                                           
 s            sort                                                                                                                           
-                                                                                                                                            
+/            filter                                                                                                                         
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
@@ -37,4 +37,4 @@ s            sort
                                                                                                                                             
                                                                                                                                             
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-↑↓ move   home/end first/last   enter open   s sort   : command   ? help   q quit                                                           
+↑↓ move   home/end first/last   enter open   s sort   / filter   : command   ? help   q quit                                                

@@ -89,7 +89,7 @@ relevo CLI      Invoked by the PLANNER through its Bash tool. Harness-agnostic, 
                  relevo unbind <name>
                  relevo status [--json] [--line]
                  relevo show <name> [--report|--diff|--log]
-                 relevo ui
+                 relevo ui [:view [args]]
 
 relayd         One daemon per herdr session. Watches herdr agent state. Three jobs only:
                  1. builder -> idle    : deliver its report to the planner
@@ -309,7 +309,7 @@ Three display states cover everything: **ACTIVE** (someone is working), **NEEDS 
   the pending report.
 - `relevo show <name> --log` — every relayed message: round, direction, file, timestamp. The
   audit trail for "what did the planner actually tell the builder".
-- `relevo ui` — interactive reader over the same: report, terminal, diff and log tabs.
+- `relevo ui [:view [args]]` — the cockpit: the `:fleet` table, round detail and the `:rounds` grid.
 - `relevo status --line` — one row per binding this planner owns, for Claude Code's `statusLine` setting; store-only, never probes the harness (spec `docs/specs/2026-09-13-statusline-design.md`).
 
 All agent rows are derived live from herdr on each call. Relevo holds no truth herdr already
@@ -410,5 +410,6 @@ so the next send is silent. It self-heals after one round.
 - Cross-machine relaying (herdr `--remote` exists; not needed yet).
 - A TUI in the original scope: `relevo status` / `relevo watch` were enough. Superseded by
   [`docs/specs/2026-09-08-relevo-tui-design.md`](specs/2026-09-08-relevo-tui-design.md), which
-  designs `relevo ui` as a read-only reader. `relevo watch` (status on a ticker) was dropped in
+  designs `relevo ui` as the cockpit, read-only until B2 of the cockpit plan
+  (docs/specs/2026-09-24-cockpit-design.md). `relevo watch` (status on a ticker) was dropped in
   favour of `watch -n2 relevo status` once `ui` existed (#114).

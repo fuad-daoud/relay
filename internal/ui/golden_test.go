@@ -170,7 +170,9 @@ func goldenArchivedRoundModel(t *testing.T, width, height int) Model {
 	return res.(Model)
 }
 
-// goldenRoundsModel hosts the dashboard with its rows fed.
+// goldenRoundsModel hosts the dashboard with its rows fed, reached through
+// the shell's start command so the breadcrumb reads relevo › rounds, as the
+// real `:rounds` does (A5).
 func goldenRoundsModel(t *testing.T, width, height int) Model {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -179,16 +181,17 @@ func goldenRoundsModel(t *testing.T, width, height int) Model {
 	}
 	t.Cleanup(func() { d.Close() })
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st, DB: d}}, Options{Interval: time.Second})
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st, DB: d}},
+		Options{Interval: time.Second, Start: "rounds"})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
-	m.statusLoaded = true
-	v, _, err := newRoundsView(m.env(), "", "")
-	if err != nil {
-		t.Fatalf("newRoundsView: %v", err)
+	m.statusInFlight = false
+	res, cmd := m.Update(statusMsg{report: relevo.Report{}})
+	m = drain(t, res.(Model), cmd)
+	if _, ok := m.top().(roundsView); !ok {
+		t.Fatalf("Start=rounds must replace the stack, top is %T", m.top())
 	}
-	m.stack = append(m.stack, v)
 	res, _ = m.Update(dash.RowsMsg{Rows: dashRows(), At: railNow})
 	return res.(Model)
 }
@@ -211,6 +214,21 @@ func TestGoldenViews(t *testing.T) {
 			name: "fleet-narrow-80", width: 80, height: 30,
 			build: func(t *testing.T) Model {
 				return goldenModel(t, 80, 30, relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
+			},
+		},
+		{
+			name: "fleet-filtered", width: 140, height: 40,
+			build: func(t *testing.T) Model {
+				m := goldenModel(t, 140, 40, relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
+				key := func(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
+				res, _ := m.Update(key('/'))
+				m = res.(Model)
+				for _, r := range "web" {
+					res, _ = m.Update(key(r))
+					m = res.(Model)
+				}
+				res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+				return res.(Model)
 			},
 		},
 		{

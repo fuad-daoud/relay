@@ -1,13 +1,13 @@
  relevo › fleet                                                                         ● 1 needs you  ·  codex gated until 15:30  ·  14:02 
-6 bindings · 1 needs you · 3 active                                                                        sort attention · refreshed 0s ago
+1 bindings · 1 needs you · 0 active                                                         filter "web" · sort attention · refreshed 0s ago
    NAME            ACTOR         ON                      RND   STATE       NOW                       SPEND     PLANNER         REPO         
 ▎  webshop         builder       -                       r4    NEEDS YOU   question · 2m             $9.40     architect-1                  
      └ which branch should r4 target?                                                                                                       
-   api             builder       -                       r2    ACTIVE      working                             architect-1                  
-   atlas           builder       -                       r4    ACTIVE      working                   $0.16     architect-1                  
-   worker          builder       opencode-1              r2    ACTIVE      working                             architect-1                  
-   ledger          builder       -                       r3    PAUSED      paused                    ~$1.63    architect-1                  
-   docs            builder       -                       r1    DONE        done · 3h                           architect-1     /home/x/docs 
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
+                                                                                                                                            
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
