@@ -1893,3 +1893,121 @@ func TestStatusJSONCarriesStructuredFields(t *testing.T) {
 
 // TestStatusRowBranch: the worktree branch reaches the row; a --cwd
 // binding (no branch) leaves it empty.
+
+func TestRoundFacts(t *testing.T) {
+	t0 := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+	t1 := t0.Add(1 * time.Minute)
+	t2 := t0.Add(2 * time.Minute)
+	t3 := t0.Add(3 * time.Minute)
+	u1 := &usage.Usage{Tokens: usage.Tokens{In: 1000}}
+
+	tests := []struct {
+		name      string
+		entries   []store.LogEntry
+		wantStart time.Time
+		wantEnd   time.Time
+		wantUsage *usage.Usage
+	}{
+		{
+			name:      "empty log",
+			entries:   nil,
+			wantStart: time.Time{},
+			wantEnd:   time.Time{},
+			wantUsage: nil,
+		},
+		{
+			name: "plan r1",
+			entries: []store.LogEntry{
+				{TS: t0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
+			},
+			wantStart: t0,
+			wantEnd:   time.Time{},
+			wantUsage: nil,
+		},
+		{
+			name: "plan r1, report r1 with usage",
+			entries: []store.LogEntry{
+				{TS: t0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
+				{TS: t1, Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: u1},
+			},
+			wantStart: t0,
+			wantEnd:   t1,
+			wantUsage: u1,
+		},
+		{
+			name: "plan r1, report r1 (usage U1), plan r2",
+			entries: []store.LogEntry{
+				{TS: t0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
+				{TS: t1, Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: u1},
+				{TS: t2, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
+			},
+			wantStart: t2,
+			wantEnd:   time.Time{},
+			wantUsage: nil,
+		},
+		{
+			name: "plan r2, later plan r2 (nudge or switch), report r2",
+			entries: []store.LogEntry{
+				{TS: t0, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
+				{TS: t1, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
+				{TS: t2, Round: 2, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: u1},
+			},
+			wantStart: t0,
+			wantEnd:   t2,
+			wantUsage: u1,
+		},
+		{
+			name: "plan r1, report r1 (U1), plan r2, report r2 with nil usage",
+			entries: []store.LogEntry{
+				{TS: t0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
+				{TS: t1, Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: u1},
+				{TS: t2, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
+				{TS: t3, Round: 2, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: nil},
+			},
+			wantStart: t2,
+			wantEnd:   t3,
+			wantUsage: nil,
+		},
+		{
+			name: "plan r1, findings entry with usage, question and answer entries",
+			entries: []store.LogEntry{
+				{TS: t0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
+				{TS: t1, Round: 1, Kind: store.KindFindings, Direction: store.DirToPlanner, Usage: u1},
+				{TS: t2, Round: 1, Kind: store.KindQuestion, Direction: store.DirToPlanner},
+				{TS: t3, Round: 1, Kind: store.KindAnswer, Direction: store.DirToBuilder},
+			},
+			wantStart: t0,
+			wantEnd:   time.Time{},
+			wantUsage: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotStart, gotEnd, gotUsage := roundFacts(tt.entries)
+			if !gotStart.Equal(tt.wantStart) {
+				t.Errorf("start = %v, want %v", gotStart, tt.wantStart)
+			}
+			if !gotEnd.Equal(tt.wantEnd) {
+				t.Errorf("end = %v, want %v", gotEnd, tt.wantEnd)
+			}
+			if tt.wantUsage == nil {
+				if gotUsage != nil {
+					t.Errorf("usage = %+v, want nil", gotUsage)
+				}
+			} else {
+				if gotUsage == nil {
+					t.Fatalf("usage is nil, want %+v", tt.wantUsage)
+				}
+				if *gotUsage != *tt.wantUsage {
+					t.Errorf("usage = %+v, want %+v", gotUsage, tt.wantUsage)
+				}
+				for _, e := range tt.entries {
+					if e.Usage != nil && gotUsage == e.Usage {
+						t.Errorf("gotUsage must be a fresh copy, but shares pointer with log entry")
+					}
+				}
+			}
+		})
+	}
+}

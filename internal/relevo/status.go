@@ -145,6 +145,18 @@ type BindingStatus struct {
 	// harness's record on this call (#234). nil when no round is open or
 	// nothing is readable yet. Never recorded, never summed into Spend.
 	LiveUsage *usage.Usage `json:"live_usage,omitempty"`
+	// RoundStart is the TS of the earliest KindPlan + DirToBuilder entry whose
+	// Round equals the round of the newest such entry. Zero when the log has no
+	// such entry.
+	RoundStart time.Time `json:"round_start,omitzero"`
+	// RoundEnd is the TS of the newest KindReport + DirToPlanner entry with that
+	// same Round and TS >= RoundStart. Zero when none (the round is open).
+	RoundEnd time.Time `json:"round_end,omitzero"`
+	// RoundUsage is a copy of the Usage on the entry that set RoundEnd. Nil when
+	// RoundEnd is zero or that entry's Usage is nil. Never taken from any other entry.
+	RoundUsage *usage.Usage `json:"round_usage,omitempty"`
+	// Server is b.Builder.Server when b.Builder.Remote(); "" otherwise.
+	Server string `json:"server,omitempty"`
 	// Dirty is the rendered rule: the newest close left the tree dirty and
 	// no newer round has been sent, so the uncommitted work is still what
 	// the tree holds. False once a round is running -- a dirty tree is then
@@ -376,6 +388,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus,
 	if b.Builder.Headless() {
 		row.BuilderStatus, row.Headless = headlessStatus(ctx, rt, b)
 	} else if b.Builder.Remote() {
+		row.Server = b.Builder.Server
 		row.BuilderStatus = b.Builder.RemoteStatus
 		if row.BuilderStatus == "" {
 			row.BuilderStatus = "unknown"
@@ -457,6 +470,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus,
 			break
 		}
 	}
+	row.RoundStart, row.RoundEnd, row.RoundUsage = roundFacts(entries)
 	var usages []usage.Usage
 	var consults []bool
 	for _, e := range entries {
@@ -552,6 +566,46 @@ func isPayloadKind(k store.Kind) bool {
 	default:
 		return false
 	}
+}
+
+// roundFacts derives the current round's start, end and report usage from log entries.
+// Pure; no I/O. entries is in log order (oldest first).
+func roundFacts(entries []store.LogEntry) (start, end time.Time, u *usage.Usage) {
+	var targetRound int
+	hasPlan := false
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
+		if e.Kind == store.KindPlan && e.Direction == store.DirToBuilder {
+			targetRound = e.Round
+			hasPlan = true
+			break
+		}
+	}
+	if !hasPlan {
+		return time.Time{}, time.Time{}, nil
+	}
+
+	for i := 0; i < len(entries); i++ {
+		e := entries[i]
+		if e.Kind == store.KindPlan && e.Direction == store.DirToBuilder && e.Round == targetRound {
+			start = e.TS
+			break
+		}
+	}
+
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
+		if e.Kind == store.KindReport && e.Direction == store.DirToPlanner && e.Round == targetRound && !e.TS.Before(start) {
+			end = e.TS
+			if e.Usage != nil {
+				copyU := *e.Usage
+				u = &copyU
+			}
+			break
+		}
+	}
+
+	return start, end, u
 }
 
 // displayState collapses the stored states into the words the human cares
