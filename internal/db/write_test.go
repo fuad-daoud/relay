@@ -419,6 +419,110 @@ func TestSaveCursorReplaces(t *testing.T) {
 	}
 }
 
+// seedMirrorRow inserts one mirror binding and one round of it -- the minimum
+// an artifact or a round transcript hangs off -- and returns the round id.
+func seedMirrorRow(t *testing.T, d *DB, name string, at time.Time, number int) string {
+	t.Helper()
+	bindingID, err := d.UpsertBinding(newTestBinding(name, at))
+	if err != nil {
+		t.Fatalf("UpsertBinding: %v", err)
+	}
+	roundID, err := d.UpsertRound(Round{BindingID: bindingID, Number: number, StartedAt: at, Outcome: OutcomeOpen})
+	if err != nil {
+		t.Fatalf("UpsertRound: %v", err)
+	}
+	return roundID
+}
+
+// TestDeleteArtifactRemovesOnlyTheNamedRow pins DeleteArtifact's contract: it
+// removes exactly the row whose id it is given, leaves the round's other
+// artifacts alone, and treats a missing id as a no-op rather than an error.
+// Mutation that breaks it: drop the WHERE clause, and the sibling artifact
+// below disappears with the named one.
+func TestDeleteArtifactRemovesOnlyTheNamedRow(t *testing.T) {
+	d := openTestDB(t)
+	roundID := seedMirrorRow(t, d, "webshop", time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC), 3)
+
+	report := Artifact{RoundID: roundID, Kind: ArtifactReport, Text: "report\n", Bytes: 7, SHA256: "aa", CapturedAt: time.Now()}
+	if err := d.UpsertArtifact(report); err != nil {
+		t.Fatalf("UpsertArtifact(report): %v", err)
+	}
+	plan := Artifact{RoundID: roundID, Kind: ArtifactPlan, Text: "plan\n", Bytes: 5, SHA256: "bb", CapturedAt: time.Now()}
+	if err := d.UpsertArtifact(plan); err != nil {
+		t.Fatalf("UpsertArtifact(plan): %v", err)
+	}
+
+	got, ok, err := d.Artifact(roundID, ArtifactReport)
+	if err != nil || !ok {
+		t.Fatalf("Artifact(report) = (ok %v, err %v), want (true, nil)", ok, err)
+	}
+
+	if err := d.Tx(func(tx *Tx) error { return tx.DeleteArtifact(got.ID) }); err != nil {
+		t.Fatalf("DeleteArtifact: %v", err)
+	}
+
+	if _, ok, err := d.Artifact(roundID, ArtifactReport); err != nil || ok {
+		t.Errorf("Artifact(report) after delete = (ok %v, err %v), want (false, nil)", ok, err)
+	}
+	if _, ok, err := d.Artifact(roundID, ArtifactPlan); err != nil || !ok {
+		t.Errorf("Artifact(plan) after deleting the report = (ok %v, err %v), want (true, nil)", ok, err)
+	}
+
+	if err := d.Tx(func(tx *Tx) error { return tx.DeleteArtifact(got.ID) }); err != nil {
+		t.Errorf("DeleteArtifact(a missing id): %v, want nil", err)
+	}
+}
+
+// TestDeleteRoundTranscriptLeavesPlannerRows pins DeleteRoundTranscript's
+// contract: it removes the round-owned rows of one owner id and returns how
+// many, while a planner-owned row carrying the same owner id survives --
+// because the owner kind is hard-coded to 'round', never taken from the
+// caller. Mutation that breaks it: pass the caller's owner kind through, and
+// the planner rows are deleted too.
+func TestDeleteRoundTranscriptLeavesPlannerRows(t *testing.T) {
+	d := openTestDB(t)
+	const ownerID = "owner-shared-by-both-kinds"
+	recs := []TranscriptRecord{
+		{Seq: 0, Rendered: "one"},
+		{Seq: 1, Rendered: "two"},
+	}
+
+	if _, err := d.AppendTranscript(OwnerRound, ownerID, recs); err != nil {
+		t.Fatalf("AppendTranscript(round): %v", err)
+	}
+	if _, err := d.AppendTranscript(OwnerPlanner, ownerID, recs); err != nil {
+		t.Fatalf("AppendTranscript(planner): %v", err)
+	}
+
+	var n int64
+	if err := d.Tx(func(tx *Tx) error {
+		var derr error
+		n, derr = tx.DeleteRoundTranscript(ownerID)
+		return derr
+	}); err != nil {
+		t.Fatalf("DeleteRoundTranscript: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("DeleteRoundTranscript deleted %d rows, want 2", n)
+	}
+
+	roundRows, err := d.Transcript(OwnerRound, ownerID, 0, 0)
+	if err != nil {
+		t.Fatalf("Transcript(round): %v", err)
+	}
+	if len(roundRows) != 0 {
+		t.Errorf("round transcript has %d rows after the delete, want 0", len(roundRows))
+	}
+
+	plannerRows, err := d.Transcript(OwnerPlanner, ownerID, 0, 0)
+	if err != nil {
+		t.Fatalf("Transcript(planner): %v", err)
+	}
+	if len(plannerRows) != len(recs) {
+		t.Errorf("planner transcript has %d rows, want %d (it must be untouched)", len(plannerRows), len(recs))
+	}
+}
+
 func TestWriterRejectsInvalidEnum(t *testing.T) {
 	d := openTestDB(t)
 	bindingID, err := d.UpsertBinding(newTestBinding("webshop", time.Now()))
