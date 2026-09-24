@@ -109,13 +109,17 @@ func finishRound(t *testing.T, serverRT relevo.Runtime, name string, round int, 
 	runGit(t, worktree, "add", "hello.txt")
 	runGit(t, worktree, "commit", "-m", commitMsg)
 
+	// A builder writes its done marker and then exits: in that order, so a
+	// server tick running in the background between the two can never see an
+	// exited builder with a report but no marker (the unmarked close) -- the
+	// race that made TestRemoteRoundCollectedAfterClientWasAway flaky on macOS.
+	if err := os.WriteFile(serverRT.Store.DonePath(name, round), []byte(""), 0o644); err != nil {
+		t.Fatalf("finishRound: write done marker: %v", err)
+	}
+
 	if sr, ok := serverRT.Runner.(*scriptRunner); ok {
 		sr.mu.Lock()
 		sr.alive = false
 		sr.mu.Unlock()
-	}
-
-	if err := os.WriteFile(serverRT.Store.DonePath(name, round), []byte(""), 0o644); err != nil {
-		t.Fatalf("finishRound: write done marker: %v", err)
 	}
 }
