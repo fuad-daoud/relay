@@ -1,4 +1,4 @@
-format 3
+format 4
 base
 base_ref
 branch
@@ -19,6 +19,10 @@ builder.remote_live.exploring_since
 builder.remote_live.gating_since
 builder.remote_live.last_progress_at
 builder.remote_live.pid
+builder.remote_live.prior_tokens.cache_read
+builder.remote_live.prior_tokens.cache_write
+builder.remote_live.prior_tokens.in
+builder.remote_live.prior_tokens.out
 builder.remote_live.started_at
 builder.remote_live.tail[]
 builder.remote_live.usage.cost.basis
@@ -50,6 +54,7 @@ builder.started_at
 builder.stream_offset
 builder.stream_round
 builder.stream_session_id
+builder.stream_start
 builder.transcript_locator
 builder_candidate
 builder_missing_since
@@ -74,6 +79,10 @@ consults[].endpoint.remote_live.exploring_since
 consults[].endpoint.remote_live.gating_since
 consults[].endpoint.remote_live.last_progress_at
 consults[].endpoint.remote_live.pid
+consults[].endpoint.remote_live.prior_tokens.cache_read
+consults[].endpoint.remote_live.prior_tokens.cache_write
+consults[].endpoint.remote_live.prior_tokens.in
+consults[].endpoint.remote_live.prior_tokens.out
 consults[].endpoint.remote_live.started_at
 consults[].endpoint.remote_live.tail[]
 consults[].endpoint.remote_live.usage.cost.basis
@@ -105,6 +114,7 @@ consults[].endpoint.started_at
 consults[].endpoint.stream_offset
 consults[].endpoint.stream_round
 consults[].endpoint.stream_session_id
+consults[].endpoint.stream_start
 consults[].endpoint.transcript_locator
 consults[].findings_path
 consults[].id
@@ -171,6 +181,10 @@ planner.remote_live.exploring_since
 planner.remote_live.gating_since
 planner.remote_live.last_progress_at
 planner.remote_live.pid
+planner.remote_live.prior_tokens.cache_read
+planner.remote_live.prior_tokens.cache_write
+planner.remote_live.prior_tokens.in
+planner.remote_live.prior_tokens.out
 planner.remote_live.started_at
 planner.remote_live.tail[]
 planner.remote_live.usage.cost.basis
@@ -202,6 +216,7 @@ planner.started_at
 planner.stream_offset
 planner.stream_round
 planner.stream_session_id
+planner.stream_start
 planner.transcript_locator
 planner_id
 planner_screen

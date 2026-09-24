@@ -166,14 +166,17 @@ func roundClock(b BindingStatus, now time.Time) string {
 }
 
 func roundTokens(b BindingStatus) string {
+	var base int64
 	if b.RoundEnd.IsZero() {
-		if b.LiveUsage != nil && b.LiveUsage.Samples > 0 && b.LiveUsage.Tokens.Total() > 0 {
-			return usage.ShortTokens(b.LiveUsage.Tokens.Total()) + " tok"
+		if b.LiveUsage != nil && b.LiveUsage.Samples > 0 {
+			base = b.LiveUsage.Tokens.Total()
 		}
-		return ""
+	} else if b.RoundUsage != nil {
+		base = b.RoundUsage.Tokens.Total()
 	}
-	if b.RoundUsage != nil && b.RoundUsage.Tokens.Total() > 0 {
-		return usage.ShortTokens(b.RoundUsage.Tokens.Total()) + " tok"
+	total := base + b.RoundPriorTokens.Total()
+	if total > 0 {
+		return usage.ShortTokens(total) + " tok"
 	}
 	return ""
 }

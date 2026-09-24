@@ -716,3 +716,40 @@ func TestRenderStatusLineRemoteServer(t *testing.T) {
 		t.Errorf("expected opencode, got: %q", plainLocal)
 	}
 }
+
+func TestRoundTokensAddsPrior(t *testing.T) {
+	// 1. open round with live 41k plus prior 100k gives "141k tok"
+	b1 := BindingStatus{
+		RoundEnd: time.Time{}, // open
+		LiveUsage: &usage.Usage{
+			Samples: 1,
+			Tokens:  usage.Tokens{In: 41_000},
+		},
+		RoundPriorTokens: usage.Tokens{In: 100_000},
+	}
+	if got := roundTokens(b1); got != "141k tok" {
+		t.Errorf("open roundTokens = %q, want %q", got, "141k tok")
+	}
+
+	// 2. closed with 2.1M plus 0.4M gives "2.5M tok"
+	b2 := BindingStatus{
+		RoundEnd: baseTime, // closed
+		RoundUsage: &usage.Usage{
+			Tokens: usage.Tokens{In: 2_100_000},
+		},
+		RoundPriorTokens: usage.Tokens{In: 400_000},
+	}
+	if got := roundTokens(b2); got != "2.5M tok" {
+		t.Errorf("closed roundTokens = %q, want %q", got, "2.5M tok")
+	}
+
+	// 3. no live samples but prior 100k gives "100k tok"
+	b3 := BindingStatus{
+		RoundEnd:         time.Time{}, // open
+		LiveUsage:        &usage.Usage{Samples: 0},
+		RoundPriorTokens: usage.Tokens{In: 100_000},
+	}
+	if got := roundTokens(b3); got != "100k tok" {
+		t.Errorf("no live samples roundTokens = %q, want %q", got, "100k tok")
+	}
+}

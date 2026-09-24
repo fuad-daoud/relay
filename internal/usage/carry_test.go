@@ -43,7 +43,7 @@ func cachedEntry(t *testing.T, r Reader, path, harness string) *streamCache {
 	if !ok {
 		t.Fatal("production reader expected")
 	}
-	return rd.cache[path+"\x00"+harness]
+	return rd.cache[path+"\x00"+harness+"\x000"]
 }
 
 // TestParseCachedFeedsOnlyAppendedBytes pins the cache's reason to exist

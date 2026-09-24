@@ -164,6 +164,10 @@ type BindingView struct {
 	// no report entry.
 	Rusage *store.Rusage `json:"rusage,omitempty"`
 
+	// PriorTokens is the tokens the server's earlier builders in ClosedRound
+	// used. Nil when zero or when ClosedRound is 0.
+	PriorTokens *usage.Tokens `json:"prior_tokens,omitempty"`
+
 	// StalledSince is the server's stall stamp for a live-but-quiet headless
 	// round (#252), copied onto the client binding for a running round. Zero
 	// from a pre-stall server, and zero when the round is not stalled.
@@ -204,6 +208,7 @@ type LiveView struct {
 	ExitCode       string       `json:"exit_code,omitempty"`
 	Tail           []string     `json:"tail,omitempty"`
 	Usage          *usage.Usage `json:"usage,omitempty"`
+	PriorTokens    usage.Tokens `json:"prior_tokens,omitzero"`
 	Diff           *DiffStat    `json:"diff,omitempty"`
 	LastProgressAt time.Time    `json:"last_progress_at,omitzero"`
 	ExploringSince time.Time    `json:"exploring_since,omitzero"`

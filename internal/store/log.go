@@ -125,6 +125,9 @@ type LogEntry struct {
 	// says whether the dollars were measured, estimated or unknown; a
 	// reader that treats nil as "free" is wrong -- nil is unknown.
 	Usage *usage.Usage `json:"usage,omitempty"`
+	// PriorTokens is only on a report entry that closed a remote round:
+	// the tokens the server's earlier builders in that round used.
+	PriorTokens *usage.Tokens `json:"prior_tokens,omitempty"`
 
 	// Rusage is what the supervisor measured for the round's systemd scope
 	// (#244, #216), on report entries of a headless round the server ran

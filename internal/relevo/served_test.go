@@ -844,9 +844,10 @@ func TestLiveViewOf(t *testing.T) {
 			ExitCode:  "3",
 			Tail:      []string{"line1", "line2"},
 		},
-		LiveUsage:      u,
-		Live:           &LiveDiff{Files: 4, Added: 20, Removed: 5, Shared: true},
-		LastProgressAt: lastProg,
+		LiveUsage:        u,
+		RoundPriorTokens: usage.Tokens{In: 500, Out: 250},
+		Live:             &LiveDiff{Files: 4, Added: 20, Removed: 5, Shared: true},
+		LastProgressAt:   lastProg,
 	}
 	b := store.Binding{
 		ExploringSince: exploring,
@@ -876,6 +877,9 @@ func TestLiveViewOf(t *testing.T) {
 	}
 	if v.Usage != u {
 		t.Errorf("Usage = %v, want %v", v.Usage, u)
+	}
+	if v.PriorTokens != (usage.Tokens{In: 500, Out: 250}) {
+		t.Errorf("PriorTokens = %+v, want in:500 out:250", v.PriorTokens)
 	}
 	if v.Diff == nil || v.Diff.Files != 4 || v.Diff.Added != 20 || v.Diff.Removed != 5 {
 		t.Errorf("Diff = %+v, want Files:4 Added:20 Removed:5", v.Diff)
@@ -919,5 +923,59 @@ func TestLiveViewOf(t *testing.T) {
 	}
 	if !vNil.GatingSince.IsZero() {
 		t.Errorf("GatingSince = %v, want zero", vNil.GatingSince)
+	}
+}
+
+func TestServedViewPriorTokens(t *testing.T) {
+	b := store.Binding{
+		Name:             "api",
+		State:            store.StateActive,
+		Round:            3,
+		BuilderCandidate: "claude-sonnet",
+		Serve: &store.ServeFacts{
+			ClosedRound: 2,
+			AckedRound:  1,
+		},
+	}
+
+	// 1. Server entries with two switches carrying usage in the closed round -> view.PriorTokens is their sum
+	entries := []store.LogEntry{
+		{
+			Round: 2, Kind: store.KindSwitch, Direction: store.DirToPlanner,
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}},
+		},
+		{
+			Round: 2, Kind: store.KindSwitch, Direction: store.DirToPlanner,
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}},
+		},
+		{
+			Round: 2, Kind: store.KindReport, Direction: store.DirToPlanner, Outcome: "done",
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 300, Out: 40}},
+		},
+	}
+	view := ServedView(b, entries)
+	if view.PriorTokens == nil {
+		t.Fatal("view.PriorTokens is nil, want sum of switches")
+	}
+	want := usage.Tokens{In: 300, Out: 80}
+	if *view.PriorTokens != want {
+		t.Errorf("view.PriorTokens = %+v, want %+v", *view.PriorTokens, want)
+	}
+
+	// 2. None -> nil
+	entriesNoSwitch := []store.LogEntry{
+		{
+			Round: 2, Kind: store.KindReport, Direction: store.DirToPlanner, Outcome: "done",
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 300, Out: 40}},
+		},
+	}
+	viewNoSwitch := ServedView(b, entriesNoSwitch)
+	if viewNoSwitch.PriorTokens != nil {
+		t.Errorf("viewNoSwitch.PriorTokens = %+v, want nil", viewNoSwitch.PriorTokens)
+	}
+
+	viewEmpty := ServedView(b, nil)
+	if viewEmpty.PriorTokens != nil {
+		t.Errorf("viewEmpty.PriorTokens = %+v, want nil", viewEmpty.PriorTokens)
 	}
 }

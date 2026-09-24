@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 // runnerOf is the fakeRunner a fixture installed on rt.
@@ -407,5 +408,58 @@ func TestAllGatedHalts(t *testing.T) {
 	}
 	if !strings.Contains(got.Halt, `every candidate serving "builder" is gated`) {
 		t.Fatalf("Halt = %q, want it to contain the ErrAllGated text", got.Halt)
+	}
+}
+
+func TestSwitchRecordsOutgoingUsage(t *testing.T) {
+	rt, b := sentSwitchable(t)
+	b.Builder.StreamStart = 4200
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fu := &fakeUsage{
+		peekSamples: []usage.Sample{
+			{Provider: "other", Tokens: usage.Tokens{In: 500, Out: 200}, USD: 0.15, HasCost: true},
+		},
+	}
+	rt.Usage = fu
+
+	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "rate-limited"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	var out store.Binding
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		out, err = switchBuilder(context.Background(), rt, tx, b, "rate-limited", false, true)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+	if out.BuilderCandidate == b.BuilderCandidate {
+		t.Fatal("switchBuilder did not switch candidate")
+	}
+
+	// Verify peek was called with StreamFrom == outgoing StreamStart
+	if len(fu.peeks) == 0 {
+		t.Fatal("peekUsage was not called")
+	}
+	if fu.peeks[0].StreamFrom != 4200 {
+		t.Errorf("peek StreamFrom = %d, want 4200", fu.peeks[0].StreamFrom)
+	}
+
+	// Verify appended KindSwitch entry's Usage has those tokens
+	sws := switches(t, rt)
+	if len(sws) == 0 {
+		t.Fatal("no KindSwitch entries found")
+	}
+	lastSw := sws[len(sws)-1]
+	if lastSw.Usage == nil {
+		t.Fatal("switch entry has nil Usage")
+	}
+	if lastSw.Usage.Tokens.In != 500 || lastSw.Usage.Tokens.Out != 200 {
+		t.Errorf("switch entry tokens = %+v, want in:500 out:200", lastSw.Usage.Tokens)
 	}
 }
