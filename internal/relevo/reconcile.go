@@ -433,7 +433,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 	closed := ""
 	if !HasEntry(entries, b.Round, store.DirToPlanner, store.KindDiff) {
-		result := CaptureRoundDiff(ctx, rt, b)
+		result := CaptureRoundDiff(ctx, rt, tx, b)
 		facts := CommitFacts(ctx, rt, b)
 		closed = result.EndTree
 		diffNote := DiffSummary(result, facts)

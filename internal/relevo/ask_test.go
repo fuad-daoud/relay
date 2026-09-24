@@ -1174,7 +1174,10 @@ func TestAskRoundFinalMessageBecomesFindings(t *testing.T) {
 	if b.Consults[0].State != store.ConsultDone {
 		t.Fatalf("state = %q, want done", b.Consults[0].State)
 	}
-	body, err := os.ReadFile(c.FindingsPath)
+	if _, err := os.Stat(c.FindingsPath); !os.IsNotExist(err) {
+		t.Fatalf("expected no findings file on disk, got err: %v", err)
+	}
+	body, err := rt.Store.ReadFile(c.FindingsPath)
 	if err != nil {
 		t.Fatalf("read findings: %v", err)
 	}

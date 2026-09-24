@@ -211,7 +211,9 @@ func (s *Store) QuestionPath(name string, round int) string {
 	return s.roundFile(name, round, "question", ".md")
 }
 
-// DiffPath is where a round's captured patch is stored.
+// DiffPath names a round's captured patch. It is a round_file key: relevo
+// stores the patch with Tx.PutRoundFile and never writes it to disk; read it
+// with Store.ReadFile.
 // Layout: <binding dir>/NNN-diff.patch
 func (s *Store) DiffPath(name string, round int) string {
 	return s.roundFile(name, round, "diff", ".patch")
@@ -279,8 +281,9 @@ func (s *Store) AskPath(name string, round int, id string) string {
 	return s.consultFile(name, round, id, "ask", ".md")
 }
 
-// FindingsPath is where a consult is told to write. Its existence is the entire
-// completion gate.
+// FindingsPath names a consult's findings: relevo records the consult's final
+// message under it with Tx.PutRoundFile; it is never a file on disk. Read it
+// with Store.ReadFile.
 // Layout: <binding dir>/NNN-<id>-findings.md
 func (s *Store) FindingsPath(name string, round int, id string) string {
 	return s.consultFile(name, round, id, "findings", ".md")

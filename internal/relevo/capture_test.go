@@ -18,7 +18,13 @@ func TestCaptureRoundDiff_NilGit(t *testing.T) {
 	rt := Runtime{Store: s, Gates: testGateKV(t)}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "abc"}
 
-	res := CaptureRoundDiff(ctx, rt, b)
+	var res DiffResult
+	if err := s.WithLock(func(tx *store.Tx) error {
+		res = CaptureRoundDiff(ctx, rt, tx, b)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if res.Available {
 		t.Fatal("expected Available=false with nil Git")
 	}
@@ -34,7 +40,13 @@ func TestCaptureRoundDiff_ErrNotRepo(t *testing.T) {
 	rt := Runtime{Store: s, Git: fg, Gates: testGateKV(t)}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "abc"}
 
-	res := CaptureRoundDiff(ctx, rt, b)
+	var res DiffResult
+	if err := s.WithLock(func(tx *store.Tx) error {
+		res = CaptureRoundDiff(ctx, rt, tx, b)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if res.Available {
 		t.Fatal("expected Available=false for ErrNotRepo")
 	}
@@ -50,7 +62,13 @@ func TestCaptureRoundDiff_GitFailure(t *testing.T) {
 	rt := Runtime{Store: s, Git: fg, Gates: testGateKV(t)}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "abc"}
 
-	res := CaptureRoundDiff(ctx, rt, b)
+	var res DiffResult
+	if err := s.WithLock(func(tx *store.Tx) error {
+		res = CaptureRoundDiff(ctx, rt, tx, b)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if res.Available {
 		t.Fatal("expected Available=false for git failure")
 	}
@@ -73,7 +91,13 @@ func TestCaptureRoundDiff_EmptyDiff(t *testing.T) {
 	rt := Runtime{Store: s, Git: fg, Gates: testGateKV(t)}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "tree-start"}
 
-	res := CaptureRoundDiff(ctx, rt, b)
+	var res DiffResult
+	if err := s.WithLock(func(tx *store.Tx) error {
+		res = CaptureRoundDiff(ctx, rt, tx, b)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if !res.Available {
 		t.Fatal("expected Available=true for empty diff")
 	}
@@ -82,6 +106,9 @@ func TestCaptureRoundDiff_EmptyDiff(t *testing.T) {
 	}
 	if _, err := os.Stat(s.DiffPath("webshop", 1)); !os.IsNotExist(err) {
 		t.Fatalf("expected no patch file written, got err %v", err)
+	}
+	if _, err := s.ReadFile(s.DiffPath("webshop", 1)); err == nil {
+		t.Fatal("expected no patch row stored, got nil err")
 	}
 	wantLine := "Diff: no file changes"
 	if line := DiffLine(res, CommitResult{}, "", "webshop", 1); line != wantLine {
@@ -102,7 +129,13 @@ func TestCaptureRoundDiff_TruncatedDiff(t *testing.T) {
 	rt := Runtime{Store: s, Git: fg, Gates: testGateKV(t)}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "tree-start"}
 
-	res := CaptureRoundDiff(ctx, rt, b)
+	var res DiffResult
+	if err := s.WithLock(func(tx *store.Tx) error {
+		res = CaptureRoundDiff(ctx, rt, tx, b)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if !res.Available {
 		t.Fatal("expected Available=true for truncated diff")
 	}
@@ -114,6 +147,9 @@ func TestCaptureRoundDiff_TruncatedDiff(t *testing.T) {
 	}
 	if _, err := os.Stat(s.DiffPath("webshop", 1)); !os.IsNotExist(err) {
 		t.Fatalf("expected no patch file written, got err %v", err)
+	}
+	if _, err := s.ReadFile(s.DiffPath("webshop", 1)); err == nil {
+		t.Fatal("expected no patch row stored, got nil err")
 	}
 	wantLine := "Diff: 312 files, +48120 -9033 (patch omitted, over the 4 MiB cap)"
 	if line := DiffLine(res, CommitResult{}, "", "webshop", 1); line != wantLine {
@@ -139,7 +175,13 @@ func TestCaptureRoundDiff_NormalDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res := CaptureRoundDiff(ctx, rt, b)
+	var res DiffResult
+	if err := s.WithLock(func(tx *store.Tx) error {
+		res = CaptureRoundDiff(ctx, rt, tx, b)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if !res.Available {
 		t.Fatal("expected Available=true")
 	}
@@ -148,9 +190,13 @@ func TestCaptureRoundDiff_NormalDiff(t *testing.T) {
 		t.Fatalf("got path %q, want %q", res.Path, expectedPath)
 	}
 
-	data, err := os.ReadFile(expectedPath)
+	if _, err := os.Stat(expectedPath); !os.IsNotExist(err) {
+		t.Fatalf("expected no patch file on disk, got err %v", err)
+	}
+
+	data, err := s.ReadFile(expectedPath)
 	if err != nil {
-		t.Fatalf("read written patch: %v", err)
+		t.Fatalf("read stored patch: %v", err)
 	}
 	if string(data) != "--- a/file\n+++ b/file\n@@ ...\n" {
 		t.Fatalf("unexpected patch content: %s", string(data))
@@ -220,7 +266,13 @@ func TestCaptureRoundDiff_EmptyBaselineSkipsSnapshot(t *testing.T) {
 	rt := Runtime{Store: s, Git: fg, Gates: testGateKV(t)}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: ""}
 
-	res := CaptureRoundDiff(ctx, rt, b)
+	var res DiffResult
+	if err := s.WithLock(func(tx *store.Tx) error {
+		res = CaptureRoundDiff(ctx, rt, tx, b)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if res.Available {
 		t.Fatal("expected Available=false for empty baseline")
 	}
@@ -348,7 +400,13 @@ func TestCaptureRoundDiff_EndTree(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			res := CaptureRoundDiff(ctx, rt, b)
+			var res DiffResult
+			if err := s.WithLock(func(tx *store.Tx) error {
+				res = CaptureRoundDiff(ctx, rt, tx, b)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
 
 			if res.EndTree != tc.wantEndTree {
 				t.Fatalf("EndTree = %q, want %q", res.EndTree, tc.wantEndTree)

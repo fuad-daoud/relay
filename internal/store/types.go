@@ -550,7 +550,7 @@ type Verdict struct {
 	Verdict string `json:"verdict"`
 	// Reasons are the reviewer's reasons, from the block when it parsed.
 	Reasons []string `json:"reasons,omitempty"`
-	// Findings is the path of the findings file the verdict was parsed from;
+	// Findings is the round file key the verdict was parsed from;
 	// "" when the consult wrote none.
 	Findings string `json:"findings"`
 }
@@ -619,7 +619,8 @@ type Consult struct {
 	// stamps RoundStartedAt, and never touches a diff baseline.
 	Round int `json:"round"`
 
-	AskPath      string `json:"ask_path"`
+	AskPath string `json:"ask_path"`
+	// FindingsPath is the round file key read through Store.ReadFile.
 	FindingsPath string `json:"findings_path"`
 
 	State ConsultState `json:"state"`

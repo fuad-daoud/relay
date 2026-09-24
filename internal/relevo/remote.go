@@ -1119,11 +1119,20 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 		}
 	} else {
 		defer rcDiff.Close()
-		if err := writeTempAndRename(rt.Store.DiffPath(name, n), rcDiff); err != nil {
-			slog.Warn("write diff failed", "path", rt.Store.DiffPath(name, n), "err", err)
+		body, err := io.ReadAll(io.LimitReader(rcDiff, git.DefaultMaxPatchBytes+1))
+		if err != nil {
+			slog.Warn("read diff failed", "server", server, "name", name, "round", n, "err", err)
 			return b, nil
 		}
-		diffDownloaded = true
+		if int64(len(body)) > git.DefaultMaxPatchBytes {
+			slog.Warn("remote diff over cap; not stored", "server", server, "name", name, "round", n)
+		} else {
+			if err := tx.PutRoundFile(name, n, rt.Store.DiffPath(name, n), body); err != nil {
+				slog.Warn("store diff failed", "path", rt.Store.DiffPath(name, n), "err", err)
+				return b, nil
+			}
+			diffDownloaded = true
+		}
 	}
 
 	rcLog, err := rt.Remote.RoundFile(ctx, server, name, n, "log")

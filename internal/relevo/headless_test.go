@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -979,6 +980,74 @@ func TestVerifyRoundStartsOnHeadlessClose(t *testing.T) {
 	}
 	if consult.State != store.ConsultRunning {
 		t.Errorf("consult state = %q, want running", consult.State)
+	}
+}
+
+func TestVerifyRoundHandsTheReviewerAGitDiff(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	fg := &fakeGit{
+		headCommitID:   "head1",
+		snapshotTreeID: "tree-end",
+		diffResult:     git.Diff{Stat: git.Stat{FilesChanged: 1, Insertions: 1}, Patch: []byte("PATCH\n")},
+	}
+	rt.Git = fg
+	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
+	rt.Policy.Order = map[string][]string{"reviewer": {testClaudeRef}}
+	rt.NewID = func() string { return verifyConsultID }
+
+	b.RoundVerify = true
+	b.RoundBaselineTree = "tree-base"
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 0)
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if got.Round != 2 {
+		t.Fatalf("round = %d, want 2: the round closed", got.Round)
+	}
+
+	var consult *store.Consult
+	for i := range got.Consults {
+		if got.Consults[i].Role == verifyRole {
+			consult = &got.Consults[i]
+		}
+	}
+	if consult == nil {
+		t.Fatalf("no %q consult on the binding: %+v", verifyRole, got.Consults)
+	}
+
+	q, err := rt.Store.ReadFile(consult.AskPath)
+	if err != nil {
+		t.Fatalf("read ask: %v", err)
+	}
+	if !strings.Contains(string(q), "git diff tree-base tree-end") {
+		t.Errorf("question %q does not contain %q", string(q), "git diff tree-base tree-end")
+	}
+	if strings.Contains(string(q), "diff.patch") {
+		t.Errorf("question %q contains diff.patch", string(q))
+	}
+
+	if _, err := os.Stat(rt.Store.DiffPath("webshop", 1)); !os.IsNotExist(err) {
+		t.Fatalf("expected diff.patch to not exist on disk, got err: %v", err)
+	}
+
+	patch, err := rt.Store.ReadFile(rt.Store.DiffPath("webshop", 1))
+	if err != nil {
+		t.Fatalf("read diff patch: %v", err)
+	}
+	if string(patch) != "PATCH\n" {
+		t.Fatalf("diff patch = %q, want %q", string(patch), "PATCH\n")
 	}
 }
 

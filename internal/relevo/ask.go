@@ -65,8 +65,8 @@ type AskOptions struct {
 	Question string
 }
 
-// AskResult is what an ask produced, so the CLI can tell the planner where the
-// findings will appear without re-deriving the path.
+// AskResult is what an ask produced, so the CLI can print the show command
+// that displays the findings.
 type AskResult struct {
 	Consult store.Consult
 	Binding string

@@ -129,7 +129,7 @@ func seedSpawning(t *testing.T) (Runtime, *fakeClock) {
 			Role:         "reviewer",
 			Round:        1,
 			AskPath:      "/repo/.relevo/consults/7f2a3c1d-ask.md",
-			FindingsPath: "/repo/.relevo/consults/7f2a3c1d-findings.md",
+			FindingsPath: rt.Store.FindingsPath("webshop", 1, "7f2a3c1d"),
 			Endpoint:     store.Endpoint{AgentName: "reviewer", Kind: "claude"},
 			State:        store.ConsultSpawning,
 			SpawnedAt:    baseTime,
@@ -265,7 +265,7 @@ func seedHeadlessConsult(t *testing.T, fr *fakeRunner) (Runtime, store.Consult) 
 // consult running and this fails.
 
 // TestHeadlessConsultFinalMessageBecomesFindings: the process's last
-// assistant message is the findings. Deleting the WriteFile leaves the
+// assistant message is the findings. Deleting the PutRoundFile leaves the
 // consult running and this fails.
 func TestHeadlessConsultFinalMessageBecomesFindings(t *testing.T) {
 	fr := newFakeRunner()
@@ -284,7 +284,10 @@ func TestHeadlessConsultFinalMessageBecomesFindings(t *testing.T) {
 	if b.Consults[0].State != store.ConsultDone {
 		t.Fatalf("state = %q, want done", b.Consults[0].State)
 	}
-	body, err := os.ReadFile(c.FindingsPath)
+	if _, err := os.Stat(c.FindingsPath); !os.IsNotExist(err) {
+		t.Fatalf("expected no findings file on disk, got err: %v", err)
+	}
+	body, err := rt.Store.ReadFile(c.FindingsPath)
 	if err != nil {
 		t.Fatalf("read findings: %v", err)
 	}
@@ -327,7 +330,7 @@ func TestHeadlessConsultExitWithoutTextIsSilent(t *testing.T) {
 	if !strings.Contains(note, c.Endpoint.LogPath) {
 		t.Errorf("note = %q, want it to point at the stream %s", note, c.Endpoint.LogPath)
 	}
-	if _, err := os.Stat(c.FindingsPath); err == nil {
+	if _, err := rt.Store.ReadFile(c.FindingsPath); err == nil {
 		t.Error("a silent consult must write no findings file")
 	}
 }
@@ -380,7 +383,7 @@ func TestHeadlessConsultNoTrailerIsSilentDespiteText(t *testing.T) {
 		return tickConsults(t, rt)
 	}
 
-	assertSilent := func(t *testing.T, c store.Consult, b store.Binding, wants ...string) {
+	assertSilent := func(t *testing.T, rt Runtime, c store.Consult, b store.Binding, wants ...string) {
 		t.Helper()
 		if b.Consults[0].State != store.ConsultSilent {
 			t.Fatalf("state = %q, want silent", b.Consults[0].State)
@@ -397,7 +400,7 @@ func TestHeadlessConsultNoTrailerIsSilentDespiteText(t *testing.T) {
 		if !strings.Contains(note, c.Endpoint.LogPath) {
 			t.Errorf("note = %q, want it to point at the partial output %s", note, c.Endpoint.LogPath)
 		}
-		if _, err := os.Stat(c.FindingsPath); err == nil {
+		if _, err := rt.Store.ReadFile(c.FindingsPath); err == nil {
 			t.Error("a consult with no exit trailer must write no findings file")
 		}
 	}
@@ -408,14 +411,14 @@ func TestHeadlessConsultNoTrailerIsSilentDespiteText(t *testing.T) {
 		rt.StartedAt = baseTime
 		rt.Watched = NewWatched()
 		b := run(t, rt, fr, c)
-		assertSilent(t, c, b, "lost to a daemon restart before it finished", "no exit trailer")
+		assertSilent(t, rt, c, b, "lost to a daemon restart before it finished", "no exit trailer")
 	})
 
 	t.Run("killed by anything else", func(t *testing.T) {
 		fr := newFakeRunner()
 		rt, c := seedHeadlessConsult(t, fr)
 		b := run(t, rt, fr, c)
-		assertSilent(t, c, b, "ended without an exit trailer (killed before it finished)")
+		assertSilent(t, rt, c, b, "ended without an exit trailer (killed before it finished)")
 	})
 }
 

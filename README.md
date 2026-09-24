@@ -1900,17 +1900,12 @@ The planner runs, from its own session:
 relevo ask --actor reviewer --file q.md webshop
 ```
 
-relevo stages the question and starts the agent. The consult reads the staged question, writes its findings to a
-file, and replies with only that path. Findings land under the binding's state
-directory as `NNN-<id>-findings.md` — the exact path is printed when you ask —
-and relevo queues them to the planner like any other report, once the file
-exists. That file's existence is the only completion gate: relevo makes no
-judgements about what the findings say.
-
-A consult is a one-shot process: relevo starts the harness in its print form,
-and the consult's **final message** becomes the findings, which relevo writes
-to `NNN-<id>-findings.md` and queues to the planner. The same form resumes a
-closed round's builder session and runs
+relevo stages the question and starts the agent. A consult is a one-shot process:
+relevo starts the harness in its print form, and the consult's **final message**
+becomes the findings. relevo records them as `NNN-<id>-findings.md` in its
+database, and queues them to the planner like any other report. When you ask,
+`relevo ask` prints the `relevo show <name> --round N --findings <id>` command that
+shows them. The same form resumes a closed round's builder session and runs
 a verifier at round close. The process is the only thing relevo can observe: it is killed at the
 consult timeout (10m), and a process that exits without a final message is
 reported silent with its exit code and the stream to read. The resolved tier
@@ -2086,7 +2081,7 @@ relevo ask --round 1 -q "why did you stop at the second migration?" webshop
 `--round N` looks the session up on round N's report entry and resumes it as a
 headless consult with the harness's own resume form — claude `--resume`, agy
 `--conversation`, opencode `run --session … --fork`. The answer is the
-process's final message, which relevo writes to the usual
+process's final message, which relevo records as the usual
 `NNN-<id>-findings.md` and queues to the planner exactly as any consult's
 findings are. `--actor` and `--candidate` are ignored (with a note on stderr if
 you passed one): resuming a session fixes both. The question comes from
