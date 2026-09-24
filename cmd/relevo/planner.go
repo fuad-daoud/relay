@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
 	"text/tabwriter"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/proc"
@@ -300,13 +302,23 @@ func cmdPlannerList(args []string) error {
 		return err
 	}
 
+	// The chat column (#386): what the harness itself calls each session, read
+	// from the harness's own files now and never stored on the record.
+	res := chatResolver()
+	labels := make([]chatlabel.Label, len(records))
+	for i, rec := range records {
+		labels[i] = res.Resolve(context.Background(), rec.HarnessKind, rec.SessionID, rec.TranscriptLocator)
+	}
+
 	if *asJSON {
 		views := make([]plannerListView, 0, len(records))
-		for _, rec := range records {
+		for i, rec := range records {
 			views = append(views, plannerListView{
-				Record:   rec,
-				State:    string(planner.RecordState(rec, rt.ProcStart)),
-				Bindings: counts[rec.ID],
+				Record:    rec,
+				State:     string(planner.RecordState(rec, rt.ProcStart)),
+				Bindings:  counts[rec.ID],
+				ChatLabel: labels[i].Text,
+				ChatLink:  labels[i].Link,
 			})
 		}
 		enc := json.NewEncoder(os.Stdout)
@@ -317,14 +329,14 @@ func cmdPlannerList(args []string) error {
 	// tabwriter, not fixed widths: a 36-character session id or a long cwd
 	// used to overflow its cell and shift every column after it.
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "name\tid\tkind\tsession\thost pid\tstate\tbindings\tcwd\tseen")
-	for _, rec := range records {
+	fmt.Fprintln(w, "name\tchat\tid\tkind\tsession\thost pid\tstate\tbindings\tcwd\tseen")
+	for i, rec := range records {
 		host := "-"
 		if rec.HostPID > 0 {
 			host = strconv.Itoa(rec.HostPID)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
-			rec.Name, rec.ID, rec.HarnessKind, rec.SessionID, host,
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+			rec.Name, labels[i].String(), rec.ID, rec.HarnessKind, rec.SessionID, host,
 			planner.RecordState(rec, rt.ProcStart), counts[rec.ID], rec.CWD,
 			rec.SeenAt.UTC().Format(time.RFC3339))
 	}
@@ -338,6 +350,51 @@ type plannerListView struct {
 	planner.Record
 	State    string `json:"state"`
 	Bindings int    `json:"bindings"`
+	// ChatLabel and ChatLink are the harness's own name for the session
+	// (#386), read when the command runs and never stored.
+	ChatLabel string `json:"chat_label,omitempty"`
+	ChatLink  string `json:"chat_link,omitempty"`
+}
+
+// chatResolver is the label reader `relevo planner list` uses (#386): a claude
+// transcript is read directly, and an opencode session title is read through
+// the sqlite3 shell-out, which is wired only when sqlite3 is on PATH.
+func chatResolver() chatlabel.Resolver {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		return chatlabel.Resolver{}
+	}
+	return chatlabel.Resolver{Exec: binExec{}, OpencodeDB: opencodeDBPath()}
+}
+
+// annotatePlannerChat fills each binding row's PlannerChatLabel and
+// PlannerChatLink (#386) from the planner record the row names. It runs only
+// from cmd/relevo, inside the command a person ran, and fills only fields that
+// are printed: internal/relevo.Status itself never computes a label, because it
+// also serves relevo serve. The label is resolved at most once per planner id,
+// every lookup failure ends in the empty label, and the function never returns
+// an error and never prints.
+func annotatePlannerChat(rt relevo.Runtime, rep *relevo.Report, res chatlabel.Resolver) {
+	if rt.Planners == nil {
+		return
+	}
+	labels := make(map[string]chatlabel.Label)
+	for i := range rep.Bindings {
+		b := &rep.Bindings[i]
+		if b.PlannerID == "" {
+			continue
+		}
+		lbl, ok := labels[b.PlannerID]
+		if !ok {
+			if rec, err := rt.Planners.Get(b.PlannerID); err != nil {
+				lbl = chatlabel.Label{}
+			} else {
+				lbl = res.Resolve(context.Background(), rec.HarnessKind, rec.SessionID, rec.TranscriptLocator)
+			}
+			labels[b.PlannerID] = lbl
+		}
+		b.PlannerChatLabel = lbl.Text
+		b.PlannerChatLink = lbl.Link
+	}
 }
 
 func cmdPlannerRename(args []string) error {

@@ -71,6 +71,10 @@ type PlannerCheckInput struct {
 	// Resolved is the planner Resolve found for this session; nil when it
 	// found none.
 	Resolved *planner.Record
+	// Chat is the resolved planner's chatlabel.Label.String() (#386): the
+	// harness's own name for its session, read by cmd/relevo when the
+	// command runs. "" when the label is empty or Resolved is nil.
+	Chat string
 	// ClaimLive is true when a live channel claim exists for Resolved.
 	ClaimLive bool
 	// MCPChild is true when a `relevo mcp` process is a child of the
@@ -111,20 +115,20 @@ func PlannerChecks(in PlannerCheckInput) []Check {
 			checks = append(checks, Check{
 				Name:     "planner",
 				Severity: SevFail,
-				Detail:   fmt.Sprintf("planner %s (%s): no relevo mcp process is a child of its host process; reports never arrive", in.Resolved.Name, in.Resolved.ID),
+				Detail:   fmt.Sprintf("planner %s: no relevo mcp process is a child of its host process; reports never arrive", plannerRef(in.Resolved, in.Chat)),
 				Fix:      "enable the relevo plugin so relevo mcp starts with the session (relevo doctor)",
 			})
 		case !in.ClaimLive:
 			checks = append(checks, Check{
 				Name:     "planner",
 				Severity: SevInfo,
-				Detail:   fmt.Sprintf("planner %s (%s): tools mode: reports arrive by background wait. For push, launch with `--dangerously-load-development-channels plugin:relevo@relevo`, or have an org admin add relevo to `allowedChannelPlugins`", in.Resolved.Name, in.Resolved.ID),
+				Detail:   fmt.Sprintf("planner %s: tools mode: reports arrive by background wait. For push, launch with `--dangerously-load-development-channels plugin:relevo@relevo`, or have an org admin add relevo to `allowedChannelPlugins`", plannerRef(in.Resolved, in.Chat)),
 			})
 		default:
 			checks = append(checks, Check{
 				Name:     "planner",
 				Severity: SevOK,
-				Detail:   fmt.Sprintf("%s (%s); channel claim live", in.Resolved.Name, in.Resolved.ID),
+				Detail:   fmt.Sprintf("%s; channel claim live", plannerRef(in.Resolved, in.Chat)),
 			})
 		}
 	}
@@ -139,6 +143,16 @@ func PlannerChecks(in PlannerCheckInput) []Check {
 	}
 
 	return checks
+}
+
+// plannerRef renders a planner record for a doctor detail: its name and id,
+// with the harness's own chat label appended when cmd/relevo resolved one
+// (#386). An empty chat leaves today's "name (id)" byte-identical.
+func plannerRef(rec *planner.Record, chat string) string {
+	if chat == "" {
+		return rec.Name + " (" + rec.ID + ")"
+	}
+	return rec.Name + " (" + rec.ID + ") · " + chat
 }
 
 // pluginEnabledCheck is §4.8's first row: FAIL when a claude candidate or

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -80,7 +81,14 @@ type BindingStatus struct {
 	// belongs to (#303 §3.2).
 	PlannerID   string `json:"planner_id,omitempty"`
 	PlannerName string `json:"planner_name,omitempty"`
-	PlannerKind string `json:"planner_kind"`
+	// PlannerChatLabel and PlannerChatLink are the harness's own name for
+	// the planner's session (#386): Label.Text and Label.Link. Only
+	// cmd/relevo fills them, inside the command a person ran, and only to
+	// print them; Status itself leaves them empty, so no label is ever
+	// computed on, or sent to, a server. They are never stored or logged.
+	PlannerChatLabel string `json:"planner_chat_label,omitempty"`
+	PlannerChatLink  string `json:"planner_chat_link,omitempty"`
+	PlannerKind      string `json:"planner_kind"`
 	// PlannerRoute is how a pending report reaches this binding planner
 	// (#303 §3.6): "channel", "deliverer" or "pull". "pull" is a route, not
 	// a fault: it is the background wait's `relevo pull`, which is how a
@@ -693,8 +701,16 @@ func RenderStatus(r Report) string {
 			fmt.Fprint(&sb, "  ●new")
 		}
 		fmt.Fprint(&sb, "\n")
-		fmt.Fprintf(&sb, "  planner  %-14s %-8s route %s\n",
+		fmt.Fprintf(&sb, "  planner  %-14s %-8s route %s",
 			plannerNameOrID(b), b.PlannerKind, b.PlannerRoute)
+		// #386: the planner's chat label follows its name when cmd/relevo
+		// filled it. An empty label leaves the line byte-identical to the
+		// line that existed before these fields.
+		if b.PlannerChatLabel != "" || b.PlannerChatLink != "" {
+			lbl := chatlabel.Label{Text: b.PlannerChatLabel, Link: b.PlannerChatLink}
+			fmt.Fprintf(&sb, " · %s", lbl.String())
+		}
+		fmt.Fprint(&sb, "\n")
 		if b.Headless != nil {
 			// spec §4.8: builder  headless  <kind>  <status>  [pid P since HH:MM]  `<token>`
 			fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s", "headless", b.BuilderKind, b.BuilderStatus)

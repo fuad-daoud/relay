@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/planner"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -280,6 +282,58 @@ func TestPlannerVerbsListRenameForget(t *testing.T) {
 	}
 }
 
+// TestAnnotatePlannerChat is #386's CLI surface: annotatePlannerChat fills a
+// row's chat label and link from the planner record it names, resolves a
+// repeated id once, and leaves a row naming an unknown planner empty. It writes
+// a synthetic claude transcript and names claude records only, so the test
+// spawns nothing and reaches no network.
+func TestAnnotatePlannerChat(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	reg := &planner.FileRegistry{Root: filepath.Join(root, "planners")}
+
+	transcript := filepath.Join(t.TempDir(), "session.jsonl")
+	content := "{\"type\":\"custom-title\",\"customTitle\":\"my chat\"}\n" +
+		"{\"type\":\"bridge-session\",\"bridgeSessionId\":\"cse_01ABCDEF\"}\n"
+	if err := os.WriteFile(transcript, []byte(content), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	const knownID = "pl_aaaaaaaaaaaa"
+	if _, err := reg.Create(planner.Record{
+		ID: knownID, Name: "alpha", HarnessKind: "claude",
+		SessionID: "sess-alpha", CWD: t.TempDir(), TranscriptLocator: transcript,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	rt := relevo.Runtime{Planners: reg}
+	rep := relevo.Report{Bindings: []relevo.BindingStatus{
+		{Name: "one", PlannerID: knownID},
+		{Name: "two", PlannerID: knownID},
+		{Name: "three", PlannerID: "pl_zzzzzzzzzzzz"},
+	}}
+
+	annotatePlannerChat(rt, &rep, chatlabel.Resolver{})
+
+	const wantText = "my chat"
+	const wantLink = "https://claude.ai/code/session_01ABCDEF"
+	for i := 0; i < 2; i++ {
+		if rep.Bindings[i].PlannerChatLabel != wantText || rep.Bindings[i].PlannerChatLink != wantLink {
+			t.Errorf("row %d carries label %q / link %q, want %q / %q",
+				i, rep.Bindings[i].PlannerChatLabel, rep.Bindings[i].PlannerChatLink, wantText, wantLink)
+		}
+	}
+	if rep.Bindings[2].PlannerChatLabel != "" || rep.Bindings[2].PlannerChatLink != "" {
+		t.Errorf("the unknown planner's row carries label %q / link %q, want neither",
+			rep.Bindings[2].PlannerChatLabel, rep.Bindings[2].PlannerChatLink)
+	}
+}
+
 // TestListAlignsLongValues is the list polish: the old fixed-width format
 // shifted every later column when a 36-character session id or a long cwd
 // overflowed its cell. Under tabwriter every row -- header included -- starts
@@ -337,5 +391,98 @@ func TestListAlignsLongValues(t *testing.T) {
 		if at != want {
 			t.Errorf("line %d's seen column starts at byte %d, want %d:\n%s", i, at, want, line)
 		}
+	}
+}
+
+// TestListShowsChat is the #386 chat column: a claude planner's row names the
+// chat the way its own harness does, a planner with nothing readable shows "-",
+// and --json carries the same two fields. It writes a synthetic transcript and
+// uses claude records only, so the test spawns nothing and reaches no network.
+func TestListShowsChat(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	reg := &planner.FileRegistry{Root: filepath.Join(root, "planners")}
+
+	transcript := filepath.Join(t.TempDir(), "session.jsonl")
+	content := "{\"type\":\"custom-title\",\"customTitle\":\"my chat\"}\n" +
+		"{\"type\":\"bridge-session\",\"bridgeSessionId\":\"cse_01ABCDEF\"}\n"
+	if err := os.WriteFile(transcript, []byte(content), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	cwd := t.TempDir()
+	for _, rec := range []planner.Record{
+		{
+			ID: "pl_aaaaaaaaaaaa", Name: "alpha", HarnessKind: "claude",
+			SessionID: "sess-alpha", CWD: cwd, TranscriptLocator: transcript,
+		},
+		{
+			ID: "pl_bbbbbbbbbbbb", Name: "beta", HarnessKind: "claude",
+			SessionID: "sess-beta", CWD: cwd,
+		},
+	} {
+		if _, err := reg.Create(rec); err != nil {
+			t.Fatalf("Create(%s): %v", rec.Name, err)
+		}
+	}
+
+	stdout, _, err := captureOutput(t, func() error { return run([]string{"planner", "list"}) })
+	if err != nil {
+		t.Fatalf("planner list: %v", err)
+	}
+
+	rows := strings.Split(strings.TrimRight(string(stdout), "\n"), "\n")
+	if len(rows) != 3 {
+		t.Fatalf("planner list printed %d lines, want a header and two rows:\n%s", len(rows), stdout)
+	}
+	if !strings.Contains(rows[0], "chat") {
+		t.Errorf("header %q does not name the chat column", rows[0])
+	}
+
+	rowFor := func(name string) string {
+		for _, row := range rows[1:] {
+			if strings.HasPrefix(row, name) {
+				return row
+			}
+		}
+		t.Fatalf("no row for %s in:\n%s", name, stdout)
+		return ""
+	}
+
+	wantChat := "my chat · https://claude.ai/code/session_01ABCDEF"
+	if got := rowFor("alpha"); !strings.Contains(got, wantChat) {
+		t.Errorf("alpha's row %q does not contain %q", got, wantChat)
+	}
+	beta := rowFor("beta")
+	if fields := strings.Fields(beta); len(fields) < 2 || fields[1] != "-" {
+		t.Errorf("beta's chat cell is not \"-\" in row %q", beta)
+	}
+
+	stdout, _, err = captureOutput(t, func() error { return run([]string{"planner", "list", "--json"}) })
+	if err != nil {
+		t.Fatalf("planner list --json: %v", err)
+	}
+	var views []map[string]any
+	if err := json.Unmarshal(stdout, &views); err != nil {
+		t.Fatalf("decode --json: %v\n%s", err, stdout)
+	}
+	if len(views) != 2 {
+		t.Fatalf("--json printed %d records, want 2", len(views))
+	}
+	if got := views[0]["chat_label"]; got != "my chat" {
+		t.Errorf("alpha chat_label = %v, want %q", got, "my chat")
+	}
+	if got := views[0]["chat_link"]; got != "https://claude.ai/code/session_01ABCDEF" {
+		t.Errorf("alpha chat_link = %v, want the claude.ai url", got)
+	}
+	if _, ok := views[1]["chat_label"]; ok {
+		t.Errorf("beta should carry no chat_label, got %v", views[1]["chat_label"])
+	}
+	if _, ok := views[1]["chat_link"]; ok {
+		t.Errorf("beta should carry no chat_link, got %v", views[1]["chat_link"])
 	}
 }
