@@ -107,11 +107,19 @@ longer configured prints as the token itself. `--json` outputs keep the token an
 | `overrides` | map kind → agent name | Escape hatch: use an existing harness-native agent for that kind instead of rendering. |
 | `source` | `shipped` \| `custom` | Derived. Shipped agents (`plan-executor`, `reviewer`, `researcher`, `architect`) are read-only. Duplicating one yields a custom copy. |
 
-**Rendering.** A pure function takes (agent, kind) to the bytes of that kind's file:
-the claude `.md`, opencode `.md`, agy `.md` with its tool list, and codex `.toml`. The
-frontmatter differences follow from `shape`: a reader gets read-only tools and sandbox
-on every kind. The shipped agents, expressed as single sources, must render
-byte-for-byte to today's shipped per-kind files in `internal/harness/agents/`.
+**Rendering.** A pure function takes (custom agent, kind) to the bytes of that kind's
+file: the claude `.md`, opencode `.md`, agy `.md` with its tool list, and codex
+`.toml`.
+
+- **Shipped agents are not rendered.** They stay the hand-maintained per-kind files in
+  `internal/harness/agents/`. The agy bodies are rewritten, plan-executor has three
+  body variants, and the frontmatter was chosen by hand (see the A2a plan), so one
+  source cannot reproduce them.
+- **Duplicating a shipped agent** starts the custom copy from its claude body.
+- **Shape does not change the tool list.** A reader needs write tools to fill its
+  artifact directory, and the scratch worktree is what keeps it off the binding's tree
+  (D6). So a reader and a writer render the same tools. Shape decides where the round
+  runs, not what the agent may call.
 
 **Install state per kind:** `installed`, `stale` (the source changed since the last
 install) or `not installed`.
@@ -144,9 +152,14 @@ today.
 - `summary.md` is the actor's final message, written by relevo, as the consult's
   findings are today (`internal/relevo/ask.go:35`).
 - A writer also writes `report.md` there, which is today's report.
-- A reader round's scratch worktree is `.worktrees/<binding>.scratch-NNN`, detached at
-  the binding's HEAD with `git diff HEAD` (binary) applied. It is removed with
-  `git worktree remove --force` at seal, even on halt or stop.
+- A reader round's scratch worktree is `.worktrees/.scratch/<binding>-NNN`, next to
+  `.worktrees/.verify/`.
+  - It is detached at the binding's HEAD. The binding tree's whole working state is
+    then written in: tracked edits, deletions and untracked files (not ignored ones).
+    relevo does this with `SnapshotTree`, then `read-tree --reset -u <tree>`, then
+    `reset -q`, so staged and unstaged edits arrive as unstaged changes.
+  - It is removed with `git worktree remove --force` at seal, even on halt or stop.
+  - A daemon sweep removes leftovers whose round is closed.
 - If the scratch worktree cannot be created, the round refuses to start and the
   binding goes NEEDS YOU with the reason. There is never a fallback to the binding's
   own tree.
@@ -373,8 +386,8 @@ TUI actions run as a planner record `you@<host>` (kind `human`).
     `config export` is a fixture.
   - `Diff(a, Apply(a, cs))` describes exactly `cs`.
   - The stats functions.
-  - Rendering the shipped agents from single sources reproduces the shipped files
-    byte-for-byte.
+  - A golden file of every custom agent rendered for every kind, plus a check that
+    each rendered frontmatter carries the keys the shipped files use for that kind.
 - **Scratch worktree** lifecycle, with real git in a temp dir: the dirty diff is
   carried over, the tree is discarded at seal, and the binding's tree is untouched.
 - **Keys → actions:** a fake `Actions` records calls, and tests assert key → confirm
