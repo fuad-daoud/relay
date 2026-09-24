@@ -344,14 +344,14 @@ func TestForkSuccess(t *testing.T) {
 		t.Errorf("pick log entry note = %q", pickLogEntry.Note)
 	}
 
-	// Round files copied
-	if _, err := os.Stat(rt.Store.PlanPath("alt", 1)); err != nil {
+	// Round files copied: ReadFile answers from dst's own round_file rows.
+	if _, err := rt.Store.ReadFile(rt.Store.PlanPath("alt", 1)); err != nil {
 		t.Errorf("plan 1 not copied: %v", err)
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("alt", 2)); err != nil {
+	if _, err := rt.Store.ReadFile(rt.Store.PlanPath("alt", 2)); err != nil {
 		t.Errorf("plan 2 not copied: %v", err)
 	}
-	if _, err := os.Stat(rt.Store.PlanPath("alt", 3)); !os.IsNotExist(err) {
+	if _, err := rt.Store.ReadFile(rt.Store.PlanPath("alt", 3)); !os.IsNotExist(err) {
 		t.Errorf("plan 3 should NOT exist in fork")
 	}
 

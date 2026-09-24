@@ -2637,3 +2637,107 @@ func TestRemoveWorktreeAlreadyGone(t *testing.T) {
 		t.Fatalf("DeleteBranch after removing a gone worktree = %v, want nil (stale registration pruned)", err)
 	}
 }
+
+// TestSnapshotTreeCleanTreeNeedsNoTempIndex snapshots a repo with one commit
+// and a clean tree while TMPDIR points at a directory that does not exist, so
+// the temp-index path's os.MkdirTemp("", ...) would fail if it ran.
+//
+// Mutation: remove the clean fast path and MkdirTemp fails under the missing TMPDIR.
+func TestSnapshotTreeCleanTreeNeedsNoTempIndex(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repoDir := initRepo(t)
+	writeGitFile(t, repoDir, "a.txt", "hello\n")
+	runGit(t, repoDir, "add", "a.txt")
+	runGit(t, repoDir, "commit", "-m", "first")
+
+	// A missing TMPDIR makes os.MkdirTemp("", ...) fail: only the clean fast
+	// path can produce a tree here.
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+
+	want := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD^{tree}"))
+	got, err := client.SnapshotTree(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("SnapshotTree on a clean tree: %v", err)
+	}
+	if got != want {
+		t.Fatalf("SnapshotTree = %s, want HEAD^{tree} = %s", got, want)
+	}
+
+	// Ignored files do not count as dirty: a clean repo with a committed
+	// .gitignore and an untracked, ignored x.log still returns HEAD^{tree}.
+	writeGitFile(t, repoDir, ".gitignore", "*.log\n")
+	runGit(t, repoDir, "add", ".gitignore")
+	runGit(t, repoDir, "commit", "-m", "ignore logs")
+	writeGitFile(t, repoDir, "x.log", "noise\n")
+
+	wantIgnored := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD^{tree}"))
+	gotIgnored, err := client.SnapshotTree(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("SnapshotTree with an ignored file: %v", err)
+	}
+	if gotIgnored != wantIgnored {
+		t.Fatalf("SnapshotTree with an ignored file = %s, want HEAD^{tree} = %s", gotIgnored, wantIgnored)
+	}
+}
+
+// TestSnapshotTreeDirtyTreeCapturesChanges snapshots a repo whose only change
+// is one untracked, non-ignored file: the result must be a fresh tree, not
+// HEAD^{tree}, and the repo's index must be left untouched.
+func TestSnapshotTreeDirtyTreeCapturesChanges(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repoDir := initRepo(t)
+	writeGitFile(t, repoDir, "a.txt", "hello\n")
+	runGit(t, repoDir, "add", "a.txt")
+	runGit(t, repoDir, "commit", "-m", "first")
+
+	writeGitFile(t, repoDir, "new_file.txt", "line1\nline2\n")
+
+	statusBefore := runGit(t, repoDir, "status", "--porcelain")
+	headTree := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD^{tree}"))
+
+	tree, err := client.SnapshotTree(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("SnapshotTree on a dirty tree: %v", err)
+	}
+	if tree == headTree {
+		t.Fatalf("SnapshotTree = HEAD^{tree} (%s) with an untracked file present", tree)
+	}
+
+	lsTree := runGit(t, repoDir, "ls-tree", "-r", "--name-only", tree)
+	if !strings.Contains(lsTree, "new_file.txt") {
+		t.Fatalf("tree %s does not list new_file.txt:\n%s", tree, lsTree)
+	}
+
+	statusAfter := runGit(t, repoDir, "status", "--porcelain")
+	if statusAfter != statusBefore {
+		t.Fatalf("git status changed after snapshot: got %q, want %q", statusAfter, statusBefore)
+	}
+}
+
+// TestSnapshotTreeUnbornHeadFallsBack snapshots a repo that has no commits
+// yet: HEAD^{tree} does not resolve, so SnapshotTree must fall through to the
+// existing temp-index path and still capture the untracked file.
+func TestSnapshotTreeUnbornHeadFallsBack(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	repoDir := initRepo(t)
+	writeGitFile(t, repoDir, "new_file.txt", "line1\n")
+
+	tree, err := client.SnapshotTree(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("SnapshotTree with an unborn HEAD: %v", err)
+	}
+
+	lsTree := runGit(t, repoDir, "ls-tree", "-r", "--name-only", tree)
+	if !strings.Contains(lsTree, "new_file.txt") {
+		t.Fatalf("tree %s does not list new_file.txt:\n%s", tree, lsTree)
+	}
+}

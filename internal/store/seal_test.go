@@ -13,12 +13,14 @@ import (
 )
 
 // TestSealableTable pins the pure predicate: a closed, quiet round is
-// sealable, and each in-flight reader of the round holds it back. The stream
+// sealable, and each in-flight reader of the round holds it back. The latest
+// closed round (b.Round-1) is held back too, unless the binding is DONE, so
+// the planner and a repair round can still read its files (D2/A1). The stream
 // blocker now takes streamDrained, not PID: the "not drained" row is the one
 // the plan's mutation check drops blocker 2 for.
 func TestSealableTable(t *testing.T) {
 	base := newBinding("webshop", "/home/dev/webshop")
-	base.Round = 4
+	base.Round = 5
 
 	cases := []struct {
 		name    string
@@ -28,8 +30,10 @@ func TestSealableTable(t *testing.T) {
 		want    bool
 	}{
 		{"closed and quiet", base, 3, false, true},
-		{"the open round", base, 4, false, false},
-		{"a future round", base, 5, false, false},
+		{"the open round", base, 5, false, false},
+		{"a future round", base, 6, false, false},
+		{"the latest closed round is kept for its readers", base, 4, true, false},
+		{"a done binding seals its latest closed round", withBinding(base, func(b *Binding) { b.State = StateDone }), 4, true, true},
 		{"done is not a blocker", withBinding(base, func(b *Binding) { b.State = StateDone }), 3, false, true},
 		{"stream drain of the round is not drained", withBinding(base, func(b *Binding) {
 			b.Builder.StreamRound = 3

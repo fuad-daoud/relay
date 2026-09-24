@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // roundOfFile parses the leading NNN- of a binding directory entry and returns
@@ -31,34 +33,42 @@ func roundOfFile(base string) (int, bool) {
 	return n, true
 }
 
-// ForkState copies src's history into a NEW binding directory for dst under the
-// state lock.
-func (s *Store) ForkState(src, dst string, throughRound int) error {
+// ForkState copies src's history into a NEW binding for dst under the state
+// lock.
+func (s *Store) ForkState(src string, dst Binding, throughRound int) error {
 	return s.WithLock(func(tx *Tx) error {
 		return tx.ForkState(src, dst, throughRound)
 	})
 }
 
-// ForkState copies src's history into a NEW binding directory for dst: every
-// log entry with Round <= throughRound, and every round file whose leading
-// number is <= throughRound. Copied log entries are all marked Confirmed, so a
-// fork begins with nothing pending. It does NOT write dst's bind.json -- the
-// caller owns the new Binding and saves it.
+// ForkState copies src's history into a NEW binding for dst: every log entry
+// with Round <= throughRound, and every round file whose leading number is
+// <= throughRound. Copied log entries are all marked Confirmed, so a fork
+// begins with nothing pending, and a copied entry's Path, when it pointed into
+// src's directory, is rewritten to point into dst's, so the fork no longer
+// depends on src.
 //
-// Preconditions:  the lock is held; src exists; dst has no directory yet;
+// The history goes straight into the database: the record Save writes, the
+// copied entries as that record's events, and one round_file row per copied
+// file. No dst directory and no files are created, and src is never modified.
+// It does NOT write dst's bind.json -- the caller owns the new Binding.
 //
-//	throughRound >= 1.
+// Preconditions:  the lock is held; src exists; dst.Name has no record and no
 //
-// Postconditions: dst's directory exists with log.jsonl and the copied round
+//	directory; throughRound >= 1.
 //
-//	files, all mode 0644; src is not modified in any way.
+// Postconditions: Load(dst.Name) works; ReadLog returns the copied entries
 //
-// Errors: ErrNotFound (src), a wrapped copy error, or an error if dst exists.
+//	with rewritten paths; RoundFiles lists the copied names and ReadFile
+//	returns identical bytes; $STATE/<dst.Name> does not exist.
 //
-//	On error, dst's directory is removed, so a failed fork leaves no
-//	half-populated binding for List to pick up.
-func (t *Tx) ForkState(src, dst string, throughRound int) error {
-	if err := ValidName(dst); err != nil {
+// Errors: ErrNotFound (src), a wrapped copy error, or an error if dst.Name
+//
+//	already has a record or a directory. On error, dst's record is deleted,
+//	which cascades its events and round files, so a failed fork leaves
+//	nothing List could pick up and nothing on disk.
+func (t *Tx) ForkState(src string, dst Binding, throughRound int) error {
+	if err := ValidName(dst.Name); err != nil {
 		return err
 	}
 	if throughRound < 1 {
@@ -69,21 +79,33 @@ func (t *Tx) ForkState(src, dst string, throughRound int) error {
 		return err
 	}
 
-	dstDir := t.s.Dir(dst)
+	dstDir := t.s.Dir(dst.Name)
 	if _, err := os.Lstat(dstDir); err == nil {
-		return fmt.Errorf("binding directory %q already exists", dst)
+		return fmt.Errorf("binding directory %q already exists", dst.Name)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("stat destination dir %s: %w", dstDir, err)
 	}
 
-	if err := os.Mkdir(dstDir, bindingDirMode); err != nil {
-		return fmt.Errorf("create binding dir %q: %w", dst, err)
+	// A record with no directory of its own still owns the name: Save would
+	// refuse it, but only after the copy had begun.
+	if d, err := t.s.dbForRead(); err != nil {
+		return err
+	} else if d != nil {
+		if _, ok, err := d.RecordGet(t.s.owner, dst.Name); err != nil {
+			return fmt.Errorf("read binding %q: %w", dst.Name, err)
+		} else if ok {
+			return fmt.Errorf("binding %q already exists", dst.Name)
+		}
+	}
+
+	if err := t.Save(dst); err != nil {
+		return err
 	}
 
 	var success bool
 	defer func() {
 		if !success {
-			_ = os.RemoveAll(dstDir)
+			_ = t.Delete(dst.Name)
 		}
 	}()
 
@@ -92,29 +114,51 @@ func (t *Tx) ForkState(src, dst string, throughRound int) error {
 		return fmt.Errorf("read log %q: %w", src, err)
 	}
 
-	var logBuf []byte
-	for _, e := range entries {
-		if e.Round <= throughRound {
-			e.Confirmed = true
-			e.DeliveredAt = nil
-			raw, err := json.Marshal(e)
-			if err != nil {
-				return fmt.Errorf("encode log entry for %q: %w", dst, err)
-			}
-			logBuf = append(logBuf, raw...)
-			logBuf = append(logBuf, '\n')
-		}
-	}
-
-	dstLog := t.s.logPath(dst)
-	if err := os.WriteFile(dstLog, logBuf, bindingFileMode); err != nil {
-		return fmt.Errorf("write log for %q: %w", dst, err)
-	}
-	if err := os.Chmod(dstLog, bindingFileMode); err != nil {
-		return fmt.Errorf("chmod log for %q: %w", dst, err)
-	}
-
+	// Every entry through the cut, confirmed and undelivered (a fork begins
+	// with nothing pending), with a Path that pointed into src's directory
+	// rewritten into dst's.
 	srcDir := t.s.Dir(src)
+	copied := make([]LogEntry, 0, len(entries))
+	lines := make([][]byte, 0, len(entries))
+	for _, e := range entries {
+		if e.Round > throughRound {
+			continue
+		}
+		e.Confirmed = true
+		e.DeliveredAt = nil
+		if e.Path != "" && filepath.Dir(e.Path) == srcDir {
+			e.Path = filepath.Join(dstDir, filepath.Base(e.Path))
+		}
+		raw, err := json.Marshal(e)
+		if err != nil {
+			return fmt.Errorf("encode log entry for %q: %w", dst.Name, err)
+		}
+		copied = append(copied, e)
+		lines = append(lines, raw)
+	}
+
+	d, err := t.s.dbForWrite()
+	if err != nil {
+		return err
+	}
+	rec, ok, err := d.RecordGet(t.s.owner, dst.Name)
+	if err != nil {
+		return fmt.Errorf("read binding %q: %w", dst.Name, err)
+	}
+	if !ok {
+		return fmt.Errorf("%s: %w", dst.Name, ErrNotFound)
+	}
+
+	// The copied entries become the record's events through the same
+	// conversion importPresent uses for an adopted log.jsonl.
+	evs, err := recordEventsOf(copied, lines)
+	if err != nil {
+		return fmt.Errorf("encode log for %q: %w", dst.Name, err)
+	}
+	if err := d.EventReplaceAll(rec.ID, evs); err != nil {
+		return fmt.Errorf("write log for %q: %w", dst.Name, err)
+	}
+
 	// RoundFiles unions what is in src's directory with what a seal pass
 	// already moved into the database (P3c §4.4), so a fork cut from a
 	// closed round copies its files either way.
@@ -123,53 +167,46 @@ func (t *Tx) ForkState(src, dst string, throughRound int) error {
 		return fmt.Errorf("list round files %q: %w", src, err)
 	}
 
-	for _, base := range names {
-		r, ok := roundOfFile(base)
-		if !ok || r > throughRound {
-			continue
+	now := time.Now().UTC()
+	if err := d.Tx(func(dtx *db.Tx) error {
+		for _, base := range names {
+			r, ok := roundOfFile(base)
+			if !ok || r > throughRound {
+				continue
+			}
+			srcPath := filepath.Join(srcDir, base)
+			body, err := t.s.ReadFile(srcPath)
+			if err != nil {
+				return fmt.Errorf("copy %s: %w", base, err)
+			}
+			// A sealed empty file (NNN-done is the common one) reads back as
+			// a nil slice -- round_file's body scans a zero-length blob as
+			// nil -- and a nil body binds as SQL NULL, which the column
+			// refuses. The copied file's bytes are empty, not absent.
+			if body == nil {
+				body = []byte{}
+			}
+			// StatFile exposes the source's own mtime, on disk or sealed;
+			// without one the seal's stamp stands in.
+			mtime := now
+			if _, mt, ok, err := t.s.StatFile(srcPath); err == nil && ok {
+				mtime = mt
+			}
+			if err := dtx.RoundFilePut(rec.ID, base, r, body, mtime, now); err != nil {
+				return fmt.Errorf("copy %s for %q: %w", base, dst.Name, err)
+			}
 		}
-		data, err := t.s.ReadFile(filepath.Join(srcDir, base))
-		if err != nil {
-			return fmt.Errorf("copy %s: %w", base, err)
-		}
-		dstFile := filepath.Join(dstDir, base)
-		if err := os.WriteFile(dstFile, data, bindingFileMode); err != nil {
-			return fmt.Errorf("write %s: %w", base, err)
-		}
-		if err := os.Chmod(dstFile, bindingFileMode); err != nil {
-			return fmt.Errorf("chmod %s: %w", base, err)
-		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// Save created the record's directory (save's own MkdirAll); the fork
+	// keeps its whole history in the database, so the empty directory goes.
+	if err := os.RemoveAll(dstDir); err != nil {
+		return fmt.Errorf("remove fork dir %q: %w", dst.Name, err)
 	}
 
 	success = true
-	return nil
-}
-
-func copyFile(src, dst string, mode os.FileMode) (err error) {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_EXCL, mode)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if cerr := out.Close(); cerr != nil && err == nil {
-			err = cerr
-		}
-	}()
-
-	if _, err = io.Copy(out, in); err != nil {
-		return err
-	}
-	if err = out.Sync(); err != nil {
-		return err
-	}
-	if err = os.Chmod(dst, mode); err != nil {
-		return err
-	}
 	return nil
 }

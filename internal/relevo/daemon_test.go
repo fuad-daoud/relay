@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -738,6 +739,71 @@ func TestRefreshReleaseSuccessClearsTheBackoff(t *testing.T) {
 	if cached.Latest != "v0.9.0" {
 		t.Errorf("cache latest = %q, want v0.9.0", cached.Latest)
 	}
+}
+
+// TestRefreshReleaseOpensTheDatabaseOnce pins the D1 postcondition: across any
+// number of refreshRelease calls on one Daemon, only one connection to
+// relevo.db is open. Before the fix each tick made a fresh store.New, opened a
+// connection and never closed it.
+//
+// Mutation: restore `store.New(root).DB()` inside refreshRelease and the count
+// grows by one per call.
+func TestRefreshReleaseOpensTheDatabaseOnce(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("counts open fds through /proc/self/fd, which is Linux-only")
+	}
+
+	root := releaseStateRoot(t)
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+
+	ff := &fakeFetcher{tag: "v0.9.0"}
+	rt, _ := sentBinding(t)
+	rt.Fetcher = ff
+	rt.Now = func() time.Time { return now }
+
+	d := NewDaemon(rt, time.Second)
+	ctx := context.Background()
+
+	// The first call may open and create relevo.db, so the baseline is
+	// counted after it.
+	d.refreshRelease(ctx)
+	before := countFDsOn(t, filepath.Join(root, "relevo.db"))
+
+	for i := 0; i < 20; i++ {
+		if i == 10 {
+			// Once past the TTL in the middle, so the save path runs
+			// again as well as the read path.
+			now = now.Add(release.TTL + time.Minute)
+		}
+		d.refreshRelease(ctx)
+	}
+
+	after := countFDsOn(t, filepath.Join(root, "relevo.db"))
+	if after-before != 0 {
+		t.Errorf("open fds on relevo.db went from %d to %d across 20 extra refreshRelease calls, want no growth",
+			before, after)
+	}
+}
+
+// countFDsOn counts this process's open file descriptors whose readlink target
+// is exactly path.
+func countFDsOn(t *testing.T, path string) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatalf("read /proc/self/fd: %v", err)
+	}
+	n := 0
+	for _, e := range entries {
+		target, err := os.Readlink(filepath.Join("/proc/self/fd", e.Name()))
+		if err != nil {
+			continue // the fd closed between ReadDir and Readlink
+		}
+		if target == path {
+			n++
+		}
+	}
+	return n
 }
 
 // TestBackfillLeavesDoneBindingsAlone pins the DONE guard in

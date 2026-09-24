@@ -642,9 +642,6 @@ func TestConsultPathsCarryRoundAndID(t *testing.T) {
 	if got, want := s.ConsultStreamPath("webshop", 3, "7f2a3c1d"), "/state/webshop/003-7f2a3c1d-consult.jsonl"; got != want {
 		t.Errorf("ConsultStreamPath = %q, want %q", got, want)
 	}
-	if got, want := s.ConsultLogPath("webshop", 3, "7f2a3c1d"), "/state/webshop/003-7f2a3c1d-consult.log"; got != want {
-		t.Errorf("ConsultLogPath = %q, want %q", got, want)
-	}
 	// NNN-question.md belongs to the blocked-dialog capture. A consult being
 	// asked something is not a builder being blocked on something.
 	if s.AskPath("webshop", 3, "7f2a3c1d") == s.QuestionPath("webshop", 3) {
@@ -655,8 +652,8 @@ func TestConsultPathsCarryRoundAndID(t *testing.T) {
 	if r, ok := roundOfFile(filepath.Base(s.ConsultStreamPath("webshop", 12, "7f2a3c1d"))); !ok || r != 12 {
 		t.Errorf("roundOfFile(consult.jsonl) = %d, %v; want 12, true", r, ok)
 	}
-	if r, ok := roundOfFile(filepath.Base(s.ConsultLogPath("webshop", 12, "7f2a3c1d"))); !ok || r != 12 {
-		t.Errorf("roundOfFile(consult.log) = %d, %v; want 12, true", r, ok)
+	if r, ok := roundOfFile(filepath.Base(s.ConsultStreamPath("webshop", 12, "7f2a3c1d"))); !ok || r != 12 {
+		t.Errorf("roundOfFile(consult.jsonl) = %d, %v; want 12, true", r, ok)
 	}
 }
 
@@ -753,4 +750,80 @@ func TestBuilderLogPathIsARoundFileBesideTheReport(t *testing.T) {
 	if r, ok := roundOfFile(filepath.Base(s.BuilderStreamPath("webshop", 12))); !ok || r != 12 {
 		t.Errorf("roundOfFile(012-builder.jsonl) = %d, %v; want 12, true", r, ok)
 	}
+}
+
+// TestPruneWorktreeDirs pins the R5 prune: the parents of relevo's worktrees
+// go only once they are empty, so an idle state directory does not keep an
+// empty .worktrees/ or .worktrees/.verify/ forever.
+func TestPruneWorktreeDirs(t *testing.T) {
+	mkdir := func(t *testing.T, path string) {
+		t.Helper()
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q): %v", path, err)
+		}
+	}
+	exists := func(path string) bool {
+		_, err := os.Stat(path)
+		return err == nil
+	}
+
+	t.Run("both empty are removed", func(t *testing.T) {
+		s := New(t.TempDir())
+		verify := filepath.Join(s.WorktreeDir(), ".verify")
+		mkdir(t, verify)
+
+		s.PruneWorktreeDirs()
+
+		if exists(verify) {
+			t.Errorf("%s still exists, want it removed", verify)
+		}
+		if exists(s.WorktreeDir()) {
+			t.Errorf("%s still exists, want it removed", s.WorktreeDir())
+		}
+	})
+
+	t.Run("a sibling worktree keeps .worktrees but not .verify", func(t *testing.T) {
+		s := New(t.TempDir())
+		verify := filepath.Join(s.WorktreeDir(), ".verify")
+		mkdir(t, verify)
+		other := filepath.Join(s.WorktreeDir(), "other")
+		mkdir(t, other)
+
+		s.PruneWorktreeDirs()
+
+		if exists(verify) {
+			t.Errorf("%s still exists, want the empty .verify removed", verify)
+		}
+		if !exists(s.WorktreeDir()) {
+			t.Errorf("%s was removed though it still held a worktree", s.WorktreeDir())
+		}
+		if !exists(other) {
+			t.Errorf("sibling worktree %s was touched", other)
+		}
+	})
+
+	t.Run("a worktree under .verify keeps everything", func(t *testing.T) {
+		s := New(t.TempDir())
+		verify := filepath.Join(s.WorktreeDir(), ".verify")
+		mkdir(t, filepath.Join(verify, "x-001"))
+
+		s.PruneWorktreeDirs()
+
+		if !exists(verify) {
+			t.Errorf("%s was removed though it still held a worktree", verify)
+		}
+		if !exists(s.WorktreeDir()) {
+			t.Errorf("%s was removed though %s still held a worktree", s.WorktreeDir(), verify)
+		}
+	})
+
+	t.Run("neither exists is a no-op", func(t *testing.T) {
+		s := New(t.TempDir())
+
+		s.PruneWorktreeDirs() // must not panic
+
+		if exists(s.WorktreeDir()) {
+			t.Errorf("%s exists after the prune of nothing", s.WorktreeDir())
+		}
+	})
 }

@@ -295,13 +295,6 @@ func (s *Store) ConsultStreamPath(name string, round int, id string) string {
 	return s.consultFile(name, round, id, "consult", ".jsonl")
 }
 
-// ConsultLogPath is where a headless consult's stderr is appended: what the
-// harness wrote outside its stream, for a human reading why a process died.
-// Layout: <binding dir>/NNN-<id>-consult.log
-func (s *Store) ConsultLogPath(name string, round int, id string) string {
-	return s.consultFile(name, round, id, "consult", ".log")
-}
-
 // consultFile is roundFile with a consult id folded in. roundFile takes no id,
 // and widening it would touch five call sites that will never have one.
 func (s *Store) consultFile(name string, round int, id, suffix, ext string) string {
@@ -715,6 +708,19 @@ func (s *Store) ScratchWorktreeDir() string {
 // has (2026-09-24-cockpit-design.md §3.4).
 func (s *Store) ScratchWorktreePath(name string, round int) string {
 	return filepath.Join(s.ScratchWorktreeDir(), fmt.Sprintf("%s-%03d", name, round))
+}
+
+// PruneWorktreeDirs removes the parents of relevo's worktrees once they are
+// empty: .worktrees/.verify and .worktrees/.scratch first, then .worktrees.
+// os.Remove never removes a non-empty directory, so a sibling worktree keeps
+// its parent; every error --
+// not-exist, not-empty -- is ignored. It never logs: the parents of relevo's
+// worktrees go once they are empty; a racing `git worktree add` recreates its
+// parent itself.
+func (s *Store) PruneWorktreeDirs() {
+	_ = os.Remove(filepath.Join(s.WorktreeDir(), ".verify"))
+	_ = os.Remove(s.ScratchWorktreeDir())
+	_ = os.Remove(s.WorktreeDir())
 }
 
 // archive marks a binding's record archived and removes its directory, so the

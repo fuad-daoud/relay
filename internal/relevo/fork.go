@@ -370,22 +370,23 @@ func Fork(ctx context.Context, rt Runtime, opts ForkOptions) (ForkResult, error)
 	}, nil
 }
 
-// writeFork populates the new binding's state and saves it, under the caller's
-// held lock. It is all-or-nothing: if any step fails, both the destination
-// directory and (when Save created it) the binding's record are removed, so a
-// failed fork leaves neither a record store.list could see nor a directory a
-// later bind would collide with.
+// writeFork populates the new binding's state under the caller's held lock. It
+// is all-or-nothing: if any step fails, both the binding's record and the
+// directory ForkState's Save caused are removed, so a failed fork leaves
+// neither a record store.list could see nor a directory a later bind would
+// collide with.
 //
-// Save comes before the appended entries because it is what creates the record
-// they belong to; it is also what adopts the dst/log.jsonl ForkState wrote.
-// The log order is fixed: the entries copied from src, then the fork note, then
-// the pick.
+// ForkState comes first because it is what creates the record the appended
+// entries belong to and writes the copied history into its events and round
+// files; there is no dst directory and no log.jsonl for this function to adopt
+// or save. The log order is fixed: the entries copied from src, then the fork
+// note, then the pick.
 //
 // Preconditions:  the lock is held; b.Name has no record and no directory yet.
-// Postconditions: on success, <root>/<b.Name>/ holds the copied round files and
+// Postconditions: on success, the binding's record holds the copied entries
 //
-//	the binding's record holds the forked entries, the fork note and the pick.
-//	On ANY error, neither the record nor the directory exists.
+//	and the copied round files, then the fork note and the pick. On ANY error,
+//	neither the record nor the directory exists.
 func writeFork(tx *store.Tx, s *store.Store, src string, b store.Binding, throughRound int, now time.Time, pick store.LogEntry) error {
 	success := false
 	defer func() {
@@ -395,7 +396,7 @@ func writeFork(tx *store.Tx, s *store.Store, src string, b store.Binding, throug
 		}
 	}()
 
-	if err := tx.ForkState(src, b.Name, throughRound); err != nil {
+	if err := tx.ForkState(src, b, throughRound); err != nil {
 		return err
 	}
 
@@ -409,9 +410,6 @@ func writeFork(tx *store.Tx, s *store.Store, src string, b store.Binding, throug
 		Kind:      store.KindFork,
 		Confirmed: true,
 		Note:      fmt.Sprintf("forked from %s at round %d", src, throughRound),
-	}
-	if err := tx.Save(b); err != nil {
-		return err
 	}
 	if err := tx.AppendLog(b.Name, forkEntry); err != nil {
 		return err
