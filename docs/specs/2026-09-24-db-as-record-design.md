@@ -333,3 +333,37 @@ policy.json to `relevo config import`.
 - **Q2: pause.** Removed.
 - **Q3: transcripts.** Everything is kept, with no retention (D10). Planner transcripts are still copied.
 - **Q4: statusline.** Merged into `relevo status --line`. `doctor` prints the settings change.
+
+## 12. Refinements made while planning (2026-09-24)
+
+- **The flock `.lock` stays** (it refines §4.2). Existing callers hold `WithLock` for up to about
+  90 s (Reconcile's report path, gc's worktree teardown). A `BEGIN IMMEDIATE` held that long
+  would make every other process's write fail with busy after 5 s. So `WithLock` keeps the flock
+  as the cross-process mutex, and each DB write inside it is a short statement or transaction.
+- **New record tables** (refines §3.1). The record lives in `binding_record` and `binding_event`
+  (migration 003). The ingest-mirror tables `binding`/`event`/`round` stay until the history
+  readers move (phase 3c/3d). The mirror has 0-based seq, FK and NOT NULL constraints, and stale
+  "live" rows, so reusing it would have collided with ingest.
+- **One DB per store root until phase 5.** Each serve owner root gets its own `relevo.db`, so
+  serve's nested owner locks (`heldCPUs`) stay deadlock-free. Phase 5 merges them.
+- **A file that is present is imported, for config and for bindings.** A config file in
+  `~/.config/relevo`, or a `bind.json`/`log.jsonl` in a binding dir, is validated, stored and
+  deleted whenever it is found. That one rule is the migration, the provisioning path and the
+  test-fixture path. `daemon --preflight/--check` only peek.
+- **The ingest bridge.** Until 3c, the daemon feeds the ingest mirror from `ingest.StoreSource`,
+  which synthesizes bind.json and log.jsonl from the store. Archive tarballs keep today's layout,
+  because archive writes both files into the dir before tarring.
+- **The ack gap** (§7, 5a) is found and being fixed separately (HK-ACK). The ack set only
+  `ServeFacts.AckedRound` and never confirmed the log entry that status reads. The fix makes ack
+  and done settle the log, and the server backfills once when it starts.
+- **Rounds seal lazily** (this refines D7 and §5). Verify, edges, repair and the stream drain, plus
+  the server's file route, read a round's files after it closes. So a round seals once
+  nothing can still read it: it is closed, the drain has moved on, no consult on it is running,
+  and no gate is running for it. Its `NNN-*` files then become `round_file` rows (migration 004)
+  and are deleted. `Store.ReadFile(path)` returns a sealed file from the DB, so a path stays a
+  valid identifier, and ingest, fork, archive and serve see sealed files unchanged. The binding
+  dir holds only unsealed rounds; there is no separate spool dir.
+- **Small state becomes kv documents** (this refines §3.2 for P3b). ledger, availability,
+  latency, release-check, ui prefs, agents-manifest and daemon info each become one `kv` row
+  holding the same JSON document the file held. Their semantics don't change; a file that is
+  present is imported. A later phase can normalise them into tables if a query needs it.
