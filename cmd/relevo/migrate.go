@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -34,7 +35,10 @@ func cmdMigrate(args []string) error {
 	keepOld := fs.Bool("keep-old-binary", false, "do not remove the old relay binary beside relevo") // name-guard: legacy
 	stateFrom := fs.String("state-from", "", "migrate only this state root")
 	stateTo := fs.String("state-to", "", "to this state root")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 	if (*stateFrom == "") != (*stateTo == "") {

@@ -472,15 +472,15 @@ func openHooksLogAppend(path string) io.Writer {
 	return f
 }
 
-// opencodeStateFile resolves $XDG_STATE_HOME/opencode/service.json, falling
-// back to ~/.local/state/opencode/service.json, the same way store.DefaultRoot
-// resolves $XDG_STATE_HOME.
-func opencodeStateFile() string {
-	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
+// opencodeServiceFile resolves $XDG_CONFIG_HOME/opencode/service.json, falling
+// back to ~/.config/opencode/service.json, the same way userConfigRoot resolves
+// $XDG_CONFIG_HOME.
+func opencodeServiceFile() string {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		return filepath.Join(xdg, "opencode", "service.json")
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "opencode", "service.json")
+	return filepath.Join(home, ".config", "opencode", "service.json")
 }
 
 // opencodeDBPath resolves $XDG_DATA_HOME/opencode/opencode.db, falling back
@@ -532,7 +532,7 @@ func newDeliverers() map[string]relevo.PlannerDeliverer {
 	}
 	deliverers["opencode"] = &relevo.OpencodeDeliverer{
 		Exec:      binExec{},
-		StateFile: opencodeStateFile(),
+		StateFile: opencodeServiceFile(),
 		DBPath:    opencodeDBPath(),
 	}
 	return deliverers
@@ -705,41 +705,6 @@ func roleOrBuilder(r string) string {
 		return "builder"
 	}
 	return r
-}
-
-// headlessFlagNote is the one line relevo prints when a local-builder verb is
-// passed --headless: the flag is accepted and ignored (#303).
-const headlessFlagNote = "relevo: --headless is the default and only local mode; the flag is ignored"
-
-// headlessNoOpLines is what bind/add/fork print to stderr when --headless is
-// passed. Pure, so the rule is testable without running a subcommand that
-// launches a harness.
-func headlessNoOpLines(headless bool) []string {
-	if !headless {
-		return nil
-	}
-	return []string{headlessFlagNote}
-}
-
-// askHeadlessFlagNote is what `relevo ask --headless` prints: every consult is
-// headless since #303, so the flag is accepted and ignored.
-const askHeadlessFlagNote = "relevo: --headless is the default and only consult mode; the flag is ignored"
-
-// askHeadlessNoOpLines is what ask prints to stderr when --headless is
-// passed. Pure, so the rule is testable without running a subcommand that
-// launches a harness.
-func askHeadlessNoOpLines(headless bool) []string {
-	if !headless {
-		return nil
-	}
-	return []string{askHeadlessFlagNote}
-}
-
-// printHeadlessNoOp prints headlessNoOpLines to stderr.
-func printHeadlessNoOp(headless bool) {
-	for _, line := range headlessNoOpLines(headless) {
-		fmt.Fprintln(os.Stderr, line)
-	}
 }
 
 // builderWhere is how the bound/added lines name the builder's place: a local
@@ -968,8 +933,6 @@ func cmdBind(args []string) error {
 	rebind := fs.Bool("rebind", false,
 		"with --resume: replace a gone builder, picking it by policy.json order and the ledger (like bind with --builder omitted)")
 	timeout := fs.Duration("timeout", 0, "round budget before relevo flags the binding (default 24h)")
-	headless := fs.Bool("headless", false,
-		"accepted and ignored: a local builder is always a headless process per round")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relevo runs on the round's completion marker (default: policy.json gate.default)")
@@ -992,7 +955,6 @@ func cmdBind(args []string) error {
 		return fmt.Errorf("relevo bind --resume keeps the binding's role; drop --role")
 	}
 
-	printHeadlessNoOp(*headless)
 	if *feature != "" {
 		if err := store.ValidFeature(*feature); err != nil {
 			fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
@@ -1021,7 +983,6 @@ func cmdBind(args []string) error {
 		Resume:       *resume,
 		Rebind:       *rebind,
 		RoundTimeout: *timeout,
-		Headless:     *headless,
 		Tier:         *tier,
 		AllowYolo:    *allowYolo,
 		Gate:         *gate,
@@ -1128,7 +1089,6 @@ func cmdFork(args []string) error {
 	newName := fs.String("new-name", "", "name for the new binding")
 	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn (default: inherits source; else the first ungated in policy.json order[builder])")
 	cwd := fs.String("cwd", "", "bind the fork to an existing directory instead of creating a git worktree")
-	headless := fs.Bool("headless", false, "accepted and ignored: a local builder is always a headless process per round")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
 	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	gate := fs.String("gate", "", "acceptance command relevo runs on the round's completion marker (default: inherits the source binding's gate)")
@@ -1175,7 +1135,6 @@ func cmdFork(args []string) error {
 		Candidate: *builderAlias,
 		PlannerID: *plannerFlag,
 		CWD:       *cwd,
-		Headless:  *headless,
 		Tier:      *tier,
 		AllowYolo: *allowYolo,
 		Gate:      *gate,
@@ -1183,7 +1142,6 @@ func cmdFork(args []string) error {
 		Regate:    regateOpt,
 		Feature:   *feature,
 	}
-	printHeadlessNoOp(*headless)
 
 	res, err := relevo.Fork(context.Background(), rt, opts)
 	if err != nil {
@@ -1213,7 +1171,6 @@ func cmdAdd(args []string) error {
 	builderAlias := fs.String("builder", "", "candidate harness/provider/model to spawn; omit to take the first ungated candidate in policy.json order[builder]")
 	cwd := fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
 	branch := fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relevo/<name>")
-	headless := fs.Bool("headless", false, "accepted and ignored: a local builder is always a headless process per round")
 	server := fs.String("server", "", "run the builder on this configured remote server instead of a local process (relevo servers)")
 	base := fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
 	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
@@ -1272,7 +1229,6 @@ func cmdAdd(args []string) error {
 		Repo:      repo,
 		CWD:       *cwd,
 		Branch:    *branch,
-		Headless:  *headless,
 		Server:    *server,
 		Base:      *base,
 		Tier:      *tier,
@@ -1286,7 +1242,6 @@ func cmdAdd(args []string) error {
 	if err != nil {
 		return err
 	}
-	printHeadlessNoOp(*headless)
 
 	switch {
 	case res.Binding.Builder.Remote():
@@ -1367,8 +1322,6 @@ func cmdUnbind(args []string) error {
 func cmdGC(args []string) error {
 	fs := flag.NewFlagSet("gc", flag.ContinueOnError)
 	delete := fs.Bool("delete", false, "remove each finished binding's directory instead of archiving it")
-	// --archive is kept as an accepted, ignored flag so scripts written against the old default do not break; archiving is now the default (spec §7.3).
-	archive := fs.Bool("archive", false, "no-op; archiving is now the default")
 	dryRun := fs.Bool("dry-run", false, "list what would be cleared, change nothing")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: relevo gc [--dry-run] [--delete]")
@@ -1377,7 +1330,6 @@ func cmdGC(args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	_ = archive
 
 	rt, err := newRuntime()
 	if err != nil {
@@ -1525,15 +1477,9 @@ func cmdAsk(args []string) error {
 	fs.StringVar(question, "q", "", "the question itself (shorthand for --question)")
 	round := fs.Int("round", 0, "ask the builder that built this closed round: resumes its session, headless and read-only")
 	nameFlag := fs.String("name", "", "binding name")
-	headless := fs.Bool("headless", false, "accepted and ignored: every consult is a one-shot process since #303")
 	plannerFlag := fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
-	}
-	// --headless is the default and only consult mode; the flag is accepted
-	// for compatibility and says so once.
-	for _, line := range askHeadlessNoOpLines(*headless) {
-		fmt.Fprintln(os.Stderr, line)
 	}
 	if *round > 0 {
 		// The round's recorded session fixes the role and the candidate, so

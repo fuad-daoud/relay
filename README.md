@@ -266,9 +266,7 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   only `bind.json` would be rewritten, so a fresh round 1 would collide with
   the previous session's round log. `--resume --name N` re-points that
   existing binding's planner side at the calling planner without touching the
-  builder; `relevo unbind N` is the other way out. `--headless` is accepted and
-  ignored with a one-line stderr note: headless is the only local mode (see
-  "Headless builders" below).
+  builder; `relevo unbind N` is the other way out.
 - `relevo send [NAME|--name N] --file PATH [--dry-run]` — stage the file as the current round's
   plan and hand it to the builder as the prompt of a fresh process started in
   the binding's tree.
@@ -356,7 +354,6 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   additional builder to this planner on its own git worktree, starting at
   round 1. This is how one planner drives several builders at once.
   `--role R` is the writer role the binding runs (default `builder`).
-  `--headless` is accepted and ignored, as for `bind`.
   `relevo add --name N --server S [--base REF]` runs that builder on a
   configured remote server instead (see "Remote builders: the client" below);
   `--cwd` cannot be combined with `--server`.
@@ -1855,8 +1852,8 @@ judgements about what the findings say.
 
 A consult is a one-shot process: relevo starts the harness in its print form,
 and the consult's **final message** becomes the findings, which relevo writes
-to `NNN-<id>-findings.md` and queues to the planner (`--headless` is accepted
-and ignored). The same form resumes a closed round's builder session and runs
+to `NNN-<id>-findings.md` and queues to the planner. The same form resumes a
+closed round's builder session and runs
 a verifier at round close. The process is the only thing relevo can observe: it is killed at the
 consult timeout (10m), and a process that exits without a final message is
 reported silent with its exit code and the stream to read. The resolved tier

@@ -772,7 +772,7 @@ func TestStatusRowBranch(t *testing.T) {
 }
 
 // TestStatusRowWaiting: a needs_you binding whose round has a captured
-// question carries Waiting{Cause: "blocked", Hint: "relevo answer ..."};
+// question carries Waiting{Cause: "blocked", Hint: "relevo status ..."};
 // an active binding carries nil.
 
 func TestStatusRowWaiting(t *testing.T) {
@@ -800,7 +800,7 @@ func TestStatusRowWaiting(t *testing.T) {
 	if row.Waiting == nil || row.Waiting.Cause != "blocked" {
 		t.Fatalf("Waiting = %+v, want cause blocked", row.Waiting)
 	}
-	if row.Waiting.Hint != "relevo answer --name "+b.Name {
+	if row.Waiting.Hint != "relevo status --name "+b.Name {
 		t.Errorf("Hint = %q", row.Waiting.Hint)
 	}
 	b.State = store.StateActive

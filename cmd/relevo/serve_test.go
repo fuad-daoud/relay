@@ -337,3 +337,22 @@ func TestServeAvailableWithoutSubjectExits2(t *testing.T) {
 		t.Errorf("expected a usage line on stderr, got %q", string(stderr))
 	}
 }
+
+// TestServeFlagAfterPositionalIsHonoured pins the #48 bug class for
+// cmdServeAvailable: a flag after a positional must still reach the handler.
+// With a raw fs.Parse, --state after "sometoken" was silently dropped, so
+// cmdServeAvailable resolved the default root under the TestMain temp HOME
+// instead of the temp dir here. CI-safe: an uninitialised --state dir fails
+// in adminRoot before any network or harness use.
+func TestServeFlagAfterPositionalIsHonoured(t *testing.T) {
+	dir := t.TempDir()
+	_, _, runErr := captureOutput(t, func() error {
+		return run([]string{"serve", "available", "sometoken", "--state", dir})
+	})
+	if runErr == nil {
+		t.Fatal("run error = nil, want an uninitialised-root error")
+	}
+	if !strings.Contains(runErr.Error(), dir) {
+		t.Errorf("error = %q, want it to contain %q", runErr, dir)
+	}
+}

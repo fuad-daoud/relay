@@ -316,7 +316,10 @@ func serveAdminConfigWithCandidates(root string) (serve.Config, error) {
 func cmdServeRun(args []string) error {
 	fs, sf := serveFlagSet()
 	fs.SetOutput(os.Stderr)
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -474,7 +477,10 @@ func cmdServeInit(args []string) error {
 	var hosts hostSlice
 	fs.Var(&hosts, "host", "hostname or IP to include in certificate SANs")
 	_ = fs.String("state", "", "state directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -508,7 +514,10 @@ func cmdServeEnroll(args []string) error {
 	label := fs.String("label", "", "client label")
 	key := fs.String("key", "", "client ed25519 public key line")
 	_ = fs.String("state", "", "state directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -546,7 +555,10 @@ func cmdServeClients(args []string) error {
 	fs := flag.NewFlagSet("relevo serve clients", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	_ = fs.String("state", "", "state directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -569,7 +581,10 @@ func cmdServeRevoke(args []string) error {
 	fs := flag.NewFlagSet("relevo serve revoke", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	_ = fs.String("state", "", "state directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -604,7 +619,10 @@ func cmdServeFingerprint(args []string) error {
 	fs := flag.NewFlagSet("relevo serve fingerprint", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	_ = fs.String("state", "", "state directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -628,7 +646,10 @@ func cmdServeStatus(args []string) error {
 	fs := flag.NewFlagSet("relevo serve status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	_ = fs.String("state", "", "state directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -669,7 +690,10 @@ func cmdServeLog(args []string) error {
 	asJSON := fs.Bool("json", false, "one compact JSON object per line (NDJSON)")
 	follow := fs.Bool("follow", false, "keep printing new entries until the binding is DONE or removed")
 	_ = fs.String("state", "", "state directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -733,7 +757,10 @@ func cmdServeShow(args []string) error {
 	transcript := fs.Bool("transcript", false, "show the round's builder transcript")
 	asJSON := fs.Bool("json", false, "machine-readable output: the ShowResult, Events included for --log")
 	_ = fs.String("state", "", "state directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -799,7 +826,10 @@ func cmdServeTab(args []string) error {
 	by := fs.String("by", "binding", "group rows by binding, model, provider or owner")
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	_ = fs.String("state", "", "state directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -847,7 +877,10 @@ func cmdServeGates(args []string) error {
 	fs := flag.NewFlagSet("relevo serve gates", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	_ = fs.String("state", "", "state directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -875,7 +908,10 @@ func cmdServeAvailable(args []string) error {
 	fs := flag.NewFlagSet("relevo serve available", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	_ = fs.String("state", "", "state directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -921,7 +957,10 @@ func cmdServeUnavailable(args []string) error {
 	forFlag := fs.String("for", "", "how long to gate the provider (Go duration, e.g. 2h); omit to leave it gated until `relevo serve available`")
 	reason := fs.String("reason", "", "why, for the record")
 	_ = fs.String("state", "", "state directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -975,7 +1014,10 @@ func cmdServeUI(args []string) error {
 	fs.SetOutput(os.Stderr)
 	_ = fs.String("state", "", "state directory")
 	interval := fs.Duration("interval", 0, "poll interval (0 uses the ui default)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -1007,7 +1049,10 @@ func cmdServeUnbind(args []string) error {
 	owner := fs.String("owner", "", "client label or id")
 	force := fs.Bool("force", false, "unbind even if the round is running")
 	_ = fs.String("state", "", "state directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 
@@ -1046,7 +1091,10 @@ func cmdServeGC(args []string) error {
 	abandoned := fs.String("abandoned", "", "abandoned duration threshold")
 	dryRun := fs.Bool("dry-run", false, "dry run without unbinding")
 	_ = fs.String("state", "", "state directory")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
+		if errors.Is(err, errHelpShown) {
+			return err
+		}
 		return exitCodeErr{code: 2}
 	}
 

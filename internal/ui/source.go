@@ -121,7 +121,7 @@ func notTTY() bool {
 // text otherwise.
 func pipeRefusal(hint string) error {
 	if hint == "" {
-		hint = "relevo ui needs a terminal; use `relevo status` or `relevo watch` when piping"
+		hint = "relevo ui needs a terminal; use `relevo status` when piping"
 	}
 	return errors.New(hint)
 }
