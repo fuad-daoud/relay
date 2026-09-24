@@ -3,9 +3,12 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // errFake is a sentinel Tx callers return to force a rollback in tests.
@@ -274,5 +277,96 @@ func TestTxRollsBackOnError(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("repo has %d rows after rollback, want 0", count)
+	}
+}
+
+// TestBackupToCopiesEveryRowAndRefusesAnExistingPath pins BackupTo's contract:
+// the copy opens with Open and holds the same row counts as the source, the
+// file is owner-only, and a path that already exists is refused with an error
+// naming it. Mutation that breaks it: delete the os.Stat guard, and the second
+// BackupTo silently overwrites the copy instead of failing.
+func TestBackupToCopiesEveryRowAndRefusesAnExistingPath(t *testing.T) {
+	d := openTestDB(t)
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+
+	bindingID, err := d.UpsertBinding(newTestBinding("webshop", now))
+	if err != nil {
+		t.Fatalf("UpsertBinding: %v", err)
+	}
+	if _, err := d.UpsertRound(Round{BindingID: bindingID, Number: 1, StartedAt: now, Outcome: OutcomeOpen}); err != nil {
+		t.Fatalf("UpsertRound: %v", err)
+	}
+	if err := d.KVPut("probe", []byte(`{"a":1}`)); err != nil {
+		t.Fatalf("KVPut: %v", err)
+	}
+
+	want, err := d.Stats()
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "copy.db")
+	if err := d.BackupTo(path); err != nil {
+		t.Fatalf("BackupTo: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(backup): %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("backup mode = %o, want 600", perm)
+	}
+
+	copyDB, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(backup): %v", err)
+	}
+	defer copyDB.Close()
+
+	got, err := copyDB.Stats()
+	if err != nil {
+		t.Fatalf("Stats(backup): %v", err)
+	}
+	for tbl, n := range want.Rows {
+		if got.Rows[tbl] != n {
+			t.Errorf("backup Rows[%s] = %d, want %d", tbl, got.Rows[tbl], n)
+		}
+	}
+
+	err = d.BackupTo(path)
+	if err == nil {
+		t.Fatal("BackupTo(a path that already exists) = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("BackupTo(existing) err = %v, want it to name %s", err, path)
+	}
+}
+
+// TestVacuumKeepsRows pins Vacuum's contract: it completes on a database with
+// rows and leaves them readable. Mutation that breaks it: run VACUUM inside a
+// transaction -- sqlite refuses it there, and the error surfaces here.
+func TestVacuumKeepsRows(t *testing.T) {
+	d := openTestDB(t)
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+
+	bindingID, err := d.UpsertBinding(newTestBinding("webshop", now))
+	if err != nil {
+		t.Fatalf("UpsertBinding: %v", err)
+	}
+	if _, err := d.UpsertRound(Round{BindingID: bindingID, Number: 1, StartedAt: now, Outcome: OutcomeOpen}); err != nil {
+		t.Fatalf("UpsertRound: %v", err)
+	}
+
+	if err := d.Vacuum(); err != nil {
+		t.Fatalf("Vacuum: %v", err)
+	}
+
+	rounds, err := d.Rounds(bindingID)
+	if err != nil {
+		t.Fatalf("Rounds: %v", err)
+	}
+	if len(rounds) != 1 {
+		t.Errorf("rounds after Vacuum = %d, want 1", len(rounds))
 	}
 }

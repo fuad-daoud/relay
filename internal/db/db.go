@@ -149,6 +149,41 @@ func (d *DB) Close() error {
 	return nil
 }
 
+// BackupTo writes a consistent, standalone copy of the whole database to
+// path with VACUUM INTO. The copy holds every committed row and no
+// journal-mode companions of its own, so it can be opened with Open like any
+// other database file.
+//
+// A path that already exists is refused, with an error naming it: VACUUM
+// INTO would overwrite it, and a caller that means to overwrite a backup
+// says so itself. The copy is chmodded 0600 afterwards, because the
+// database holds secrets from schema v2 on.
+func (d *DB) BackupTo(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("db: backup to %s: file already exists: %w", path, ErrInvalid)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("db: backup to %s: %w", path, mapBusy(err))
+	}
+
+	if _, err := d.sqlDB.ExecContext(context.Background(), `VACUUM INTO ?`, path); err != nil {
+		return fmt.Errorf("db: backup to %s: %w", path, mapBusy(err))
+	}
+	if err := chmodPrivate(path); err != nil {
+		return fmt.Errorf("db: backup to %s: chmod: %w", path, err)
+	}
+	return nil
+}
+
+// Vacuum compacts the database in place with VACUUM, returning a file to the
+// OS that still holds the rows a delete pass removed. It runs outside any
+// transaction, as sqlite requires.
+func (d *DB) Vacuum() error {
+	if _, err := d.sqlDB.ExecContext(context.Background(), `VACUUM`); err != nil {
+		return fmt.Errorf("db: vacuum: %w", mapBusy(err))
+	}
+	return nil
+}
+
 // Version returns the highest applied schema_version, 0 when none has run.
 func (d *DB) Version() (int, error) {
 	var v sql.NullInt64

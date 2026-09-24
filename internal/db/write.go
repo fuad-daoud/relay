@@ -423,6 +423,35 @@ func (t *Tx) UpsertArtifact(a Artifact) error {
 	return nil
 }
 
+// DeleteArtifact removes the artifact row with this id. Deleting an id that
+// is not there is not an error: the caller may be applying a plan built
+// against a database that has since lost the row, and the end state it wants
+// -- no such row -- already holds.
+func (t *Tx) DeleteArtifact(id string) error {
+	if _, err := t.exec(`DELETE FROM artifact WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("db: delete artifact %s: %w", id, mapBusy(err))
+	}
+	return nil
+}
+
+// DeleteRoundTranscript removes every transcript row of one mirror round:
+// owner_kind = 'round' and owner_id = roundID. It returns how many rows went.
+//
+// The owner kind is hard-coded to OwnerRound, not taken from the caller, so
+// this function cannot delete a planner transcript (owner_kind = 'planner')
+// even if it is handed a planner's id.
+func (t *Tx) DeleteRoundTranscript(roundID string) (int64, error) {
+	res, err := t.exec(`DELETE FROM transcript WHERE owner_kind = ? AND owner_id = ?`, OwnerRound, roundID)
+	if err != nil {
+		return 0, fmt.Errorf("db: delete round transcript %s: %w", roundID, mapBusy(err))
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("db: delete round transcript %s: rows affected: %w", roundID, err)
+	}
+	return n, nil
+}
+
 // AppendTranscript inserts every record not already present, keyed on
 // (owner_kind, owner_id, seq); known seqs are ignored. It returns how many
 // were added.

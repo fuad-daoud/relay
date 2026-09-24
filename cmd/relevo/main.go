@@ -29,6 +29,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/history"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/latency"
 	"github.com/fuad-daoud/relevo/internal/legacy"
 	diffpatch "github.com/fuad-daoud/relevo/internal/patch"
@@ -2629,6 +2630,30 @@ func cmdDaemon(args []string) error {
 		_ = d.Close()
 	} else {
 		rt.DB = d
+	}
+
+	// The ingest mirror's proven duplicates are removed once, before daemon.json
+	// is written (D3c). The run backs the database up first and records itself
+	// in the kv table, so every later start is a no-op, and a failure never
+	// stops the daemon: a machine with no database, or one where the backup
+	// could not be written, still runs and retries on the next start.
+	if rt.DB != nil {
+		stats, ran, derr := ingest.DedupeMirrorOnce(rt.DB, filepath.Dir(rt.Store.DBPath()), time.Now())
+		if derr != nil {
+			slog.Warn("relevo daemon: mirror dedupe skipped", "err", derr)
+		} else if ran {
+			slog.Info("relevo daemon: mirror dedupe",
+				"done_at", stats.DoneAt,
+				"mirror_bindings", stats.MirrorBindings,
+				"unmapped", stats.Unmapped,
+				"artifacts_deleted", stats.ArtifactsDeleted,
+				"artifacts_kept", stats.ArtifactsKept,
+				"transcript_rounds_deleted", stats.TranscriptRoundsDeleted,
+				"transcript_rows_deleted", stats.TranscriptRowsDeleted,
+				"transcript_rounds_kept", stats.TranscriptRoundsKept,
+				"backup_path", stats.BackupPath,
+				"vacuum_err", stats.VacuumErr)
+		}
 	}
 
 	// daemon.json: what this image runs. Written under the lock, so its
