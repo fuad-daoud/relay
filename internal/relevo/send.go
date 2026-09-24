@@ -428,7 +428,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			if err := tx.AppendLog(name, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick)); err != nil {
 				return err
 			}
-			pickLine = ExplainResolution("builder", *pf.pick)
+			pickLine = PickText("builder", *pf.pick, rt.Candidates)
 		}
 
 		entry := store.LogEntry{
@@ -525,19 +525,22 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 // would go to, the paths and the head of the prompt. It is a description only;
 // nothing was written (#149).
 type DryRun struct {
-	Name       string   `json:"name"`
-	Round      int      `json:"round"`
-	Mode       string   `json:"mode"` // "headless" | "remote"
-	Candidate  string   `json:"candidate"`
-	Where      string   `json:"where"`               // headless: the harness binary + first arg; remote: "server contabo, branch relevo/x @ <sha12>; server not contacted"
-	GateNote   string   `json:"gate_note,omitempty"` // "rate-limited until 00:26; the daemon would switch after start" / "roles missing: ...; the daemon would switch after start"
-	PlanPath   string   `json:"plan_path"`
-	PlanFrom   string   `json:"plan_from"`
-	PlanBytes  int64    `json:"plan_bytes"`
-	ReportPath string   `json:"report_path"`
-	DonePath   string   `json:"done_path"`
-	Tier       string   `json:"tier"`
-	PromptHead []string `json:"prompt_head"` // the prompt's first two non-empty lines
+	Name      string `json:"name"`
+	Round     int    `json:"round"`
+	Mode      string `json:"mode"` // "headless" | "remote"
+	Candidate string `json:"candidate"`
+	// CandidateName is Candidate's short name (A1 §4.4). Empty when the
+	// candidate is no longer configured, in which case Candidate is shown.
+	CandidateName string   `json:"candidate_name,omitempty"`
+	Where         string   `json:"where"`               // headless: the harness binary + first arg; remote: "server contabo, branch relevo/x @ <sha12>; server not contacted"
+	GateNote      string   `json:"gate_note,omitempty"` // "rate-limited until 00:26; the daemon would switch after start" / "roles missing: ...; the daemon would switch after start"
+	PlanPath      string   `json:"plan_path"`
+	PlanFrom      string   `json:"plan_from"`
+	PlanBytes     int64    `json:"plan_bytes"`
+	ReportPath    string   `json:"report_path"`
+	DonePath      string   `json:"done_path"`
+	Tier          string   `json:"tier"`
+	PromptHead    []string `json:"prompt_head"` // the prompt's first two non-empty lines
 }
 
 // SendDryRun checks every precondition Send checks and describes the round
@@ -552,18 +555,19 @@ func SendDryRun(ctx context.Context, rt Runtime, name, file string, opts SendOpt
 	}
 
 	d := DryRun{
-		Name:       pf.b.Name,
-		Round:      pf.b.Round,
-		Mode:       dryRunMode(pf.b),
-		Candidate:  pf.b.BuilderCandidate,
-		Where:      dryRunWhere(pf),
-		PlanPath:   pf.planPath,
-		PlanFrom:   absoluteOr(file),
-		PlanBytes:  int64(len(pf.body)),
-		ReportPath: pf.reportPath,
-		DonePath:   pf.donePath,
-		Tier:       string(pf.tier),
-		PromptHead: promptHead(pf.prompt),
+		Name:          pf.b.Name,
+		Round:         pf.b.Round,
+		Mode:          dryRunMode(pf.b),
+		Candidate:     pf.b.BuilderCandidate,
+		CandidateName: rt.Candidates.NameOf(pf.b.BuilderCandidate),
+		Where:         dryRunWhere(pf),
+		PlanPath:      pf.planPath,
+		PlanFrom:      absoluteOr(file),
+		PlanBytes:     int64(len(pf.body)),
+		ReportPath:    pf.reportPath,
+		DonePath:      pf.donePath,
+		Tier:          string(pf.tier),
+		PromptHead:    promptHead(pf.prompt),
 	}
 	if pf.gate != nil {
 		d.GateNote = dryRunGateNote(pf.gate)

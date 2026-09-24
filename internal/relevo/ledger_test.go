@@ -2,7 +2,6 @@ package relevo
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -392,6 +391,30 @@ func TestGatedNoteEmptyWhenNotGated(t *testing.T) {
 	}
 }
 
+// TestGatesCarryName pins A1 §4.4: every gate Gates hands a renderer carries
+// the candidate's short name beside its canonical token, and a token no
+// longer configured reads as itself.
+func TestGatesCarryName(t *testing.T) {
+	rt := newRuntime(t)
+
+	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+	recordSpawnFailure(rt, testAgyRef, "webshop", errors.New("boom"))
+
+	gates := Gates(rt)
+	byToken := make(map[string]ledger.Gate, len(gates))
+	for _, g := range gates {
+		byToken[g.Token] = g
+	}
+	if got := byToken[testClaudeRef].Name; got != "claude-m" {
+		t.Errorf("claude gate Name = %q, want claude-m", got)
+	}
+	if got := byToken[testAgyRef].Name; got != "agy-m" {
+		t.Errorf("agy gate Name = %q, want agy-m", got)
+	}
+}
+
 func TestGatedNoteFormatsEveryGate(t *testing.T) {
 	rt := newRuntime(t)
 
@@ -401,8 +424,8 @@ func TestGatedNoteFormatsEveryGate(t *testing.T) {
 	recordSpawnFailure(rt, testClaudeRef, "webshop", errors.New("boom"))
 
 	got := gatedNote(rt, testClaudeRef)
-	if !strings.HasPrefix(got, fmt.Sprintf("note: %s is gated: ", testClaudeRef)) {
-		t.Fatalf("gatedNote() = %q, want prefix %q", got, fmt.Sprintf("note: %s is gated: ", testClaudeRef))
+	if !strings.HasPrefix(got, "note: claude-m is gated: ") {
+		t.Fatalf("gatedNote() = %q, want prefix %q", got, "note: claude-m is gated: ")
 	}
 	if !strings.HasSuffix(got, "; proceeding") {
 		t.Errorf("gatedNote() = %q, want suffix %q", got, "; proceeding")

@@ -168,9 +168,11 @@ func gatesForRole(gates []ledger.Gate, role string) []ledger.Gate {
 	return out
 }
 
-// skipText renders one Skip as "<token> (<kind> <until>)".
-func skipText(s Skip) string {
-	return fmt.Sprintf("%s (%s %s)", s.Token, GateKindText(s.Kind), GateUntilText(s.Until))
+// skipText renders one Skip as "<token> (<kind> <until>)". name maps every
+// token before it is printed: identity for the stored pick note, Set.NameOf
+// for the line a human reads (A1 §4.4).
+func skipText(s Skip, name func(string) string) string {
+	return fmt.Sprintf("%s (%s %s)", name(s.Token), GateKindText(s.Kind), GateUntilText(s.Until))
 }
 
 // uniqStrings drops later duplicates, keeping first occurrences in order.
@@ -297,17 +299,22 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, t
 func allGated(role string, skipped []Skip) (Resolution, error) {
 	texts := make([]string, 0, len(skipped))
 	for _, s := range skipped {
-		texts = append(texts, skipText(s))
+		texts = append(texts, skipText(s, identityName))
 	}
 	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; name one with --builder to bypass, or clear a gate with relevo gate --clear <provider>: %w", role, strings.Join(uniqStrings(texts), ", "), ErrAllGated)
 }
 
-// ExplainResolution is the one line that says what was picked and why.
-// The pick log entry, the stderr line after a spawn, and `relevo config`
-// all render from it, so a pick the planner reads in `relevo log` is
-// word-for-word what bind printed (spec §1 principle 1).
-func ExplainResolution(role string, res Resolution) string {
-	head := "picked " + res.Token() + " for " + role + ": "
+// identityName leaves every token as it is. It is what ExplainResolution
+// passes, so the stored KindPick note is byte-identical to its pre-A1 text
+// even though the rendering now takes a name mapping (A1 §4.4).
+func identityName(token string) string {
+	return token
+}
+
+// explainResolution is the one line that says what was picked and why, with
+// every candidate token passed through name before it is printed.
+func explainResolution(role string, res Resolution, name func(string) string) string {
+	head := "picked " + name(res.Token()) + " for " + role + ": "
 
 	var body string
 	switch res.How {
@@ -330,7 +337,7 @@ func ExplainResolution(role string, res Resolution) string {
 	if len(res.Skipped) > 0 {
 		texts := make([]string, 0, len(res.Skipped))
 		for _, s := range res.Skipped {
-			texts = append(texts, skipText(s))
+			texts = append(texts, skipText(s, name))
 		}
 		out += "; skipped " + strings.Join(uniqStrings(texts), ", ")
 	}
@@ -344,6 +351,23 @@ func ExplainResolution(role string, res Resolution) string {
 	}
 
 	return out
+}
+
+// ExplainResolution is the one line that says what was picked and why.
+// The pick log entry, the stderr line after a spawn, and `relevo config`
+// all render from it, so a pick the planner reads in `relevo log` is
+// word-for-word what bind printed (spec §1 principle 1). It names every
+// candidate by its token: stored notes and their parsers are unchanged by A1.
+func ExplainResolution(role string, res Resolution) string {
+	return explainResolution(role, res, identityName)
+}
+
+// PickText is ExplainResolution for a line a human reads: every candidate is
+// named by its short name, or by its token when the set no longer holds it
+// (A1 §4.4). The stored KindPick note keeps ExplainResolution, so
+// `relevo log` and the outcome and stats parsers read today's words.
+func PickText(role string, res Resolution, set *candidate.Set) string {
+	return explainResolution(role, res, set.NameOf)
 }
 
 // pickEntry is the log record of one resolution. Confirmed and bound for

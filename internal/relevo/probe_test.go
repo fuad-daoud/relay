@@ -384,15 +384,24 @@ func TestProbeRecordsHistory(t *testing.T) {
 	}
 }
 
+// TestFormatProbe pins A1 §4.4: the line prints the candidate's short name,
+// falling back to the token when the result carries none.
 func TestFormatProbe(t *testing.T) {
-	success := ProbeResult{Token: "opencode/test/m", TTFTMS: 640, TotalMS: 1500}
-	if got, want := FormatProbe(success, 15), "opencode/test/m  ttft 640ms  total 1.5s"; got != want {
+	success := ProbeResult{Sample: latency.Sample{Token: "opencode/test/m", TTFTMS: 640, TotalMS: 1500}, Name: "m"}
+	if got, want := FormatProbe(success, 15), "m"+strings.Repeat(" ", 14)+"  ttft 640ms  total 1.5s"; got != want {
 		t.Errorf("FormatProbe(success) = %q, want %q", got, want)
 	}
 
-	failure := ProbeResult{Token: "opencode/test/m", TTFTMS: 200, TotalMS: 900, Err: "exit status 1"}
-	if got, want := FormatProbe(failure, 15), "opencode/test/m  error: exit status 1  (ttft 200ms)"; got != want {
+	failure := ProbeResult{Sample: latency.Sample{Token: "opencode/test/m", TTFTMS: 200, TotalMS: 900, Err: "exit status 1"}, Name: "m"}
+	if got, want := FormatProbe(failure, 15), "m"+strings.Repeat(" ", 14)+"  error: exit status 1  (ttft 200ms)"; got != want {
 		t.Errorf("FormatProbe(failure) = %q, want %q", got, want)
+	}
+
+	// A result with no name -- one read back from a pre-A1 record -- prints
+	// the token.
+	nameless := ProbeResult{Sample: latency.Sample{Token: "opencode/test/m", TTFTMS: 640, TotalMS: 1500}}
+	if got, want := FormatProbe(nameless, 15), "opencode/test/m  ttft 640ms  total 1.5s"; got != want {
+		t.Errorf("FormatProbe(nameless) = %q, want %q", got, want)
 	}
 }
 

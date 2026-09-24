@@ -61,7 +61,7 @@ func TestFormatRolesLegacy(t *testing.T) {
 	if !strings.Contains(got, "builder  writer  gate  tier -  (legacy)") {
 		t.Errorf("legacy builder line must carry writer, gate and (legacy):\n%s", got)
 	}
-	if !strings.Contains(got, "  candidates  "+testClaudeRef) {
+	if !strings.Contains(got, "  candidates  m") {
 		t.Errorf("legacy candidates line must be the role's order:\n%s", got)
 	}
 	if !strings.Contains(got, "researcher  reader  tier -  (legacy)\n  candidates  (none)") {
@@ -86,7 +86,7 @@ func TestFormatRolesLegacyCandidatesFromRanked(t *testing.T) {
 
 	got := FormatRoles(legacy)
 
-	if !strings.Contains(got, "researcher  reader  tier -  (legacy)\n  candidates  claude/anthropic/haiku (unlisted)") {
+	if !strings.Contains(got, "researcher  reader  tier -  (legacy)\n  candidates  haiku (unlisted)") {
 		t.Errorf("researcher's legacy candidates line must list the unlisted candidate:\n%s", got)
 	}
 }

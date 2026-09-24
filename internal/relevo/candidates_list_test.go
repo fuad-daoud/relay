@@ -9,12 +9,27 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ledger"
 )
 
+// testFaintOn/Off are the dim pair the candidate listings wrap a token in
+// (A1 §4.4), spelled out so these tests pin the actual bytes.
+const (
+	testFaintOn  = "\x1b[38;5;245m"
+	testFaintOff = "\x1b[0m"
+)
+
+// testFaint wraps a token the way formatCandidatesLatency does.
+func testFaint(s string) string { return testFaintOn + s + testFaintOff }
+
+// Every expectation below is built from the names DeriveNames gives
+// testCandidatesJSON's entries (agy/test/m -> agy-m, claude/test/m ->
+// claude-m, opencode/test/m -> m): the name column is sized from the names,
+// the faint token column from the tokens.
+
 func TestFormatCandidates(t *testing.T) {
 	set := candidateSet(t, testCandidatesJSON)
 	got := FormatCandidates(set, nil)
-	want := "agy/test/m       builder   [--dangerously-skip-permissions]   note: extra_args carries --dangerously-skip-permissions; launches at tier harness only -- move it to \"tier\"\n" +
-		"claude/test/m    builder, reviewer\n" +
-		"opencode/test/m  builder\n"
+	want := "agy-m" + strings.Repeat(" ", 5) + testFaint("agy/test/m     ") + "  builder   [--dangerously-skip-permissions]   note: extra_args carries --dangerously-skip-permissions; launches at tier harness only -- move it to \"tier\"\n" +
+		"claude-m" + strings.Repeat(" ", 2) + testFaint("claude/test/m  ") + "  builder, reviewer\n" +
+		"m" + strings.Repeat(" ", 9) + testFaint("opencode/test/m") + "  builder\n"
 	if got != want {
 		t.Errorf("FormatCandidates() =\n%q\nwant:\n%q", got, want)
 	}
@@ -35,9 +50,9 @@ func TestFormatCandidatesMarksGated(t *testing.T) {
 		{Token: testClaudeRef, Kind: ledger.RateLimited, Until: time.Time{}},
 	}
 	got := FormatCandidates(set, gates)
-	want := "agy/test/m       builder   [--dangerously-skip-permissions]   note: extra_args carries --dangerously-skip-permissions; launches at tier harness only -- move it to \"tier\"\n" +
-		"claude/test/m    builder, reviewer   unavailable: rate-limited until cleared\n" +
-		"opencode/test/m  builder\n"
+	want := "agy-m" + strings.Repeat(" ", 5) + testFaint("agy/test/m     ") + "  builder   [--dangerously-skip-permissions]   note: extra_args carries --dangerously-skip-permissions; launches at tier harness only -- move it to \"tier\"\n" +
+		"claude-m" + strings.Repeat(" ", 2) + testFaint("claude/test/m  ") + "  builder, reviewer   unavailable: rate-limited until cleared\n" +
+		"m" + strings.Repeat(" ", 9) + testFaint("opencode/test/m") + "  builder\n"
 	if got != want {
 		t.Errorf("FormatCandidates() =\n%q\nwant:\n%q", got, want)
 	}
@@ -50,8 +65,9 @@ func TestFormatCandidatesTier(t *testing.T) {
 ]`
 	set := candidateSet(t, json)
 	got := FormatCandidates(set, nil)
-	want := "agy/test/m     builder   [--dangerously-skip-permissions]   note: extra_args carries --dangerously-skip-permissions; launches at tier harness only -- move it to \"tier\"\n" +
-		"claude/test/m  builder   tier: yolo\n"
+	// claude's entry takes "m" first, so agy's becomes "agy-m".
+	want := "agy-m" + strings.Repeat(" ", 2) + testFaint("agy/test/m   ") + "  builder   [--dangerously-skip-permissions]   note: extra_args carries --dangerously-skip-permissions; launches at tier harness only -- move it to \"tier\"\n" +
+		"m" + strings.Repeat(" ", 6) + testFaint("claude/test/m") + "  builder   tier: yolo\n"
 	if got != want {
 		t.Errorf("FormatCandidates() =\n%q\nwant:\n%q", got, want)
 	}
@@ -66,16 +82,17 @@ func TestFormatCandidatesLatencySuffix(t *testing.T) {
 	lat := map[string]latency.Summary{"claude/test/m": {N: 3, TTFTP50MS: 640}}
 
 	got := FormatCandidatesLatency(set, nil, lat)
-	want := "claude/test/m    builder   ttft p50 640ms (n=3, 30d)\n" +
-		"opencode/test/m  builder\n"
+	want := "m" + strings.Repeat(" ", 11) + testFaint("claude/test/m  ") + "  builder   ttft p50 640ms (n=3, 30d)\n" +
+		"opencode-m" + strings.Repeat(" ", 2) + testFaint("opencode/test/m") + "  builder\n"
 	if got != want {
 		t.Errorf("FormatCandidatesLatency() =\n%q\nwant:\n%q", got, want)
 	}
 
 	// The token with no samples renders exactly as the plain listing does.
 	other := got[strings.Index(got, "\n")+1:]
-	single := candidateSet(t, `[{"harness":"opencode","provider":"test","model":"m","roles":["builder"]}]`)
-	if plain := FormatCandidates(single, nil); other != plain {
+	plainList := FormatCandidates(set, nil)
+	plain := plainList[strings.Index(plainList, "\n")+1:]
+	if other != plain {
 		t.Errorf("unprobed line = %q, want FormatCandidates's %q", other, plain)
 	}
 

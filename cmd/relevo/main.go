@@ -813,11 +813,12 @@ func noteConsultRolesTooLong(reg *roles.Registry, name string) {
 // notePick prints why relevo chose the candidate it spawned. Silent for
 // an explicit token (the planner already knows) and for adoption
 // (nothing was chosen); the gated note, if any, is printed separately.
-func notePick(role string, res relevo.Resolution) {
+// A1 §4.4: the line names the candidate by its short name.
+func notePick(rt relevo.Runtime, role string, res relevo.Resolution) {
 	if res.How == "" || res.How == relevo.HowExplicit {
 		return
 	}
-	fmt.Fprintln(os.Stderr, relevo.ExplainResolution(role, res))
+	fmt.Fprintln(os.Stderr, relevo.PickText(role, res, rt.Candidates))
 }
 
 // roleOrBuilder is the role name a flag value means: "builder" for "", else
@@ -1360,25 +1361,25 @@ func runBind(f bindFlags) error {
 	if f.resume && (f.builder != "" || f.rebind) {
 		builderDesc := builderWhere(b.Builder)
 		if b.BuilderCandidate != "" {
-			builderDesc = fmt.Sprintf("%s (%s)", builderWhere(b.Builder), b.BuilderCandidate)
+			builderDesc = fmt.Sprintf("%s (%s)", builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate))
 		}
 		fmt.Printf("rebound %s: builder %s, still on round %d\n"+
 			"hand it the round with:\n"+
 			"  relevo send --name %s --file %s\n",
 			b.Name, builderDesc, b.Round, b.Name, rt.Store.PlanPath(b.Name, b.Round))
 		noteRegateNoGate(b)
-		notePick(roleName, res)
+		notePick(rt, roleName, res)
 		warnWaitingOnYou(rt, b.Name)
 		return nil
 	}
 
 	fmt.Printf("bound %s: planner %s -> builder %s (%s), round %d\n",
-		b.Name, b.Planner.PaneID, builderWhere(b.Builder), b.BuilderCandidate, b.Round)
+		b.Name, b.Planner.PaneID, builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate), b.Round)
 	noteRegateNoGate(b)
 	if n := relevo.GatedNote(rt, b.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
-	notePick(roleName, res)
+	notePick(rt, roleName, res)
 	// Spawn path only: an adopted pane or resumed binding has no fresh name
 	// relevo chose, so the note would warn about a name the human did not pick
 	// here.
@@ -1471,7 +1472,7 @@ func runFork(f bindFlags) error {
 	if n := relevo.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
-	notePick("builder", res.Resolution)
+	notePick(rt, "builder", res.Resolution)
 	noteConsultRolesTooLong(rt.RoleRegistry(), res.Binding.Name)
 	warnWaitingOnYou(rt, res.Binding.Name)
 
@@ -1541,23 +1542,23 @@ func runAdd(f bindFlags) error {
 
 	switch {
 	case res.Binding.Builder.Remote():
-		fmt.Printf("added %s: builder %s on %s\n", res.Binding.Name, res.Binding.BuilderCandidate, res.Binding.Builder.Server)
+		fmt.Printf("added %s: builder %s on %s\n", res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), res.Binding.Builder.Server)
 		if res.Binding.Tier != "" {
 			fmt.Printf("  tier %s (server)\n", res.Binding.Tier)
 		} else {
 			fmt.Printf("  tier server's choice (pre-tier server)\n")
 		}
 	case res.Binding.Builder.Headless():
-		fmt.Printf("added %s: builder %s (headless)\n", res.Binding.Name, res.Binding.BuilderCandidate)
+		fmt.Printf("added %s: builder %s (headless)\n", res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate))
 	default:
 		fmt.Printf("added %s: builder %s in %s\n",
-			res.Binding.Name, res.Binding.BuilderCandidate, builderWhere(res.Binding.Builder))
+			res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), builderWhere(res.Binding.Builder))
 	}
 	noteRegateNoGate(res.Binding)
 	if n := relevo.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
-	notePick(roleOrBuilder(f.role), res.Resolution)
+	notePick(rt, roleOrBuilder(f.role), res.Resolution)
 	switch {
 	case res.Binding.Builder.Remote() && res.Binding.ExistingBranch:
 		fmt.Printf("  branch %s (existing, tip %s) on %s\n", res.Binding.Branch, res.Base, res.Binding.Builder.Server)
@@ -1834,7 +1835,7 @@ func cmdAsk(args []string) error {
 	if n := relevo.GatedNote(rt, res.Candidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
-	notePick(*role, res.Resolution)
+	notePick(rt, *role, res.Resolution)
 	return nil
 }
 

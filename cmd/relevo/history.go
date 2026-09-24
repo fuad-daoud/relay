@@ -10,10 +10,34 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/histq"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
+
+// historyJSONRow is one `relevo history --json` row: db.RoundRow's fields
+// plus the candidate's short name beside the token (A1 §4.4). The embedded
+// struct keeps every token field where it always was.
+type historyJSONRow struct {
+	db.RoundRow
+	BuilderName string `json:"BuilderName,omitempty"`
+}
+
+// historyJSONRows wraps each row with its candidate's short name as set
+// resolves it. A token the set no longer holds stays as the name, exactly as
+// the text listing renders it (Set.NameOf never errors).
+func historyJSONRows(rows []db.RoundRow, set *candidate.Set) []historyJSONRow {
+	out := make([]historyJSONRow, len(rows))
+	for i, r := range rows {
+		row := historyJSONRow{RoundRow: r}
+		if r.BuilderCandidate != nil {
+			row.BuilderName = set.NameOf(*r.BuilderCandidate)
+		}
+		out[i] = row
+	}
+	return out
+}
 
 const historyUsage = `usage: relevo history [--here|--repo <url|dir>] [--feature L] [--binding N] [--planner S]
                      [--harness K] [--provider P] [--model M] [--candidate T]
@@ -312,7 +336,7 @@ func cmdHistory(args []string) error {
 		if *asJSON {
 			return json.NewEncoder(os.Stdout).Encode(groupJSON(groups, *withRows))
 		}
-		fmt.Print(relevo.FormatGroups(groups, axis, time.Local))
+		fmt.Print(relevo.FormatGroups(groups, axis, time.Local, rt.Candidates.NameOf))
 		return nil
 	}
 
@@ -320,9 +344,9 @@ func cmdHistory(args []string) error {
 		if rows == nil {
 			rows = []db.RoundRow{}
 		}
-		return json.NewEncoder(os.Stdout).Encode(rows)
+		return json.NewEncoder(os.Stdout).Encode(historyJSONRows(rows, rt.Candidates))
 	}
-	fmt.Print(relevo.FormatHistory(rows, time.Local))
+	fmt.Print(relevo.FormatHistory(rows, time.Local, rt.Candidates.NameOf))
 	return nil
 }
 

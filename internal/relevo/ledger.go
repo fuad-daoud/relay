@@ -271,7 +271,15 @@ func Gates(rt Runtime) []ledger.Gate {
 	}
 
 	gates := ledger.Gated(l, rt.Candidates.Refs(), providerOf, rt.Now())
-	return append(gates, rolesMissingGates(rt)...)
+	gates = append(gates, rolesMissingGates(rt)...)
+
+	// A1 §4.4: every gate also carries the candidate's short name, so the
+	// gates block and `relevo serve gates` can print it. The token stays the
+	// gate's identity; NameOf never fails.
+	for i := range gates {
+		gates[i].Name = rt.Candidates.NameOf(gates[i].Token)
+	}
+	return gates
 }
 
 // rolesMissingGates synthesises an in-memory ledger.RolesMissing gate for
@@ -445,7 +453,9 @@ func gatedNote(rt Runtime, token string) string {
 		return ""
 	}
 
-	return fmt.Sprintf("note: %s is gated: %s; proceeding", token, strings.Join(parts, "; "))
+	// A1 §4.4: the note names the candidate by its short name; a token no
+	// longer configured reads as itself (NameOf returns it unchanged).
+	return fmt.Sprintf("note: %s is gated: %s; proceeding", rt.Candidates.NameOf(token), strings.Join(parts, "; "))
 }
 
 // GatedNote is gatedNote exported for cmd/relevo, which prints it to stderr

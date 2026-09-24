@@ -526,10 +526,11 @@ func AdminUnavailable(s *Server, token string, until time.Time, reason string) (
 
 // RenderGates formats `relevo serve gates`: one line per gate,
 //
-//	"<token>  <kind>  <until>  <note>\n"
+//	"<name or token>  <kind>  <until>  <note>\n"
 //
 // in the order given, using the same wording status, candidates and doctor
-// use (GateKindText, GateUntilText). Empty input prints "no gates\n", the
+// use (GateKindText, GateUntilText) and printing the candidate's short name
+// when the gate carries one (A1 §4.4). Empty input prints "no gates\n", the
 // shape RenderAdminStatus and RenderClients give an empty list.
 func RenderGates(gates []ledger.Gate, now time.Time) string {
 	if len(gates) == 0 {
@@ -538,7 +539,11 @@ func RenderGates(gates []ledger.Gate, now time.Time) string {
 
 	var sb strings.Builder
 	for _, g := range gates {
-		fmt.Fprintf(&sb, "%s  %s  %s  %s\n", g.Token, relevo.GateKindText(g.Kind), relevo.GateUntilText(g.Until), g.Note)
+		label := g.Token
+		if g.Name != "" {
+			label = g.Name
+		}
+		fmt.Fprintf(&sb, "%s  %s  %s  %s\n", label, relevo.GateKindText(g.Kind), relevo.GateUntilText(g.Until), g.Note)
 	}
 	return sb.String()
 }

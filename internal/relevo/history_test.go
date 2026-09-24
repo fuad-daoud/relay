@@ -25,6 +25,8 @@ func openTestHistoryDB(t *testing.T) *db.DB {
 }
 
 func TestHistoryLineColumns(t *testing.T) {
+	set := candidateSet(t, `[{"harness":"agy","provider":"antigravity","model":"opus","roles":["builder"]}]`)
+	names := set.NameOf
 	commits := 2
 	tree := "clean"
 	cost := 0.42
@@ -46,8 +48,14 @@ func TestHistoryLineColumns(t *testing.T) {
 		Archived:         true,
 	}
 
-	want := "2026-09-15 14:02  api-auth      r3  agy/antigravity/opus                      reported        +2 commits  clean  $0.42  (archived)"
-	if got := HistoryLine(base, time.UTC); got != want {
+	// A1 §4.4: the candidate column prints the candidate's short name,
+	// padded to 24 instead of 40. DeriveNames gives agy/antigravity/opus the
+	// name "opus".
+	candidateCol := "opus" + strings.Repeat(" ", 20)
+	head := "2026-09-15 14:02  api-auth      r3  " + candidateCol + "  reported        "
+
+	want := head + "+2 commits  clean  $0.42  (archived)"
+	if got := HistoryLine(base, time.UTC, names); got != want {
 		t.Errorf("HistoryLine(measured, archived) =\n%q\nwant\n%q", got, want)
 	}
 
@@ -56,8 +64,8 @@ func TestHistoryLineColumns(t *testing.T) {
 		r.CostUSD = nil
 		r.CostBasis = nil
 		r.Archived = false
-		want := "2026-09-15 14:02  api-auth      r3  agy/antigravity/opus                      reported        +2 commits  clean  -"
-		if got := HistoryLine(r, time.UTC); got != want {
+		want := head + "+2 commits  clean  -"
+		if got := HistoryLine(r, time.UTC, names); got != want {
 			t.Errorf("HistoryLine(nil cost) =\n%q\nwant\n%q", got, want)
 		}
 	})
@@ -65,8 +73,8 @@ func TestHistoryLineColumns(t *testing.T) {
 	t.Run("estimated basis", func(t *testing.T) {
 		r := base
 		r.CostBasis = &basisEstimated
-		want := "2026-09-15 14:02  api-auth      r3  agy/antigravity/opus                      reported        +2 commits  clean  ~$0.42  (archived)"
-		if got := HistoryLine(r, time.UTC); got != want {
+		want := head + "+2 commits  clean  ~$0.42  (archived)"
+		if got := HistoryLine(r, time.UTC, names); got != want {
 			t.Errorf("HistoryLine(estimated) =\n%q\nwant\n%q", got, want)
 		}
 	})
@@ -74,8 +82,8 @@ func TestHistoryLineColumns(t *testing.T) {
 	t.Run("unknown basis", func(t *testing.T) {
 		r := base
 		r.CostBasis = &basisUnknown
-		want := "2026-09-15 14:02  api-auth      r3  agy/antigravity/opus                      reported        +2 commits  clean  unknown  (archived)"
-		if got := HistoryLine(r, time.UTC); got != want {
+		want := head + "+2 commits  clean  unknown  (archived)"
+		if got := HistoryLine(r, time.UTC, names); got != want {
 			t.Errorf("HistoryLine(unknown basis) =\n%q\nwant\n%q", got, want)
 		}
 	})
@@ -83,18 +91,27 @@ func TestHistoryLineColumns(t *testing.T) {
 	t.Run("long name truncated", func(t *testing.T) {
 		r := base
 		r.BindingName = "a-very-long-binding-name-indeed"
-		want := "2026-09-15 14:02  a-very-long…  r3  agy/antigravity/opus                      reported        +2 commits  clean  $0.42  (archived)"
-		if got := HistoryLine(r, time.UTC); got != want {
+		want := "2026-09-15 14:02  a-very-long…  r3  " + candidateCol + "  reported        +2 commits  clean  $0.42  (archived)"
+		if got := HistoryLine(r, time.UTC, names); got != want {
 			t.Errorf("HistoryLine(long name) =\n%q\nwant\n%q", got, want)
+		}
+	})
+
+	t.Run("no names prints the token", func(t *testing.T) {
+		want := "2026-09-15 14:02  api-auth      r3  " +
+			"agy/antigravity/opus" + strings.Repeat(" ", 4) + "  reported        " +
+			"+2 commits  clean  $0.42  (archived)"
+		if got := HistoryLine(base, time.UTC, nil); got != want {
+			t.Errorf("HistoryLine(nil names) =\n%q\nwant\n%q", got, want)
 		}
 	})
 }
 
 func TestFormatHistoryEmpty(t *testing.T) {
-	if got := FormatHistory(nil, time.UTC); got != "no rounds\n" {
+	if got := FormatHistory(nil, time.UTC, nil); got != "no rounds\n" {
 		t.Errorf("FormatHistory(nil) = %q, want %q", got, "no rounds\n")
 	}
-	if got := FormatHistory([]db.RoundRow{}, time.UTC); got != "no rounds\n" {
+	if got := FormatHistory([]db.RoundRow{}, time.UTC, nil); got != "no rounds\n" {
 		t.Errorf("FormatHistory(empty) = %q, want %q", got, "no rounds\n")
 	}
 }
@@ -395,6 +412,7 @@ func TestHistoryOptionsByOverridesQueryByNote(t *testing.T) {
 // column padded to 40, tokens and cost in their short forms, and the empty
 // view.
 func TestFormatGroupsColumns(t *testing.T) {
+	set := candidateSet(t, `[{"harness":"agy","provider":"antigravity","model":"claude-sonnet-4-6","roles":["builder"]}]`)
 	groups := []histq.GroupRow{{
 		Key:      "agy/antigravity/claude-sonnet-4-6",
 		Rounds:   31,
@@ -407,21 +425,25 @@ func TestFormatGroupsColumns(t *testing.T) {
 		Last:     time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC),
 	}}
 
-	got := FormatGroups(groups, histq.AxisBuilder, time.UTC)
+	got := FormatGroups(groups, histq.AxisBuilder, time.UTC, set.NameOf)
+	// A1 §4.4: with by == builder the leading column prints the group key's
+	// short name (DeriveNames gives agy/antigravity/claude-sonnet-4-6 the
+	// name claude-sonnet-4-6), while the key itself and every sum stay the
+	// token.
 	want := "builder" + strings.Repeat(" ", 35) +
 		"rounds  reported  halted  commits  tokens   cost  last      \n" +
-		"agy/antigravity/claude-sonnet-4-6         " +
+		"claude-sonnet-4-6" + strings.Repeat(" ", 25) +
 		"    31" + "  " + "      27" + "  " + "     3" + "  " + "     58" +
 		"  " + " 22.1M" + "  " + "$9.10 (3 unknown)" + "  " + "2026-09-20\n"
 	if got != want {
 		t.Errorf("FormatGroups =\n%q\nwant\n%q", got, want)
 	}
 
-	if got := FormatGroups(nil, histq.AxisBuilder, time.UTC); got != "no rounds\n" {
+	if got := FormatGroups(nil, histq.AxisBuilder, time.UTC, set.NameOf); got != "no rounds\n" {
 		t.Errorf("FormatGroups(nil) = %q, want %q", got, "no rounds\n")
 	}
 
-	long := FormatGroups([]histq.GroupRow{{Key: strings.Repeat("x", 45) + "end"}}, histq.AxisDay, time.UTC)
+	long := FormatGroups([]histq.GroupRow{{Key: strings.Repeat("x", 45) + "end"}}, histq.AxisDay, time.UTC, set.NameOf)
 	if !strings.Contains(long, "…") {
 		t.Errorf("FormatGroups(long key) = %q, want a “…” truncation", long)
 	}

@@ -42,10 +42,10 @@ func TestPolicyWarningsMatrix(t *testing.T) {
 
 	want := []PolicyWarning{
 		{Role: "builder", Index: 1, Token: "claude/test/nope", Text: `order.builder[1] "claude/test/nope" is not a configured candidate`},
-		{Role: "builder", Index: -1, Token: testClaudeRef, Text: `builder: claude/test/m serves the role but is not in order.builder`},
-		{Role: "builder", Index: -1, Token: testOpencodeRef, Text: `builder: opencode/test/m serves the role but is not in order.builder`},
-		{Role: "reviewer", Index: 0, Token: testAgyRef, Text: `order.reviewer[0] "agy/test/m" does not serve reviewer (its roles: [builder])`},
-		{Role: "reviewer", Index: -1, Token: testClaudeRef, Text: `reviewer: claude/test/m serves the role but is not in order.reviewer`},
+		{Role: "builder", Index: -1, Token: testClaudeRef, Text: `builder: claude-m serves the role but is not in order.builder`},
+		{Role: "builder", Index: -1, Token: testOpencodeRef, Text: `builder: m serves the role but is not in order.builder`},
+		{Role: "reviewer", Index: 0, Token: testAgyRef, Text: `order.reviewer[0] "agy-m" does not serve reviewer (its roles: [builder])`},
+		{Role: "reviewer", Index: -1, Token: testClaudeRef, Text: `reviewer: claude-m serves the role but is not in order.reviewer`},
 	}
 
 	got := PolicyWarnings(set, pol)
@@ -69,16 +69,16 @@ func TestFormatPolicyOrderWithGatedFirst(t *testing.T) {
 
 	want := strings.Join([]string{
 		"builder  (order set in config policy)",
-		"  1  agy/test/m       order     spawn failed " + GateUntilText(until),
-		"  2  claude/test/m    order     <- would pick",
-		"  3  opencode/test/m  unlisted",
+		"  1  agy-m     order     spawn failed " + GateUntilText(until),
+		"  2  claude-m  order     <- would pick",
+		"  3  m         unlisted",
 		"reviewer  (no order set)",
-		"  1  claude/test/m    sole      <- would pick",
+		"  1  claude-m  sole      <- would pick",
 		"researcher  (no order set)",
 		"  no candidate serves this role",
 		"",
 		"warnings",
-		"  builder: opencode/test/m serves the role but is not in order.builder",
+		"  builder: m serves the role but is not in order.builder",
 	}, "\n") + "\n"
 
 	if got != want {
@@ -93,12 +93,12 @@ func TestFormatPolicyNoOrderTwoServeRefuses(t *testing.T) {
 
 	want := strings.Join([]string{
 		"builder  (no order set)",
-		"  1  agy/test/m",
-		"  2  claude/test/m",
-		"  3  opencode/test/m",
+		"  1  agy-m",
+		"  2  claude-m",
+		"  3  m",
 		"  would refuse: 3 candidates serve builder and no order is set",
 		"reviewer  (no order set)",
-		"  1  claude/test/m    sole      <- would pick",
+		"  1  claude-m  sole      <- would pick",
 		"researcher  (no order set)",
 		"  no candidate serves this role",
 		`no policy configured; set one with relevo config set policy (see README "Policy")`,
@@ -118,12 +118,12 @@ func TestFormatPolicyAllGated(t *testing.T) {
 
 	want := strings.Join([]string{
 		"builder  (order set in config policy)",
-		"  1  agy/test/m       order     rate-limited until cleared",
-		"  2  claude/test/m    order     rate-limited until cleared",
-		"  3  opencode/test/m  order     rate-limited until cleared",
+		"  1  agy-m     order     rate-limited until cleared",
+		"  2  claude-m  order     rate-limited until cleared",
+		"  3  m         order     rate-limited until cleared",
 		"  would refuse: every candidate serving builder is gated",
 		"reviewer  (no order set)",
-		"  1  claude/test/m    sole      rate-limited until cleared",
+		"  1  claude-m  sole      rate-limited until cleared",
 		"  would refuse: every candidate serving reviewer is gated",
 		"researcher  (no order set)",
 		"  no candidate serves this role",
@@ -159,9 +159,9 @@ func TestFormatPolicySoleWithOrder(t *testing.T) {
 
 	want := strings.Join([]string{
 		"builder  (no order set)",
-		"  1  claude/test/m  sole      <- would pick",
+		"  1  m  sole      <- would pick",
 		"reviewer  (order set in config policy)",
-		"  1  claude/test/m  sole      <- would pick",
+		"  1  m  sole      <- would pick",
 		"researcher  (no order set)",
 		"  no candidate serves this role",
 	}, "\n") + "\n"
@@ -218,16 +218,16 @@ func TestFormatPolicyPeakColumn(t *testing.T) {
 
 	want := strings.Join([]string{
 		"builder  (order set in config policy)",
-		"  1  agy/test/m       order     limited 3x around 21:00 (30d)  <- would pick",
-		"  2  claude/test/m    order     limited 3x around 21:00 (30d)",
-		"  3  opencode/test/m  unlisted  limited 3x around 21:00 (30d)",
+		"  1  agy-m     order     limited 3x around 21:00 (30d)  <- would pick",
+		"  2  claude-m  order     limited 3x around 21:00 (30d)",
+		"  3  m         unlisted  limited 3x around 21:00 (30d)",
 		"reviewer  (no order set)",
-		"  1  claude/test/m    sole      limited 3x around 21:00 (30d)  <- would pick",
+		"  1  claude-m  sole      limited 3x around 21:00 (30d)  <- would pick",
 		"researcher  (no order set)",
 		"  no candidate serves this role",
 		"",
 		"warnings",
-		"  builder: opencode/test/m serves the role but is not in order.builder",
+		"  builder: m serves the role but is not in order.builder",
 		"",
 		"history (30d, local hours)",
 		wantHourRuler(),
@@ -304,7 +304,7 @@ func TestFormatPolicyRepeatedGateRendersOnce(t *testing.T) {
 
 	got := FormatPolicy(set, pol, gates, history.History{}, baseTime, time.UTC)
 
-	wantRow := "  1  agy/test/m       order     rate-limited until cleared\n"
+	wantRow := "  1  agy-m     order     rate-limited until cleared\n"
 	if !strings.Contains(got, wantRow) {
 		t.Errorf("FormatPolicy =\n%s\nwant a row exactly %q", got, wantRow)
 	}

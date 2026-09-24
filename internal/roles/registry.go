@@ -363,6 +363,17 @@ func (r *Registry) RoleTier(name string) (harness.Tier, bool) {
 	return r.pol.TierFor(name)
 }
 
+// NameOf returns the short name (A1 §4.4) of the candidate whose canonical
+// token is token, delegating to the registry's own set. It returns token
+// unchanged when the registry has no set or holds no such candidate, and
+// never errors. Display only: everything that decides stays on the token.
+func (r *Registry) NameOf(token string) string {
+	if r == nil || r.set == nil {
+		return token
+	}
+	return r.set.NameOf(token)
+}
+
 // Source returns where the registry's roles came from: SourceFile or
 // SourceLegacy.
 func (r *Registry) Source() string {

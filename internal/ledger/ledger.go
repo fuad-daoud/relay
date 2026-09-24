@@ -226,7 +226,11 @@ func (l Ledger) Clear(kind Kind, subject string) Ledger {
 // gates, why, and since when. A candidate can carry several gates; the
 // renderer shows them all.
 type Gate struct {
-	Token   string // the gated candidate, canonical ref
+	Token string // the gated candidate, canonical ref
+	// Name is the gated candidate's short name (A1 §4.4), filled by
+	// relevo.Gates for display only: every lookup and comparison stays on
+	// Token. Empty when no set was available to resolve it through.
+	Name    string `json:",omitempty"`
 	Kind    Kind
 	Since   time.Time // Entry.At
 	Until   time.Time // zero = until cleared

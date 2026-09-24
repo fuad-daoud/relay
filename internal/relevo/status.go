@@ -77,6 +77,10 @@ type BindingStatus struct {
 	State            string `json:"state"`
 	Display          string `json:"display"`
 	BuilderCandidate string `json:"builder_candidate"`
+	// BuilderName is that candidate's short name (A1 §4.4), for display.
+	// Empty when the candidate is no longer configured, in which case the
+	// token is shown; the token always stays the identity.
+	BuilderName string `json:"builder_name,omitempty"`
 	// Role is the binding's stored writer role (#382); empty for builder, so a
 	// builder row's JSON omits the key and is unchanged.
 	Role string `json:"role,omitempty"`
@@ -328,6 +332,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus,
 		Name: b.Name, CWD: b.CWD, Round: b.Round,
 		State: string(b.State), Display: displayState(b.State),
 		BuilderCandidate: b.BuilderCandidate,
+		BuilderName:      rt.Candidates.NameOf(b.BuilderCandidate),
 		Role:             b.Role,
 		ForkedFrom:       b.ForkedFrom,
 		ForkedAtRound:    b.ForkedAtRound,
@@ -616,16 +621,18 @@ func HideDone(r Report) Report {
 func writeGatedBlock(sb *strings.Builder, gates []ledger.Gate, trailingBlank bool) {
 	sb.WriteString("candidates\n")
 
+	// A1 §4.4: a gate prints the candidate's short name when it has one, its
+	// token otherwise; the column fits whatever is printed.
 	width := 0
 	for _, g := range gates {
-		if len(g.Token) > width {
-			width = len(g.Token)
+		if len(gateLabel(g)) > width {
+			width = len(gateLabel(g))
 		}
 	}
 
 	for _, g := range gates {
 		fmt.Fprintf(sb, "  %-*s  %-12s  %s  %s",
-			width, g.Token, GateKindText(g.Kind), GateTimeText(g.Since), GateUntilText(g.Until))
+			width, gateLabel(g), GateKindText(g.Kind), GateTimeText(g.Since), GateUntilText(g.Until))
 		if g.Note != "" {
 			fmt.Fprintf(sb, "  %s", g.Note)
 		}
@@ -638,6 +645,15 @@ func writeGatedBlock(sb *strings.Builder, gates []ledger.Gate, trailingBlank boo
 	if trailingBlank {
 		sb.WriteString("\n")
 	}
+}
+
+// gateLabel is what a gate row prints: the candidate's short name when it has
+// one (A1 §4.4), its token otherwise.
+func gateLabel(g ledger.Gate) string {
+	if g.Name != "" {
+		return g.Name
+	}
+	return g.Token
 }
 
 // RenderStatus formats a Report for a terminal.
@@ -716,6 +732,12 @@ func RenderStatus(r Report) string {
 			fmt.Fprintf(&sb, " · %s", lbl.String())
 		}
 		fmt.Fprint(&sb, "\n")
+		// A1 §4.4: the builder is named by its short name when it has one,
+		// by its token otherwise.
+		builderLabel := b.BuilderName
+		if builderLabel == "" {
+			builderLabel = b.BuilderCandidate
+		}
 		if b.Headless != nil {
 			// spec §4.8: builder  headless  <kind>  <status>  [pid P since HH:MM]  `<token>`
 			fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s", "headless", b.BuilderKind, b.BuilderStatus)
@@ -724,10 +746,10 @@ func RenderStatus(r Report) string {
 			} else {
 				fmt.Fprint(&sb, " ")
 			}
-			fmt.Fprintf(&sb, "`%s`", b.BuilderCandidate)
+			fmt.Fprintf(&sb, "`%s`", builderLabel)
 		} else {
 			fmt.Fprintf(&sb, "  builder  %-14s %-8s %-9s `%s`",
-				"remote", b.BuilderKind, b.BuilderStatus, b.BuilderCandidate)
+				"remote", b.BuilderKind, b.BuilderStatus, builderLabel)
 		}
 		if b.Role != "" {
 			fmt.Fprintf(&sb, "   role %s", b.Role)

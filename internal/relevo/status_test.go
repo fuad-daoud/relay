@@ -224,8 +224,8 @@ func TestRenderStatusGatedBlock(t *testing.T) {
 			BuilderCandidate: testAgyRef,
 		}},
 		Gated: []ledger.Gate{
-			{Token: testAgyRef, Kind: ledger.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
-			{Token: testClaudeRef, Kind: ledger.RateLimited, Since: now, Until: time.Time{}},
+			{Token: testAgyRef, Name: "agy-m", Kind: ledger.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
+			{Token: testClaudeRef, Name: "claude-m", Kind: ledger.RateLimited, Since: now, Until: time.Time{}},
 		},
 	}
 
@@ -239,11 +239,76 @@ func TestRenderStatusGatedBlock(t *testing.T) {
 		t.Fatalf("expected two gate rows, got:\n%s", rest)
 	}
 	wantUntil := "until " + now.Add(10*time.Minute).Local().Format("15:04")
-	if !strings.Contains(lines[0], testAgyRef) || !strings.Contains(lines[0], "spawn failed") || !strings.Contains(lines[0], wantUntil) {
+	if !strings.Contains(lines[0], "agy-m") || !strings.Contains(lines[0], "spawn failed") || !strings.Contains(lines[0], wantUntil) {
 		t.Errorf("row 0 = %q", lines[0])
 	}
-	if !strings.Contains(lines[1], testClaudeRef) || !strings.Contains(lines[1], "rate-limited") || !strings.Contains(lines[1], "until cleared") {
+	if strings.Contains(lines[0], testAgyRef) {
+		t.Errorf("row 0 must print the gate's name, not its token: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "claude-m") || !strings.Contains(lines[1], "rate-limited") || !strings.Contains(lines[1], "until cleared") {
 		t.Errorf("row 1 = %q", lines[1])
+	}
+}
+
+// TestRenderStatusGatedBlockFallsBackToToken pins the other half of A1 §4.4:
+// a gate with no name -- one built without a candidate set -- prints its
+// token.
+func TestRenderStatusGatedBlockFallsBackToToken(t *testing.T) {
+	r := Report{
+		Gated: []ledger.Gate{{Token: testAgyRef, Kind: ledger.RateLimited, Until: time.Time{}}},
+	}
+
+	out := RenderStatus(r)
+	if !strings.Contains(out, testAgyRef) {
+		t.Errorf("RenderStatus =\n%s\nwant it naming %q", out, testAgyRef)
+	}
+}
+
+// TestStatusJSONHasBuilderName pins A1 §4.4: a binding's status document
+// carries the candidate's short name beside the token. A token no longer
+// configured reads as itself, exactly as the text listing prints it, and a
+// binding with no candidate carries no key at all.
+func TestStatusJSONHasBuilderName(t *testing.T) {
+	rt := newRuntime(t)
+
+	row := statusRowForTest(t, rt, store.Binding{
+		Name: "webshop", CWD: "/repo",
+		Builder:          store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
+		BuilderCandidate: testAgyRef,
+		Round:            1, State: store.StateActive,
+	})
+	if row.BuilderName != "agy-m" {
+		t.Errorf("BuilderName = %q, want agy-m", row.BuilderName)
+	}
+	raw, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"builder_name":"agy-m"`) {
+		t.Errorf("JSON = %s, want it to contain %q", raw, `"builder_name":"agy-m"`)
+	}
+
+	gone := statusRowForTest(t, rt, store.Binding{
+		Name: "gone", CWD: "/gone-repo",
+		Builder:          store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
+		BuilderCandidate: "agy/test/gone",
+		Round:            1, State: store.StateActive,
+	})
+	if gone.BuilderName != "agy/test/gone" {
+		t.Errorf("BuilderName for an unconfigured token = %q, want the token", gone.BuilderName)
+	}
+
+	none := statusRowForTest(t, rt, store.Binding{
+		Name: "adopted", CWD: "/adopted-repo",
+		Builder: store.Endpoint{Kind: "agy", Mode: store.ModeHeadless},
+		Round:   1, State: store.StateActive,
+	})
+	raw, err = json.Marshal(none)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "builder_name") {
+		t.Errorf("JSON = %s, want no builder_name key with no candidate", raw)
 	}
 }
 

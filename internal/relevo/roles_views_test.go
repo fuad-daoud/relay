@@ -62,8 +62,8 @@ func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 	got := FormatPolicyFor(reg, set, policy.Policy{}, nil, history.History{}, baseTime, time.UTC)
 
 	want := "builder  (config roles)\n" +
-		"  1  claude/test/b    order     <- would pick\n" +
-		"  2  claude/test/a    order\n" +
+		"  1  b  order     <- would pick\n" +
+		"  2  a  order\n" +
 		"reviewer  (config roles)\n" +
 		"  no candidate listed in config roles reviewer.candidates\n" +
 		"researcher  (config roles)\n" +
@@ -75,8 +75,8 @@ func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 	if !strings.Contains(got, "builder  (config roles)") {
 		t.Errorf("output must carry the file-mode header, got:\n%s", got)
 	}
-	pick := strings.Index(got, "1  claude/test/b    order     <- would pick")
-	second := strings.Index(got, "2  claude/test/a")
+	pick := strings.Index(got, "1  b  order     <- would pick")
+	second := strings.Index(got, "2  a  order")
 	if pick < 0 || second < 0 || pick > second {
 		t.Errorf("the row's first candidate must be row 1 with the pick, then the second:\n%s", got)
 	}
@@ -144,7 +144,7 @@ func TestRolesViewsPolicyWarningsForFileMode(t *testing.T) {
 	want := []PolicyWarning{
 		{
 			Role: "scout", Index: 0, Token: "claude/test/m",
-			Text: `config roles scout.candidates[0] "claude/test/m": scout has no definition for claude`,
+			Text: `config roles scout.candidates[0] "m": scout has no definition for claude`,
 		},
 		{
 			Role: "scout", Index: 1, Token: "claude/test/ghost",
@@ -196,8 +196,9 @@ func TestRolesViewsFormatCandidatesLatencyForFileMode(t *testing.T) {
 	})
 
 	got := FormatCandidatesLatencyFor(reg, set, nil, nil)
-	want := "claude/test/m    builder, reviewer\n" +
-		"opencode/test/m  (no role)\n"
+	// claude's entry takes "m" first, so opencode's becomes "opencode-m".
+	want := "m" + strings.Repeat(" ", 11) + testFaint("claude/test/m  ") + "  builder, reviewer\n" +
+		"opencode-m" + strings.Repeat(" ", 2) + testFaint("opencode/test/m") + "  (no role)\n"
 	if got != want {
 		t.Errorf("FormatCandidatesLatencyFor =\n%q\nwant:\n%q", got, want)
 	}

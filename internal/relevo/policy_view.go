@@ -44,24 +44,18 @@ func PolicyWarnings(set *candidate.Set, pol policy.Policy) []PolicyWarning {
 		}
 
 		listed := make(map[string]bool)
-		for i, tok := range order {
-			ref, err := candidate.ParseRef(tok)
+		for i, entry := range order {
+			// An entry may be a candidate name or a canonical token (A1
+			// §4.2). A token that resolves is shown as the candidate's short
+			// name; one that does not stays raw, since naming it is the
+			// point of the warning (A1 §4.4).
+			c, err := set.Resolve(entry)
 			if err != nil {
 				out = append(out, PolicyWarning{
 					Role:  role,
 					Index: i,
-					Token: tok,
-					Text:  fmt.Sprintf("order.%s[%d] %q is not a configured candidate", role, i, tok),
-				})
-				continue
-			}
-			c, err := set.Lookup(ref)
-			if err != nil {
-				out = append(out, PolicyWarning{
-					Role:  role,
-					Index: i,
-					Token: tok,
-					Text:  fmt.Sprintf("order.%s[%d] %q is not a configured candidate", role, i, tok),
+					Token: entry,
+					Text:  fmt.Sprintf("order.%s[%d] %q is not a configured candidate", role, i, entry),
 				})
 				continue
 			}
@@ -69,12 +63,12 @@ func PolicyWarnings(set *candidate.Set, pol policy.Policy) []PolicyWarning {
 				out = append(out, PolicyWarning{
 					Role:  role,
 					Index: i,
-					Token: tok,
-					Text:  fmt.Sprintf("order.%s[%d] %q does not serve %s (its roles: %v)", role, i, tok, role, c.Roles),
+					Token: entry,
+					Text:  fmt.Sprintf("order.%s[%d] %q does not serve %s (its roles: %v)", role, i, c.Name, role, c.Roles),
 				})
 				continue
 			}
-			listed[tok] = true
+			listed[c.Ref().String()] = true
 		}
 
 		for _, c := range set.ForRole(role) {
@@ -86,7 +80,7 @@ func PolicyWarnings(set *candidate.Set, pol policy.Policy) []PolicyWarning {
 				Role:  role,
 				Index: -1,
 				Token: tok,
-				Text:  fmt.Sprintf("%s: %s serves the role but is not in order.%s", role, tok, role),
+				Text:  fmt.Sprintf("%s: %s serves the role but is not in order.%s", role, c.Name, role),
 			})
 		}
 	}
@@ -161,13 +155,13 @@ func refusalFromErr(role string, serving []candidate.Candidate, gates []ledger.G
 	return RoleRefusal{}, false
 }
 
-// refWidth is the widest configured candidate reference: the token column
-// width every policy row pads to.
+// refWidth is the widest configured candidate as it is printed: its short
+// name (A1 §4.4), so every policy row pads to the width of what it shows.
 func refWidth(set *candidate.Set) int {
 	width := 0
 	for _, ref := range set.Refs() {
-		if len(ref) > width {
-			width = len(ref)
+		if n := set.NameOf(ref); len(n) > width {
+			width = len(n)
 		}
 	}
 	return width
@@ -198,7 +192,7 @@ type policyRoleView struct {
 // FormatPolicyFor call, so the two can never drift. The gates are filtered to
 // the role here, so a gate scoped to another role never shows on this role's
 // rows or in its refusal.
-func formatPolicyRole(sb *strings.Builder, v policyRoleView, width int, gates []ledger.Gate, hist history.History, now time.Time, loc *time.Location) {
+func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set, width int, gates []ledger.Gate, hist history.History, now time.Time, loc *time.Location) {
 	sb.WriteString(v.header + "\n")
 	if len(v.rows) == 0 {
 		if v.noRows != "" {
@@ -239,7 +233,7 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, width int, gates []
 			tail += "<- would pick"
 		}
 
-		row := fmt.Sprintf("  %d  %-*s  %-8s  %s", i+1, width, tok, tag, tail)
+		row := fmt.Sprintf("  %d  %-*s  %-8s  %s", i+1, width, set.NameOf(tok), tag, tail)
 		sb.WriteString(strings.TrimRight(row, " ") + "\n")
 	}
 
@@ -288,7 +282,7 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, hi
 			}
 			v.res, v.err = resolveCandidate(set, pol, gates, "", role)
 		}
-		formatPolicyRole(&sb, v, width, gates, hist, now, loc)
+		formatPolicyRole(&sb, v, set, width, gates, hist, now, loc)
 	}
 
 	if warnings := PolicyWarnings(set, pol); len(warnings) > 0 {
@@ -343,7 +337,7 @@ func FormatPolicyFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy,
 		if len(rows) > 0 {
 			v.res, v.err = resolveRole(reg, set, gates, "", role)
 		}
-		formatPolicyRole(&sb, v, width, gates, hist, now, loc)
+		formatPolicyRole(&sb, v, set, width, gates, hist, now, loc)
 	}
 
 	if warnings := PolicyWarningsFor(reg, set, pol); len(warnings) > 0 {
@@ -378,32 +372,26 @@ func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Polic
 	var out []PolicyWarning
 	for _, role := range reg.Names() {
 		info, _ := reg.Role(role)
-		for i, tok := range info.Candidates {
-			ref, err := candidate.ParseRef(tok)
+		for i, entry := range info.Candidates {
+			// An entry may be a candidate name or a canonical token (A1
+			// §4.2); a resolving one is shown as its short name, an
+			// unresolved one stays raw (A1 §4.4).
+			c, err := set.Resolve(entry)
 			if err != nil {
 				out = append(out, PolicyWarning{
 					Role:  role,
 					Index: i,
-					Token: tok,
-					Text:  fmt.Sprintf("config roles %s.candidates[%d] %q is not a configured candidate", role, i, tok),
+					Token: entry,
+					Text:  fmt.Sprintf("config roles %s.candidates[%d] %q is not a configured candidate", role, i, entry),
 				})
 				continue
 			}
-			if _, err := set.Lookup(ref); err != nil {
+			if _, err := reg.Spec(role, c.Ref().Harness); err != nil {
 				out = append(out, PolicyWarning{
 					Role:  role,
 					Index: i,
-					Token: tok,
-					Text:  fmt.Sprintf("config roles %s.candidates[%d] %q is not a configured candidate", role, i, tok),
-				})
-				continue
-			}
-			if _, err := reg.Spec(role, ref.Harness); err != nil {
-				out = append(out, PolicyWarning{
-					Role:  role,
-					Index: i,
-					Token: tok,
-					Text:  fmt.Sprintf("config roles %s.candidates[%d] %q: %s has no definition for %s", role, i, tok, role, ref.Harness),
+					Token: entry,
+					Text:  fmt.Sprintf("config roles %s.candidates[%d] %q: %s has no definition for %s", role, i, c.Name, role, c.Ref().Harness),
 				})
 			}
 		}
