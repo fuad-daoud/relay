@@ -62,14 +62,14 @@ func renderScorecard(sb *strings.Builder, r Report, name func(string) string) {
 		}
 		sb.WriteString(fmt.Sprintf(scorecardRow,
 			label, s.Rounds,
-			fmt.Sprintf("%.0f%%", s.DonePct),
-			fmt.Sprintf("%.0f%%", s.HaltPct),
-			duration(s.MedianMS),
+			pctText(s.DonePct, s.Closed),
+			pctText(s.HaltPct, s.Closed),
+			medianText(s),
 			ttftText(s),
 			costPerRoundText(s),
 			commitsText(s)))
 	}
-	sb.WriteString(fmt.Sprintf("  (* fewer than 5 rounds)%9sunrecorded: %d rounds\n", "", r.Totals.Candidates))
+	sb.WriteString(fmt.Sprintf("  (* fewer than 5 rounds)%9sunrecorded: %d rounds\n", "", r.Totals.Unrecorded))
 }
 
 // renderSpend writes the day sparkline and the week-over-week line.
@@ -127,7 +127,7 @@ func renderGroups(sb *strings.Builder, label string, rows []GroupRow) {
 	sb.WriteString(fmt.Sprintf(groupHeader, label, "RNDS", "COST", "HALT", "RNDS/LAND"))
 	for _, g := range rows {
 		sb.WriteString(fmt.Sprintf(groupRowFmt,
-			g.Key, g.Rounds, money(g.CostUSD), g.Halted, fmt.Sprintf("%.1f", g.RoundsPerLand)))
+			g.Key, g.Rounds, money(g.CostUSD), g.Halted, roundsPerLandText(g)))
 	}
 }
 
@@ -165,6 +165,32 @@ func countPairs(keys []struct{ key, label string }, counts map[string]int) strin
 		parts = append(parts, fmt.Sprintf("%s %d", k.label, counts[k.key]))
 	}
 	return strings.Join(parts, " · ")
+}
+
+// pctText is a percentage of the closed rounds, or "-" when none is closed.
+func pctText(pct float64, closed int) string {
+	if closed == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.0f%%", pct)
+}
+
+// medianText is the median duration, or "-" when no closed round carried a
+// duration.
+func medianText(s ScoreRow) string {
+	if s.Closed == 0 || !s.HasMedian {
+		return "-"
+	}
+	return duration(s.MedianMS)
+}
+
+// roundsPerLandText is a group's rounds per landed binding, or "-" when
+// nothing landed.
+func roundsPerLandText(g GroupRow) string {
+	if g.Landed == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.1f", g.RoundsPerLand)
 }
 
 // ttftText is the time to first token, or "-" when there is none.

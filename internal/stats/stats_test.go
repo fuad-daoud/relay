@@ -56,7 +56,8 @@ func TestScorecardRates(t *testing.T) {
 }
 
 // TestScorecardUnrecordedAndKeep pins that a nil candidate never gets a
-// scorecard row but is counted in Totals, and that Keep drops a row.
+// scorecard row but counts in Totals.Unrecorded, that Candidates counts the
+// distinct non-nil tokens, and that Keep drops a row.
 func TestScorecardUnrecordedAndKeep(t *testing.T) {
 	rows := []db.RoundRow{
 		{BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported},
@@ -72,8 +73,11 @@ func TestScorecardUnrecordedAndKeep(t *testing.T) {
 		},
 	})
 
-	if rep.Totals.Candidates != 1 {
-		t.Errorf("Totals.Candidates = %d, want 1: the nil candidate's rounds", rep.Totals.Candidates)
+	if rep.Totals.Unrecorded != 1 {
+		t.Errorf("Totals.Unrecorded = %d, want 1: the nil candidate's rounds", rep.Totals.Unrecorded)
+	}
+	if rep.Totals.Candidates != 2 {
+		t.Errorf("Totals.Candidates = %d, want 2: the distinct non-nil tokens", rep.Totals.Candidates)
 	}
 	if rep.Totals.Rounds != 3 {
 		t.Errorf("Totals.Rounds = %d, want 3: Totals counts every row", rep.Totals.Rounds)
@@ -84,14 +88,16 @@ func TestScorecardUnrecordedAndKeep(t *testing.T) {
 }
 
 // TestScorecardPlanAndCost pins that a plan token reports no cost, that an
-// unknown basis and a missing cost are excluded from the mean, and that Few is
-// set under five rounds.
+// unknown basis and a missing cost are excluded from the mean, that a nil
+// basis counts as known, and that Few is set under five rounds.
 func TestScorecardPlanAndCost(t *testing.T) {
 	rows := []db.RoundRow{
 		{BuilderCandidate: stStr("plan/x"), Outcome: db.OutcomeReported, CostUSD: stF64(9), CostBasis: stStr("measured")},
 		{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(1), CostBasis: stStr("measured")},
 		{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(3), CostBasis: stStr("measured")},
 		{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(2), CostBasis: stStr("unknown")},
+		// A cost with no basis at all: histq's costKnown rule counts it.
+		{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(5)},
 		{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported},
 		{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported},
 	}
@@ -118,11 +124,11 @@ func TestScorecardPlanAndCost(t *testing.T) {
 	if !y.HasCost {
 		t.Fatalf("paid row HasCost = false, want true")
 	}
-	if y.CostPerRound != 2 {
-		t.Errorf("paid row cost = %v, want 2 (the two measured rows)", y.CostPerRound)
+	if y.CostPerRound != 3 {
+		t.Errorf("paid row cost = %v, want 3 (the two measured rows plus the nil-basis row)", y.CostPerRound)
 	}
 	if y.Few {
-		t.Errorf("paid row Few = true, want false (5 rounds)")
+		t.Errorf("paid row Few = true, want false (6 rounds)")
 	}
 }
 

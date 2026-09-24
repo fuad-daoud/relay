@@ -166,7 +166,7 @@ func cmdHistory(args []string) error {
 	by := fs.String("by", "", "regroup the result by one of: "+strings.Join(historyAxisNames(), ", "))
 	withRows := fs.Bool("rows", false, "with --json --by, include each group's rows")
 	tab := fs.Bool("tab", false, "tokens and cost across bindings, archived ones included")
-	stats := fs.Bool("stats", false, "rounds, outcomes, switches, gate and consults, plus provider blocks")
+	stats := fs.Bool("stats", false, "per-candidate scorecard, spend per day, reliability, repos and outcomes (default window 30d; --since all for everything)")
 	owner := fs.String("owner", "", "with --tab: the server's owner, a client label or id (all = every owner)")
 	state := fs.String("state", "", "with --owner: the serve state directory")
 	fs.Usage = func() {

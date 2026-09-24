@@ -56,13 +56,19 @@ type Report struct {
 
 // Totals is the report's headline numbers.
 type Totals struct {
-	Rounds, Bindings, Candidates int
-	CostUSD                      float64 // known basis, non-plan
-	PlanRounds                   int
-	UnknownCost                  int // rounds with basis unknown or nil cost (non-plan)
-	Tokens                       int64
-	Halted                       int
-	MedianMS                     int64 // closed rounds with DurationMS
+	Rounds, Bindings int
+	// Candidates is the number of distinct non-nil BuilderCandidate tokens
+	// among the rows.
+	Candidates int
+	// Unrecorded is the rounds whose BuilderCandidate is nil: the spec's
+	// "(unrecorded)" bucket, which never gets a scorecard row.
+	Unrecorded  int
+	CostUSD     float64 // known basis, non-plan
+	PlanRounds  int
+	UnknownCost int   // rounds with basis unknown or nil cost (non-plan)
+	Tokens      int64 // in+cache+write+out
+	Halted      int
+	MedianMS    int64 // closed rounds with DurationMS
 }
 
 // ScoreRow is one candidate's line on the scorecard.
@@ -72,6 +78,7 @@ type ScoreRow struct {
 	Reported, Halted int
 	DonePct, HaltPct float64 // of Closed; 0 when Closed == 0
 	MedianMS         int64   // closed rounds with DurationMS; 0 when none
+	HasMedian        bool    // true when a closed row carried a duration
 	TTFTMS           int64
 	HasTTFT          bool
 	Plan             bool
@@ -172,6 +179,7 @@ func Build(in Inputs) Report {
 func buildTotals(in Inputs, rows []db.RoundRow) Totals {
 	var t Totals
 	bindings := map[string]bool{}
+	candidates := map[string]bool{}
 	var durations []int64
 	for _, r := range rows {
 		t.Rounds++
@@ -186,9 +194,10 @@ func buildTotals(in Inputs, rows []db.RoundRow) Totals {
 		if r.BuilderCandidate == nil {
 			// A nil candidate is the "(unrecorded)" bucket: it never gets a
 			// scorecard row, and its rounds count here.
-			t.Candidates++
+			t.Unrecorded++
 			continue
 		}
+		candidates[*r.BuilderCandidate] = true
 		if isPlan(in, r) {
 			t.PlanRounds++
 			continue
@@ -200,6 +209,7 @@ func buildTotals(in Inputs, rows []db.RoundRow) Totals {
 		}
 	}
 	t.Bindings = len(bindings)
+	t.Candidates = len(candidates)
 	t.MedianMS = median(durations)
 	return t
 }
@@ -258,13 +268,14 @@ func buildScorecard(in Inputs, rows []db.RoundRow) []ScoreRow {
 	for _, tok := range order {
 		a := accs[tok]
 		s := ScoreRow{
-			Token:    tok,
-			Rounds:   a.rounds,
-			Closed:   a.closed,
-			Reported: a.reported,
-			Halted:   a.halted,
-			MedianMS: median(a.durations),
-			Few:      a.rounds < 5,
+			Token:     tok,
+			Rounds:    a.rounds,
+			Closed:    a.closed,
+			Reported:  a.reported,
+			Halted:    a.halted,
+			MedianMS:  median(a.durations),
+			HasMedian: len(a.durations) > 0,
+			Few:       a.rounds < 5,
 		}
 		if a.closed > 0 {
 			s.DonePct = 100 * float64(a.reported) / float64(a.closed)
@@ -496,10 +507,13 @@ func isPlan(in Inputs, r db.RoundRow) bool {
 	return r.BuilderCandidate != nil && in.IsPlan != nil && in.IsPlan(*r.BuilderCandidate)
 }
 
-// costKnown reports whether a row's cost is summed: a non-nil basis other than
-// "unknown", a cost, and a non-plan candidate (C2a plan §4.3).
+// costKnown reports whether a row's cost is summed: a cost, a basis that is
+// absent or not "unknown", and a non-plan candidate. This is histq's rule
+// (internal/histq/group.go costKnown) plus the plan exclusion, so
+// `history --stats` and the `:rounds` grid never disagree on a total
+// (C2a round-2 plan F2).
 func costKnown(in Inputs, r db.RoundRow) bool {
-	return r.CostBasis != nil && *r.CostBasis != "unknown" && r.CostUSD != nil && !isPlan(in, r)
+	return r.CostUSD != nil && (r.CostBasis == nil || *r.CostBasis != "unknown") && !isPlan(in, r)
 }
 
 // rowTokens sums a row's token columns; a nil column is zero.

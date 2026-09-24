@@ -81,6 +81,13 @@ func goldenReport() Report {
 			BindingID: "b4", BindingName: "b4", StartedAt: utc(22, 8),
 			Outcome: db.OutcomeReported, InTokens: stI64(100_000),
 		},
+		// An open-only candidate (no closed round) in a repo with nothing
+		// landed: DONE, HALT, MED and RNDS/LAND all print "-" (round-2 F3).
+		{
+			BindingID: "b5", BindingName: "b5", Repo: stStr("github.com/fuad-daoud/site"),
+			StartedAt: utc(23, 10), Outcome: db.OutcomeOpen,
+			BuilderCandidate: stStr("haiku"), BuilderProvider: stStr("anthropic"),
+		},
 	}
 	// Switches: two rounds switched, four switches between them.
 	rows[0].Switches = 1
