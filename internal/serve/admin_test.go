@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -1000,5 +1001,154 @@ func TestFlatStatusStampsOwnersAndDedupsGates(t *testing.T) {
 	}
 	if out.DoneHidden != 0 {
 		t.Errorf("DoneHidden = %d, want 0", out.DoneHidden)
+	}
+}
+
+// TestStatusDocumentLastContact: last_contact is the max LastSeen over every
+// owner; an owner that has never seen a request marshals last_seen as JSON
+// null; and the owners array keeps the label order AdminStatus hands over.
+//
+// Mutation check: take the min instead of the max and this fails.
+func TestStatusDocumentLastContact(t *testing.T) {
+	t1 := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	t2 := t1.Add(2 * time.Hour)
+
+	owners := []OwnerStatus{
+		{Owner: remote.ClientID("SHA256:alice"), Label: "alice"},
+		{Owner: remote.ClientID("SHA256:bob"), Label: "bob", LastSeen: t1},
+		{Owner: remote.ClientID("SHA256:carol"), Label: "carol", LastSeen: t2},
+	}
+
+	doc := StatusDocument(owners, remote.BuildersView{Running: 1, Cap: 2})
+	if doc.LastContact == nil {
+		t.Fatal("LastContact = nil, want the newest owner LastSeen")
+	}
+	if !doc.LastContact.Equal(t2) {
+		t.Errorf("LastContact = %v, want %v", doc.LastContact, t2)
+	}
+	if len(doc.Owners) != 3 {
+		t.Fatalf("got %d owners, want 3", len(doc.Owners))
+	}
+	for i, want := range []string{"alice", "bob", "carol"} {
+		if doc.Owners[i].Label != want {
+			t.Errorf("owners[%d].Label = %q, want %q: owners stay label-sorted", i, doc.Owners[i].Label, want)
+		}
+	}
+	if doc.Owners[0].Owner != "SHA256:alice" {
+		t.Errorf("owners[0].Owner = %q, want SHA256:alice", doc.Owners[0].Owner)
+	}
+	if doc.Owners[0].LastSeen != nil {
+		t.Errorf("owners[0].LastSeen = %v, want nil for the owner with no contact", doc.Owners[0].LastSeen)
+	}
+	if doc.Owners[1].LastSeen == nil || !doc.Owners[1].LastSeen.Equal(t1) {
+		t.Errorf("owners[1].LastSeen = %v, want %v", doc.Owners[1].LastSeen, t1)
+	}
+	if doc.Owners[2].LastSeen == nil || !doc.Owners[2].LastSeen.Equal(t2) {
+		t.Errorf("owners[2].LastSeen = %v, want %v", doc.Owners[2].LastSeen, t2)
+	}
+
+	blob, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(blob), `"last_seen":null`) {
+		t.Errorf("marshalled document has no \"last_seen\":null for the zero owner:\n%s", blob)
+	}
+	if !strings.Contains(string(blob), `"last_contact":"2026-09-20T12:00:00Z"`) {
+		t.Errorf("marshalled last_contact is not the max, as RFC 3339 UTC:\n%s", blob)
+	}
+}
+
+// TestStatusDocumentEmpty: no owners still prints the three top-level keys,
+// with last_contact null and owners an empty array -- [] and never null.
+func TestStatusDocumentEmpty(t *testing.T) {
+	blob, err := json.Marshal(StatusDocument(nil, remote.BuildersView{}))
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	want := `{"builders":{"running":0,"queued":0,"cap":0,"scopes":false},"last_contact":null,"owners":[]}`
+	if string(blob) != want {
+		t.Errorf("StatusDocument(nil) JSON = %s, want %s", blob, want)
+	}
+}
+
+// TestAdminStatusLastSeen: an owner's LastSeen is the newest Serve.LastSeen
+// over its bindings. RoundStartedAt is no fallback -- an owner whose only
+// binding was last touched by a round start has no recorded contact at all.
+func TestAdminStatusLastSeen(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+
+	s, err := New(Config{DB: testServeDB(t), Root: root, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	kpA, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idA := remote.IDOf(kpA.Public)
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), now); err != nil {
+		t.Fatal(err)
+	}
+	rtA, err := s.runtime(idA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := now.Add(-3 * time.Hour)
+	if err := rtA.Store.Save(store.Binding{
+		Name:    "app-a",
+		Owner:   string(idA),
+		CWD:     rtA.Store.WorktreePath("app-a"),
+		State:   store.StateActive,
+		Round:   1,
+		Builder: store.Endpoint{Kind: "claude"},
+		Serve:   &store.ServeFacts{LastSeen: seen},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	kpB, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idB := remote.IDOf(kpB.Public)
+	if _, err := s.clients.Add("bob", remote.MarshalPublic(kpB.Public, "bob"), now); err != nil {
+		t.Fatal(err)
+	}
+	rtB, err := s.runtime(idB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rtB.Store.Save(store.Binding{
+		Name:           "app-b",
+		Owner:          string(idB),
+		CWD:            rtB.Store.WorktreePath("app-b"),
+		State:          store.StateActive,
+		Round:          1,
+		Builder:        store.Endpoint{Kind: "claude"},
+		RoundStartedAt: now.Add(-9 * time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	owners, _, err := AdminStatus(context.Background(), s)
+	if err != nil {
+		t.Fatalf("AdminStatus: %v", err)
+	}
+	if len(owners) != 2 || owners[0].Label != "alice" || owners[1].Label != "bob" {
+		t.Fatalf("owners = %+v, want alice then bob", owners)
+	}
+	if !owners[0].LastSeen.Equal(seen) {
+		t.Errorf("alice LastSeen = %v, want the binding's Serve.LastSeen %v", owners[0].LastSeen, seen)
+	}
+	if !owners[1].LastSeen.IsZero() {
+		t.Errorf("bob LastSeen = %v, want the zero time: RoundStartedAt is no contact", owners[1].LastSeen)
+	}
+
+	doc := StatusDocument(owners, remote.BuildersView{})
+	if doc.LastContact == nil || !doc.LastContact.Equal(seen) {
+		t.Errorf("LastContact = %v, want %v", doc.LastContact, seen)
 	}
 }

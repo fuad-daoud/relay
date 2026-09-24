@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -162,7 +163,7 @@ func cmdServe(args []string) error {
        relevo serve clients [--state <dir>]
        relevo serve revoke <id> [--state <dir>]
        relevo serve fingerprint [--state <dir>]
-       relevo serve status [--state <dir>]
+       relevo serve status [--json] [--state <dir>]
        relevo gate --serve [--state <dir>]        (gates, available and unavailable moved to relevo gate)
        relevo serve ui [--state <dir>] [--interval 2s]
        relevo serve gc --abandoned <duration> [--dry-run] [--state <dir>]
@@ -706,6 +707,7 @@ func cmdServeStatus(args []string) error {
 	fs := flag.NewFlagSet("relevo serve status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	_ = fs.String("state", "", "state directory")
+	asJSON := fs.Bool("json", false, "print the census as JSON")
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, errHelpShown) {
 			return err
@@ -727,6 +729,12 @@ func cmdServeStatus(args []string) error {
 	owners, builders, err := serve.AdminStatus(context.Background(), srv)
 	if err != nil {
 		return err
+	}
+
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(serve.StatusDocument(owners, builders))
 	}
 
 	fmt.Print(serve.RenderAdminStatus(owners, builders))

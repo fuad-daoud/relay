@@ -776,7 +776,7 @@ On a fresh server host, the first run looks like:
 
 On the server machine, the admin runs these on the server host. No `--state` is needed: an admin verb reads the running daemon's root from the database's `serve.daemon` record (an explicit `--state` still wins, and a stale record falls back to the default root with a note):
 
-- `relevo serve status` displays active bindings across all owners, sorted by owner label.
+- `relevo serve status [--json]` displays active bindings across all owners, sorted by owner label; `--json` prints the same census as one JSON object with the top-level keys `builders`, `last_contact` and `owners`.
 - `relevo show <name> --owner <label|id>` prints one round's plan, report, diff, drift, log or transcript, with `relevo show`'s flags. Read-only, and it reads live bindings only: a non-live binding reads as "binding not found".
 - `relevo show <name> --owner <label|id> --log` prints that owner's binding log, with `relevo show --log`'s `--round`, `--after`, `--json` and `--follow`. Read-only: `--owner` is an exact label or an exact client id, and nothing is stamped or created.
 - `relevo history --tab [--owner <label|id|all>] [--since 7d] [--by binding|model|provider|owner]` sums recorded usage: with `--owner` for that one owner, and `--owner all` (or no `--owner`) for every owner, where a binding group reads `<label>/<name>` and `--by owner` groups by owner label. Reads only; it creates nothing.

@@ -16,9 +16,10 @@ import (
 )
 
 type OwnerStatus struct {
-	Owner  remote.ClientID
-	Label  string        // Clients.LabelOf
-	Report relevo.Report // relevo.Status over that owner's runtime
+	Owner    remote.ClientID
+	Label    string        // Clients.LabelOf
+	LastSeen time.Time     // max over the owner's bindings of Serve.LastSeen; zero when none
+	Report   relevo.Report // relevo.Status over that owner's runtime
 }
 
 // AdminStatus returns the status of every owner who has a bindings
@@ -65,8 +66,20 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 		if err != nil {
 			return nil, remote.BuildersView{}, err
 		}
+		var lastSeen time.Time
 		for ri := range rep.Bindings {
 			row := &rep.Bindings[ri]
+			// #391: LastSeen is the newest real client request about any of
+			// this owner's bindings -- the same field GCAbandoned reads
+			// (b.Serve.LastSeen), but without its fallback to RoundStartedAt:
+			// only a client request counts as contact.
+			b, err := rt.Store.Load(row.Name)
+			if err != nil {
+				return nil, remote.BuildersView{}, err
+			}
+			if b.Serve != nil && b.Serve.LastSeen.After(lastSeen) {
+				lastSeen = b.Serve.LastSeen
+			}
 			i, ok := position[string(id)+"/"+row.Name]
 			if !ok {
 				continue
@@ -77,9 +90,10 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 		}
 		label := s.clients.LabelOf(id)
 		owners = append(owners, OwnerStatus{
-			Owner:  id,
-			Label:  label,
-			Report: rep,
+			Owner:    id,
+			Label:    label,
+			LastSeen: lastSeen,
+			Report:   rep,
 		})
 	}
 
@@ -155,6 +169,56 @@ func RenderAdminStatus(owners []OwnerStatus, builders remote.BuildersView) strin
 		}
 	}
 	return sb.String()
+}
+
+// StatusJSON is the document `relevo serve status --json` prints: the
+// machine-readable server census (servers#13). The field names are a
+// contract. Owners is never null; LastContact is null until some owner
+// binding has recorded a real client request.
+type StatusJSON struct {
+	Builders    remote.BuildersView `json:"builders"`
+	LastContact *time.Time          `json:"last_contact"`
+	Owners      []OwnerJSON         `json:"owners"`
+}
+
+// OwnerJSON is one owner's row of StatusJSON.
+type OwnerJSON struct {
+	Owner    string        `json:"owner"`
+	Label    string        `json:"label"`
+	LastSeen *time.Time    `json:"last_seen"`
+	Report   relevo.Report `json:"report"`
+}
+
+// StatusDocument projects AdminStatus's owners and builders into the --json
+// document. It is pure. Every time it writes is UTC, which encoding/json
+// marshals as RFC 3339; it never sorts, because owners arrive label-sorted
+// from AdminStatus.
+func StatusDocument(owners []OwnerStatus, builders remote.BuildersView) StatusJSON {
+	doc := StatusJSON{
+		Builders: builders,
+		Owners:   make([]OwnerJSON, 0, len(owners)),
+	}
+
+	var lastContact time.Time
+	for _, o := range owners {
+		row := OwnerJSON{
+			Owner:  string(o.Owner),
+			Label:  o.Label,
+			Report: o.Report,
+		}
+		if !o.LastSeen.IsZero() {
+			seen := o.LastSeen.UTC()
+			row.LastSeen = &seen
+			if seen.After(lastContact) {
+				lastContact = seen
+			}
+		}
+		doc.Owners = append(doc.Owners, row)
+	}
+	if !lastContact.IsZero() {
+		doc.LastContact = &lastContact
+	}
+	return doc
 }
 
 // RenderClients formats `relevo serve clients`: one line per client,
