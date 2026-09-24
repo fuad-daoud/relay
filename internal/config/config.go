@@ -279,6 +279,13 @@ func Validate(sec Section, body []byte) ([]string, error) {
 // Put validates body and, when it is valid, stores it as sec in one
 // transaction. A refused body writes nothing.
 func (s *Store) Put(sec Section, body []byte) ([]string, error) {
+	if sec == Candidates {
+		filled, _, err := fillCandidateNames(body)
+		if err != nil {
+			return nil, err
+		}
+		body = filled
+	}
 	warnings, err := Validate(sec, body)
 	if err != nil {
 		return nil, err
@@ -329,6 +336,14 @@ func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
 		return nil, fmt.Errorf("unknown config section %q", unknown[0])
+	}
+
+	if body, ok := doc[Candidates]; ok {
+		filled, _, err := fillCandidateNames(body)
+		if err != nil {
+			return nil, err
+		}
+		doc[Candidates] = filled
 	}
 
 	var warnings []string

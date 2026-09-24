@@ -144,7 +144,7 @@ func (m Model) roundColumns(r db.RoundRow) []col {
 		{"started", colStarted, r.StartedAt.In(m.loc).Format("2006-01-02 15:04"), m.styles.Fg},
 		{"binding", colBinding, r.BindingName, m.styles.Fg},
 		{"rnd", colRound, fmt.Sprintf("r%d", r.Number), m.styles.Dim},
-		{"builder", m.builderWidth(), deref(r.BuilderCandidate), m.styles.Fg},
+		{"builder", m.builderWidth(), m.nameOf(deref(r.BuilderCandidate)), m.styles.Fg},
 		{"outcome", colOutcome, outcome, outcomeStyle},
 	}
 	if m.width >= tierTree {
@@ -194,7 +194,11 @@ func (m Model) groupLine(g histq.GroupRow, cursor bool) string {
 	if m.expanded[g.Key] {
 		marker = "▾ "
 	}
-	parts := []string{pad(marker+clip(g.Key, colKey-2), colKey)}
+	key := g.Key
+	if m.query.By == histq.AxisBuilder {
+		key = m.nameOf(g.Key)
+	}
+	parts := []string{pad(marker+clip(key, colKey-2), colKey)}
 	parts = append(parts, fmt.Sprintf("%6d", g.Rounds))
 	parts = append(parts, fmt.Sprintf("%8d", g.Reported))
 	parts = append(parts, fmt.Sprintf("%6d", g.Halted))
@@ -508,4 +512,16 @@ func spread(left, right string, width int) string {
 		return left
 	}
 	return left + strings.Repeat(" ", gap) + right
+}
+
+// nameOf resolves token with Names when set, returning token unchanged when
+// Names is nil or token is "-" or empty.
+func (m Model) nameOf(token string) string {
+	if token == "" || token == "-" {
+		return token
+	}
+	if m.Names != nil {
+		return m.Names(token)
+	}
+	return token
 }

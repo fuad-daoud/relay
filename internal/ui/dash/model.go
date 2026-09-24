@@ -68,6 +68,10 @@ type Model struct {
 	// whose name vanished. "" when there is none.
 	Notice string
 
+	// Names resolves a candidate token to its display name (§5). A nil value
+	// means identity.
+	Names func(token string) string
+
 	// Embedded is true when the dashboard is hosted as a view inside the
 	// cockpit shell rather than owning the whole screen (B1 round 2). The
 	// shell draws the identity line itself, so View omits headerLine and

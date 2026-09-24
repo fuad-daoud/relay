@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // TestEnsureCandidateNamesWritesOnce pins A1 §3.8's migration: the first run
@@ -16,8 +18,12 @@ func TestEnsureCandidateNamesWritesOnce(t *testing.T) {
 	  {"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"],"colour":"red"},
 	  {"harness":"agy","provider":"google","model":"gemini-3.8-flash-high","roles":["builder"]}
 	]`
-	if _, err := s.Put(Candidates, []byte(body)); err != nil {
-		t.Fatalf("Put: %v", err)
+	// Seed nameless candidates directly into the database, simulating legacy
+	// data written before names were derived on Put.
+	if err := s.db.Tx(func(t *db.Tx) error {
+		return t.ConfigPut(string(Candidates), []byte(body), s.now().UTC())
+	}); err != nil {
+		t.Fatalf("ConfigPut: %v", err)
 	}
 	before, err := s.Version()
 	if err != nil {
@@ -30,6 +36,20 @@ func TestEnsureCandidateNamesWritesOnce(t *testing.T) {
 	}
 	if !changed {
 		t.Fatal("EnsureCandidateNames = false, want true on the first run")
+	}
+
+	revs, err := s.Log(1)
+	if err != nil {
+		t.Fatalf("Log: %v", err)
+	}
+	if len(revs) == 0 {
+		t.Fatal("Log returned no revisions")
+	}
+	if revs[0].Source != "migration" {
+		t.Errorf("revision source = %q, want migration", revs[0].Source)
+	}
+	if revs[0].Message != "candidate names derived" {
+		t.Errorf("revision message = %q, want %q", revs[0].Message, "candidate names derived")
 	}
 
 	stored, ok, err := s.Body(Candidates)
@@ -105,5 +125,113 @@ func TestEnsureCandidateNamesAbsentSection(t *testing.T) {
 
 	if _, ok, err := s.Body(Candidates); err != nil || ok {
 		t.Errorf("a section was written: ok=%v err=%v", ok, err)
+	}
+}
+
+// TestFillCandidateNames verifies that missing names are filled, existing names
+// are preserved, and unparseable JSON passes through untouched.
+func TestFillCandidateNames(t *testing.T) {
+	// Missing names get filled
+	nameless := `[
+  {
+    "harness": "claude",
+    "provider": "anthropic",
+    "model": "sonnet",
+    "roles": [
+      "builder"
+    ]
+  }
+]`
+	filled, changed, err := fillCandidateNames([]byte(nameless))
+	if err != nil {
+		t.Fatalf("fillCandidateNames(nameless): %v", err)
+	}
+	if !changed {
+		t.Error("fillCandidateNames(nameless) changed = false, want true")
+	}
+	if !strings.Contains(string(filled), `"name": "sonnet"`) {
+		t.Errorf("fillCandidateNames(nameless) = %s, want name sonnet", filled)
+	}
+
+	// Present names are kept
+	named := `[
+  {
+    "harness": "claude",
+    "provider": "anthropic",
+    "model": "sonnet",
+    "name": "custom",
+    "roles": [
+      "builder"
+    ]
+  }
+]`
+	filled, changed, err = fillCandidateNames([]byte(named))
+	if err != nil {
+		t.Fatalf("fillCandidateNames(named): %v", err)
+	}
+	if changed {
+		t.Error("fillCandidateNames(named) changed = true, want false")
+	}
+	if string(filled) != named {
+		t.Errorf("fillCandidateNames(named) = %s, want unchanged %s", filled, named)
+	}
+
+	// Bad JSON passes through
+	badJSON := `[{bad json`
+	filled, changed, err = fillCandidateNames([]byte(badJSON))
+	if err != nil {
+		t.Fatalf("fillCandidateNames(badJSON): %v", err)
+	}
+	if changed {
+		t.Error("fillCandidateNames(badJSON) changed = true, want false")
+	}
+	if string(filled) != badJSON {
+		t.Errorf("fillCandidateNames(badJSON) = %s, want unchanged %s", filled, badJSON)
+	}
+}
+
+// TestPutCandidatesRecordsOneRevision pins W1: one Put of a nameless candidates
+// body produces exactly one revision whose changes include the candidates add
+// with names.
+func TestPutCandidatesRecordsOneRevision(t *testing.T) {
+	s := openStore(t)
+
+	nameless := `[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}]`
+	if _, err := s.As("cli", "config set candidates").Put(Candidates, []byte(nameless)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	revs, err := s.Log(0)
+	if err != nil {
+		t.Fatalf("Log: %v", err)
+	}
+	if len(revs) != 1 {
+		t.Fatalf("got %d revisions, want 1", len(revs))
+	}
+	if revs[0].Source != "cli" {
+		t.Errorf("rev source = %q, want cli", revs[0].Source)
+	}
+	if revs[0].Message != "config set candidates" {
+		t.Errorf("rev message = %q, want config set candidates", revs[0].Message)
+	}
+
+	var changes []Change
+	if err := json.Unmarshal(revs[0].Changes, &changes); err != nil {
+		t.Fatalf("decode changes: %v", err)
+	}
+	found := false
+	for _, c := range changes {
+		if c.Path == "candidates" && c.Op == "add" {
+			afterJSON, err := json.Marshal(c.After)
+			if err != nil {
+				t.Fatalf("marshal after: %v", err)
+			}
+			if strings.Contains(string(afterJSON), `"name":"sonnet"`) || strings.Contains(string(afterJSON), `"name": "sonnet"`) {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("revision changes do not include candidates add with names: %s", revs[0].Changes)
 	}
 }

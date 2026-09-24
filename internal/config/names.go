@@ -7,33 +7,52 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 )
 
-// EnsureCandidateNames is A1's migration (cockpit spec §3.8): it gives every
-// stored candidate a `name`, deriving the ones that lack a name exactly as
-// candidate.Parse does in memory. It is the written half of a rule that holds
-// without it -- Parse derives names anyway -- so a failure is only a warning
-// for the caller.
+// EnsureCandidateNames is A1's migration (cockpit spec §3.8): it derives and
+// stores names for candidates written before names existed. Writes on this
+// branch fill names on every Put, so EnsureCandidateNames only matters for
+// legacy data.
 //
 // It is idempotent: once every element has a non-empty "name" it returns
-// false and writes nothing. It keeps every key and the element order, because
-// it edits the decoded JSON objects rather than re-encoding candidate.Candidate.
-// The written body is indented the way `config export` prints, and Put is one
-// transaction, so a concurrent CLI and daemon compute the same names.
+// false and writes nothing.
 func (s *Store) EnsureCandidateNames() (bool, error) {
 	body, ok, err := s.Body(Candidates)
 	if err != nil || !ok {
 		return false, err
 	}
 
+	filled, changed, err := fillCandidateNames(body)
+	if err != nil {
+		return false, err
+	}
+	if !changed {
+		return false, nil
+	}
+
+	if _, err := s.As("migration", "candidate names derived").Put(Candidates, filled); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// fillCandidateNames ensures every candidate object in body carries a "name",
+// deriving the missing ones with candidate.DeriveNames. It edits decoded JSON
+// objects rather than re-encoding candidate.Candidate, keeping every extra key
+// and the element order. When no candidate was missing a name, it returns the
+// input body unchanged and changed=false.
+//
+// A body that fails to decode is returned unchanged with changed=false, err=nil
+// so Validate reports the format error.
+func fillCandidateNames(body []byte) (filled []byte, changed bool, err error) {
 	var rows []map[string]json.RawMessage
 	if err := json.Unmarshal(body, &rows); err != nil {
-		return false, fmt.Errorf("%s: %v", FileName(Candidates), err)
+		return body, false, nil
 	}
 
 	missing := false
 	for _, row := range rows {
 		name, err := rowName(row)
 		if err != nil {
-			return false, fmt.Errorf("%s: %v", FileName(Candidates), err)
+			return body, false, nil
 		}
 		if name == "" {
 			missing = true
@@ -41,43 +60,39 @@ func (s *Store) EnsureCandidateNames() (bool, error) {
 		}
 	}
 	if !missing {
-		return false, nil
+		return body, false, nil
 	}
 
 	var entries []candidate.Candidate
 	if err := json.Unmarshal(body, &entries); err != nil {
-		return false, fmt.Errorf("%s: %v", FileName(Candidates), err)
+		return body, false, nil
 	}
 	names := candidate.DeriveNames(entries)
 	if len(names) != len(rows) {
-		return false, fmt.Errorf("%s: %d entries, %d names", FileName(Candidates), len(rows), len(names))
+		return body, false, nil
 	}
 
 	for i, row := range rows {
 		name, err := rowName(row)
 		if err != nil {
-			return false, fmt.Errorf("%s: %v", FileName(Candidates), err)
+			return body, false, nil
 		}
 		if name != "" {
 			continue
 		}
 		raw, err := json.Marshal(names[i])
 		if err != nil {
-			return false, err
+			return nil, false, err
 		}
 		row["name"] = raw
 	}
 
 	encoded, err := json.MarshalIndent(rows, "", "  ")
 	if err != nil {
-		return false, fmt.Errorf("%s: %v", FileName(Candidates), err)
+		return nil, false, fmt.Errorf("%s: %v", FileName(Candidates), err)
 	}
 	encoded = append(encoded, '\n')
-
-	if _, err := s.Put(Candidates, encoded); err != nil {
-		return false, err
-	}
-	return true, nil
+	return encoded, true, nil
 }
 
 // rowName returns the "name" a decoded candidate object carries, or "" when it

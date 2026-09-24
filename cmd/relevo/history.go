@@ -466,7 +466,7 @@ func historyStats(since string, asJSON bool) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(rep)
 	}
-	fmt.Print(stats.Render(rep, func(s string) string { return s }))
+	fmt.Print(stats.Render(rep, rt.Candidates.NameOf))
 	return nil
 }
 

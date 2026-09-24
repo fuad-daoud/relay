@@ -207,7 +207,11 @@ func (f fleetView) Context(env Env) (string, string) {
 			active++
 		}
 	}
-	left := fmt.Sprintf("%d bindings · %s · %d active", len(rows), needsYouCount(need), active)
+	bindingsLabel := fmt.Sprintf("%d bindings", len(rows))
+	if len(rows) == 1 {
+		bindingsLabel = "1 binding"
+	}
+	left := fmt.Sprintf("%s · %s · %d active", bindingsLabel, needsYouCount(need), active)
 	order := "attention"
 	if !f.attention {
 		order = "name"
@@ -409,7 +413,9 @@ type fleetCell struct {
 // (BindingStatus.BuilderName); when that field exists its non-empty value
 // wins. The naming rule lives here alone.
 func candidateText(b relevo.BindingStatus) string {
-	// A1 round 2: use b.BuilderName here when BindingStatus gains it.
+	if b.BuilderName != "" {
+		return b.BuilderName
+	}
 	s := b.BuilderCandidate
 	if i := strings.LastIndex(s, "/"); i >= 0 {
 		s = s[i+1:]

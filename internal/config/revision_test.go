@@ -311,7 +311,8 @@ func TestRollbackRestoresAndDeletes(t *testing.T) {
 		t.Errorf("new revision = %q / %q, want rollback / rollback to #2", row.Source, row.Message)
 	}
 
-	if body, ok, err := s.Body(Candidates); err != nil || !ok || string(body) != string(bodyA) {
+	wantCandidates, _, _ := fillCandidateNames(bodyA)
+	if body, ok, err := s.Body(Candidates); err != nil || !ok || string(body) != string(wantCandidates) {
 		t.Errorf("candidates after rollback = %q (ok %v, err %v), want revision 2's body", body, ok, err)
 	}
 	if body, ok, err := s.Body(Policy); err != nil || !ok || string(body) != string(bodyP) {
