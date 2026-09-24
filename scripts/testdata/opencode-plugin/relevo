@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -n "${RELEVO_FAKE_LOG:-}" ]; then
+  echo "$*" >> "$RELEVO_FAKE_LOG"
+fi
+
+cmd="${1:-}"
+
+case "$cmd" in
+  planner)
+    if [ "${2:-}" = "init" ]; then
+      echo "planner oc-smoke (pl_smoke000001) created"
+      echo "export RELEVO_PLANNER=pl_smoke000001"
+      exit 0
+    fi
+    ;;
+  status)
+    STATE_DIR="${RELEVO_FAKE_STATE:-/tmp/relevo-fake-state}"
+    mkdir -p "$STATE_DIR"
+    COUNT_FILE="$STATE_DIR/status.count"
+    COUNT=0
+    if [ -f "$COUNT_FILE" ]; then
+      COUNT=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
+    fi
+    COUNT=$((COUNT + 1))
+    echo "$COUNT" > "$COUNT_FILE"
+    if [ "$COUNT" -le 2 ]; then
+      cat "$DIR/status-1.json"
+    else
+      cat "$DIR/status-2.json"
+    fi
+    exit 0
+    ;;
+  history)
+    cat "$DIR/history.json"
+    exit 0
+    ;;
+  show)
+    TAB="report"
+    for arg in "$@"; do
+      case "$arg" in
+        --plan) TAB="plan" ;;
+        --report) TAB="report" ;;
+        --diff) TAB="diff" ;;
+        --log) TAB="log" ;;
+        --transcript) TAB="transcript" ;;
+      esac
+    done
+    cat "$DIR/show-$TAB.json"
+    exit 0
+    ;;
+  send|stop|done|gate)
+    echo "ok (fake)"
+    exit 0
+    ;;
+esac
+
+echo "fake relevo: unhandled: $*" >&2
+exit 2
