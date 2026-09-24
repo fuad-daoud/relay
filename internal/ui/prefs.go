@@ -2,15 +2,16 @@ package ui
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// prefs is what ui.json holds: the three things a human sets and would
-// not want to set again next time (spec §6.0). The ui's own file, under
-// relevo's state root, written by the ui alone and read by nothing else.
+// prefs is what the ui's preference document holds: the three things a human
+// sets and would not want to set again next time (spec §6.0). It lives in the
+// machine database's kv row "ui" (or "serve.ui" for the server ui) -- the file
+// ui.json before this round -- written by the ui alone and read by nothing else.
 type prefs struct {
 	Sort     string `json:"sort"` // "attention" | "name"
 	Compact  bool   `json:"compact"`
@@ -25,51 +26,48 @@ type prefs struct {
 	DashboardSort string `json:"dashboard_sort,omitempty"`
 }
 
+// PrefsStore is where the ui's preferences live (P3b plan §4.4): the kv row Key
+// in KV, with LegacyPath (ui.json) imported on the first read. A zero
+// PrefsStore -- KV nil -- keeps the ui stateless, nothing loaded, nothing saved,
+// exactly as an empty Options.PrefsPath did.
+type PrefsStore struct {
+	KV         db.KV
+	Key        string
+	LegacyPath string
+}
+
 type prefsSavedMsg struct{}
 
-// loadPrefs reads path; any error -- missing, unreadable, not JSON -- is
-// the zero prefs, which applyPrefs reads as the defaults. Never errors:
-// a preference file is not worth refusing to start over.
-func loadPrefs(path string) prefs {
-	var p prefs
-	data, err := os.ReadFile(path)
-	if err != nil {
+// loadPrefs reads the KV row; any error -- missing, unreadable, not JSON -- is
+// the zero prefs, which applyPrefs reads as the defaults. Never errors: a
+// preference record is not worth refusing to start over.
+func loadPrefs(ps PrefsStore) prefs {
+	if ps.KV == nil {
 		return prefs{}
 	}
+	data, ok, err := db.KVImportFile(ps.KV, ps.Key, ps.LegacyPath)
+	if err != nil || !ok {
+		return prefs{}
+	}
+	var p prefs
 	if json.Unmarshal(data, &p) != nil {
 		return prefs{}
 	}
 	return p
 }
 
-// savePrefs writes p to path atomically (temp file in the same directory,
-// then rename) from inside the command, so Update stays pure. A failed
-// save is silent: the change still applies for this run.
-func savePrefs(path string, p prefs) tea.Cmd {
+// savePrefs writes p to the KV row from inside the command, so Update stays
+// pure. A failed save is silent: the change still applies for this run.
+func savePrefs(ps PrefsStore, p prefs) tea.Cmd {
 	return func() tea.Msg {
+		if ps.KV == nil {
+			return prefsSavedMsg{}
+		}
 		data, err := json.MarshalIndent(p, "", "  ")
 		if err != nil {
 			return prefsSavedMsg{}
 		}
-		dir := filepath.Dir(path)
-		_ = os.MkdirAll(dir, 0o755)
-		tmp, err := os.CreateTemp(dir, ".ui-*.json")
-		if err != nil {
-			return prefsSavedMsg{}
-		}
-		name := tmp.Name()
-		if _, err := tmp.Write(append(data, '\n')); err != nil {
-			tmp.Close()
-			os.Remove(name)
-			return prefsSavedMsg{}
-		}
-		if err := tmp.Close(); err != nil {
-			os.Remove(name)
-			return prefsSavedMsg{}
-		}
-		if err := os.Rename(name, path); err != nil {
-			os.Remove(name)
-		}
+		_ = ps.KV.KVPut(ps.Key, append(data, '\n'))
 		return prefsSavedMsg{}
 	}
 }
@@ -105,11 +103,11 @@ func (m Model) applyPrefs(p prefs) Model {
 	return m
 }
 
-// save is the command every preference change returns: the save when a
-// path is configured, nil otherwise.
+// save is the command every preference change returns: the save when a store
+// is configured, nil otherwise.
 func (m Model) save() tea.Cmd {
-	if m.opts.PrefsPath == "" {
+	if m.opts.Prefs.KV == nil {
 		return nil
 	}
-	return savePrefs(m.opts.PrefsPath, m.prefs())
+	return savePrefs(m.opts.Prefs, m.prefs())
 }

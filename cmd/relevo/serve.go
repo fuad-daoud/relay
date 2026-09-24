@@ -17,6 +17,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -185,13 +186,21 @@ func cmdServe(args []string) error {
 }
 
 // serveTierRuntime is the Runtime cmdServeRun uses only to log the builder
-// tier at startup: candidates, policy, the server ledger and a clock.
-// It is a pure constructor: no I/O beyond what the caller already loaded.
+// tier at startup: candidates, policy, the server's gates and a clock.
+// Gates is the serve root's database (P3b plan §4.5), so a tier check that
+// reads the gate record sees the server-wide one. The open is best-effort: a
+// failure leaves Gates nil -- an empty record -- and the tier log never reads
+// it anyway.
 func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, root string) relevo.Runtime {
+	var gates db.KV
+	if d, err := store.New(root).DB(); err == nil {
+		gates = d
+	}
 	return relevo.Runtime{
 		Candidates: candidates,
 		Policy:     pol,
-		LedgerPath: filepath.Join(root, "ledger.json"),
+		Gates:      gates,
+		GatesDir:   root,
 		Now:        time.Now,
 	}
 }
@@ -1034,9 +1043,13 @@ func cmdServeUI(args []string) error {
 	defer cancel()
 
 	return ui.RunSource(ctx, ui.ServerSource(srv), ui.Options{
-		Interval:  *interval,
-		PrefsPath: filepath.Join(root, "ui.json"),
-		PipeHint:  "relevo serve ui needs a terminal; use relevo serve status when piping",
+		Interval: *interval,
+		Prefs: ui.PrefsStore{
+			KV:         srv.DB(),
+			Key:        "serve.ui",
+			LegacyPath: filepath.Join(root, "ui.json"),
+		},
+		PipeHint: "relevo serve ui needs a terminal; use relevo serve status when piping",
 	})
 }
 

@@ -2,11 +2,11 @@ package store
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // FileID is a file's identity at one instant: the device and inode that name
@@ -28,9 +28,10 @@ type ReexecFailure struct {
 	Reason string    `json:"reason"`
 }
 
-// DaemonInfo is the daemon's own record, written at <state root>/daemon.json
-// (#371). A missing file while the daemon lock is held means "a daemon older
-// than #371": one that does not follow upgrades.
+// DaemonInfo is the daemon's own record, stored in the store database under
+// the kv key "daemon" (#371; P3b plan §4.4). It was <state root>/daemon.json
+// before the move. A missing record while the daemon lock is held means "a
+// daemon older than #371": one that does not follow upgrades.
 type DaemonInfo struct {
 	// Version is buildVersion() of the running image.
 	Version string `json:"version"`
@@ -50,34 +51,50 @@ type DaemonInfo struct {
 	ReexecFailed *ReexecFailure `json:"reexec_failed,omitempty"`
 }
 
-// daemonInfoPath is the daemon's record inside the state root.
+// daemonInfoKey is the kv row the daemon's own record lives in (P3b plan
+// §4.4). daemon.json was the file form until this round; ReadDaemonInfo imports
+// a present one on first read.
+const daemonInfoKey = "daemon"
+
+// daemonInfoPath is the daemon's record as it was written before the move to
+// the kv table: the legacy file KVImportFile adopts on first read.
 func (s *Store) daemonInfoPath() string { return filepath.Join(s.root, daemonInfoFileName) }
 
-// WriteDaemonInfo writes daemon.json atomically: a temp file in the root, then
-// a rename, mode 0644. A reader never sees a half-written record.
+// WriteDaemonInfo stores the daemon's record in the store database under the
+// kv key "daemon" (P3b plan §4.3): one short upsert, so a reader never sees a
+// half-written record.
 func (s *Store) WriteDaemonInfo(info DaemonInfo) error {
-	if err := os.MkdirAll(s.root, bindingDirMode); err != nil {
-		return fmt.Errorf("create state root: %w", err)
-	}
-
-	raw, err := json.MarshalIndent(info, "", "  ")
+	raw, err := json.Marshal(info)
 	if err != nil {
 		return fmt.Errorf("marshal daemon info: %w", err)
 	}
-
-	return writeFileAtomic(s.daemonInfoPath(), raw, bindingFileMode)
+	d, err := s.DB()
+	if err != nil {
+		return err
+	}
+	return d.KVPut(daemonInfoKey, raw)
 }
 
-// ReadDaemonInfo reads daemon.json. A missing file is (zero, false, nil) --
-// not an error, because a daemon older than #371 writes none. Malformed JSON
-// is an error.
+// ReadDaemonInfo reads the daemon's record from the kv table. A missing row is
+// (zero, false, nil) -- not an error, because a daemon older than #371 writes
+// none -- and so is a store root with no database yet. A present legacy
+// daemon.json is imported and removed on the first read. Malformed JSON is an
+// error.
 func (s *Store) ReadDaemonInfo() (DaemonInfo, bool, error) {
-	raw, err := os.ReadFile(s.daemonInfoPath())
-	if errors.Is(err, os.ErrNotExist) {
+	d, err := s.DBIfExists()
+	if err != nil {
+		return DaemonInfo{}, false, err
+	}
+	if d == nil {
 		return DaemonInfo{}, false, nil
 	}
+
+	raw, ok, err := db.KVImportFile(d, daemonInfoKey, s.daemonInfoPath())
 	if err != nil {
 		return DaemonInfo{}, false, fmt.Errorf("read daemon info: %w", err)
+	}
+	if !ok {
+		return DaemonInfo{}, false, nil
 	}
 
 	var info DaemonInfo
@@ -87,11 +104,16 @@ func (s *Store) ReadDaemonInfo() (DaemonInfo, bool, error) {
 	return info, true, nil
 }
 
-// RemoveDaemonInfo removes daemon.json. A file that is not there is nil: the
+// RemoveDaemonInfo deletes the daemon's record. An absent key is nil: the
 // clean-shutdown path runs this whether or not the write at start succeeded.
+// A root with no database has nothing to remove.
 func (s *Store) RemoveDaemonInfo() error {
-	if err := os.Remove(s.daemonInfoPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove daemon info: %w", err)
+	d, err := s.DBIfExists()
+	if err != nil {
+		return err
 	}
-	return nil
+	if d == nil {
+		return nil
+	}
+	return d.KVDelete(daemonInfoKey)
 }

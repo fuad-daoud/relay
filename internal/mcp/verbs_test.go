@@ -8,9 +8,22 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
+
+// testGateKV is a real t.TempDir() database for a Runtime literal's Gates
+// field (P3b plan §4.5, §7).
+func testGateKV(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
 
 // mcpTestPlannerA and mcpTestPlannerB are valid planner ids (pl_ plus 12
 // characters of [a-z2-7]); the status filter keys on them.
@@ -156,7 +169,7 @@ func TestRelevoVerbsSendDryRunHeadless(t *testing.T) {
 		Store:      s,
 		Candidates: set,
 		Runner:     stubRunner{},
-		LedgerPath: filepath.Join(t.TempDir(), "ledger.json"),
+		Gates:      testGateKV(t),
 		Now:        func() time.Time { return time.Unix(0, 0) },
 	}
 	saveVerbBinding(t, s, store.Binding{
@@ -196,7 +209,7 @@ func TestRelevoVerbsSendRealRunHeadless(t *testing.T) {
 		Store:      s,
 		Candidates: set,
 		Runner:     stubRunner{},
-		LedgerPath: filepath.Join(t.TempDir(), "ledger.json"),
+		Gates:      testGateKV(t),
 		Now:        func() time.Time { return time.Unix(0, 0) },
 	}
 	saveVerbBinding(t, s, store.Binding{

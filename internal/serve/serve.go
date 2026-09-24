@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
@@ -63,6 +64,11 @@ type Server struct {
 	addr         net.Addr
 	insecureHTTP bool
 	mu           sync.Mutex // §6.3 of the spec: every store/ledger mutation and every tick
+	// gates is the serve-root database (P3b plan §4.5): the server-wide gate
+	// and availability records live in its kv rows, and phase 5 merges it into
+	// the one machine DB. It is opened once here and shared by every runtime
+	// the server builds, so an owner's rounds do not each open their own.
+	gates *db.DB
 	// tickFn, when non-nil, replaces Tick in Run (#373): the drain and
 	// WithoutCancel tests need a tick they can hold open. Production leaves
 	// it nil.
@@ -97,13 +103,27 @@ func New(cfg Config) (*Server, error) {
 	nonces := remote.NewNonceWindow(remote.MaxClockSkew)
 	transport := remote.NewBundleTransport(cfg.Git, tmpDir)
 
+	// The serve-root database is opened once here (P3b plan §4.5): it holds
+	// the server-wide gate and availability records, so every runtime the
+	// server builds shares one handle.
+	gates, err := store.New(cfg.Root).DB()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Server{
 		cfg:       cfg,
 		clients:   clients,
 		nonces:    nonces,
 		transport: transport,
+		gates:     gates,
 	}, nil
 }
+
+// DB returns the serve-root database the server holds (P3b plan §4.5). It is
+// the store served rounds and the admin verbs share, and the one the serve ui
+// keeps its own preferences in.
+func (s *Server) DB() *db.DB { return s.gates }
 
 // sweepTmp removes the stale request temp files in dir (#373 §4.3): the
 // req-body-* and plan-* files relevo serve creates while a request is in
@@ -184,22 +204,22 @@ func (s *Server) runtime(id remote.ClientID) (relevo.Runtime, error) {
 func (s *Server) runtimeAt(root string) relevo.Runtime {
 	st := store.New(root)
 	return relevo.Runtime{
-		Git:              s.cfg.Git,
-		Runner:           s.cfg.Runner,
-		Store:            st,
-		Candidates:       s.cfg.Candidates,
-		Policy:           s.cfg.Policy,
-		LedgerPath:       filepath.Join(s.cfg.Root, "ledger.json"), // server-wide, not st.LedgerPath()
-		AvailabilityPath: filepath.Join(s.cfg.Root, "availability.json"),
-		Usage:            s.cfg.Usage,
-		Prices:           s.cfg.Prices,
-		Now:              s.cfg.Now,
-		StartedAt:        s.cfg.StartedAt,
-		Roles:            s.cfg.Roles,
-		Registry:         s.cfg.Registry,
-		Hooks:            s.cfg.Hooks,
-		Scope:            s.cfg.Scope,
-		HeldCPUs:         func(tx *store.Tx, self string) ([]int, error) { return s.heldCPUs(root, tx, self) },
+		Git:        s.cfg.Git,
+		Runner:     s.cfg.Runner,
+		Store:      st,
+		Candidates: s.cfg.Candidates,
+		Policy:     s.cfg.Policy,
+		Gates:      s.gates,    // server-wide, not the owner's own
+		GatesDir:   s.cfg.Root, // its legacy ledger.json/availability.json/history.json
+		Usage:      s.cfg.Usage,
+		Prices:     s.cfg.Prices,
+		Now:        s.cfg.Now,
+		StartedAt:  s.cfg.StartedAt,
+		Roles:      s.cfg.Roles,
+		Registry:   s.cfg.Registry,
+		Hooks:      s.cfg.Hooks,
+		Scope:      s.cfg.Scope,
+		HeldCPUs:   func(tx *store.Tx, self string) ([]int, error) { return s.heldCPUs(root, tx, self) },
 	}
 }
 

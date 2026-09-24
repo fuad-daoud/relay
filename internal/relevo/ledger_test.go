@@ -18,9 +18,9 @@ import (
 // loadLedger reads the runtime's ledger for assertions.
 func loadLedger(t *testing.T, rt Runtime) ledger.Ledger {
 	t.Helper()
-	l, err := ledger.Load(rt.LedgerPath)
+	l, err := ledger.LoadKV(rt.Gates, "")
 	if err != nil {
-		t.Fatalf("Load ledger: %v", err)
+		t.Fatalf("LoadKV ledger: %v", err)
 	}
 	return l
 }
@@ -28,11 +28,21 @@ func loadLedger(t *testing.T, rt Runtime) ledger.Ledger {
 // loadHistory reads the runtime's history for assertions.
 func loadHistory(t *testing.T, rt Runtime) history.History {
 	t.Helper()
-	h, err := history.Load(rt.AvailabilityPath)
+	h, err := history.LoadKV(rt.Gates, "")
 	if err != nil {
-		t.Fatalf("Load history: %v", err)
+		t.Fatalf("LoadKV history: %v", err)
 	}
 	return h
+}
+
+// kvRowBytes reads one kv row for a byte-identity assertion.
+func kvRowBytes(t *testing.T, rt Runtime, key string) []byte {
+	t.Helper()
+	raw, ok, err := rt.Gates.KVGet(key)
+	if err != nil || !ok {
+		t.Fatalf("KVGet(%s) = (_, %v, %v), want the row", key, ok, err)
+	}
+	return raw
 }
 
 // TestRecordSpawnFailureLockedUnderHeldLock pins the fix for the deadlock
@@ -243,13 +253,12 @@ func TestGatesProjectsOntoCandidates(t *testing.T) {
 }
 
 // TestGatesToleratesABadLedger pins that a ledger relevo cannot parse is still
-// read as empty with its stderr note, never a crash.
+// read as empty with its stderr note, never a crash. A hand-edited row (the
+// medium's version of a hand-edited file) is simulated by a KV that returns
+// invalid bytes.
 func TestGatesToleratesABadLedger(t *testing.T) {
 	rt := newRuntime(t)
-
-	if err := os.WriteFile(rt.LedgerPath, []byte("not json"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	rt.Gates = badJSONKV{}
 
 	if got := Gates(rt); got != nil {
 		t.Errorf("Gates() = %+v, want nil", got)
@@ -266,7 +275,7 @@ func TestMutateLedgerCarriesUnknownEntries(t *testing.T) {
   {"kind":"future_kind","subject":"test","at":"2026-09-11T15:00:00Z","source":"relevo"},
   {"kind":"spawn_failed","subject":"future/subject","at":"2026-09-11T15:00:00Z","source":"future_source"}
 ]}`
-	if err := os.WriteFile(rt.LedgerPath, []byte(doc), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(rt.GatesDir, "ledger.json"), []byte(doc), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -302,7 +311,7 @@ func TestGatesIgnoresUnknownEntries(t *testing.T) {
   {"kind":"spawn_failed","subject":"future/subject","at":"2026-09-11T15:00:00Z","source":"future_source"},
   {"kind":"rate_limited","subject":"test","at":"2026-09-11T15:00:00Z","source":"planner"}
 ]}`
-	if err := os.WriteFile(rt.LedgerPath, []byte(doc), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(rt.GatesDir, "ledger.json"), []byte(doc), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -419,8 +428,8 @@ func TestMutateLedgerPrunes(t *testing.T) {
 		Until:   baseTime.Add(-time.Minute),
 		Source:  "planner",
 	}
-	if err := ledger.Save(rt.LedgerPath, ledger.Ledger{Entries: []ledger.Entry{expired}}); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := ledger.SaveKV(rt.Gates, ledger.Ledger{Entries: []ledger.Entry{expired}}); err != nil {
+		t.Fatalf("SaveKV: %v", err)
 	}
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
@@ -574,18 +583,18 @@ func TestAvailableRefusesUnknownWritesNothing(t *testing.T) {
 	}
 	rt.Now = func() time.Time { return baseTime.Add(5 * time.Hour) }
 
-	beforeLedger := readFileBytes(t, rt.LedgerPath)
-	beforeHistory := readFileBytes(t, rt.AvailabilityPath)
+	beforeLedger := kvRowBytes(t, rt, "ledger")
+	beforeHistory := kvRowBytes(t, rt, "availability")
 
 	if _, _, err := Available(rt, "tset", ClearedByPlanner); !errors.Is(err, ErrUnknownProvider) {
 		t.Fatalf("Available(tset) err = %v, want ErrUnknownProvider", err)
 	}
 
-	if got := readFileBytes(t, rt.LedgerPath); string(got) != string(beforeLedger) {
-		t.Errorf("ledger.json = %s, want it untouched at %s", got, beforeLedger)
+	if got := kvRowBytes(t, rt, "ledger"); string(got) != string(beforeLedger) {
+		t.Errorf("ledger row = %s, want it untouched at %s", got, beforeLedger)
 	}
-	if got := readFileBytes(t, rt.AvailabilityPath); string(got) != string(beforeHistory) {
-		t.Errorf("availability.json = %s, want it untouched at %s", got, beforeHistory)
+	if got := kvRowBytes(t, rt, "availability"); string(got) != string(beforeHistory) {
+		t.Errorf("availability row = %s, want it untouched at %s", got, beforeHistory)
 	}
 }
 
@@ -598,39 +607,28 @@ func TestAvailableRejectsBadSource(t *testing.T) {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
-	beforeLedger := readFileBytes(t, rt.LedgerPath)
-	beforeHistory := readFileBytes(t, rt.AvailabilityPath)
+	beforeLedger := kvRowBytes(t, rt, "ledger")
+	beforeHistory := kvRowBytes(t, rt, "availability")
 
 	if _, _, err := Available(rt, "test", "bogus"); err == nil {
 		t.Fatal("Available(source=\"bogus\") err = nil, want an error")
 	}
 
-	if got := readFileBytes(t, rt.LedgerPath); string(got) != string(beforeLedger) {
-		t.Errorf("ledger.json = %s, want it untouched at %s", got, beforeLedger)
+	if got := kvRowBytes(t, rt, "ledger"); string(got) != string(beforeLedger) {
+		t.Errorf("ledger row = %s, want it untouched at %s", got, beforeLedger)
 	}
-	if got := readFileBytes(t, rt.AvailabilityPath); string(got) != string(beforeHistory) {
-		t.Errorf("availability.json = %s, want it untouched at %s", got, beforeHistory)
+	if got := kvRowBytes(t, rt, "availability"); string(got) != string(beforeHistory) {
+		t.Errorf("availability row = %s, want it untouched at %s", got, beforeHistory)
 	}
-}
-
-// readFileBytes reads path for a byte-identity assertion.
-func readFileBytes(t *testing.T, path string) []byte {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile(%s): %v", path, err)
-	}
-	return data
 }
 
 func TestHistoryFailureDoesNotFailTheLedger(t *testing.T) {
 	rt := newRuntime(t)
 
-	blocker := filepath.Join(t.TempDir(), "blocker")
-	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	rt.AvailabilityPath = filepath.Join(blocker, "availability.json")
+	// A KV whose availability write fails while the ledger write succeeds:
+	// the ledger write is the one that matters and must still land.
+	rt.Gates = failPutKV{inner: rt.Gates, key: "availability"}
+	rt.GatesDir = ""
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
 		t.Fatalf("Unavailable: %v", err)

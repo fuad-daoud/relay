@@ -5,12 +5,27 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// TestLoadMissingAndMalformed pins §4.3's promise: neither a missing file nor
-// a corrupt one is an error, because a cache that cannot be read must only
-// fail to inform, never fail a caller. Return an error for malformed and this
-// test fails.
+// testKV is a real t.TempDir() database, the medium the cache lives in from
+// this round (P3b plan §7).
+func testKV(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
+// TestLoadMissingAndMalformed pins §4.3's promise: neither a missing record nor
+// a corrupt one is an error, because a cache that cannot be read must only fail
+// to inform, never fail a caller. Return an error for malformed and this test
+// fails. The corrupt document arrives as a legacy release-check.json, which the
+// import refuses to store (P3b plan §4.4).
 func TestLoadMissingAndMalformed(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -26,14 +41,15 @@ func TestLoadMissingAndMalformed(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
+			kv := testKV(t)
+			path := filepath.Join(t.TempDir(), "release-check.json")
 			if tc.write {
-				if err := os.WriteFile(filepath.Join(root, cacheFile), []byte(tc.content), 0o644); err != nil {
+				if err := os.WriteFile(path, []byte(tc.content), 0o644); err != nil {
 					t.Fatalf("write cache fixture: %v", err)
 				}
 			}
 
-			c, ok, err := Load(root)
+			c, ok, err := Load(kv, path)
 			if err != nil {
 				t.Fatalf("Load = error %v, want nil: a corrupt cache must never fail a caller", err)
 			}
@@ -48,20 +64,17 @@ func TestLoadMissingAndMalformed(t *testing.T) {
 }
 
 func TestSaveLoadRoundTrip(t *testing.T) {
-	root := t.TempDir()
-	// Save must create the root: the daemon is the first writer on a fresh
-	// machine, and nothing has made the state directory yet.
-	nested := filepath.Join(root, "state", "relevo")
+	kv := testKV(t)
 	want := Cache{
 		Latest:    "v0.7.0",
 		CheckedAt: time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC),
 		Source:    DefaultEndpoint,
 	}
-	if err := Save(nested, want); err != nil {
+	if err := Save(kv, want); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	got, ok, err := Load(nested)
+	got, ok, err := Load(kv, "")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -72,17 +85,9 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Errorf("round trip = %+v, want %+v", got, want)
 	}
 
-	// Temp-and-rename must leave nothing behind.
-	entries, err := os.ReadDir(nested)
-	if err != nil {
-		t.Fatalf("ReadDir: %v", err)
-	}
-	if len(entries) != 1 || entries[0].Name() != cacheFile {
-		names := make([]string, 0, len(entries))
-		for _, e := range entries {
-			names = append(names, e.Name())
-		}
-		t.Errorf("state root holds %v, want only %s", names, cacheFile)
+	// The whole document is one row, and only that row.
+	if _, ok, err := kv.KVGet("release-check"); err != nil || !ok {
+		t.Errorf("KVGet(release-check) = (_, %v, %v), want the row", ok, err)
 	}
 }
 

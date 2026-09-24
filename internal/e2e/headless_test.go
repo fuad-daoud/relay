@@ -427,18 +427,26 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 	gitClient := git.NewClient("git", 10*time.Second, 0)
 	reg := &planner.FileRegistry{Root: st.PlannersDir(), Now: time.Now}
 
+	// Gates live in the store root's database, as buildRuntime wires them
+	// (P3b plan §4.5).
+	mdb, err := st.DB()
+	if err != nil {
+		t.Fatalf("open store db: %v", err)
+	}
+
 	rt := relevo.Runtime{
-		Git:              gitClient,
-		Runner:           proc.New(),
-		Store:            st,
-		Candidates:       candidates,
-		LedgerPath:       filepath.Join(root, "ledger.json"),
-		AvailabilityPath: filepath.Join(root, "availability.json"),
-		Policy:           pol,
-		Now:              time.Now,
-		Channels:         &relevo.FileClaims{Root: st.ChannelsDir()},
-		Planners:         reg,
-		ProcStart:        procStartUnix,
+		Git:        gitClient,
+		Runner:     proc.New(),
+		Store:      st,
+		Candidates: candidates,
+		Gates:      mdb,
+		GatesDir:   root,
+		Latency:    mdb,
+		Policy:     pol,
+		Now:        time.Now,
+		Channels:   &relevo.FileClaims{Root: st.ChannelsDir()},
+		Planners:   reg,
+		ProcStart:  procStartUnix,
 	}
 	return rt, reg
 }

@@ -163,7 +163,8 @@ func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Ke
 	}
 
 	gitClient := git.NewClient("git", 10*time.Second, 0)
-	st := store.New(t.TempDir())
+	stRoot := t.TempDir()
+	st := store.New(stRoot)
 
 	// `relevo add --server` resolves the caller's planner before it contacts
 	// the server and records it on the client binding. Export one the way a
@@ -193,16 +194,22 @@ func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Ke
 		t.Fatalf("load candidates: %v", err)
 	}
 
+	mdb, err := st.DB()
+	if err != nil {
+		t.Fatalf("open store db: %v", err)
+	}
+
 	rt := relevo.Runtime{
-		Git:              gitClient,
-		Store:            st,
-		Candidates:       cSet,
-		Planners:         reg,
-		LedgerPath:       filepath.Join(t.TempDir(), "ledger.json"),
-		AvailabilityPath: filepath.Join(t.TempDir(), "availability.json"),
-		Now:              time.Now,
-		Remote:           client.New(servers, kp, time.Now),
-		Transport:        remote.NewBundleTransport(gitClient, t.TempDir()),
+		Git:        gitClient,
+		Store:      st,
+		Candidates: cSet,
+		Planners:   reg,
+		Gates:      mdb,
+		GatesDir:   stRoot,
+		Latency:    mdb,
+		Now:        time.Now,
+		Remote:     client.New(servers, kp, time.Now),
+		Transport:  remote.NewBundleTransport(gitClient, t.TempDir()),
 	}
 
 	return rt, kp

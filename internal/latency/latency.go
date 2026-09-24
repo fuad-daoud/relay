@@ -7,12 +7,11 @@ package latency
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // RetainWindow is how long a sample is kept before Prune drops it, matching
@@ -44,50 +43,38 @@ type Summary struct {
 	TTFTP50MS int64
 }
 
-// Load reads the latency history from disk. A missing file is an empty
-// History and no error: a fresh install has probed nothing yet. Invalid JSON
-// is an error, so a torn or hand-edited file is reported rather than read as
-// empty.
-func Load(path string) (History, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return History{}, nil
-	}
+// latencyKey is the kv row the latency document lives in (P3b plan §1).
+const latencyKey = "latency"
+
+// LoadKV reads the latency history from the kv row "latency", importing a
+// present legacyPath file (latency.json) on first read (P3b plan §4.3, §4.4).
+// An absent row with no file behind it is an empty History and no error: a
+// fresh install has probed nothing yet. Invalid JSON is an error, so a torn or
+// hand-edited document is reported rather than read as empty.
+func LoadKV(kv db.KV, legacyPath string) (History, error) {
+	data, ok, err := db.KVImportFile(kv, latencyKey, legacyPath)
 	if err != nil {
-		return History{}, fmt.Errorf("read latency %s: %w", path, err)
+		return History{}, err
+	}
+	if !ok {
+		return History{}, nil
 	}
 
 	var h History
 	if err := json.Unmarshal(data, &h); err != nil {
-		return History{}, fmt.Errorf("decode latency %s: %w", path, err)
+		return History{}, fmt.Errorf("decode latency: %w", err)
 	}
 
 	return h, nil
 }
 
-// Save writes the history to disk atomically via a temporary file and
-// rename, so concurrent readers never observe a torn write. It creates any
-// missing parent directories so callers need not ensure state root existence.
-func Save(path string, h History) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create latency dir: %w", err)
-	}
-
+// SaveKV writes the whole history document to the kv row "latency".
+func SaveKV(kv db.KV, h History) error {
 	data, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal latency: %w", err)
 	}
-
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("write latency temp file: %w", err)
-	}
-
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("rename latency into place: %w", err)
-	}
-
-	return nil
+	return kv.KVPut(latencyKey, data)
 }
 
 // Prune returns a new History containing every sample no older than

@@ -578,7 +578,7 @@ func newRuntime() (relevo.Runtime, error) {
 		return relevo.Runtime{}, err
 	}
 
-	rt, err := buildRuntime(root, L)
+	rt, err := buildRuntime(root, L, true)
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
@@ -619,7 +619,9 @@ func newRuntimePeek() (relevo.Runtime, error) {
 		return relevo.Runtime{}, err
 	}
 
-	return buildRuntime(root, L)
+	// buildRuntime with openGates false: preflight and check open no database
+	// and carry nil Gates/Latency, so they touch no gate record (P3b plan §4.5).
+	return buildRuntime(root, L, false)
 }
 
 // configFilesPresent reports whether any file the import consumes, or a hooks
@@ -642,8 +644,11 @@ func fileExists(path string) bool {
 }
 
 // buildRuntime wires the Runtime from one loaded config, the shape both
-// newRuntime and newRuntimePeek use.
-func buildRuntime(root string, L config.Loaded) (relevo.Runtime, error) {
+// newRuntime and newRuntimePeek use. openGates opens the store root's database
+// for the gate, availability and latency records (P3b plan §4.5): newRuntime
+// passes true, and a DB() error is fatal for the verb; newRuntimePeek passes
+// false, so preflight and check leave the root with no database and nil gates.
+func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime, error) {
 	pol := L.Policy
 
 	// Warnings are carried, never printed: every CLI command calls newRuntime,
@@ -665,36 +670,50 @@ func buildRuntime(root string, L config.Loaded) (relevo.Runtime, error) {
 	st := store.New(root)
 	gitClient := git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes)
 
+	// Gates, availability and latency live in the store root's database; the
+	// legacy directory holding ledger.json/availability.json/history.json is
+	// the store root too, so LoadKV imports them on first read (P3b plan §4.5).
+	var gates db.KV
+	gatesDir := ""
+	if openGates {
+		d, err := st.DB()
+		if err != nil {
+			return relevo.Runtime{}, err
+		}
+		gates = d
+		gatesDir = root
+	}
+
 	remoteClient, transport, err := newRemoteClient(L.Servers, L.ClientKey, gitClient)
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
 
 	rt := relevo.Runtime{
-		Git:              gitClient,
-		Runner:           proc.New(),
-		Store:            st,
-		Candidates:       L.Candidates,
-		LedgerPath:       st.LedgerPath(),
-		AvailabilityPath: st.AvailabilityPath(),
-		LatencyPath:      st.LatencyPath(),
-		Policy:           pol,
-		Registry:         L.Registry,
-		ConfigWarnings:   configWarnings,
-		Scope:            scopeFromPolicy(pol.ScopeFor(false)),
-		Classify:         cls,
-		Usage:            reader,
-		Sessions:         relevo.HomeSessionLocator(home),
-		Prices:           prices,
-		Fetcher:          release.NewHTTPFetcher(release.Source(), 5*time.Second),
-		Now:              time.Now,
-		Hooks:            dispatcher,
-		Remote:           remoteClient,
-		Transport:        transport,
-		Roles:            harness.OSRoleChecker(),
-		Channels:         &relevo.FileClaims{Root: st.ChannelsDir()},
-		ProcStart:        procStartUnix,
-		Deliverers:       newDeliverers(),
+		Git:            gitClient,
+		Runner:         proc.New(),
+		Store:          st,
+		Candidates:     L.Candidates,
+		Gates:          gates,
+		GatesDir:       gatesDir,
+		Latency:        gates,
+		Policy:         pol,
+		Registry:       L.Registry,
+		ConfigWarnings: configWarnings,
+		Scope:          scopeFromPolicy(pol.ScopeFor(false)),
+		Classify:       cls,
+		Usage:          reader,
+		Sessions:       relevo.HomeSessionLocator(home),
+		Prices:         prices,
+		Fetcher:        release.NewHTTPFetcher(release.Source(), 5*time.Second),
+		Now:            time.Now,
+		Hooks:          dispatcher,
+		Remote:         remoteClient,
+		Transport:      transport,
+		Roles:          harness.OSRoleChecker(),
+		Channels:       &relevo.FileClaims{Root: st.ChannelsDir()},
+		ProcStart:      procStartUnix,
+		Deliverers:     newDeliverers(),
 	}
 	// The registry needs the runtime's own store and clock, so it is wired
 	// here rather than in the literal above.
@@ -858,10 +877,14 @@ func cmdCandidates(args []string) error {
 // formatCandidates renders the candidate table cmdCandidates' non-probe form
 // prints -- the candidates block `relevo config` shows.
 func formatCandidates(rt relevo.Runtime) string {
-	h, err := latency.Load(rt.LatencyPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo: could not read latency: %v\n", err)
-		h = latency.History{}
+	h := latency.History{}
+	if rt.Latency != nil {
+		loaded, err := latency.LoadKV(rt.Latency, legacyGatesPath(rt.GatesDir, "latency.json"))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "relevo: could not read latency: %v\n", err)
+		} else {
+			h = loaded
+		}
 	}
 	h = h.Prune(rt.Now())
 
@@ -873,11 +896,25 @@ func formatCandidates(rt relevo.Runtime) string {
 	return relevo.FormatCandidatesLatencyFor(rt.RoleRegistry(), rt.Candidates, relevo.Gates(rt), lat)
 }
 
+// legacyGatesPath is <dir>/<name> for the pre-kv gate documents
+// (ledger.json, availability.json, latency.json), or "" when no gates
+// directory is configured -- so an import never reads a file out of the
+// process's working directory (P3b plan §4.5).
+func legacyGatesPath(dir, name string) string {
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, name)
+}
+
 // loadHistory reads the availability history for display, treating an
-// unreadable file as empty after one stderr line -- the same rule Gates
+// unreadable record as empty after one stderr line -- the same rule Gates
 // applies to the ledger.
 func loadHistory(rt relevo.Runtime) history.History {
-	h, err := history.Load(rt.AvailabilityPath)
+	if rt.Gates == nil {
+		return history.History{}
+	}
+	h, err := history.LoadKV(rt.Gates, legacyGatesPath(rt.GatesDir, "availability.json"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not read history: %v\n", err)
 		return history.History{}
@@ -982,12 +1019,13 @@ func cmdAvailable(args []string) error {
 	}
 
 	// On a box that also runs a serve daemon, the client ledger just cleared
-	// is not the ledger that gates anything: the daemon reads its own. The
-	// pointer lives under the serve root (#372 §4.6): the client root's
-	// daemon.json is DaemonInfo, which decodes as a pointer with a live pid.
+	// is not the record that gates anything: a serve daemon keeps its own
+	// gates, in the serve root's database (P3b plan §4.5). The pointer lives
+	// under the serve root (#372 §4.6): the client root's daemon.json is
+	// DaemonInfo, which decodes as a pointer with a live pid.
 	if defRoot, err := defaultServeRoot(); err == nil {
 		if p, ok, _ := serve.ReadPointer(defRoot); ok && pidAlive(p.PID) {
-			fmt.Printf("note: a relevo serve daemon runs here with its own ledger (%s); use relevo serve gates / relevo serve available\n", filepath.Join(p.Root, "ledger.json"))
+			fmt.Print("note: a relevo serve daemon runs here with its own gates; use relevo serve gates / relevo serve available\n")
 		}
 	}
 
@@ -2103,9 +2141,21 @@ func cmdUI(args []string) error {
 
 	here, _ := os.Getwd()
 
+	// Preferences live in the machine database rt.DB holds once openDB
+	// succeeded; a failed open leaves them disabled, as an empty PrefsPath did
+	// (P3b plan §4.4).
+	var prefsKV db.KV
+	if rt.DB != nil {
+		prefsKV = rt.DB
+	}
+
 	return ui.Run(ctx, rt, ui.Options{
-		Interval:  *interval,
-		PrefsPath: filepath.Join(root, "ui.json"),
+		Interval: *interval,
+		Prefs: ui.PrefsStore{
+			KV:         prefsKV,
+			Key:        "ui",
+			LegacyPath: filepath.Join(root, "ui.json"),
+		},
 		Here:      here,
 		Notice:    notice,
 		Dashboard: *dashboard,

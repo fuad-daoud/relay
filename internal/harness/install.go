@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // InstallEnv defines the filesystem and PATH seams required by Install.
@@ -278,27 +280,32 @@ func (r InstallResult) Line() string {
 }
 
 type osInstallEnv struct {
-	// manifestPath is <state root>/agents-manifest.json. Only OSInstallEnvAt
-	// sets it; a caller that has no state root gets an env that reads as
-	// "nothing recorded" and refuses to save, rather than writing a manifest
-	// somewhere unintended (#371 §3).
+	// kv is the database the role manifest lives in, under the kv key
+	// "agents-manifest" (P3b plan §4.4). Only OSInstallEnvKV sets it; a caller
+	// that has no database gets an env that reads as "nothing recorded" and
+	// refuses to save, rather than writing a manifest somewhere unintended
+	// (#371 §3).
+	kv db.KV
+	// manifestPath is the legacy file the first read imports: <state
+	// root>/agents-manifest.json. "" skips the import.
 	manifestPath string
 }
 
 // OSInstallEnv returns an InstallEnv backed by the OS and exec packages,
 // without a role manifest: it is for the seams that only resolve paths and
 // read files (OSRoleChecker). Callers that install definitions and want the
-// manifest maintained use OSInstallEnvAt.
+// manifest maintained use OSInstallEnvKV.
 func OSInstallEnv() InstallEnv {
 	return osInstallEnv{}
 }
 
-// OSInstallEnvAt is OSInstallEnv with the role manifest at
-// ManifestPath(stateRoot) (#371 §4.10). stateRoot is relevo's state root, which
-// package main resolves through store.DefaultRoot and passes in, because this
-// package cannot import internal/store (harness <- usage <- store).
-func OSInstallEnvAt(stateRoot string) InstallEnv {
-	return osInstallEnv{manifestPath: ManifestPath(stateRoot)}
+// OSInstallEnvKV is OSInstallEnv with the role manifest kept in kv, importing a
+// present legacy file at legacyPath (agents-manifest.json) on first read
+// (#371 §4.10; P3b plan §4.4). It replaces OSInstallEnvAt: the caller opens the
+// machine database -- which this package cannot, since harness <- usage <- store
+// -- and passes the handle and the old path in.
+func OSInstallEnvKV(kv db.KV, legacyPath string) InstallEnv {
+	return osInstallEnv{kv: kv, manifestPath: legacyPath}
 }
 
 func (osInstallEnv) LookPath(binary string) (string, error) {
@@ -328,15 +335,15 @@ func (osInstallEnv) WriteFile(path string, data []byte) error {
 }
 
 func (e osInstallEnv) LoadManifest() (map[string]string, error) {
-	if e.manifestPath == "" {
+	if e.kv == nil {
 		return map[string]string{}, nil
 	}
-	return ReadManifest(e.manifestPath)
+	return ReadManifest(e.kv, e.manifestPath)
 }
 
 func (e osInstallEnv) SaveManifest(m map[string]string) error {
-	if e.manifestPath == "" {
-		return errors.New("no role manifest path configured")
+	if e.kv == nil {
+		return errors.New("no role manifest store configured")
 	}
-	return WriteManifest(e.manifestPath, m)
+	return WriteManifest(e.kv, m)
 }

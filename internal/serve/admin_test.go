@@ -887,12 +887,12 @@ func TestAdminAvailableRecordsServerClear(t *testing.T) {
 		t.Errorf("removed = %d, want 1", removed)
 	}
 
-	h, err := history.Load(filepath.Join(root, "availability.json"))
+	h, err := history.LoadKV(s.DB(), "")
 	if err != nil {
-		t.Fatalf("history.Load: %v", err)
+		t.Fatalf("history.LoadKV: %v", err)
 	}
 	if len(h.Events) == 0 {
-		t.Fatal("availability.json has no events, want a Cleared event")
+		t.Fatal("the availability row has no events, want a Cleared event")
 	}
 	ev := h.Events[len(h.Events)-1]
 	if ev.Kind != history.Cleared {

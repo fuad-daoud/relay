@@ -4,35 +4,50 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-func TestLoadMissingIsEmpty(t *testing.T) {
-	h, err := Load(filepath.Join(t.TempDir(), "latency.json"))
+// testKV is a real t.TempDir() database, the medium the latency history lives
+// in from this round (P3b plan §7).
+func testKV(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
-		t.Fatalf("Load(missing) error = %v, want nil", err)
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
+func TestLoadKVMissingIsEmpty(t *testing.T) {
+	kv := testKV(t)
+	h, err := LoadKV(kv, filepath.Join(t.TempDir(), "latency.json"))
+	if err != nil {
+		t.Fatalf("LoadKV(missing) error = %v, want nil", err)
 	}
 	if len(h.Samples) != 0 {
-		t.Errorf("Load(missing).Samples = %+v, want empty", h.Samples)
+		t.Errorf("LoadKV(missing).Samples = %+v, want empty", h.Samples)
 	}
 }
 
-func TestSaveLoadRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "nested", "latency.json")
+func TestSaveKVLoadKVRoundTrip(t *testing.T) {
+	kv := testKV(t)
 	at := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	h := History{}.Append(Sample{
 		At: at, Token: "claude/test/m", Host: "box", TTFTMS: 640, TotalMS: 900,
 	})
 
-	if err := Save(path, h); err != nil {
-		t.Fatalf("Save() error = %v", err)
+	if err := SaveKV(kv, h); err != nil {
+		t.Fatalf("SaveKV() error = %v", err)
 	}
 
-	got, err := Load(path)
+	got, err := LoadKV(kv, "")
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadKV() error = %v", err)
 	}
 	if len(got.Samples) != 1 {
-		t.Fatalf("Load() = %+v, want 1 sample", got.Samples)
+		t.Fatalf("LoadKV() = %+v, want 1 sample", got.Samples)
 	}
 	s := got.Samples[0]
 	if s.Token != "claude/test/m" || s.Host != "box" || s.TTFTMS != 640 || s.TotalMS != 900 || s.Err != "" {

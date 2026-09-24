@@ -192,7 +192,7 @@ func TestRunSurvivesFailingTick(t *testing.T) {
 // TestNewDaemonFloorsInterval guards the floor by inspection made concrete:
 // a misconfigured (zero or negative) interval must not spin the tick.
 func TestNewDaemonFloorsInterval(t *testing.T) {
-	rt := Runtime{LedgerPath: filepath.Join(t.TempDir(), "ledger.json"), AvailabilityPath: filepath.Join(t.TempDir(), "availability.json")}
+	rt := Runtime{Gates: testGateKV(t)}
 
 	if d := NewDaemon(rt, 0); d.interval != minInterval {
 		t.Errorf("zero interval -> %s, want floor %s", d.interval, minInterval)
@@ -479,8 +479,15 @@ func TestTickRefreshesOncePastTTL(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			root := releaseStateRoot(t)
+			// The cache lives in the machine database's kv row, so seeding and
+			// reading it goes through a store handle on that root (P3b plan §4.5).
+			mdb, err := store.New(root).DB()
+			if err != nil {
+				t.Fatalf("open store db: %v", err)
+			}
+			defer mdb.Close()
 			if tc.seed {
-				if err := release.Save(root, release.Cache{
+				if err := release.Save(mdb, release.Cache{
 					Latest:    "v0.7.0",
 					CheckedAt: tc.checkedAt,
 					Source:    "test",
@@ -502,7 +509,7 @@ func TestTickRefreshesOncePastTTL(t *testing.T) {
 				t.Errorf("fetch calls = %d, want %d", ff.calls, tc.wantCalls)
 			}
 
-			c, ok, err := release.Load(root)
+			c, ok, err := release.Load(mdb, "")
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
@@ -540,15 +547,25 @@ func TestTickSurvivesFetchError(t *testing.T) {
 		if ff.calls != 1 {
 			t.Errorf("fetch calls = %d, want 1 (the stale check tried)", ff.calls)
 		}
-		if _, err := os.Stat(filepath.Join(root, "release-check.json")); !os.IsNotExist(err) {
-			t.Errorf("cache stat = %v, want os.ErrNotExist: a failed fetch saves nothing", err)
+		mdb, merr := store.New(root).DB()
+		if merr != nil {
+			t.Fatalf("open store db: %v", merr)
+		}
+		defer mdb.Close()
+		if _, ok, err := release.Load(mdb, ""); err != nil || ok {
+			t.Errorf("cache = (_, %v, %v), want no record: a failed fetch saves nothing", ok, err)
 		}
 	})
 
 	t.Run("stale cache is left alone", func(t *testing.T) {
 		root := releaseStateRoot(t)
+		mdb, merr := store.New(root).DB()
+		if merr != nil {
+			t.Fatalf("open store db: %v", merr)
+		}
+		defer mdb.Close()
 		stale := release.Cache{Latest: "v0.7.0", CheckedAt: now.Add(-2 * release.TTL), Source: "test"}
-		if err := release.Save(root, stale); err != nil {
+		if err := release.Save(mdb, stale); err != nil {
 			t.Fatalf("seed cache: %v", err)
 		}
 
@@ -561,7 +578,7 @@ func TestTickSurvivesFetchError(t *testing.T) {
 			t.Errorf("Tick = %v, want nil", err)
 		}
 
-		c, ok, err := release.Load(root)
+		c, ok, err := release.Load(mdb, "")
 		if err != nil || !ok {
 			t.Fatalf("Load = (%+v, ok %v, %v), want the seeded cache", c, ok, err)
 		}
@@ -709,7 +726,12 @@ func TestRefreshReleaseSuccessClearsTheBackoff(t *testing.T) {
 	if !d.releaseRetryAt.IsZero() {
 		t.Errorf("releaseRetryAt = %v after a successful fetch, want the zero time", d.releaseRetryAt)
 	}
-	cached, ok, err := release.Load(root)
+	mdb, merr := store.New(root).DB()
+	if merr != nil {
+		t.Fatalf("open store db: %v", merr)
+	}
+	defer mdb.Close()
+	cached, ok, err := release.Load(mdb, "")
 	if err != nil || !ok {
 		t.Fatalf("release.Load = (ok %v, err %v), want the fetched answer saved", ok, err)
 	}

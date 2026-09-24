@@ -425,9 +425,10 @@ func (s *Server) resolveOwner(owner string) (remote.ClientID, error) {
 }
 
 // ledgerRuntime is the runtime the server-side gate verbs run on: the one
-// server-wide ledger at <root>/ledger.json, not any owner's. Its store is
-// over the serve root only because relevo's ledger mutation takes its lock
-// through rt.Store; these verbs never list bindings from it.
+// server-wide gate record, not any owner's. Gates is the serve-root database
+// the Server opened (P3b plan §4.5). Its store is over the serve root only
+// because relevo's ledger mutation takes its lock through rt.Store; these verbs
+// never list bindings from it.
 //
 // store.New creates nothing on its own -- the root and its .lock file appear
 // only once WithLock runs -- and neither is one of Initialised's markers
@@ -435,12 +436,12 @@ func (s *Server) resolveOwner(owner string) (remote.ClientID, error) {
 // make an uninitialised root report as initialised.
 func ledgerRuntime(s *Server) relevo.Runtime {
 	return relevo.Runtime{
-		Candidates:       s.cfg.Candidates,
-		Policy:           s.cfg.Policy,
-		Store:            store.New(s.cfg.Root),
-		LedgerPath:       filepath.Join(s.cfg.Root, "ledger.json"),
-		AvailabilityPath: filepath.Join(s.cfg.Root, "availability.json"),
-		Now:              s.cfg.Now,
+		Candidates: s.cfg.Candidates,
+		Policy:     s.cfg.Policy,
+		Store:      store.New(s.cfg.Root),
+		Gates:      s.gates,
+		GatesDir:   s.cfg.Root,
+		Now:        s.cfg.Now,
 	}
 }
 

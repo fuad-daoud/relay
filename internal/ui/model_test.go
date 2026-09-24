@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -511,7 +510,7 @@ func TestEmptyFleetSnapsBackToList(t *testing.T) {
 // exits or panics.
 func TestKeyAToggleWithoutDBNotices(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...) // rt.DB is nil: the planner runtime carries no *db.DB
-	m.opts.PrefsPath = filepath.Join(t.TempDir(), "ui.json")
+	m.opts.Prefs = testPrefsStore(t)
 
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m = res.(Model)
@@ -544,7 +543,7 @@ func TestScopeAllRefusedOnServer(t *testing.T) {
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
 	m.statusInFlight = false
-	m.opts.PrefsPath = filepath.Join(t.TempDir(), "ui.json")
+	m.opts.Prefs = testPrefsStore(t)
 
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	m = res.(Model)

@@ -10,7 +10,21 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
+
+// testKV is a real t.TempDir() database, the medium the role manifest lives in
+// from this round (P3b plan §7).
+func testKV(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
 
 type fakeInstallEnv struct {
 	lookPaths   map[string]string
@@ -890,18 +904,14 @@ func TestInstallReportsManifestSaveError(t *testing.T) {
 	}
 }
 
-// TestReadWriteManifestRoundTrip pins the manifest file itself (#371 §3):
-// missing is empty, a write is one atomic 0644 file with no temp left behind,
-// and malformed JSON is an error.
+// TestReadWriteManifestRoundTrip pins the manifest record itself (#371 §3; P3b
+// plan §4.4): missing is empty, a write is one kv row, and malformed JSON in a
+// legacy file is an error.
 func TestReadWriteManifestRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	path := ManifestPath(dir)
+	kv := testKV(t)
+	legacyPath := filepath.Join(t.TempDir(), "agents-manifest.json")
 
-	if got := filepath.Base(path); got != manifestFileName {
-		t.Errorf("ManifestPath base = %q, want %q", got, manifestFileName)
-	}
-
-	empty, err := ReadManifest(path)
+	empty, err := ReadManifest(kv, legacyPath)
 	if err != nil {
 		t.Fatalf("ReadManifest(missing): %v", err)
 	}
@@ -913,36 +923,26 @@ func TestReadWriteManifestRoundTrip(t *testing.T) {
 		".claude/agents/plan-executor.md": "0123456789abcdef",
 		".claude/agents/researcher.md":    "fedcba9876543210",
 	}
-	if err := WriteManifest(path, want); err != nil {
+	if err := WriteManifest(kv, want); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
-	got, err := ReadManifest(path)
+	got, err := ReadManifest(kv, "")
 	if err != nil {
 		t.Fatalf("ReadManifest: %v", err)
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ReadManifest = %v, want %v", got, want)
 	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("Stat: %v", err)
-	}
-	if info.Mode().Perm() != 0o644 {
-		t.Errorf("manifest mode = %o, want 0644", info.Mode().Perm())
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("ReadDir: %v", err)
-	}
-	if len(entries) != 1 || entries[0].Name() != manifestFileName {
-		t.Errorf("state root holds %v, want only %s", entries, manifestFileName)
+	if _, ok, err := kv.KVGet("agents-manifest"); err != nil || !ok {
+		t.Errorf("KVGet(agents-manifest) = (_, %v, %v), want the row", ok, err)
 	}
 
-	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+	// A malformed legacy file is refused by the import, which names the path.
+	badPath := filepath.Join(t.TempDir(), "agents-manifest.json")
+	if err := os.WriteFile(badPath, []byte("{not json"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	if _, err := ReadManifest(path); err == nil {
+	if _, err := ReadManifest(testKV(t), badPath); err == nil {
 		t.Error("ReadManifest(malformed) = nil error, want an error")
 	}
 }

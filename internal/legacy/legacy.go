@@ -41,7 +41,7 @@ const (
 	RusageTrailer = "relay-rusage:"
 
 	// LedgerSource is the old ledger entry source, where relevo writes
-	// "relevo". ledger.Load rewrites it to "relevo" on read, so a
+	// "relevo". ledger.LoadKV rewrites it to "relevo" on read, so a
 	// pre-cutover rate-limit gate does not lapse into Other (#292 §1).
 	LedgerSource = "relay"
 

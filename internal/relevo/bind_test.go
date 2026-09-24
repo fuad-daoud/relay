@@ -47,12 +47,14 @@ func newRuntime(t *testing.T) Runtime {
 		SessionID:   "sess-architect",
 		CWD:         "/repo",
 	})
+	gates, gatesDir := testGates(t)
 	return Runtime{
-		Store:            store.New(t.TempDir()),
-		Candidates:       candidateSet(t, testCandidatesJSON),
-		LedgerPath:       filepath.Join(t.TempDir(), "ledger.json"),
-		AvailabilityPath: filepath.Join(t.TempDir(), "availability.json"),
-		Now:              func() time.Time { return baseTime },
+		Store:      store.New(t.TempDir()),
+		Candidates: candidateSet(t, testCandidatesJSON),
+		Gates:      gates,
+		GatesDir:   gatesDir,
+		Latency:    gates,
+		Now:        func() time.Time { return baseTime },
 		// Every local builder is headless since #303, so every Send needs a
 		// Runner. A test that wants "no runner" sets rt.Runner = nil.
 		Runner: newFakeRunner(),

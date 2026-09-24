@@ -115,15 +115,24 @@ func (e *realEnv) ReadFile(path string) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
-// LoadManifest reads the role manifest from relevo's state root, composed
-// through store.DefaultRoot the same way ReleaseState composes the release
-// cache path (#42, #371 §3).
+// LoadManifest reads the role manifest from the machine database's kv row
+// "agents-manifest", importing a legacy <root>/agents-manifest.json on first
+// read (P3b plan §4.4). The root is composed through store.DefaultRoot the same
+// way ReleaseState composes the release cache's (#42, #371 §3). A root with no
+// database reads as an empty manifest.
 func (e *realEnv) LoadManifest() (map[string]string, error) {
 	root, err := store.DefaultRoot()
 	if err != nil {
 		return nil, err
 	}
-	return harness.ReadManifest(harness.ManifestPath(root))
+	d, err := store.New(root).DBIfExists()
+	if err != nil {
+		return nil, err
+	}
+	if d == nil {
+		return map[string]string{}, nil
+	}
+	return harness.ReadManifest(d, filepath.Join(root, "agents-manifest.json"))
 }
 
 func (e *realEnv) BinaryVersion(ctx context.Context, path string) (string, error) {
@@ -156,10 +165,12 @@ func (e *realEnv) Command(ctx context.Context, bin string, args ...string) ([]by
 }
 
 // ReleaseState reads the daemon's cached answer and classifies this install.
-// It composes the cache path from store.DefaultRoot() rather than building an
-// XDG path by hand (#42), and a root or cache it cannot read is not an error:
-// it is "not checked", which is what every unrefreshed, offline or
-// unclassifiable install reads as.
+// It composes the record's root from store.DefaultRoot() rather than building
+// an XDG path by hand (#42), and a root or cache it cannot read is not an
+// error: it is "not checked", which is what every unrefreshed, offline or
+// unclassifiable install reads as. The cache lives in the machine database's
+// kv row "release-check" (P3b plan §4.4); a root with no database is not
+// checked.
 func (e *realEnv) ReleaseState() (string, string, bool, release.Kind) {
 	kind := release.Detect(e.self)
 
@@ -167,7 +178,11 @@ func (e *realEnv) ReleaseState() (string, string, bool, release.Kind) {
 	if err != nil {
 		return e.self.Version, "", false, kind
 	}
-	cached, ok, err := release.Load(root)
+	d, err := store.New(root).DBIfExists()
+	if err != nil || d == nil {
+		return e.self.Version, "", false, kind
+	}
+	cached, ok, err := release.Load(d, filepath.Join(root, "release-check.json"))
 	if err != nil {
 		return e.self.Version, "", false, kind
 	}

@@ -10,8 +10,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/legacy"
 )
+
+// testKV is a real t.TempDir() database, the medium the ledger lives in from
+// this round (P3b plan §7: new tests use t.TempDir() DBs only).
+func testKV(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
+// writeLegacy writes a pre-kv ledger.json and returns its path, so a test can
+// pin the import rule.
+func writeLegacy(t *testing.T, doc string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ledger.json")
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
 
 func TestExpired(t *testing.T) {
 	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
@@ -36,20 +60,17 @@ func TestExpired(t *testing.T) {
 	}
 }
 
-// TestLoadReadsLegacySource pins #292 §1: an entry recorded before the rename
+// TestLoadKVReadsLegacySource pins #292 §1: an entry recorded before the rename
 // carries "source":"relay" and must read as relevo's own, not as an unknown // name-guard: legacy
-// source preserved in Other. A Save then writes "relevo".
-func TestLoadReadsLegacySource(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "ledger.json")
-	doc := `{"entries":[{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"` + legacy.LedgerSource + `"}]}`
-	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
-		t.Fatal(err)
-	}
+// source preserved in Other. A SaveKV then writes "relevo". The pre-rename document
+// arrives as a legacy ledger.json, which LoadKV imports.
+func TestLoadKVReadsLegacySource(t *testing.T) {
+	kv := testKV(t)
+	path := writeLegacy(t, `{"entries":[{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"`+legacy.LedgerSource+`"}]}`)
 
-	l, err := Load(path)
+	l, err := LoadKV(kv, path)
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("LoadKV: %v", err)
 	}
 	if len(l.Entries) != 1 {
 		t.Fatalf("Entries = %+v, want the one pre-rename entry read as relevo's", l.Entries)
@@ -61,12 +82,12 @@ func TestLoadReadsLegacySource(t *testing.T) {
 		t.Errorf("Source = %q, want \"relevo\"", got)
 	}
 
-	if err := Save(path, l); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := SaveKV(kv, l); err != nil {
+		t.Fatalf("SaveKV: %v", err)
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	raw, ok, err := kv.KVGet("ledger")
+	if err != nil || !ok {
+		t.Fatalf("KVGet after SaveKV = (_, %v, %v), want the ledger row", ok, err)
 	}
 	if !strings.Contains(string(raw), `"source": "relevo"`) {
 		t.Errorf("saved ledger = %s, want the source rewritten to \"relevo\"", raw)
@@ -154,19 +175,20 @@ func TestClearMatchesKindAndSubject(t *testing.T) {
 	}
 }
 
-func TestLoadMissingIsEmpty(t *testing.T) {
+func TestLoadKVMissingIsEmpty(t *testing.T) {
+	kv := testKV(t)
 	path := filepath.Join(t.TempDir(), "nonexistent.json")
-	l, err := Load(path)
+	l, err := LoadKV(kv, path)
 	if err != nil {
-		t.Fatalf("Load(%q) unexpected error: %v", path, err)
+		t.Fatalf("LoadKV(%q) unexpected error: %v", path, err)
 	}
 	if len(l.Entries) != 0 {
-		t.Errorf("Load(%q) got %d entries, want 0", path, len(l.Entries))
+		t.Errorf("LoadKV(%q) got %d entries, want 0", path, len(l.Entries))
 	}
 }
 
-func TestSaveLoadRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ledger.json")
+func TestSaveKVLoadKVRoundTrip(t *testing.T) {
+	kv := testKV(t)
 	tz := time.FixedZone("EST", -5*3600)
 	orig := Ledger{
 		Entries: []Entry{
@@ -191,13 +213,13 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		},
 	}
 
-	if err := Save(path, orig); err != nil {
-		t.Fatalf("Save(%q) failed: %v", path, err)
+	if err := SaveKV(kv, orig); err != nil {
+		t.Fatalf("SaveKV failed: %v", err)
 	}
 
-	loaded, err := Load(path)
+	loaded, err := LoadKV(kv, "")
 	if err != nil {
-		t.Fatalf("Load(%q) failed: %v", path, err)
+		t.Fatalf("LoadKV failed: %v", err)
 	}
 
 	norm := func(l Ledger) Ledger {
@@ -217,7 +239,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLoadValidation(t *testing.T) {
+func TestLoadKVValidation(t *testing.T) {
 	tests := []struct {
 		name    string
 		json    string
@@ -269,44 +291,39 @@ func TestLoadValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "ledger.json")
-			if err := os.WriteFile(path, []byte(tt.json), 0o644); err != nil {
-				t.Fatalf("WriteFile failed: %v", err)
-			}
-			_, err := Load(path)
+			kv := testKV(t)
+			path := writeLegacy(t, tt.json)
+			_, err := LoadKV(kv, path)
 			if err == nil {
-				t.Fatalf("Load() expected error, got nil")
+				t.Fatalf("LoadKV() expected error, got nil")
 			}
 			if !errors.Is(err, ErrBadEntry) {
-				t.Errorf("Load() err = %v, want errors.Is(..., ErrBadEntry)", err)
+				t.Errorf("LoadKV() err = %v, want errors.Is(..., ErrBadEntry)", err)
 			}
 			if !strings.Contains(err.Error(), "entry 0") {
-				t.Errorf("Load() err %q does not contain %q", err.Error(), "entry 0")
+				t.Errorf("LoadKV() err %q does not contain %q", err.Error(), "entry 0")
 			}
 			if !strings.Contains(err.Error(), tt.wantWhy) {
-				t.Errorf("Load() err %q does not contain %q", err.Error(), tt.wantWhy)
+				t.Errorf("LoadKV() err %q does not contain %q", err.Error(), tt.wantWhy)
 			}
 		})
 	}
 }
 
-// TestLoadUnknownKindOrSourceIsPreserved pins #372 §4.2: an entry whose kind
+// TestLoadKVUnknownKindOrSourceIsPreserved pins #372 §4.2: an entry whose kind
 // or source this binary does not know is kept raw in Other instead of failing
 // the whole ledger, so a record a newer relevo wrote survives a rollback.
-func TestLoadUnknownKindOrSourceIsPreserved(t *testing.T) {
+func TestLoadKVUnknownKindOrSourceIsPreserved(t *testing.T) {
 	unknownKind := `{"kind":"future_kind","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"relevo"}`
 	unknownSource := `{"kind":"spawn_failed","subject":"future/subject","at":"2026-09-11T15:00:00Z","source":"future_source"}`
 	known := `{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"planner"}`
 
-	path := filepath.Join(t.TempDir(), "ledger.json")
-	doc := `{"entries":[` + unknownKind + `,` + unknownSource + `,` + known + `]}`
-	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
-	}
+	kv := testKV(t)
+	path := writeLegacy(t, `{"entries":[`+unknownKind+`,`+unknownSource+`,`+known+`]}`)
 
-	l, err := Load(path)
+	l, err := LoadKV(kv, path)
 	if err != nil {
-		t.Fatalf("Load() unexpected error: %v", err)
+		t.Fatalf("LoadKV() unexpected error: %v", err)
 	}
 	if len(l.Entries) != 1 || l.Entries[0].Kind != RateLimited {
 		t.Fatalf("Entries = %+v, want the one known rate_limited entry", l.Entries)
@@ -319,24 +336,21 @@ func TestLoadUnknownKindOrSourceIsPreserved(t *testing.T) {
 	}
 }
 
-// TestSaveCarriesOtherThroughMutation is the survival test: Other must ride
-// through Load -> Prune/Append -> Save untouched. Drop Other from Save and
+// TestSaveKVCarriesOtherThroughMutation is the survival test: Other must ride
+// through LoadKV -> Prune/Append -> SaveKV untouched. Drop Other from SaveKV and
 // this test fails (#372 §4.2).
-func TestSaveCarriesOtherThroughMutation(t *testing.T) {
+func TestSaveKVCarriesOtherThroughMutation(t *testing.T) {
 	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
 	unknownKind := `{"kind":"future_kind","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"relevo"}`
 	unknownSource := `{"kind":"spawn_failed","subject":"future/subject","at":"2026-09-11T15:00:00Z","source":"future_source"}`
 	known := `{"kind":"rate_limited","subject":"anthropic","at":"2026-09-11T15:00:00Z","source":"planner"}`
 
-	path := filepath.Join(t.TempDir(), "ledger.json")
-	doc := `{"entries":[` + unknownKind + `,` + unknownSource + `,` + known + `]}`
-	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
-	}
+	kv := testKV(t)
+	path := writeLegacy(t, `{"entries":[`+unknownKind+`,`+unknownSource+`,`+known+`]}`)
 
-	l, err := Load(path)
+	l, err := LoadKV(kv, path)
 	if err != nil {
-		t.Fatalf("Load() unexpected error: %v", err)
+		t.Fatalf("LoadKV() unexpected error: %v", err)
 	}
 
 	appended := Entry{
@@ -345,22 +359,22 @@ func TestSaveCarriesOtherThroughMutation(t *testing.T) {
 		At:      now,
 		Source:  "planner",
 	}
-	if err := Save(path, l.Prune(now).Append(appended)); err != nil {
-		t.Fatalf("Save() failed: %v", err)
+	if err := SaveKV(kv, l.Prune(now).Append(appended)); err != nil {
+		t.Fatalf("SaveKV() failed: %v", err)
 	}
 
-	reloaded, err := Load(path)
+	reloaded, err := LoadKV(kv, path)
 	if err != nil {
-		t.Fatalf("Load() after Save unexpected error: %v", err)
+		t.Fatalf("LoadKV() after SaveKV unexpected error: %v", err)
 	}
 	if len(reloaded.Entries) != 2 {
-		t.Fatalf("Entries after Save = %+v, want the 2 known entries", reloaded.Entries)
+		t.Fatalf("Entries after SaveKV = %+v, want the 2 known entries", reloaded.Entries)
 	}
 	if len(reloaded.Other) != 2 {
-		t.Fatalf("Other after Save has %d entries, want 2: %v", len(reloaded.Other), reloaded.Other)
+		t.Fatalf("Other after SaveKV has %d entries, want 2: %v", len(reloaded.Other), reloaded.Other)
 	}
 	if !sameJSON(t, reloaded.Other[0], unknownKind) || !sameJSON(t, reloaded.Other[1], unknownSource) {
-		t.Errorf("Other after Save = %v, want the unknown entries preserved verbatim", reloaded.Other)
+		t.Errorf("Other after SaveKV = %v, want the unknown entries preserved verbatim", reloaded.Other)
 	}
 }
 
@@ -442,25 +456,5 @@ func TestGatedOrdersByTokenThenSince(t *testing.T) {
 	}
 	if !got[0].Since.Equal(now.Add(-time.Hour)) || !got[1].Since.Equal(now) {
 		t.Errorf("gates not ordered by Since: got %v, %v", got[0].Since, got[1].Since)
-	}
-}
-
-func TestSaveCreatesParent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "missing", "sub", "ledger.json")
-	l := Ledger{
-		Entries: []Entry{
-			{
-				Kind:    SpawnFailed,
-				Subject: "claude/anthropic/sonnet",
-				At:      time.Now(),
-				Source:  "relevo",
-			},
-		},
-	}
-	if err := Save(path, l); err != nil {
-		t.Fatalf("Save(%q) failed: %v", path, err)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("file %q does not exist after Save: %v", path, err)
 	}
 }

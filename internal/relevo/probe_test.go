@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -71,16 +70,16 @@ func (f *fakeExec) Run(_ context.Context, dir string, argv []string, onLine func
 }
 
 // probeRuntime builds a Runtime with a real store and a fake clock the
-// caller advances by writing *now. LatencyPath lives under its own temp dir,
-// so the recording path in Probe is exercised against a real file.
+// caller advances by writing *now. Latency lives in its own temp-dir database,
+// so the recording path in Probe is exercised against a real kv row.
 func probeRuntime(t *testing.T, setBody string) (Runtime, *time.Time) {
 	t.Helper()
 	now := probeBase
 	rt := Runtime{
-		Store:       store.New(t.TempDir()),
-		Candidates:  candidateSet(t, setBody),
-		LatencyPath: filepath.Join(t.TempDir(), "latency.json"),
-		Now:         func() time.Time { return now },
+		Store:      store.New(t.TempDir()),
+		Candidates: candidateSet(t, setBody),
+		Latency:    testGateKV(t),
+		Now:        func() time.Time { return now },
 	}
 	return rt, &now
 }
@@ -368,9 +367,9 @@ func TestProbeRecordsHistory(t *testing.T) {
 		t.Errorf("each saw %v, want %v in order", seen, wantOrder)
 	}
 
-	h, err := latency.Load(rt.LatencyPath)
+	h, err := latency.LoadKV(rt.Latency, "")
 	if err != nil {
-		t.Fatalf("latency.Load() error = %v", err)
+		t.Fatalf("latency.LoadKV() error = %v", err)
 	}
 	if len(h.Samples) != 2 {
 		t.Fatalf("recorded %d samples, want 2", len(h.Samples))

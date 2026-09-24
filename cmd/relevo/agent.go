@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -12,15 +13,22 @@ import (
 
 // agentInstallEnv is the InstallEnv `relevo config agents` uses -- and the
 // same one the daemon's once-per-image role refresh uses (#371 §4.10): the
-// OS-backed env with the role manifest at <state root>/agents-manifest.json.
-// The state root is composed here through store.DefaultRoot, the one path
-// relevo's state always resolves through (CLAUDE.md, #42).
+// OS-backed env with the role manifest in the machine database's kv row
+// "agents-manifest", importing a legacy <state root>/agents-manifest.json on
+// first read (P3b plan §4.4). The state root is composed here through
+// store.DefaultRoot, the one path relevo's state always resolves through
+// (CLAUDE.md, #42), and its database is opened here because internal/harness
+// cannot import internal/store.
 func agentInstallEnv() (harness.InstallEnv, error) {
 	root, err := store.DefaultRoot()
 	if err != nil {
 		return nil, err
 	}
-	return harness.OSInstallEnvAt(root), nil
+	d, err := store.New(root).DB()
+	if err != nil {
+		return nil, err
+	}
+	return harness.OSInstallEnvKV(d, filepath.Join(root, "agents-manifest.json")), nil
 }
 
 // cmdAgentInstall installs embedded agent role definitions, the body

@@ -94,7 +94,7 @@ func TestServedBuilderTier(t *testing.T) {
 	set := candidateSet(t, servedNoTierCandidateJSON)
 
 	// Policy tier set -> that tier (candidate token resolved via PickServedCandidate("") has no tier of its own).
-	rt := Runtime{Candidates: set, Policy: policy.Policy{Tier: map[string]string{"builder": "edit"}}, Now: func() time.Time { return baseTime }, LedgerPath: filepath.Join(t.TempDir(), "ledger.json")}
+	rt := Runtime{Candidates: set, Policy: policy.Policy{Tier: map[string]string{"builder": "edit"}}, Now: func() time.Time { return baseTime }, Gates: testGateKV(t)}
 	if got := ServedBuilderTier(rt); got != harness.TierEdit {
 		t.Fatalf("policy tier set: got %v, want edit", got)
 	}

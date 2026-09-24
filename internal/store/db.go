@@ -17,9 +17,9 @@ import (
 // dbForWrite returns the store's database handle, opening it -- and applying
 // its migrations -- on first use. It is the path every write takes, so the
 // first Save/AppendLog/import creates <root>/relevo.db. Path helpers,
-// WithLock alone, DaemonRunning and the daemon-info methods never call it, so
-// serve/admin.go's lock-only store and ingest.go's store.New("/") open no
-// database (P3a plan §3.2, §4.2).
+// WithLock alone and DaemonRunning never call it, so serve/admin.go's
+// lock-only store and ingest.go's store.New("/") open no database (P3a plan
+// §3.2, §4.2). The daemon-info write does call it now (P3b plan §4.3).
 //
 // A database whose schema is newer than this binary's is never migrated and is
 // refused from every data method with db.ErrNewerSchema; path helpers keep
@@ -62,6 +62,17 @@ func (s *Store) dbForRead() (*db.DB, error) {
 	}
 	return s.dbForWrite()
 }
+
+// DB returns the store's database handle, opening and migrating it on first
+// use. It is the exported form of dbForWrite, for the packages that keep a
+// small JSON record in the schema-v2 kv table (P3b plan §4.2).
+func (s *Store) DB() (*db.DB, error) { return s.dbForWrite() }
+
+// DBIfExists returns the store's database handle without creating the
+// database: (nil, nil) when <root>/relevo.db does not exist. It is the
+// exported form of dbForRead, for readers that must not conjure a database
+// into a root that has none.
+func (s *Store) DBIfExists() (*db.DB, error) { return s.dbForRead() }
 
 // importPresent adopts binding name's files, if any, into the database: a
 // present bind.json upserts the record and is deleted, and a present log.jsonl
