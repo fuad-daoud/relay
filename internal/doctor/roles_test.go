@@ -17,6 +17,7 @@ func TestBindingRoleChecks(t *testing.T) {
 		{Name: "b", Role: "ui-builder"},
 		{Name: "c", Role: "gone"},
 		{Name: "d", Role: "gone", State: store.StateDone},
+		{Name: "e", Role: "gone", Builder: store.Endpoint{Mode: store.ModeRemote}},
 	}
 
 	got := BindingRoleChecks(bindings, known)

@@ -9,6 +9,8 @@ import (
 
 // BindingRoleChecks reports one FAIL row per binding that is not DONE whose
 // role (b.Role, or "builder" when it is empty) the registry does not define.
+// A remote binding's role is resolved by its server against the server's own
+// roles.json, so the local registry cannot judge it.
 // Pure: known is the caller's registry lookup, so internal/doctor needs no
 // internal/relevo import. Rows are sorted by binding name.
 func BindingRoleChecks(bindings []store.Binding, known func(role string) bool) []Check {
@@ -18,6 +20,9 @@ func BindingRoleChecks(bindings []store.Binding, known func(role string) bool) [
 	var out []Check
 	for _, b := range sorted {
 		if b.State == store.StateDone {
+			continue
+		}
+		if b.Builder.Remote() {
 			continue
 		}
 		role := b.Role
