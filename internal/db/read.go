@@ -93,7 +93,7 @@ func queryRounds(ctx context.Context, q queryer, f Filter) ([]RoundRow, error) {
 			round.commits, round.tree, round.gate_result, round.cost_usd, round.cost_basis,
 			round.in_tokens, round.cache_tokens, round.write_tokens, round.out_tokens,
 			round.report_outcome, round.builder_mode, binding.server,
-			binding.archived_at
+			binding.archived_at, round.switches
 		FROM round
 		JOIN binding ON binding.id = round.binding_id
 		LEFT JOIN repo ON repo.id = binding.repo_id`
@@ -150,7 +150,7 @@ func scanRoundRow(rows *sql.Rows) (RoundRow, error) {
 		&commits, &tree, &gateResult, &costUSD, &costBasis,
 		&inTokens, &cacheTokens, &writeTokens, &outTokens,
 		&reportOutcome, &builderMode, &server,
-		&archivedAt); err != nil {
+		&archivedAt, &row.Switches); err != nil {
 		return RoundRow{}, fmt.Errorf("scan: %w", err)
 	}
 

@@ -167,6 +167,7 @@ type RoundRow struct {
 	// DurationMS is *ClosedAt - StartedAt in milliseconds; nil when the
 	// round has no closed_at (still open, or a source that records none).
 	DurationMS *int64
+	Switches   int
 	Archived   bool
 	ArchivedAt *time.Time
 }
