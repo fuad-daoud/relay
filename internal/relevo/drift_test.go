@@ -288,7 +288,13 @@ func TestCaptureDrift_Cases(t *testing.T) {
 				tc.setupStore(t, s, tc.binding)
 			}
 
-			res := CaptureDrift(ctx, rt, tc.binding, tc.baseline)
+			var res DriftResult
+			if err := s.WithLock(func(tx *store.Tx) error {
+				res = CaptureDrift(ctx, rt, tx, tc.binding, tc.baseline)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
 
 			if res.Available != tc.wantAvailable {
 				t.Fatalf("Available = %v, want %v", res.Available, tc.wantAvailable)
@@ -304,12 +310,15 @@ func TestCaptureDrift_Cases(t *testing.T) {
 				if res.Path != wantPath {
 					t.Fatalf("Path = %q, want %q", res.Path, wantPath)
 				}
-				data, err := os.ReadFile(wantPath)
+				data, err := s.ReadFile(wantPath)
 				if err != nil {
 					t.Fatalf("failed to read written drift patch: %v", err)
 				}
 				if string(data) != "--- a/f\n+++ b/f\n@@ ...\n" {
 					t.Fatalf("unexpected drift patch content: %s", string(data))
+				}
+				if _, err := os.Stat(wantPath); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("os.Stat(%s) = %v, want ErrNotExist (no file on disk)", wantPath, err)
 				}
 			} else if res.Path != "" {
 				t.Fatalf("Path = %q, want empty", res.Path)
@@ -351,7 +360,13 @@ func TestCaptureDrift_DiffTreesArgOrder(t *testing.T) {
 	}
 
 	baseline := "tree-round-3-opening"
-	res := CaptureDrift(ctx, rt, b, baseline)
+	var res DriftResult
+	if err := s.WithLock(func(tx *store.Tx) error {
+		res = CaptureDrift(ctx, rt, tx, b, baseline)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if !res.Available {
 		t.Fatalf("expected Available=true, got Reason=%q", res.Reason)
 	}

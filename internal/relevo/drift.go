@@ -33,9 +33,10 @@ type DriftResult struct {
 //     is empty, baseline is empty, or DiffTrees returned git.ErrNotRepo.
 //   - Available is true with zero Stat when baseline == b.RoundClosedTree.
 //   - Available is false with Reason set when DiffTrees or writing the patch failed.
-//   - When Available is true and Stat is non-empty, Path names an existing file
-//     unless Truncated is true.
-func CaptureDrift(ctx context.Context, rt Runtime, b store.Binding, baseline string) DriftResult {
+//   - When Available is true and Stat is non-empty, Path resolves through
+//     Store.ReadFile (a round_file row, no file on disk) unless Truncated is
+//     true.
+func CaptureDrift(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, baseline string) DriftResult {
 	if rt.Git == nil || b.RoundClosedTree == "" || baseline == "" {
 		return DriftResult{Available: false}
 	}
@@ -60,7 +61,7 @@ func CaptureDrift(ctx context.Context, rt Runtime, b store.Binding, baseline str
 	}
 
 	patchPath := rt.Store.DriftPath(b.Name, b.Round)
-	if err := os.WriteFile(patchPath, diff.Patch, 0o644); err != nil {
+	if err := tx.PutRoundFile(b.Name, b.Round, patchPath, diff.Patch); err != nil {
 		return DriftResult{Available: false, Reason: brief(err)}
 	}
 

@@ -254,7 +254,8 @@ func TestSendChangedTreeBetweenRounds(t *testing.T) {
 	if de.Path == "" {
 		t.Fatal("drift entry Path is empty")
 	}
-	patch, err := os.ReadFile(de.Path)
+	// Drift is a round_file row now, not a file (R1-lite).
+	patch, err := rt.Store.ReadFile(de.Path)
 	if err != nil {
 		t.Fatalf("read drift patch %s: %v", de.Path, err)
 	}

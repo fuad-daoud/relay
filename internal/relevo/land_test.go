@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -126,7 +127,7 @@ func TestLandRebasesGatesPushesLogs(t *testing.T) {
 	if got, want := strings.Join(gate.Argv, " "), "sh -c make check 2>&1"; got != want {
 		t.Errorf("gate argv = %q, want %q", got, want)
 	}
-	if want := filepath.Join(rt.Store.Dir("webshop"), "land-gate.log"); gate.LogPath != want {
+	if want := filepath.Join(rt.Store.Dir("webshop"), fmt.Sprintf("%03d-land-gate.log", b.Round-1)); gate.LogPath != want {
 		t.Errorf("gate log path = %q, want %q", gate.LogPath, want)
 	}
 	if len(fg.remoteBranchExistsCalls) != 1 {
@@ -609,5 +610,46 @@ func TestRealExecCapturesAndLogs(t *testing.T) {
 	}
 	if string(logged) != out {
 		t.Errorf("log = %q, want the captured output %q", string(logged), out)
+	}
+}
+
+// TestLandGateLogIsASealableRoundFile pins the gate log's new name (R1-lite
+// §3.3): NNN-land-gate.log's base parses as a round file for the binding's
+// latest closed round (b.Round-1), so the regular seal takes it with the round
+// -- it survives archive and does not pin a DONE dir.
+func TestLandGateLogIsASealableRoundFile(t *testing.T) {
+	rt := newRuntime(t)
+	b := landBinding(t, rt, func(b *store.Binding) {
+		b.Round = 3
+		b.State = store.StateDone
+	})
+
+	// land names the gate log after the latest closed round; the base must
+	// parse as that round (roundOfFile, through the exported RoundsOnDisk).
+	logPath := filepath.Join(rt.Store.Dir(b.Name), fmt.Sprintf("%03d-land-gate.log", b.Round-1))
+	if err := os.WriteFile(logPath, []byte("gate output\n"), 0o644); err != nil {
+		t.Fatalf("write gate log: %v", err)
+	}
+	rounds, err := rt.Store.RoundsOnDisk(b.Name)
+	if err != nil {
+		t.Fatalf("RoundsOnDisk: %v", err)
+	}
+	if len(rounds) != 1 || rounds[0] != b.Round-1 {
+		t.Fatalf("RoundsOnDisk = %v, want [%d] (the latest closed round)", rounds, b.Round-1)
+	}
+
+	// The regular seal then takes it like any other round file.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		sealRounds(rt.Store, tx, b)
+		return nil
+	}); err != nil {
+		t.Fatalf("sealRounds: %v", err)
+	}
+	if _, err := os.Stat(logPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the gate log is still on disk after the seal: %v", err)
+	}
+	body, err := rt.Store.ReadFile(logPath)
+	if err != nil || string(body) != "gate output\n" {
+		t.Errorf("ReadFile(gate log) = %q (err %v), want the gate output", body, err)
 	}
 }
