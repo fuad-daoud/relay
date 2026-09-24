@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -296,6 +297,19 @@ func (s *Server) handleDone(w http.ResponseWriter, r *http.Request) {
 		}
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return
+	}
+
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		b2, err := tx.Load(name)
+		if err != nil {
+			return err
+		}
+		if b2.Serve != nil {
+			_, err = settleServed(tx, name, b2.Serve.ClosedRound)
+		}
+		return err
+	}); err != nil {
+		slog.Warn("settle served reports failed", "binding", name, "err", err)
 	}
 
 	if reloaded, err := rt.Store.Load(name); err == nil {

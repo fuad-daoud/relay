@@ -74,6 +74,12 @@ func (s *Server) Run(ctx context.Context) error {
 		tick = s.Tick
 	}
 
+	s.mu.Lock()
+	if err := s.settleAllServed(); err != nil {
+		slog.Warn("settle served reports failed", "err", err)
+	}
+	s.mu.Unlock()
+
 	ticks := 0
 	for {
 		select {

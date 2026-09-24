@@ -514,10 +514,21 @@ func (s *Server) handleAckRound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if n > b.Serve.AckedRound {
-		b.Serve.AckedRound = n
-	}
-	if err := rt.Store.Save(b); err != nil {
+	err = rt.Store.WithLock(func(tx *store.Tx) error {
+		b2, err := tx.Load(name)
+		if err != nil {
+			return err
+		}
+		if b2.Serve != nil && n > b2.Serve.AckedRound {
+			b2.Serve.AckedRound = n
+		}
+		if err := tx.Save(b2); err != nil {
+			return err
+		}
+		_, err = settleServed(tx, name, n)
+		return err
+	})
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return
 	}
