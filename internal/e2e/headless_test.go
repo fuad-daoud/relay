@@ -167,12 +167,12 @@ func TestHeadlessE2E(t *testing.T) {
 		return ok && e.Route == "channel"
 	}, "the channel's confirm of %s round 1 (route=channel)", channelBinding)
 
-	payload, found, err := relevo.Pull(ctx, rt, channelBinding, relevo.PullOptions{})
-	if err != nil {
-		t.Fatalf("relevo.Pull(%s): %v", channelBinding, err)
+	channelWait := runWait(t, ctx, rt, channelBinding, time.Minute)
+	if channelWait.err != nil {
+		t.Fatalf("relevo wait --name %s: %v", channelBinding, channelWait.err)
 	}
-	if found {
-		t.Fatalf("relevo.Pull(%s) returned %q; the channel already took the report (route=channel), so pull must have nothing pending", channelBinding, payload)
+	if channelWait.res.Payload != "" {
+		t.Fatalf("relevo wait --name %s printed a payload %q; the channel already took the report (route=channel), so nothing must be pending", channelBinding, channelWait.res.Payload)
 	}
 	channelReport := rt.Store.ReportPath(channelBinding, 1)
 	if got := readFile(t, channelReport); !strings.Contains(got, fakeReportText) {
@@ -226,15 +226,16 @@ func TestHeadlessE2E(t *testing.T) {
 	// binding's name and budget.
 	text := tools.callSend(t, toolsBinding, toolsPlan)
 	budget := (time.Duration(loadBinding(t, rt, toolsBinding).RoundTimeoutMS) * time.Millisecond).String()
-	wantCommand := "relevo wait --name " + toolsBinding + " --timeout " + budget + "; relevo pull --name " + toolsBinding
+	wantCommand := "relevo wait --name " + toolsBinding + " --timeout " + budget
 	if !strings.HasSuffix(text, wantCommand) {
 		t.Fatalf("the tools-mode send result does not end with the background-wait command for %s (budget %s):\n%s",
 			toolsBinding, budget, text)
 	}
 
 	// 8.3: the daemon closes round two, then the test runs the command the
-	// result named -- through the in-process equivalents of relevo wait and
-	// relevo pull, with the name and budget parsed out of the result itself.
+	// result named -- through the in-process equivalent of relevo wait, with
+	// the name and budget parsed out of the result itself. The wait delivers
+	// the report itself (§4.1), so there is no second command.
 	tickUntilRoundCloses(t, ctx, daemon, rt, toolsBinding)
 
 	waitName, waitBudget := parseWaitCommand(t, text)
@@ -252,32 +253,25 @@ func TestHeadlessE2E(t *testing.T) {
 	if want := rt.Store.ReportPath(toolsBinding, 1); waited.res.Line != want {
 		t.Fatalf("relevo wait printed %q, want the round's report path %s", waited.res.Line, want)
 	}
-	pulled, ok, err := relevo.Pull(ctx, rt, toolsBinding, relevo.PullOptions{})
-	if err != nil {
-		t.Fatalf("relevo pull --name %s: %v", toolsBinding, err)
+	if !strings.Contains(waited.res.Payload, fakeReportText) {
+		t.Fatalf("the wait output does not carry the report's text; want %q in:\n%s", fakeReportText, waited.res.Payload)
 	}
-	if !ok {
-		t.Fatalf("relevo pull --name %s found nothing pending, want the round's report payload", toolsBinding)
-	}
-	output := waited.res.Line + "\n" + pulled
-	if !strings.Contains(pulled, fakeReportText) {
-		t.Fatalf("relevo pull output does not carry the report's text; want %q in:\n%s", fakeReportText, pulled)
-	}
+	output := waited.res.Line + "\n" + waited.res.Payload
 
-	// 8.4: the output names the fake report -- relevo pull prints the entry's
+	// 8.4: the output names the fake report -- relevo wait prints the entry's
 	// payload and the report's text (PushText), so the planner needs no
-	// second read; the payload names the report's path and the round it
-	// belongs to (§1.1's probe records exactly that shape) -- and the
-	// report's own text is on disk at that path.
+	// second read; the payload names the `relevo show` command that prints
+	// the round's report (§4.2) -- and the report's own text is on disk at
+	// the path that command reads.
 	reportPath := rt.Store.ReportPath(toolsBinding, 1)
-	if !strings.Contains(output, reportPath) {
-		t.Fatalf("the wait/pull output does not name the round's report %s:\n%s", reportPath, output)
+	if want := "relevo show " + toolsBinding + " --round 1 --report"; !strings.Contains(output, want) {
+		t.Fatalf("the wait output does not name %s:\n%s", want, output)
 	}
 	if got := readFile(t, reportPath); !strings.Contains(got, fakeReportText) {
 		t.Fatalf("report %s = %q, want the fake report text", reportPath, got)
 	}
 
-	// 8.4: the log entry is marked delivered with route=pull, nothing was
+	// 8.4: the log entry is marked delivered with route=wait, nothing was
 	// written to a channel mailbox for that binding -- the live channel-mode
 	// server received no notification naming it -- and the round closed on the
 	// fake harness's own marker, not on a fallback.
@@ -289,8 +283,8 @@ func TestHeadlessE2E(t *testing.T) {
 		t.Fatalf("binding %s round 1 closed with note %q, want \"\": the fake harness's own marker must be what closed it; builder log tail:\n%s",
 			toolsBinding, entry.Note, builderLogTail(rt, toolsBinding, 1))
 	}
-	if !entry.Confirmed || entry.Route != "pull" {
-		t.Fatalf("binding %s round 1 report entry = confirmed:%v route:%q, want confirmed with route=pull", toolsBinding, entry.Confirmed, entry.Route)
+	if !entry.Confirmed || entry.Route != "wait" {
+		t.Fatalf("binding %s round 1 report entry = confirmed:%v route:%q, want confirmed with route=wait", toolsBinding, entry.Confirmed, entry.Route)
 	}
 	if names := channel.noteBindings(); contains(names, toolsBinding) {
 		t.Fatalf("a channel notification was written for %s (notifications: %v)", toolsBinding, names)
@@ -793,9 +787,10 @@ func (c *mcpClient) noteSummary() string {
 
 // --- small assertions -------------------------------------------------------
 
-// waitCommandRE pulls the two halves of the background wait out of a send
-// result: relevo wait --name <n> --timeout <budget>; relevo pull --name <n>.
-var waitCommandRE = regexp.MustCompile(`relevo wait --name (\S+) --timeout (\S+); relevo pull --name (\S+)`)
+// waitCommandRE pulls the background wait out of a send result:
+// relevo wait --name <n> --timeout <budget>. The wait prints the report
+// itself, so there is no second half (§4.1).
+var waitCommandRE = regexp.MustCompile(`relevo wait --name (\S+) --timeout (\S+)`)
 
 // parseWaitCommand reads the wait command's name and budget out of a send
 // result, so the test runs exactly what the result told the model to run.
@@ -804,9 +799,6 @@ func parseWaitCommand(t *testing.T, text string) (name, budget string) {
 	m := waitCommandRE.FindStringSubmatch(text)
 	if m == nil {
 		t.Fatalf("no background-wait command in the send result:\n%s", text)
-	}
-	if m[1] != m[3] {
-		t.Fatalf("the wait and pull halves name different bindings: %q vs %q", m[1], m[3])
 	}
 	return m[1], m[2]
 }

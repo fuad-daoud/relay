@@ -234,7 +234,7 @@ type Runtime struct {
 	// Channels arbitrates a planner's mailbox between the daemon and a live
 	// `relevo mcp` channel (docs/specs/2026-09-21-planner-channel-design.md).
 	// Nil means no claims exist, so DeliverPending leaves the entry pending
-	// for `relevo pull`; cmd/relevo wires
+	// for `relevo wait`; cmd/relevo wires
 	// relevo.FileClaims{Root: st.ChannelsDir()}.
 	Channels ClaimStore
 
@@ -252,7 +252,7 @@ type Runtime struct {
 
 	// Deliverers routes a planner-bound payload to that planner kind's own
 	// push path (docs/specs/2026-09-22-opencode-delivery-design.md). A kind
-	// with no entry, and a nil map, leave the entry pending for `relevo pull`.
+	// with no entry, and a nil map, leave the entry pending for `relevo wait`.
 	Deliverers map[string]PlannerDeliverer
 }
 

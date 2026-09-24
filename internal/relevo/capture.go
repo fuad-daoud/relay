@@ -253,7 +253,12 @@ func CommitFacts(ctx context.Context, rt Runtime, b store.Binding) CommitResult 
 // says nothing worth telling the planner (rt.Git off, or not a repository).
 // The commit facts follow " -- " unless the diff is empty; branch names the
 // binding's branch in the clause, or is "" for a tree relevo did not create.
-func DiffLine(res DiffResult, facts CommitResult, branch string) string {
+// DiffLine renders the report-payload Diff: line from a fresh diff result.
+// name and round are named so the line can point the planner at
+// `relevo show <name> --round <round> --diff` instead of the patch's path
+// (P4a round 2 §4.2). branch names the binding's branch in the clause, or is
+// "" for a tree relevo did not create.
+func DiffLine(res DiffResult, facts CommitResult, branch, name string, round int) string {
 	var base string
 	switch {
 	case !res.Available && res.Reason == "":
@@ -267,7 +272,7 @@ func DiffLine(res DiffResult, facts CommitResult, branch string) string {
 			formatFiles(res.Stat.FilesChanged), res.Stat.Insertions, res.Stat.Deletions)
 	default:
 		base = fmt.Sprintf("Diff: %s (%s, +%d -%d)",
-			res.Path, formatFiles(res.Stat.FilesChanged), res.Stat.Insertions, res.Stat.Deletions)
+			showCommand(name, round, "diff"), formatFiles(res.Stat.FilesChanged), res.Stat.Insertions, res.Stat.Deletions)
 	}
 	if clause := commitClause(facts, branch, true); clause != "" {
 		return base + " -- " + clause
@@ -345,7 +350,7 @@ func PathsLineFromNote(note string) string {
 }
 
 // ReadDiff returns the stored patch for one round, and whether one exists.
-// It is the read path behind `relevo diff`.
+// It is the read path behind `relevo show --diff`.
 //
 // Errors: store.ErrNotFound for an unknown binding; a wrapped read error.
 func ReadDiff(rt Runtime, name string, round int) ([]byte, bool, error) {

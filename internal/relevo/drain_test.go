@@ -135,7 +135,7 @@ func TestDrainPushesThenConfirms(t *testing.T) {
 	if got.content != "the report body" {
 		t.Errorf("content = %q, want the payload verbatim", got.content)
 	}
-	want := map[string]string{"binding": "judge", "round": "3", "kind": "report", "seq": "1", "path": "/x/003-report.md"}
+	want := map[string]string{"binding": "judge", "round": "3", "kind": "report", "seq": "1", "show": "relevo show judge --round 3 --report"}
 	if !reflect.DeepEqual(got.meta, want) {
 		t.Errorf("meta = %+v, want %+v", got.meta, want)
 	}
@@ -177,7 +177,7 @@ func TestDrainPushesExpandedReportText(t *testing.T) {
 	}
 }
 
-func TestDrainOmitsPathMetaWhenEntryHasNone(t *testing.T) {
+func TestDrainOmitsShowMetaWhenEntryHasNone(t *testing.T) {
 	s := store.New(t.TempDir())
 	rt := Runtime{Store: s}
 	pane := "w2:p3"
@@ -189,8 +189,8 @@ func TestDrainOmitsPathMetaWhenEntryHasNone(t *testing.T) {
 	if _, err := Drain(context.Background(), rt, st, pusher); err != nil {
 		t.Fatalf("Drain: %v", err)
 	}
-	if _, ok := pusher.pushes[0].meta["path"]; ok {
-		t.Errorf("meta must omit path when the entry has none, got %+v", pusher.pushes[0].meta)
+	if _, ok := pusher.pushes[0].meta["show"]; ok {
+		t.Errorf("meta must omit show when the entry has none, got %+v", pusher.pushes[0].meta)
 	}
 }
 

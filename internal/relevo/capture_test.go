@@ -22,7 +22,7 @@ func TestCaptureRoundDiff_NilGit(t *testing.T) {
 	if res.Available {
 		t.Fatal("expected Available=false with nil Git")
 	}
-	if line := DiffLine(res, CommitResult{}, ""); line != "" {
+	if line := DiffLine(res, CommitResult{}, "", "webshop", 1); line != "" {
 		t.Fatalf("expected empty line for nil Git, got %q", line)
 	}
 }
@@ -38,7 +38,7 @@ func TestCaptureRoundDiff_ErrNotRepo(t *testing.T) {
 	if res.Available {
 		t.Fatal("expected Available=false for ErrNotRepo")
 	}
-	if line := DiffLine(res, CommitResult{}, ""); line != "" {
+	if line := DiffLine(res, CommitResult{}, "", "webshop", 1); line != "" {
 		t.Fatalf("expected empty line for ErrNotRepo, got %q", line)
 	}
 }
@@ -58,7 +58,7 @@ func TestCaptureRoundDiff_GitFailure(t *testing.T) {
 		t.Fatalf("unexpected Reason: %q", res.Reason)
 	}
 	wantLine := "Diff: unavailable (boom: git broken)"
-	if line := DiffLine(res, CommitResult{}, ""); line != wantLine {
+	if line := DiffLine(res, CommitResult{}, "", "webshop", 1); line != wantLine {
 		t.Fatalf("got %q, want %q", line, wantLine)
 	}
 }
@@ -84,7 +84,7 @@ func TestCaptureRoundDiff_EmptyDiff(t *testing.T) {
 		t.Fatalf("expected no patch file written, got err %v", err)
 	}
 	wantLine := "Diff: no file changes"
-	if line := DiffLine(res, CommitResult{}, ""); line != wantLine {
+	if line := DiffLine(res, CommitResult{}, "", "webshop", 1); line != wantLine {
 		t.Fatalf("got %q, want %q", line, wantLine)
 	}
 }
@@ -116,7 +116,7 @@ func TestCaptureRoundDiff_TruncatedDiff(t *testing.T) {
 		t.Fatalf("expected no patch file written, got err %v", err)
 	}
 	wantLine := "Diff: 312 files, +48120 -9033 (patch omitted, over the 4 MiB cap)"
-	if line := DiffLine(res, CommitResult{}, ""); line != wantLine {
+	if line := DiffLine(res, CommitResult{}, "", "webshop", 1); line != wantLine {
 		t.Fatalf("got %q, want %q", line, wantLine)
 	}
 }
@@ -156,8 +156,8 @@ func TestCaptureRoundDiff_NormalDiff(t *testing.T) {
 		t.Fatalf("unexpected patch content: %s", string(data))
 	}
 
-	wantLine := "Diff: " + expectedPath + " (7 files, +214 -38)"
-	if line := DiffLine(res, CommitResult{}, ""); line != wantLine {
+	wantLine := "Diff: relevo show webshop --round 2 --diff (7 files, +214 -38)"
+	if line := DiffLine(res, CommitResult{}, "", "webshop", 2); line != wantLine {
 		t.Fatalf("got %q, want %q", line, wantLine)
 	}
 
@@ -466,28 +466,28 @@ func TestDiffTextWithCommitFacts(t *testing.T) {
 	}{
 		{"commits clean with branch", normal, CommitResult{Known: true, Commits: 3}, "relevo/api-auth",
 			"6 files, +120 -30; 3 commits, clean",
-			"Diff: /p/007-diff.patch (6 files, +120 -30) -- 3 commits on relevo/api-auth, tree clean"},
+			"Diff: relevo show webshop --round 7 --diff (6 files, +120 -30) -- 3 commits on relevo/api-auth, tree clean"},
 		{"one commit singular", normal, CommitResult{Known: true, Commits: 1}, "relevo/api-auth",
 			"6 files, +120 -30; 1 commit, clean",
-			"Diff: /p/007-diff.patch (6 files, +120 -30) -- 1 commit on relevo/api-auth, tree clean"},
+			"Diff: relevo show webshop --round 7 --diff (6 files, +120 -30) -- 1 commit on relevo/api-auth, tree clean"},
 		{"commits dirty with branch", normal, CommitResult{Known: true, Commits: 3, Dirty: true}, "relevo/api-auth",
 			"6 files, +120 -30; 3 commits, dirty",
-			"Diff: /p/007-diff.patch (6 files, +120 -30) -- 3 commits on relevo/api-auth, tree dirty"},
+			"Diff: relevo show webshop --round 7 --diff (6 files, +120 -30) -- 3 commits on relevo/api-auth, tree dirty"},
 		{"commits clean without branch", normal, CommitResult{Known: true, Commits: 3}, "",
 			"6 files, +120 -30; 3 commits, clean",
-			"Diff: /p/007-diff.patch (6 files, +120 -30) -- 3 commits, tree clean"},
+			"Diff: relevo show webshop --round 7 --diff (6 files, +120 -30) -- 3 commits, tree clean"},
 		{"no commits dirty", normal, CommitResult{Known: true, Commits: 0, Dirty: true}, "relevo/api-auth",
 			"6 files, +120 -30; no commits, dirty",
-			"Diff: /p/007-diff.patch (6 files, +120 -30) -- no commits; changes are uncommitted in the worktree"},
+			"Diff: relevo show webshop --round 7 --diff (6 files, +120 -30) -- no commits; changes are uncommitted in the worktree"},
 		{"no commits clean", normal, CommitResult{Known: true}, "relevo/api-auth",
 			"6 files, +120 -30; no commits, clean",
-			"Diff: /p/007-diff.patch (6 files, +120 -30) -- no commits, tree clean"},
+			"Diff: relevo show webshop --round 7 --diff (6 files, +120 -30) -- no commits, tree clean"},
 		{"unknown with reason", normal, CommitResult{Reason: "rev-list: boom"}, "relevo/api-auth",
 			"6 files, +120 -30; commits unknown (rev-list: boom)",
-			"Diff: /p/007-diff.patch (6 files, +120 -30) -- commits unknown (rev-list: boom)"},
+			"Diff: relevo show webshop --round 7 --diff (6 files, +120 -30) -- commits unknown (rev-list: boom)"},
 		{"unknown silent", normal, CommitResult{}, "relevo/api-auth",
 			"6 files, +120 -30",
-			"Diff: /p/007-diff.patch (6 files, +120 -30)"},
+			"Diff: relevo show webshop --round 7 --diff (6 files, +120 -30)"},
 		{"empty diff gains nothing", empty, CommitResult{Known: true, Commits: 2}, "relevo/api-auth",
 			"no changes",
 			"Diff: no file changes"},
@@ -509,7 +509,7 @@ func TestDiffTextWithCommitFacts(t *testing.T) {
 			if got := DiffSummary(tc.res, tc.facts); got != tc.wantSummary {
 				t.Errorf("DiffSummary = %q, want %q", got, tc.wantSummary)
 			}
-			if got := DiffLine(tc.res, tc.facts, tc.branch); got != tc.wantLine {
+			if got := DiffLine(tc.res, tc.facts, tc.branch, "webshop", 7); got != tc.wantLine {
 				t.Errorf("DiffLine = %q, want %q", got, tc.wantLine)
 			}
 		})
@@ -550,7 +550,7 @@ func TestDiffLineFromNoteMatchesDiffLine(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			note := DiffSummary(tc.res, tc.facts)
-			want := DiffLine(tc.res, tc.facts, branch)
+			want := DiffLine(tc.res, tc.facts, branch, "webshop", 7)
 			if got := DiffLineFromNote(note, tc.facts.Commits, tc.tree, branch); got != want {
 				t.Fatalf("DiffLineFromNote(%q, %d, %q, %q) = %q, want %q (DiffLine's own output for the same facts)",
 					note, tc.facts.Commits, tc.tree, branch, got, want)

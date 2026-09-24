@@ -2424,7 +2424,7 @@ func TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked(t *testing.T
 		t.Errorf("note = %q, want unmarked", pending.Note)
 	}
 	if !strings.Contains(pending.Payload, "exited (code 0) after writing its report but never confirmed completion (no 001-done)") ||
-		!strings.Contains(pending.Payload, rt.Store.ReportPath("webshop", 1)) {
+		!strings.Contains(pending.Payload, "relevo show webshop --round 1 --report") {
 		t.Errorf("payload = %q", pending.Payload)
 	}
 	if len(exits(t, rt)) != 0 || len(fr.specs) != 1 {

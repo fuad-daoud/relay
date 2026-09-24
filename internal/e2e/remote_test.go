@@ -174,7 +174,7 @@ func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Ke
 		t.Fatalf("open store db: %v", err)
 	}
 
-	// `relevo add --server` resolves the caller's planner before it contacts
+	// `relevo bind --server` resolves the caller's planner before it contacts
 	// the server and records it on the client binding. Export one the way a
 	// real planner session does, so the client runtime resolves a record
 	// instead of failing the add with ErrNoPlannerSession.
@@ -637,7 +637,7 @@ func TestRemoteSyncOnReadWithoutDaemon(t *testing.T) {
 	}
 
 	// then one daemon Tick leaves it pending: this planner has no channel
-	// and no deliverer, so the entry waits for `relevo pull` (route=pull).
+	// and no deliverer, so the entry waits for `relevo wait` (route=pull).
 	clientDaemon := relevo.NewDaemon(rt, time.Second)
 	if err := clientDaemon.Tick(ctx); err != nil {
 		t.Fatalf("step 4: clientDaemon.Tick: %v", err)
@@ -726,7 +726,7 @@ func TestRemoteRoundTicksWithoutEscapeWarning(t *testing.T) {
 // -- the mailbox no route has taken yet (#303 §5.4) -- and returns the newest
 // one's payload. The pane prompt these tests used to assert on is gone: a
 // report now waits as a pending entry for the channel, a deliverer or
-// `relevo pull`.
+// `relevo wait`.
 func pendingReports(t *testing.T, rt relevo.Runtime, name string) (int, string) {
 	t.Helper()
 	entries, err := rt.Store.ReadLog(name)

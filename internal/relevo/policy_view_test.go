@@ -292,7 +292,7 @@ func TestFormatPolicyGateAndPeakOrder(t *testing.T) {
 }
 
 func TestFormatPolicyRepeatedGateRendersOnce(t *testing.T) {
-	// #93: `relevo unavailable` three times without an `available` between
+	// #93: `relevo gate <token>` three times without a `--clear` between
 	// leaves three live ledger entries on one token. The row says it once.
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef)

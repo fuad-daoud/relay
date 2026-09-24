@@ -69,7 +69,7 @@ func TestMCPToolsModeSendResultCarriesBackgroundWait(t *testing.T) {
 	text := callSend(t, ModeTools, sendResult{SendResult: relevo.SendResult{Round: 1}, WaitBudget: "24h0m0s"})
 
 	want := "background wait (run with run_in_background, then end your turn):\n" +
-		"  relevo wait --name webshop --timeout 24h0m0s; relevo pull --name webshop"
+		"  relevo wait --name webshop --timeout 24h0m0s"
 	if !strings.HasSuffix(text, want) {
 		t.Fatalf("send result text = %q, want it to end with:\n%s", text, want)
 	}
@@ -105,7 +105,7 @@ func TestMCPInstructionsDependOnMode(t *testing.T) {
 	if strings.Contains(channel, "background wait") {
 		t.Error("channel instructions must not describe the background wait")
 	}
-	for _, want := range []string{"background wait", "relevo pull", "WaitTimeout", "relevo status --name"} {
+	for _, want := range []string{"background wait", "relevo wait", "WaitTimeout", "relevo status --name"} {
 		if !strings.Contains(tools, want) {
 			t.Errorf("tools instructions must mention %q", want)
 		}

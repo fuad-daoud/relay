@@ -358,6 +358,10 @@ func TestWaitTimesOut(t *testing.T) {
 	if name != "" || res.Code != WaitTimeout || !res.Done {
 		t.Errorf("Wait = (%q, %+v), want (\"\", {%d ... true})", name, res, WaitTimeout)
 	}
+	// §4.1: a timeout prints nothing extra and delivers nothing.
+	if res.Payload != "" || res.DeliverErr != nil {
+		t.Errorf("Wait payload = %q (err %v), want nothing delivered on a timeout", res.Payload, res.DeliverErr)
+	}
 }
 
 func TestWaitNotStartedReturnsAtOnce(t *testing.T) {
@@ -456,5 +460,63 @@ func TestWaitDefaultRoundIsTheNewestPlanned(t *testing.T) {
 	}
 	if name != "webshop" || res.Code != WaitClosed || res.Line != reportPath || !res.Done {
 		t.Errorf("Wait = (%q, %+v), want closed round 1", name, res)
+	}
+}
+
+// TestWaitDeliversThePendingReport pins §4.1's core case: a seeded binding
+// with a queued report. Wait prints the outcome and then the report text, and
+// marks it delivered with route "wait".
+func TestWaitDeliversThePendingReport(t *testing.T) {
+	rt := routeRuntime(t)
+	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
+
+	name, res, err := Wait(context.Background(), rt, WaitOptions{
+		Names: []string{"webshop"}, Timeout: time.Minute, Interval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if name != "webshop" || res.Code != WaitClosed || !res.Done {
+		t.Fatalf("Wait = (%q, %+v), want the seeded round closed", name, res)
+	}
+	if !strings.Contains(res.Payload, "round 1 report") {
+		t.Errorf("Payload = %q, want the pending report's text", res.Payload)
+	}
+	if res.DeliverErr != nil {
+		t.Errorf("DeliverErr = %v, want nil", res.DeliverErr)
+	}
+	if _, still, err := rt.Store.PendingForPlanner("webshop"); err != nil || still {
+		t.Errorf("the report must be delivered (still pending=%v err=%v)", still, err)
+	}
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	last := entries[len(entries)-1]
+	if !last.Confirmed || last.Route != "wait" {
+		t.Errorf("entry = confirmed:%v route:%q, want confirmed with route=wait", last.Confirmed, last.Route)
+	}
+}
+
+// TestWaitPeekLeavesTheReportPending: --peek reports the outcome only and
+// leaves the entry pending (§4.1).
+func TestWaitPeekLeavesTheReportPending(t *testing.T) {
+	rt := routeRuntime(t)
+	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
+
+	name, res, err := Wait(context.Background(), rt, WaitOptions{
+		Names: []string{"webshop"}, Timeout: time.Minute, Interval: time.Millisecond, Peek: true,
+	})
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if name != "webshop" || res.Code != WaitClosed || !res.Done {
+		t.Fatalf("Wait = (%q, %+v), want the seeded round closed", name, res)
+	}
+	if res.Payload != "" {
+		t.Errorf("Payload = %q, want nothing delivered with --peek", res.Payload)
+	}
+	if _, still, err := rt.Store.PendingForPlanner("webshop"); err != nil || !still {
+		t.Errorf("--peek must leave the entry pending (still pending=%v err=%v)", still, err)
 	}
 }

@@ -13,14 +13,14 @@ Event kinds, from the block's kind attribute:
 
   - kind="report": a builder's round closed. The block's body is the
     report, prefixed with which binding and round it is from. A very large
-    report is cut short, and the block ends with a line naming the full
-    path when it is. Run the project's check command and compare the diff
-    against the plan before calling done -- do not call done on the
-    report's arrival alone.
+    report is cut short, and the block ends with a line naming the
+    relevo show command that prints it in full. Run the project's check
+    command and compare the diff against the plan before calling done -- do
+    not call done on the report's arrival alone.
   - kind="state" state="needs_you": a binding is stalled on a human
     decision (a repeated failure, an ambiguous plan). Read the body's
-    reason, then run relevo status --name <binding> and decide: unavailable,
-    or stop.
+    reason, then run relevo status --name <binding> and decide: gate, or
+    stop.
 
 An event for a binding you did not personally send still belongs to you --
 every binding on this planner shares this one channel. Do not ignore an event
@@ -34,14 +34,14 @@ Three verbs are tools here, callable directly instead of through the shell:
     builder a new round.
   - done(name): mark a binding done once its round is verified.
 
-Every other relevo verb -- bind, add, fork, diff, log, pull, unavailable,
-available, policy, and the rest -- is not a tool here; run it with Bash.
+Every other relevo verb -- bind, show, wait, gate, config, and the rest --
+is not a tool here; run it with Bash.
 `
 
 // InstructionsTools is initialize's text when relevo mcp runs in tools mode
 // (#303 §4.5, D6): nothing is pushed, so the model gets each report by
-// running the background wait after every send and reading what relevo pull
-// prints when that wait exits.
+// running the background wait after every send and reading what the wait
+// prints when it exits (P4a round 2 §4.1).
 const InstructionsTools = `relevo is running in tools mode: no events arrive on their own. Everything
 relevo tells you arrives as the output of a command you started.
 
@@ -49,27 +49,27 @@ After every send, start the background wait for that binding and end your
 turn. The send tool's result carries the exact command; it looks like this:
 
   background wait (run with run_in_background, then end your turn):
-    relevo wait --name <binding> --timeout <budget>; relevo pull --name <binding>
+    relevo wait --name <binding> --timeout <budget>
 
 Run that with the Bash tool's run_in_background, then end your turn. Claude
 Code re-invokes you when the command exits, with its output in the new turn.
-The relevo pull half prints the report text -- the same payload a channel
-event would have carried -- and marks the entry delivered.
+The wait's output is the report text -- the same payload a channel event would
+have carried -- and it marks the entry delivered. An unmarked or halted
+round's report is printed by relevo wait too.
 
-Act on the pull output after every wait exit except WaitTimeout: an unmarked
-or halted round still has its report on disk, and relevo pull prints it.
+Act on the wait's output after every wait exit except WaitTimeout.
 
   - Report text: a builder's round closed. Run the project's check command
     and compare the diff against the plan before calling done -- do not call
     done on the report's arrival alone.
   - A needs-you outcome: relevo wait's own line gives the reason; run
     relevo status --name <binding> and decide: send the next round,
-    unavailable, or stop.
+    gate, or stop.
   - WaitTimeout (the round is still running): run
     relevo status --name <binding>, and start the background wait again if
     the round is still open.
-  - Exit without output: relevo pull printing "nothing pending" means another
-    route already delivered the report; nothing is owed.
+  - An outcome line with no report text: another route already delivered the
+    report; nothing is owed.
 
 A report or a needs_you for a binding you did not personally send still
 belongs to you -- every binding on this planner is yours. Do not ignore a
@@ -84,8 +84,8 @@ Three verbs are tools here, callable directly instead of through the shell:
     builder a new round.
   - done(name): mark a binding done once its round is verified.
 
-Every other relevo verb -- bind, add, fork, diff, log, pull, wait, unavailable,
-available, policy, and the rest -- is not a tool here; run it with Bash.
+Every other relevo verb -- bind, show, wait, gate, config, and the rest --
+is not a tool here; run it with Bash.
 `
 
 // InstructionsFor picks the text for mode. The mode is known before

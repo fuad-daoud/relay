@@ -433,7 +433,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 				if err := tx.AppendLog(name, driftEntry); err != nil {
 					return err
 				}
-				driftLine = DriftLine(res, b.Round)
+				driftLine = DriftLine(res, b.Name, b.Round)
 			}
 		}
 

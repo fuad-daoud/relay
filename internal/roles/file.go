@@ -44,7 +44,7 @@ type File struct {
 type Row struct {
 	// Shape is "writer" or "reader". A built-in row may give it only to
 	// repeat the built-in shape; a new role must give it. A new writer runs
-	// as a binding's role (`relevo add --role` / `relevo bind --role`); a
+	// as a binding's role (`relevo bind --worktree --role` / `relevo bind --role`); a
 	// new reader runs through `relevo ask --role`.
 	Shape *string `json:"shape"`
 

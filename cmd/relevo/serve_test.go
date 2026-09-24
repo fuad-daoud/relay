@@ -301,53 +301,54 @@ func TestServeStatusRefusesUninitialisedRoot(t *testing.T) {
 	}
 }
 
-// TestServeGatesRefusesUninitialisedRoot: relevo serve gates resolves its root
-// like the other admin verbs, so an uninitialised --state dir fails at
+// TestGateServeRefusesUninitialisedRoot: `relevo gate --serve` resolves its
+// root like the other admin verbs, so an uninitialised --state dir fails at
 // adminRoot before anything else can run. CI-safe: it reaches no harness.
-func TestServeGatesRefusesUninitialisedRoot(t *testing.T) {
+func TestGateServeRefusesUninitialisedRoot(t *testing.T) {
 	dir := t.TempDir()
-	err := cmdServeGates([]string{"--state", dir})
-	if err == nil {
-		t.Fatal("cmdServeGates error = nil, want an uninitialised-root error")
+	_, _, runErr := captureOutput(t, func() error {
+		return run([]string{"gate", "--serve", "--state", dir})
+	})
+	if runErr == nil {
+		t.Fatal("run error = nil, want an uninitialised-root error")
 	}
-	if !strings.Contains(err.Error(), "no serve state at ") {
-		t.Errorf("error = %q, want no serve state message", err)
+	if !strings.Contains(runErr.Error(), "no serve state at ") {
+		t.Errorf("error = %q, want no serve state message", runErr)
 	}
-	if !strings.Contains(err.Error(), filepath.Join(dir, "serve")) {
-		t.Errorf("error = %q, want root %q", err, filepath.Join(dir, "serve"))
+	if !strings.Contains(runErr.Error(), filepath.Join(dir, "serve")) {
+		t.Errorf("error = %q, want root %q", runErr, filepath.Join(dir, "serve"))
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "serve", "tmp")); !os.IsNotExist(statErr) {
 		t.Errorf("serve/tmp exists or stat failed: %v", statErr)
 	}
 }
 
-func TestServeAvailableWithoutSubjectExits2(t *testing.T) {
-	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"serve", "available"})
-	})
-
-	var ec exitCodeErr
-	if !errors.As(runErr, &ec) || ec.code != 2 {
-		t.Fatalf("expected exit code 2, got %v", runErr)
-	}
-	if len(stdout) != 0 {
-		t.Errorf("expected nothing on stdout, got %q", string(stdout))
-	}
-	if !strings.Contains(string(stderr), "usage") {
-		t.Errorf("expected a usage line on stderr, got %q", string(stderr))
+// TestServeGateSubverbsWereRemoved pins D1: `serve gates`, `serve available`
+// and `serve unavailable` exit 2, each naming `relevo gate --serve`.
+func TestServeGateSubverbsWereRemoved(t *testing.T) {
+	for _, sub := range []string{"gates", "available", "unavailable"} {
+		t.Run(sub, func(t *testing.T) {
+			stdout, stderr, runErr := captureOutput(t, func() error {
+				return run([]string{"serve", sub})
+			})
+			var ec exitCodeErr
+			if !errors.As(runErr, &ec) || ec.code != 2 {
+				t.Fatalf("run = %v, want exit code 2", runErr)
+			}
+			if len(stdout) != 0 {
+				t.Errorf("expected nothing on stdout, got %q", string(stdout))
+			}
+			if !strings.Contains(string(stderr), "relevo gate --serve") {
+				t.Errorf("stderr = %q, want it to name relevo gate --serve", stderr)
+			}
+		})
 	}
 }
 
-// TestServeFlagAfterPositionalIsHonoured pins the #48 bug class for
-// cmdServeAvailable: a flag after a positional must still reach the handler.
-// With a raw fs.Parse, --state after "sometoken" was silently dropped, so
-// cmdServeAvailable resolved the default root under the TestMain temp HOME
-// instead of the temp dir here. CI-safe: an uninitialised --state dir fails
-// in adminRoot before any network or harness use.
 func TestServeFlagAfterPositionalIsHonoured(t *testing.T) {
 	dir := t.TempDir()
 	_, _, runErr := captureOutput(t, func() error {
-		return run([]string{"serve", "available", "sometoken", "--state", dir})
+		return run([]string{"gate", "--serve", "sometoken", "--state", dir})
 	})
 	if runErr == nil {
 		t.Fatal("run error = nil, want an uninitialised-root error")

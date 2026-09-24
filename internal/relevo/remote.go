@@ -813,11 +813,11 @@ func reconcileRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 }
 
 // SyncRemote runs one read-only observe pass over every remote binding that
-// is still relaying (not store.StateDone), so `relevo status`, `relevo pull`
+// is still relaying (not store.StateDone), so `relevo status`, `relevo wait`
 // and each `relevo wait` iteration collect a closed round without the daemon
 // running (spec §2.2). It never delivers: it calls observeRemote directly,
 // not reconcileRemote, so a payload stays pending for the daemon, the channel
-// or `relevo pull` to take.
+// or `relevo wait` to take.
 //
 // synced counts bindings whose stored state actually changed under the
 // pass; per-binding errors are joined into one returned error rather than
@@ -1138,7 +1138,7 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 		if _, err := rt.Transport.Absorb(ctx, b.Repo, remote.ContentTypeGitBundle, rcBundle, refs); err != nil {
 			if strings.Contains(strings.ToLower(err.Error()), "checked out") {
 				if _, seen := checkedOutWarned.LoadOrStore(name, struct{}{}); !seen {
-					slog.Info("checkout another branch, then relevo pull", "binding", name, "branch", b.Branch)
+					slog.Info("checkout another branch, then relevo wait", "binding", name, "branch", b.Branch)
 				} else {
 					slog.Debug("still checked out", "binding", name, "branch", b.Branch)
 				}
@@ -1172,7 +1172,7 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 				// absorb above gets, not an absorb failure.
 				if strings.Contains(strings.ToLower(err.Error()), "checked out") {
 					if _, seen := checkedOutWarned.LoadOrStore(name, struct{}{}); !seen {
-						slog.Info("checkout another branch, then relevo pull", "binding", name, "branch", b.Branch)
+						slog.Info("checkout another branch, then relevo wait", "binding", name, "branch", b.Branch)
 					} else {
 						slog.Debug("still checked out", "binding", name, "branch", b.Branch)
 					}
@@ -1227,9 +1227,9 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 	payload := ""
 	note := ""
 	if view.Stopped != "" {
-		payload, note = stopPayload(view.Stopped, n, " on "+server, reportPath, haveReport)
+		payload, note = stopPayload(view.Stopped, name, n, " on "+server, haveReport)
 	} else {
-		payload = fmt.Sprintf("Builder finished round %d on %s. Report: %s", n, server, reportPath)
+		payload = fmt.Sprintf("Builder finished round %d on %s. Report: %s", n, server, showCommand(name, n, "report"))
 	}
 	if line := DiffLineFromNote(view.DiffNote, view.DiffCommits, view.DiffTree, b.Branch); line != "" {
 		payload = payload + "\n" + line
@@ -1273,7 +1273,7 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 // server-side candidate just hit a usage limit, so that server's own
 // reconcile can switch or gate it exactly as a local daemon would (§4.6). It
 // never fails the caller: a binding relevo could not reach is named in the
-// returned lines instead, and `relevo unavailable`'s local behaviour (the
+// returned lines instead, and `relevo gate <token>`'s local behaviour (the
 // ledger gate) proceeds either way.
 func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) []string {
 	if rt.Remote == nil {
@@ -1316,7 +1316,7 @@ func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) [
 // state and whether or not its round is open: a gate matters most when nothing
 // is running. One call and one answer line per distinct server, sorted, and it
 // never fails the caller -- a server relevo could not reach is named in the
-// returned lines instead, and `relevo available`'s local behaviour (the ledger
+// returned lines instead, and `relevo gate --clear`'s local behaviour (the ledger
 // clear) proceeds either way.
 func ForwardAvailable(ctx context.Context, rt Runtime, subject string) []string {
 	if rt.Remote == nil {

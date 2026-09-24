@@ -15,7 +15,7 @@ import (
 // error. showSectionFlags is a pure function, so this never executes the
 // subcommand -- CI launches no harness.
 func TestShowSectionFlagsConflict(t *testing.T) {
-	section, err := showSectionFlags(false, false, false, false, false, false)
+	section, err := showSectionFlags(false, false, false, false, false, false, false, "")
 	if err != nil {
 		t.Fatalf("no flags: err = %v, want nil", err)
 	}
@@ -23,7 +23,7 @@ func TestShowSectionFlagsConflict(t *testing.T) {
 		t.Errorf("no flags: section = %q, want %q (default)", section, relevo.ShowPlan)
 	}
 
-	section, err = showSectionFlags(false, true, false, false, false, false)
+	section, err = showSectionFlags(false, true, false, false, false, false, false, "")
 	if err != nil {
 		t.Fatalf("--report: err = %v, want nil", err)
 	}
@@ -31,7 +31,7 @@ func TestShowSectionFlagsConflict(t *testing.T) {
 		t.Errorf("--report: section = %q, want %q", section, relevo.ShowReport)
 	}
 
-	if _, err := showSectionFlags(true, true, false, false, false, false); err == nil {
+	if _, err := showSectionFlags(true, true, false, false, false, false, false, ""); err == nil {
 		t.Error("--plan --report: err = nil, want a usage error (more than one section)")
 	}
 }
@@ -113,5 +113,70 @@ func TestShowAbsorbedFlagCombinations(t *testing.T) {
 		if !errors.As(err, &ec) || ec.code != 2 {
 			t.Errorf("%v: run = %v, want exit code 2", args, err)
 		}
+	}
+}
+
+// TestShowSectionFlagsGateAndFindings pins §4.2's two new sections in the pure
+// resolver: --gate is a section, a non-empty --findings id is another, and
+// either with --report is a usage error.
+func TestShowSectionFlagsGateAndFindings(t *testing.T) {
+	section, err := showSectionFlags(false, false, false, false, false, false, true, "")
+	if err != nil || section != relevo.ShowGate {
+		t.Errorf("--gate: section = %q err = %v, want %q", section, err, relevo.ShowGate)
+	}
+
+	section, err = showSectionFlags(false, false, false, false, false, false, false, "7f2a3c1d")
+	if err != nil || section != relevo.ShowFindings {
+		t.Errorf("--findings: section = %q err = %v, want %q", section, err, relevo.ShowFindings)
+	}
+
+	if _, err := showSectionFlags(false, true, false, false, false, false, false, "7f2a3c1d"); err == nil {
+		t.Error("--report --findings: err = nil, want a usage error (more than one section)")
+	}
+}
+
+// TestShowGateAndFindings pins §4.2: `show --gate` prints the round's gate log
+// and `show --findings ID` prints a consult's findings, both read through
+// rt.Store.ReadFile. It is store-only -- no harness and no network.
+func TestShowGateAndFindings(t *testing.T) {
+	const name = "showgate"
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+	if err := s.Save(store.Binding{Name: name, CWD: t.TempDir(), Round: 2, State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := s.AppendLog(name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	gateBody := "make check -- PASS (exit 0, 1m40s)\n"
+	if err := os.WriteFile(s.GateLogPath(name, 1), []byte(gateBody), 0o644); err != nil {
+		t.Fatalf("write gate log: %v", err)
+	}
+	const id = "7f2a3c1d"
+	findingsBody := "verdict: accepted\n"
+	if err := os.WriteFile(s.FindingsPath(name, 1, id), []byte(findingsBody), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	got, _, err := captureOutput(t, func() error { return run([]string{"show", name, "--round", "1", "--gate"}) })
+	if err != nil {
+		t.Fatalf("show --gate: %v", err)
+	}
+	if string(got) != gateBody {
+		t.Errorf("show --gate = %q, want %q", got, gateBody)
+	}
+
+	got, _, err = captureOutput(t, func() error {
+		return run([]string{"show", name, "--round", "1", "--findings", id})
+	})
+	if err != nil {
+		t.Fatalf("show --findings: %v", err)
+	}
+	if string(got) != findingsBody {
+		t.Errorf("show --findings = %q, want %q", got, findingsBody)
 	}
 }

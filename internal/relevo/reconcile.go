@@ -187,8 +187,9 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (
 	// then removes the binding and its consults with it.
 	//
 	// On those early-return paths deliverAndSettle is skipped, so queued
-	// findings wait on disk and `relevo pull` retrieves them -- the same
-	// behaviour the halt comment below describes for a halted binding.
+	// findings wait on disk and the background wait's delivery retrieves them
+	// -- the same behaviour the halt comment below describes for a halted
+	// binding.
 	b, err = reconcileConsults(ctx, rt, tx, b)
 	if err != nil {
 		return b, err
@@ -350,14 +351,14 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		if rec.Result == "fail" {
 			tail = tailLines(rt.Store.ReadFile, rec.LogPath, gateTailLines)
 		}
-		gateSuffix = "\n" + gateLine(*rec, tail)
+		gateSuffix = "\n" + gateLine(b.Name, b.Round, *rec, tail)
 	}
 
 	reportPath := rt.Store.ReportPath(b.Name, b.Round)
 	if _, err := os.Stat(reportPath); err == nil {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
 		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-			fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, reportPath)+gateSuffix, joinNotes("", note), rec, nil, nil)
+			fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, showCommand(b.Name, b.Round, "report"))+gateSuffix, joinNotes("", note), rec, nil, nil)
 		if err != nil {
 			return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 		}
@@ -365,7 +366,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 	slog.Warn("round closed by marker without a report", "binding", b.Name, "round", b.Round, "note", "noreport")
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-		fmt.Sprintf("Builder wrote its completion marker for round %d but no report at %s.", b.Round, reportPath)+gateSuffix, joinNotes("noreport", note), rec, nil, nil)
+		fmt.Sprintf("Builder wrote its completion marker for round %d but wrote no report.", b.Round)+gateSuffix, joinNotes("noreport", note), rec, nil, nil)
 	if err != nil {
 		return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 	}
@@ -463,7 +464,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		if err := tx.AppendLog(b.Name, diffEntry); err != nil {
 			return b, err
 		}
-		if line := DiffLine(result, facts, b.Branch); line != "" {
+		if line := DiffLine(result, facts, b.Branch, b.Name, b.Round); line != "" {
 			payload = payload + "\n" + line
 		}
 		if pathsMismatch {
@@ -581,7 +582,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 // deliverAndSettle attempts any pending delivery. The binding is left pending
 // when no route can take the payload -- DeliverPending records why, and
-// `relevo pull` or the channel's own poll delivers it later (#303 §5.4).
+// `relevo wait` or the channel's own poll delivers it later (#303 §5.4).
 func deliverAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
 	if b.Owner != "" {
 		// Owned by a remote client: there is no planner. Payloads stay

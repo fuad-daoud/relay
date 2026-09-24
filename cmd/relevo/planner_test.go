@@ -484,3 +484,20 @@ func TestListShowsChat(t *testing.T) {
 		t.Errorf("beta should carry no chat_link, got %v", views[1]["chat_link"])
 	}
 }
+
+// TestPlannerPruneWasRemoved pins §4.4: pruning is automatic now, so the verb
+// exits 2 naming the daemon's hourly prune.
+func TestPlannerPruneWasRemoved(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	_, stderr, runErr := captureOutput(t, func() error {
+		return run([]string{"planner", "prune"})
+	})
+	var ec exitCodeErr
+	if !errors.As(runErr, &ec) || ec.code != 2 {
+		t.Fatalf("run = %v, want exit code 2", runErr)
+	}
+	if !strings.Contains(string(stderr), "the daemon prunes dead planners hourly") {
+		t.Errorf("stderr = %q, want it to name the daemon's hourly prune", stderr)
+	}
+}

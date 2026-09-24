@@ -130,9 +130,7 @@ func cmdServe(args []string) error {
        relevo serve log --owner <label|id> <name> [--round N] [--after N] [--json] [--follow] [--state <dir>]
        relevo serve show --owner <label|id> <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json] [--state <dir>]
        relevo serve tab [--owner <label|id>] [--since 7d] [--by binding|model|provider|owner] [--json] [--state <dir>]
-       relevo serve gates [--state <dir>]
-       relevo serve available <provider|token> [--state <dir>]
-       relevo serve unavailable <token> [--for D] [--reason S] [--state <dir>]
+       relevo gate --serve [--state <dir>]        (gates, available and unavailable moved to relevo gate)
        relevo serve ui [--state <dir>] [--interval 2s]
        relevo serve gc --abandoned <duration> [--dry-run] [--state <dir>]
        relevo serve unbind --owner <label|id> <name> [--state <dir>] [--force]`
@@ -161,12 +159,9 @@ func cmdServe(args []string) error {
 		return cmdServeShow(args[1:])
 	case "tab":
 		return cmdServeTab(args[1:])
-	case "gates":
-		return cmdServeGates(args[1:])
-	case "available":
-		return cmdServeAvailable(args[1:])
-	case "unavailable":
-		return cmdServeUnavailable(args[1:])
+	case "gates", "available", "unavailable":
+		fmt.Fprintf(os.Stderr, "relevo serve %s was removed; use relevo gate --serve …\n", args[0])
+		return exitCodeErr{code: 2}
 	case "ui":
 		return cmdServeUI(args[1:])
 	case "gc":
@@ -776,7 +771,7 @@ func cmdServeShow(args []string) error {
 	}
 	name := fs.Arg(0)
 
-	section, serr := showSectionFlags(*plan, *report, *diff, *drift, *logSection, *transcript)
+	section, serr := showSectionFlags(*plan, *report, *diff, *drift, *logSection, *transcript, false, "")
 	if serr != nil {
 		fmt.Fprintln(os.Stderr, "relevo serve show: "+serr.Error())
 		fmt.Fprintln(os.Stderr, usage)
@@ -876,20 +871,10 @@ func cmdServeTab(args []string) error {
 	return renderTabReport(entries, *by, cut, *asJSON)
 }
 
-// cmdServeGates lists the gates on the server-wide ledger: `relevo serve
-// gates` is the answer to `relevo available` printing "nothing was gating"
-// on a box whose gates live on the serve root's ledger, not the caller's.
-func cmdServeGates(args []string) error {
-	fs := flag.NewFlagSet("relevo serve gates", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	_ = fs.String("state", "", "state directory")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
+// serveGateList lists the gates on the server-wide ledger: `relevo serve
+// gates` was the answer to `relevo gate` printing "nothing was gating" on a
+// box whose gates live on the serve root's ledger, not the caller's (§4.3).
+func serveGateList(fs *flag.FlagSet) error {
 	root, err := adminRoot(fs)
 	if err != nil {
 		return err
@@ -897,7 +882,7 @@ func cmdServeGates(args []string) error {
 
 	cfg, err := serveAdminConfigWithCandidates(root)
 	if err != nil {
-		return fmt.Errorf("relevo serve gates: %w", err)
+		return fmt.Errorf("relevo gate --serve: %w", err)
 	}
 	srv, err := serve.New(cfg)
 	if err != nil {
@@ -908,25 +893,9 @@ func cmdServeGates(args []string) error {
 	return nil
 }
 
-// cmdServeAvailable lifts the server-side gate on a provider, in place, with
-// no forwarding: this is the verb for the box that runs the daemon.
-func cmdServeAvailable(args []string) error {
-	fs := flag.NewFlagSet("relevo serve available", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	_ = fs.String("state", "", "state directory")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
-	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "usage: relevo serve available <provider|token> [--state <dir>]")
-		return exitCodeErr{code: 2}
-	}
-	subject := fs.Arg(0)
-
+// serveGateClear lifts the server-side gate on a provider, in place, with
+// no forwarding: the verb for the box that runs the daemon (§4.3).
+func serveGateClear(fs *flag.FlagSet, subject string) error {
 	root, err := adminRoot(fs)
 	if err != nil {
 		return err
@@ -934,7 +903,7 @@ func cmdServeAvailable(args []string) error {
 
 	cfg, err := serveAdminConfigWithCandidates(root)
 	if err != nil {
-		return fmt.Errorf("relevo serve available: %w", err)
+		return fmt.Errorf("relevo gate --serve: %w", err)
 	}
 	srv, err := serve.New(cfg)
 	if err != nil {
@@ -954,28 +923,10 @@ func cmdServeAvailable(args []string) error {
 	return nil
 }
 
-// cmdServeUnavailable records a server-side gate: the server ledger's
-// counterpart to cmdUnavailable, with no daemon-switch line and no forwarding
-// (the gate is already on the ledger the daemon reads).
-func cmdServeUnavailable(args []string) error {
-	fs := flag.NewFlagSet("relevo serve unavailable", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	forFlag := fs.String("for", "", "how long to gate the provider (Go duration, e.g. 2h); omit to leave it gated until `relevo serve available`")
-	reason := fs.String("reason", "", "why, for the record")
-	_ = fs.String("state", "", "state directory")
-	if err := parseFlags(fs, args); err != nil {
-		if errors.Is(err, errHelpShown) {
-			return err
-		}
-		return exitCodeErr{code: 2}
-	}
-
-	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "usage: relevo serve unavailable <token> [--for D] [--reason S] [--state <dir>]")
-		return exitCodeErr{code: 2}
-	}
-	token := fs.Arg(0)
-
+// serveGateUnavailable records a server-side gate: the server ledger's
+// counterpart to gateUnavailable, with no daemon-switch line and no forwarding
+// (the gate is already on the ledger the daemon reads) (§4.3).
+func serveGateUnavailable(fs *flag.FlagSet, token, forFlag, reason string) error {
 	root, err := adminRoot(fs)
 	if err != nil {
 		return err
@@ -983,19 +934,19 @@ func cmdServeUnavailable(args []string) error {
 
 	cfg, err := serveAdminConfigWithCandidates(root)
 	if err != nil {
-		return fmt.Errorf("relevo serve unavailable: %w", err)
+		return fmt.Errorf("relevo gate --serve: %w", err)
 	}
 	srv, err := serve.New(cfg)
 	if err != nil {
 		return err
 	}
 
-	until, err := parseFor(*forFlag, time.Now())
+	until, err := parseFor(forFlag, time.Now())
 	if err != nil {
 		return err
 	}
 
-	provider, err := serve.AdminUnavailable(srv, token, until, *reason)
+	provider, err := serve.AdminUnavailable(srv, token, until, reason)
 	if err != nil {
 		return err
 	}

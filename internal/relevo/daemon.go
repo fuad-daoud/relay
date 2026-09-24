@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,7 +10,9 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/ingest"
+	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -21,6 +24,14 @@ const minInterval = 500 * time.Millisecond
 // daemon tries again (#371 §4.10): an endpoint that is down must be asked once
 // an hour, not once a tick.
 const releaseRetryAfter = time.Hour
+
+// plannerPruneInterval is how often the daemon prunes dead planner records
+// (§4.4): at most once an hour, so a busy tick pays one kv read.
+const plannerPruneInterval = time.Hour
+
+// plannerPrunedAtKey is the store database's kv row naming the last prune
+// (§4.4).
+const plannerPrunedAtKey = "planner.pruned_at"
 
 // ErrReexec reports that Run stopped because a new relevo binary is ready and
 // the caller should exec into it (#371). It is not a failure: the process
@@ -117,6 +128,11 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	if d.refresh != nil {
 		d.rt = d.refresh(d.rt)
 	}
+
+	// §4.4: the daemon prunes dead planner records itself, once an hour. It
+	// runs before the no-bindings early return: a machine whose sessions have
+	// all ended is exactly the one left carrying stale records.
+	d.safely("planner prune", func() { d.prunePlanners() })
 
 	bindings, err := d.rt.Store.List()
 	if err != nil {
@@ -388,4 +404,111 @@ func ingestLiveBindings(ctx context.Context, rt Runtime, bindings []store.Bindin
 				"artifacts", stats.Artifacts, "transcript", stats.TranscriptRecords)
 		}
 	}
+}
+
+// plannerPrunedAt is the kv row planner.pruned_at's document: when the daemon
+// last ran planner.Prune (§4.4).
+type plannerPrunedAt struct {
+	At time.Time `json:"pruned_at"`
+}
+
+// plannerPruneDue reports whether a prune last run at last (ok false when it
+// never ran) is due again at now: the once-an-hour decision, pure so a test
+// can pin it without a daemon (§4.4).
+func plannerPruneDue(last time.Time, ok bool, now time.Time) bool {
+	if !ok {
+		return true
+	}
+	return !now.Before(last.Add(plannerPruneInterval))
+}
+
+// prunePlanners forgets every planner record that is gone and that no non-DONE
+// binding names (planner.Prune), at most once an hour (§4.4). The last run is
+// the store database's kv row planner.pruned_at; each forgotten record is
+// logged once. A Runtime with no registry, no usable database or a store whose
+// database will not open prunes nothing and logs why.
+func (d *Daemon) prunePlanners() {
+	rt := d.rt
+	if rt.Planners == nil || rt.Store == nil {
+		return
+	}
+	kv, err := rt.Store.DB()
+	if err != nil {
+		slog.Warn("planner prune: open store db", "err", err)
+		return
+	}
+
+	now := time.Now
+	if rt.Now != nil {
+		now = rt.Now
+	}
+
+	last, ok, err := plannerLastPruned(kv)
+	if err != nil {
+		slog.Warn("planner prune: read last run", "err", err)
+		return
+	}
+	if !plannerPruneDue(last, ok, now()) {
+		return
+	}
+
+	counts, err := bindingPlannerCounts(rt.Store)
+	if err != nil {
+		slog.Warn("planner prune: list bindings", "err", err)
+		return
+	}
+
+	forgotten, err := planner.Prune(rt.Planners, rt.ProcStart, func(id string) int { return counts[id] }, false)
+	if err != nil {
+		slog.Warn("planner prune: forget", "err", err)
+	}
+	for _, rec := range forgotten {
+		slog.Info("forgot dead planner", "planner", rec.Name, "id", rec.ID)
+	}
+
+	if err := recordPlannerPruned(kv, now()); err != nil {
+		slog.Warn("planner prune: record last run", "err", err)
+	}
+}
+
+// plannerLastPruned reads planner.pruned_at, reporting ok false when the row
+// is absent (never pruned) or the database predates the kv table.
+func plannerLastPruned(kv db.KV) (last time.Time, ok bool, err error) {
+	raw, ok, err := kv.KVGet(plannerPrunedAtKey)
+	if err != nil || !ok {
+		return time.Time{}, false, err
+	}
+	var v plannerPrunedAt
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return time.Time{}, false, err
+	}
+	return v.At, true, nil
+}
+
+// recordPlannerPruned writes planner.pruned_at after a prune attempt.
+func recordPlannerPruned(kv db.KV, at time.Time) error {
+	raw, err := json.Marshal(plannerPrunedAt{At: at.UTC()})
+	if err != nil {
+		return err
+	}
+	return kv.KVPut(plannerPrunedAtKey, raw)
+}
+
+// bindingPlannerCounts counts, per planner id, the bindings that are not DONE
+// and name that planner: the in-use guard planner.Prune needs (§4.4). It is
+// the same walk cmd/relevo's plannerBindingCounts does; the daemon cannot call
+// that one (it lives in package main). An unreadable store is an error, never
+// an empty map.
+func bindingPlannerCounts(st *store.Store) (map[string]int, error) {
+	bindings, err := st.List()
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int)
+	for _, b := range bindings {
+		if b.State != store.StateDone && b.PlannerID != "" {
+			counts[b.PlannerID]++
+		}
+	}
+	return counts, nil
 }

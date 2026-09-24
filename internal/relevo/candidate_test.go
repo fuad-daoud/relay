@@ -206,7 +206,7 @@ func TestResolveCandidate(t *testing.T) {
 				`every candidate serving "builder" is gated`,
 				"agy/test/m (rate-limited until cleared)",
 				"--builder",
-				"relevo available",
+				"relevo gate --clear",
 			},
 		},
 		{
@@ -415,7 +415,7 @@ func TestExplainResolution(t *testing.T) {
 			want: "picked opencode/test/m for builder: unlisted, after order; skipped " + testAgyRef + " (spawn failed " + untilText + "), " + testClaudeRef + " (rate-limited until cleared)",
 		},
 		{
-			// #93: three `relevo unavailable` calls on one provider are three
+			// #93: three `relevo gate <token>` calls on one provider are three
 			// ledger entries and three Skips, but one sentence.
 			name: "duplicate gates on one token render once",
 			role: "builder",

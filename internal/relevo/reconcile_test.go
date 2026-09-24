@@ -97,8 +97,8 @@ func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
-	if !strings.Contains(pending.Payload, rt.Store.ReportPath("webshop", 1)) {
-		t.Errorf("payload must name the report path, got %q", pending.Payload)
+	if !strings.Contains(pending.Payload, "relevo show webshop --round 1 --report") {
+		t.Errorf("payload must name the show command, got %q", pending.Payload)
 	}
 }
 
@@ -126,8 +126,8 @@ func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
-	if !strings.Contains(pending.Payload, rt.Store.ReportPath("webshop", 1)) {
-		t.Errorf("payload must name the report path, got %q", pending.Payload)
+	if !strings.Contains(pending.Payload, "relevo show webshop --round 1 --report") {
+		t.Errorf("payload must name the show command, got %q", pending.Payload)
 	}
 }
 
@@ -226,7 +226,7 @@ func TestReconcileDiffCapture(t *testing.T) {
 
 	// Verify report payload carries diff line
 	reportEntry := log[reportIdx]
-	wantLine := "Diff: " + rt.Store.DiffPath("webshop", 1) + " (2 files, +10 -3)"
+	wantLine := "Diff: relevo show webshop --round 1 --diff (2 files, +10 -3)"
 	if !strings.Contains(reportEntry.Payload, wantLine) {
 		t.Fatalf("report payload %q does not contain %q", reportEntry.Payload, wantLine)
 	}
@@ -566,7 +566,7 @@ func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
 	if pending.Note != "" {
 		t.Errorf("note = %q, want empty on a marked close", pending.Note)
 	}
-	if !strings.Contains(pending.Payload, "Builder finished round 1. Report: "+rt.Store.ReportPath("webshop", 1)) {
+	if !strings.Contains(pending.Payload, "Builder finished round 1. Report: relevo show webshop --round 1 --report") {
 		t.Errorf("payload = %q", pending.Payload)
 	}
 }
@@ -590,7 +590,7 @@ func TestCloseOnMarkerWithoutReportIsNoreport(t *testing.T) {
 	if pending.Note != "noreport" {
 		t.Errorf("note = %q, want noreport", pending.Note)
 	}
-	want := "Builder wrote its completion marker for round 1 but no report at " + rt.Store.ReportPath("webshop", 1) + "."
+	want := "Builder wrote its completion marker for round 1 but wrote no report."
 	if !strings.Contains(pending.Payload, want) {
 		t.Errorf("payload = %q, want it to contain %q", pending.Payload, want)
 	}
@@ -741,7 +741,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if lines[1] != "" {
 			t.Errorf("line 1 = %q, want empty line", lines[1])
 		}
-		wantBodyFirst := "Builder finished round 1. Report: " + rt.Store.ReportPath("webshop", 1)
+		wantBodyFirst := "Builder finished round 1. Report: relevo show webshop --round 1 --report"
 		if lines[2] != wantBodyFirst {
 			t.Errorf("line 2 = %q, want %q", lines[2], wantBodyFirst)
 		}
@@ -801,7 +801,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if report.HaltedAt != "" {
 			t.Errorf("HaltedAt = %q, want empty", report.HaltedAt)
 		}
-		if strings.Contains(report.Payload, "--") || strings.Contains(report.Payload, "Outcome:") {
+		if strings.Contains(report.Payload, "Outcome:") {
 			t.Errorf("payload %q should have no outcome annotation", report.Payload)
 		}
 	})
@@ -1272,7 +1272,7 @@ func TestGateNotConfiguredIsUnchanged(t *testing.T) {
 	if pending.Note != "" {
 		t.Errorf("note = %q, want empty", pending.Note)
 	}
-	want := "Builder finished round 1. Report: " + rt.Store.ReportPath("webshop", 1)
+	want := "Builder finished round 1. Report: relevo show webshop --round 1 --report"
 	if !strings.HasSuffix(pending.Payload, want) {
 		t.Errorf("payload = %q, want it to end with %q (unchanged by the gate)", pending.Payload, want)
 	}
@@ -1420,9 +1420,9 @@ func TestGatePassClosesWithAnnotation(t *testing.T) {
 	if pending.Gate == nil || pending.Gate.Result != "pass" || pending.Gate.ExitCode != 0 {
 		t.Fatalf("Gate = %+v, want Result=pass ExitCode=0", pending.Gate)
 	}
-	wantLog := rt.Store.GateLogPath("webshop", 1)
+	wantRef := "relevo show webshop --round 1 --gate"
 	if !strings.Contains(pending.Payload, "Gate: make check -- PASS (exit 0,") ||
-		!strings.Contains(pending.Payload, wantLog) {
+		!strings.Contains(pending.Payload, wantRef) {
 		t.Errorf("payload = %q", pending.Payload)
 	}
 }
@@ -2092,7 +2092,7 @@ func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
 	}
 
 	// The report was queued for the planner: with no live claim it waits for
-	// `relevo pull`, which is the whole delivery route since #303.
+	// `relevo wait`, which is the whole delivery route since #303.
 	if pending, found, err := rt.Store.PendingForPlanner("webshop"); err != nil {
 		t.Fatal(err)
 	} else if !found {

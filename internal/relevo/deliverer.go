@@ -31,10 +31,14 @@ const (
 // is called again next tick with the same payload, so it must not deliver
 // twice.
 //
+// ref is how the planner reads the full text when the payload is too big to
+// push: today the `relevo show …` command that prints the entry (P4a round 2
+// §4.2), never a state-dir path.
+//
 // The returned string is a short reason for the log and Delivery.Reason,
 // and must never contain a credential. The error is for a bug in relevo
 // (a request it could not build); an unreachable planner is OutcomeUnavailable,
 // not an error.
 type PlannerDeliverer interface {
-	Deliver(ctx context.Context, planner store.Endpoint, payload, path string, queuedAt time.Time) (Outcome, string, error)
+	Deliver(ctx context.Context, planner store.Endpoint, payload, ref string, queuedAt time.Time) (Outcome, string, error)
 }

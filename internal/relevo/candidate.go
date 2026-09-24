@@ -175,7 +175,7 @@ func skipText(s Skip) string {
 
 // uniqStrings drops later duplicates, keeping first occurrences in order.
 // Gate texts are de-duplicated at render time only (#93): the ledger keeps
-// every `relevo unavailable` entry and resolveCandidate yields one Skip per
+// every `relevo gate <token>` entry and resolveCandidate yields one Skip per
 // gate, but a row or a pick line says each distinct text once.
 func uniqStrings(in []string) []string {
 	if len(in) == 0 {
@@ -299,7 +299,7 @@ func allGated(role string, skipped []Skip) (Resolution, error) {
 	for _, s := range skipped {
 		texts = append(texts, skipText(s))
 	}
-	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; name one with --builder to bypass, or clear a gate with relevo available <provider>: %w", role, strings.Join(uniqStrings(texts), ", "), ErrAllGated)
+	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; name one with --builder to bypass, or clear a gate with relevo gate --clear <provider>: %w", role, strings.Join(uniqStrings(texts), ", "), ErrAllGated)
 }
 
 // ExplainResolution is the one line that says what was picked and why.

@@ -13,7 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-const showUsage = `usage: relevo show <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json]
+const showUsage = `usage: relevo show <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript|--gate|--findings ID] [--json]
        relevo show <name> --diff|--drift [--stat] [--anchors]
        relevo show <name> --log [--follow] [--after N]`
 
@@ -32,22 +32,28 @@ func flagGiven(fs *flag.FlagSet, name string) bool {
 // showSectionFlags counts how many section flags are set and resolves the
 // one section they name, defaulting to plan when none is given. It is a
 // pure function so a cmd/relevo test can pin "more than one is a usage
-// error" without executing the subcommand.
-func showSectionFlags(plan, report, diff, drift, log, transcript bool) (relevo.ShowSection, error) {
-	set := map[relevo.ShowSection]bool{
-		relevo.ShowPlan:       plan,
-		relevo.ShowReport:     report,
-		relevo.ShowDiff:       diff,
-		relevo.ShowDrift:      drift,
-		relevo.ShowLog:        log,
-		relevo.ShowTranscript: transcript,
+// error" without executing the subcommand. findingsID is `--findings`'s
+// value: a non-empty id names the findings section.
+func showSectionFlags(plan, report, diff, drift, log, transcript, gate bool, findingsID string) (relevo.ShowSection, error) {
+	sections := []struct {
+		on      bool
+		section relevo.ShowSection
+	}{
+		{plan, relevo.ShowPlan},
+		{report, relevo.ShowReport},
+		{diff, relevo.ShowDiff},
+		{drift, relevo.ShowDrift},
+		{log, relevo.ShowLog},
+		{transcript, relevo.ShowTranscript},
+		{gate, relevo.ShowGate},
+		{findingsID != "", relevo.ShowFindings},
 	}
 	var chosen relevo.ShowSection
 	n := 0
-	for section, on := range set {
-		if on {
+	for _, s := range sections {
+		if s.on {
 			n++
-			chosen = section
+			chosen = s.section
 		}
 	}
 	switch n {
@@ -56,7 +62,7 @@ func showSectionFlags(plan, report, diff, drift, log, transcript bool) (relevo.S
 	case 1:
 		return chosen, nil
 	default:
-		return "", fmt.Errorf("only one of --plan, --report, --diff, --drift, --log, --transcript may be given")
+		return "", fmt.Errorf("only one of --plan, --report, --diff, --drift, --log, --transcript, --gate, --findings may be given")
 	}
 }
 
@@ -74,6 +80,8 @@ func cmdShow(args []string) error {
 	drift := fs.Bool("drift", false, "show the round's drift patch")
 	logSection := fs.Bool("log", false, "show the round's log entries")
 	transcript := fs.Bool("transcript", false, "show the round's builder transcript")
+	gateSection := fs.Bool("gate", false, "show the round's gate log")
+	findings := fs.String("findings", "", "show a consult's findings: --findings <id>")
 	stat := fs.Bool("stat", false, "with --diff/--drift: print the summary line instead of the patch body")
 	anchors := fs.Bool("anchors", false, "with --diff/--drift: prefix each hunk and line with its path:line")
 	follow := fs.Bool("follow", false, "with --log: keep printing new entries until the binding is DONE or removed")
@@ -92,7 +100,7 @@ func cmdShow(args []string) error {
 	}
 	name := fs.Args()[0]
 
-	section, serr := showSectionFlags(*plan, *report, *diff, *drift, *logSection, *transcript)
+	section, serr := showSectionFlags(*plan, *report, *diff, *drift, *logSection, *transcript, *gateSection, *findings)
 	if serr != nil {
 		fmt.Fprintln(os.Stderr, "relevo show: "+serr.Error())
 		fmt.Fprintln(os.Stderr, showUsage)
@@ -144,7 +152,7 @@ func cmdShow(args []string) error {
 		return printLog(rt, name, *round, *after, *asJSON, *follow, true)
 	}
 
-	opts := relevo.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON}
+	opts := relevo.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON, FindingsID: *findings}
 	return printShow(rt, opts, true, true, "")
 }
 

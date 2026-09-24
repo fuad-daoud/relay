@@ -24,18 +24,18 @@ func TestGateLineForms(t *testing.T) {
 		{
 			name: "pass",
 			rec:  store.GateRecord{Command: "make check", Result: "pass", ExitCode: 0, DurationMS: 100000, LogPath: "/p/001-gate.log"},
-			want: "Gate: make check -- PASS (exit 0, 1m40s). Output: /p/001-gate.log",
+			want: "Gate: make check -- PASS (exit 0, 1m40s). Output: relevo show webshop --round 3 --gate",
 		},
 		{
 			name: "fail",
 			rec:  store.GateRecord{Command: "make check", Result: "fail", ExitCode: 2, DurationMS: 100000, LogPath: "/p/001-gate.log"},
 			tail: []string{"line four", "line five"},
-			want: "Gate: make check -- FAIL (exit 2, 1m40s). Output: /p/001-gate.log\n  line four\n  line five",
+			want: "Gate: make check -- FAIL (exit 2, 1m40s). Output: relevo show webshop --round 3 --gate\n  line four\n  line five",
 		},
 		{
 			name: "timeout",
 			rec:  store.GateRecord{Command: "make check", Result: "timeout", DurationMS: (10 * time.Minute).Milliseconds(), LogPath: "/p/001-gate.log"},
-			want: "Gate: make check -- TIMEOUT after 10m0s. Output: /p/001-gate.log",
+			want: "Gate: make check -- TIMEOUT after 10m0s. Output: relevo show webshop --round 3 --gate",
 		},
 		{
 			name: "error",
@@ -46,7 +46,7 @@ func TestGateLineForms(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := gateLine(tt.rec, tt.tail); got != tt.want {
+			if got := gateLine("webshop", 3, tt.rec, tt.tail); got != tt.want {
 				t.Errorf("gateLine() =\n  %q\nwant\n  %q", got, tt.want)
 			}
 		})

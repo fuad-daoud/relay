@@ -28,7 +28,7 @@ const agentUnknown = "unknown"
 // deliverer for the planner kind, else "pull".
 //
 // live reports whether that route can push right now. A pull route is never
-// live: the daemon cannot see whether the background wait's `relevo pull` is
+// live: the daemon cannot see whether the background wait's `relevo wait` is
 // running, which is exactly why pull is a route and not a fault (D6).
 func plannerRoute(rt Runtime, b store.Binding) (route string, live bool) {
 	if rt.Channels != nil && b.PlannerID != "" {
@@ -94,7 +94,7 @@ type BindingStatus struct {
 	PlannerKind      string `json:"planner_kind"`
 	// PlannerRoute is how a pending report reaches this binding planner
 	// (#303 §3.6): "channel", "deliverer" or "pull". "pull" is a route, not
-	// a fault: it is the background wait's `relevo pull`, which is how a
+	// a fault: it is the background wait's `relevo wait`, which is how a
 	// Claude Code planner in tools mode gets its report (D6).
 	PlannerRoute string `json:"planner_route"`
 	// PlannerRouteLive reports whether that route can push right now: a live

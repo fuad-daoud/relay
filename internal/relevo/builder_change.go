@@ -23,7 +23,7 @@ func ResolveSendBuilder(rt Runtime, current, token string) (*Resolution, error) 
 
 // ResolveSendBuilderFor turns --builder's token into the resolution to apply
 // for a binding whose writer role is role, or nil for a no-op. An explicit
-// token is resolved exactly as `relevo add --builder` resolves one, so a gated
+// token is resolved exactly as `relevo bind --worktree --builder` resolves one, so a gated
 // candidate still resolves (its gates are recorded on the Resolution) and only
 // roles_missing refuses (#238).
 //

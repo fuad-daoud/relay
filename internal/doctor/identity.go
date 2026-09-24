@@ -14,7 +14,7 @@ type GitIdentityInput struct {
 	Email string
 }
 
-// GitIdentityCheck is the `relevo add --server` preflight (#335): a remote
+// GitIdentityCheck is the `relevo bind --server` preflight (#335): a remote
 // builder commits as the client, so a repo whose effective user.name or
 // user.email is unset makes every remote add refuse.
 //
@@ -38,7 +38,7 @@ func GitIdentityCheck(in GitIdentityInput) (Check, bool) {
 	detail := "user.name not set"
 	switch {
 	case in.Name == "" && in.Email == "":
-		detail = "user.name/user.email not set: relevo add --server will refuse"
+		detail = "user.name/user.email not set: relevo bind --server will refuse"
 	case in.Email == "":
 		detail = "user.email not set"
 	}

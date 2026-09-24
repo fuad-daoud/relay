@@ -1376,7 +1376,7 @@ func TestAvailableClearsServerWideGate(t *testing.T) {
 
 // TestAvailableRefusesUnknownProvider is #301 over the wire: the pre-check
 // handleAvailable used to carry only ever refused unknown *tokens* and let
-// any bare provider through, so `relevo available anthropc` forwarded to a
+// any bare provider through, so `relevo gate --clear anthropc` forwarded to a
 // server read as a no-op. relevo.Available now refuses a typo itself, and the
 // 422 carries the local verb's words.
 func TestAvailableRefusesUnknownProvider(t *testing.T) {

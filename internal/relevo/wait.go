@@ -16,6 +16,15 @@ type WaitResult struct {
 	Code int    // one of the Wait* exit constants below; meaningful only when Done
 	Line string // stdout line: report path, "-" (noreport), or the Waiting line
 	Done bool   // false while the round is open and nothing needs a human
+
+	// Payload is the pending entry's text Wait delivered for the round it
+	// stopped on (§4.1): the same text `relevo wait` printed. "" when nothing
+	// was pending, when --peek suppressed the delivery, or on an exit that
+	// delivers nothing (124 and 4).
+	Payload string
+	// DeliverErr is a read or confirm failure while delivering Payload. It
+	// never changes the exit code (§6): the CLI prints it to stderr.
+	DeliverErr error
 }
 
 const (
@@ -119,10 +128,23 @@ type WaitOptions struct {
 	Round    int           // 0 = DefaultWaitRound per binding, resolved once at start
 	Timeout  time.Duration // > 0; the CLI defaults 10m
 	Interval time.Duration // poll period; the CLI passes 1s; tests pass something small
+	Peek     bool          // --peek: report the outcome only, deliver nothing
+}
+
+// waitDeliverable reports whether code is an exit on which `relevo wait`
+// prints the pending payload (§4.1): every exit except the timeout (124) and a
+// done or unbound binding (4).
+func waitDeliverable(code int) bool {
+	return code != WaitTimeout && code != WaitGone
 }
 
 // Wait polls the store until one of opts.Names closes its
 // round, needs a human, or is gone, or opts.Timeout elapses, per spec §4.7.
+// On an exit that delivers (every code but WaitTimeout and WaitGone) it then
+// prints the binding's oldest pending payload for the planner (§4.1): the
+// returned WaitResult carries the text in Payload and marks the entry
+// delivered with route "wait", unless opts.Peek suppresses that. A delivery
+// failure is returned in DeliverErr and never changes Code (§6).
 //
 // Every name is loaded once up front, so a name that does not exist is an
 // error before the loop starts (exit 1 from cmd/relevo); a name that
@@ -180,6 +202,19 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 				return n, WaitResult{}, err
 			}
 			if r := WaitOutcome(b, entries, rounds[n], qf); r.Done {
+				// §4.1: every exit except the timeout and a gone binding
+				// prints the pending payload, after the outcome line, and
+				// marks it delivered with route "wait". --peek reports the
+				// outcome only. A delivery failure never changes the exit
+				// code (§6); the CLI prints DeliverErr to stderr.
+				if waitDeliverable(r.Code) && !opts.Peek {
+					text, found, derr := pullPending(ctx, rt, n, "wait")
+					if derr != nil {
+						r.DeliverErr = derr
+					} else if found {
+						r.Payload = text
+					}
+				}
 				return n, r, nil
 			}
 		}

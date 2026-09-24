@@ -98,7 +98,7 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, planner store.Endpoint,
 	}
 	if !queuedAt.IsZero() && d.now().Sub(queuedAt) > d.fallbackAfter() {
 		reason := fmt.Sprintf("opencode push gave up after %s", d.fallbackAfter())
-		slog.Info("opencode push not confirmed; payload stays pending for relevo pull", "session", planner.SessionID, "reason", reason)
+		slog.Info("opencode push not confirmed; payload stays pending for the background wait", "session", planner.SessionID, "reason", reason)
 		return OutcomeNotMine, reason, nil
 	}
 

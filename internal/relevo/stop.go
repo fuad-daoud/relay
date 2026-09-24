@@ -183,9 +183,9 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 // remote. how names the close ("killed" or "dequeued"), where is "" for a
 // local stop and " on <server>" for a remote one, and haveReport says whether
 // a report file was on disk. Pure.
-func stopPayload(how string, round int, where, reportPath string, haveReport bool) (payload, note string) {
+func stopPayload(how, name string, round int, where string, haveReport bool) (payload, note string) {
 	if haveReport {
-		return fmt.Sprintf("Builder was stopped (%s) for round %d%s. Report: %s", how, round, where, reportPath), "stopped"
+		return fmt.Sprintf("Builder was stopped (%s) for round %d%s. Report: %s", how, round, where, showCommand(name, round, "report")), "stopped"
 	}
 	return fmt.Sprintf("Builder was stopped (%s) for round %d%s; no report was written.", how, round, where), "noreport stopped"
 }
@@ -210,7 +210,7 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	if _, err := os.Stat(reportPath); err == nil {
 		haveReport = true
 	}
-	payload, note := stopPayload(how, stoppedRound, "", reportPath, haveReport)
+	payload, note := stopPayload(how, b.Name, stoppedRound, "", haveReport)
 
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil)
 	if err != nil {

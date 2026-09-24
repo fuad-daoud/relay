@@ -291,12 +291,12 @@ func TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport(t *testing.T) {
 		t.Fatal("expected drift to be detected")
 	}
 
-	payload, found, err := Pull(context.Background(), rt, "webshop", PullOptions{})
+	payload, found, err := pullPending(context.Background(), rt, "webshop", "wait")
 	if err != nil || !found {
-		t.Fatalf("Pull: found=%v err=%v", found, err)
+		t.Fatalf("pullPending: found=%v err=%v", found, err)
 	}
 	if !strings.Contains(payload, "001-report.md") {
-		t.Fatalf("Pull returned payload %q, want pending report", payload)
+		t.Fatalf("pullPending returned payload %q, want pending report", payload)
 	}
 }
 

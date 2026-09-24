@@ -646,7 +646,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		slog.Warn("headless builder exited with a report but no marker", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText, "note", "unmarked")
 		payload := fmt.Sprintf(
 			"Builder exited (code %s) after writing its report but never confirmed completion (no %s). Report: %s.",
-			codeText, filepath.Base(rt.Store.DonePath(b.Name, b.Round)), reportPath)
+			codeText, filepath.Base(rt.Store.DonePath(b.Name, b.Round)), showCommand(b.Name, b.Round, "report"))
 		if m.Line != "" {
 			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, GateTimeText(m.Until))
 		}
@@ -800,11 +800,11 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if isDenial {
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
 			"%s: builder exited (code %s) without a report after a permission denial (%q); not switched -- re-send with a higher tier (relevo send --name %s --file <plan> --tier edit|yolo [--allow-yolo]) or extend the harness's allow list; log: %s",
-			b.Name, codeText, denialLine, b.Name, b.Builder.LogPath))
+			b.Name, codeText, denialLine, b.Name, showCommand(b.Name, b.Round, "log")))
 	}
 
 	if !switchable {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder exited (code %s) without a report; see %s", b.Name, codeText, b.Builder.LogPath))
+		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder exited (code %s) without a report; see %s", b.Name, codeText, showCommand(b.Name, b.Round, "log")))
 	}
 	// The exclusion is appended to the b that switchBuilder receives so the
 	// replacement inherits it and the field is persisted with the switch

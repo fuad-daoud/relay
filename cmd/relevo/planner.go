@@ -33,8 +33,7 @@ func cmdPlanner(args []string) error {
 	const usage = `usage: relevo planner init [--name N] [--kind K --session S] [--hook claude]
        relevo planner list [--json]
        relevo planner rename <id|name> <new-name>
-       relevo planner forget <id|name>
-       relevo planner prune [--dry-run]`
+       relevo planner forget <id|name>`
 
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
@@ -51,7 +50,10 @@ func cmdPlanner(args []string) error {
 	case "forget":
 		return cmdPlannerForget(args[1:])
 	case "prune":
-		return cmdPlannerPrune(args[1:])
+		// §4.4: pruning is automatic now; the verb names that and exits 2
+		// like every other removed spelling.
+		fmt.Fprintf(os.Stderr, "relevo: %q was removed; the daemon prunes dead planners hourly\n", "prune")
+		return exitCodeErr{code: 2}
 	case "help", "-h", "--help":
 		fmt.Println(usage)
 		return nil
@@ -482,51 +484,6 @@ func cmdPlannerForget(args []string) error {
 	return nil
 }
 
-// cmdPlannerPrune forgets every record that is gone and that no binding still
-// names (§4.7): `relevo planner forget` for the pile-up, without naming each
-// record by hand. --dry-run lists what it would forget and forgets nothing.
-func cmdPlannerPrune(args []string) error {
-	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
-	dryRun := fs.Bool("dry-run", false, "list what prune would forget, without forgetting it")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-
-	rt, err := newRuntime()
-	if err != nil {
-		return err
-	}
-
-	counts, err := plannerBindingCounts(rt)
-	if err != nil {
-		return err
-	}
-
-	reg, err := plannerRegistry(rt)
-	if err != nil {
-		return err
-	}
-	forgotten, err := planner.Prune(reg, rt.ProcStart,
-		func(id string) int { return counts[id] }, *dryRun)
-	if err != nil {
-		return err
-	}
-
-	for _, rec := range forgotten {
-		if *dryRun {
-			fmt.Printf("would forget planner %s (%s)\n", rec.Name, rec.ID)
-			continue
-		}
-		fmt.Printf("forgot planner %s (%s)\n", rec.Name, rec.ID)
-	}
-	if *dryRun {
-		fmt.Printf("%d would be forgotten\n", len(forgotten))
-	} else {
-		fmt.Printf("%d forgotten\n", len(forgotten))
-	}
-	return nil
-}
-
 // plannerLookup resolves one <id|name> argument the way Resolve resolves a
 // --planner value: by id when it has the id shape, else by name.
 func plannerLookup(reg planner.Registry, ref string) (planner.Record, error) {
@@ -555,7 +512,7 @@ func plannerLookup(reg planner.Registry, ref string) (planner.Record, error) {
 
 // plannerFilter resolves this session's planner for the commands that filter
 // by it without requiring one: `relevo status` with no name (§3.3) and
-// `relevo statusline`. A miss is not an error there -- the caller keeps its
+// `relevo status --line`. A miss is not an error there -- the caller keeps its
 // old behaviour -- and neither is a Runtime with no registry (tests).
 func plannerFilter(rt relevo.Runtime) (planner.Record, bool) {
 	if rt.Planners == nil {
@@ -596,7 +553,7 @@ func plannerInUse(rt relevo.Runtime) func(id string) bool {
 // plannerBindingCounts counts, per planner id, the bindings that are not DONE
 // and name that planner -- the store listing Forget's in-use guard walks. An
 // unreadable store is an error, never an empty map: "no bindings" would let
-// `relevo planner prune` delete a record a binding still names.
+// the daemon's hourly prune delete a record a binding still names.
 func plannerBindingCounts(rt relevo.Runtime) (map[string]int, error) {
 	bindings, err := rt.Store.List()
 	if err != nil {
