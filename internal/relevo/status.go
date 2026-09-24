@@ -71,9 +71,14 @@ type LiveDiff struct {
 // BindingStatus is one row of relevo status: stored binding plus what relevo can
 // determine about its builder and its delivery route.
 type BindingStatus struct {
-	Name             string `json:"name"`
-	CWD              string `json:"cwd"`
-	Round            int    `json:"round"`
+	Name  string `json:"name"`
+	CWD   string `json:"cwd"`
+	Round int    `json:"round"`
+	// PlanRound is the highest round with a plan log entry -- the round in
+	// flight while one is, the last round sent once it has closed; 0 before
+	// any plan. Unlike Round, it never names an unsent round. Same rule as
+	// showLive's rounds count (#428).
+	PlanRound        int    `json:"plan_round,omitempty"`
 	State            string `json:"state"`
 	Display          string `json:"display"`
 	BuilderCandidate string `json:"builder_candidate"`
@@ -452,6 +457,11 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus,
 	entries, err := rt.Store.ReadLog(b.Name)
 	if err != nil {
 		return BindingStatus{}, err
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindPlan && e.Round > row.PlanRound {
+			row.PlanRound = e.Round
+		}
 	}
 	if w, ok := WaitingOn(b, entries, questionFirstLine(rt)); ok {
 		row.Waiting = &w

@@ -18,7 +18,7 @@ func paneModel(t *testing.T, b relevo.BindingStatus, active tab) roundPane {
 	t.Helper()
 	p := roundPane{width: 140, rows: 36, now: func() time.Time { return railNow },
 		report: relevo.Report{Bindings: []relevo.BindingStatus{b}}}
-	p.detail = detailModel{name: b.Name, round: b.Round - 1, active: active,
+	p.detail = detailModel{name: b.Name, round: paneRound(b), active: active,
 		vp: viewport.New(p.width, p.viewportHeight())}
 	p.fillViewport()
 	return p

@@ -76,7 +76,7 @@ func (p roundPane) visibleTabFetch() tea.Cmd {
 }
 
 // pointDetailAt re-targets the pane at the row keyed: key, round
-// (row.Round - 1), lastLogTS from row.Last, every cache cleared, every
+// (paneRound), lastLogTS from row.Last, every cache cleared, every
 // parked scroll zeroed. The active tab is kept -- a human reading diffs
 // across bindings stays on diff. It issues the visible-tab fetch only if
 // tabInFlight is clear; a fetch already in flight for the previous
@@ -97,7 +97,7 @@ func (p roundPane) pointDetailAt(key string) (roundPane, tea.Cmd) {
 	vp := viewport.New(p.width, p.viewportHeight())
 	p.detail = detailModel{
 		name:     key,
-		round:    r.Round - 1,
+		round:    paneRound(*r),
 		rounds:   r.Round,
 		live:     true,
 		active:   p.detail.active,
@@ -187,7 +187,7 @@ func (p roundPane) invalidate() (roundPane, tea.Cmd, bool) {
 	}
 
 	p.detail.lastLogTS = r.Last.TS
-	p.detail.round = r.Round - 1
+	p.detail.round = paneRound(*r)
 	p.detail.rounds = r.Round
 	for _, t := range []tab{tabPlan, tabReport, tabDiff, tabLog} {
 		p.detail.cache[t] = tabContent{} // loaded=false
