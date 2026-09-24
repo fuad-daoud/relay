@@ -24,11 +24,20 @@ func TestSettled(t *testing.T) {
 		want bool
 	}{
 		{
-			name: "acked",
+			name: "acked but just done",
 			b: store.Binding{
 				State:     store.StateDone,
 				Serve:     &store.ServeFacts{ClosedRound: 2, AckedRound: 2},
 				UpdatedAt: fresh,
+			},
+			want: false,
+		},
+		{
+			name: "acked and past the acked grace",
+			b: store.Binding{
+				State:     store.StateDone,
+				Serve:     &store.ServeFacts{ClosedRound: 2, AckedRound: 2},
+				UpdatedAt: now.Add(-ackedGrace - time.Minute),
 			},
 			want: true,
 		},
@@ -170,6 +179,11 @@ func TestCollectSettledOnTick(t *testing.T) {
 		ClosedRound: 1,
 		AckedRound:  0,
 	})
+
+	// Both bindings were just saved; run the tick two hours on, past the acked
+	// grace (an hour) and well short of the un-acked one (seven days).
+	base := env.srv.cfg.Now
+	env.srv.cfg.Now = func() time.Time { return base().Add(2 * time.Hour) }
 
 	if err := env.srv.Tick(ctx); err != nil {
 		t.Fatalf("tick: %v", err)

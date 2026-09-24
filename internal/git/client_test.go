@@ -2435,3 +2435,37 @@ func TestClientRefs(t *testing.T) {
 		t.Fatalf("refs/relevo/other/out = (%q, %v, %v), want %q", gotSHA, ok, err, sha)
 	}
 }
+
+// TestRemoveWorktreeAlreadyGone: a worktree whose directory is already gone
+// (removed by hand, or by an earlier relevo done) is removed successfully and
+// its stale registration pruned, so its branch can then be deleted -- the
+// case the served-binding cleanup hit on contabo (git: "is not a working tree").
+func TestRemoveWorktreeAlreadyGone(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 10*time.Second, 0)
+	repoDir := initRepo(t)
+	runGit(t, repoDir, "config", "user.name", "Test")
+	runGit(t, repoDir, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "file.txt")
+	runGit(t, repoDir, "commit", "-m", "first commit")
+	head := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+	wtDir := filepath.Join(t.TempDir(), "gone")
+	if err := client.AddWorktree(ctx, repoDir, wtDir, "relevo/gone", head); err != nil {
+		t.Fatalf("AddWorktree: %v", err)
+	}
+	if err := os.RemoveAll(wtDir); err != nil {
+		t.Fatal(err)
+	}
+	// The contabo state: the directory is gone AND git no longer lists it, so
+	// a bare `git worktree remove` says "is not a working tree".
+	runGit(t, repoDir, "worktree", "prune")
+	if err := client.RemoveWorktree(ctx, repoDir, wtDir, true); err != nil {
+		t.Fatalf("RemoveWorktree on a gone path = %v, want nil", err)
+	}
+	if err := client.DeleteBranch(ctx, repoDir, "relevo/gone"); err != nil {
+		t.Fatalf("DeleteBranch after removing a gone worktree = %v, want nil (stale registration pruned)", err)
+	}
+}
