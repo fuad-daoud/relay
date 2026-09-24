@@ -65,7 +65,7 @@ func TestHitRegionsStack(t *testing.T) {
 		t.Errorf("stack list screen is all rail, got %v", r)
 	}
 	m.screen = screenDetail
-	m.detail.name = m.rows()[0].Name
+	m.pane.detail.name = m.rows()[0].Name
 	b := m.rows()[0]
 	head := len(m.paneHead(&b))
 	if r, _, _ := m.hit(3, headerRows+head); r != hitTabs {
@@ -128,22 +128,22 @@ func longBody(n int) string {
 
 func TestWheelOverPaneScrollsWithoutMovingTheCursor(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
-	m.tabInFlight = false
-	m.detail.active = tabReport
-	m.detail.cache[tabReport] = tabContent{loaded: true, body: longBody(200)}
+	m.pane.tabInFlight = false
+	m.pane.detail.active = tabReport
+	m.pane.detail.cache[tabReport] = tabContent{loaded: true, body: longBody(200)}
 	m.fillViewport()
 	cursor := m.list.cursor
 	px, py := m.railWidth()+railGap+10, headerRows+20
 	res, _ := m.Update(wheel(px, py, true))
 	m = res.(Model)
-	if m.detail.vp.YOffset != 3 {
-		t.Errorf("one notch down scrolls three lines, got offset %d", m.detail.vp.YOffset)
+	if m.pane.detail.vp.YOffset != 3 {
+		t.Errorf("one notch down scrolls three lines, got offset %d", m.pane.detail.vp.YOffset)
 	}
 	if m.list.cursor != cursor || m.screen != screenList {
 		t.Error("a wheel over the pane must move neither the cursor nor the focus")
 	}
 	res, _ = m.Update(wheel(px, py, false))
-	if res.(Model).detail.vp.YOffset != 0 {
+	if res.(Model).pane.detail.vp.YOffset != 0 {
 		t.Error("one notch up scrolls back")
 	}
 }
@@ -152,34 +152,34 @@ func TestWheelOverPaneKeepsTheTerminalFollowRule(t *testing.T) {
 	rows := threeRows()
 	rows[0].Headless = &relevo.HeadlessInfo{PID: 1, LogPath: "/x/001-builder.log"}
 	m := splitModel(t, 140, 40, rows...)
-	m.tabInFlight = false
+	m.pane.tabInFlight = false
 	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m = res.(Model)
-	m.tabInFlight = false
-	res, _ = m.Update(tabMsg{name: m.detail.name, round: m.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: longBody(200)}})
+	m.pane.tabInFlight = false
+	res, _ = m.Update(tabMsg{name: m.pane.detail.name, round: m.pane.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: longBody(200)}})
 	m = res.(Model)
 	px, py := m.railWidth()+railGap+10, headerRows+20
 	res, _ = m.Update(wheel(px, py, false))
 	m = res.(Model)
-	if m.detail.follow {
+	if m.pane.detail.follow {
 		t.Error("a wheel up over the terminal tab stops following")
 	}
-	for i := 0; i < 100 && !m.detail.vp.AtBottom(); i++ {
+	for i := 0; i < 100 && !m.pane.detail.vp.AtBottom(); i++ {
 		res, _ = m.Update(wheel(px, py, true))
 		m = res.(Model)
 	}
-	if !m.detail.follow {
+	if !m.pane.detail.follow {
 		t.Error("wheeling back to the bottom resumes following")
 	}
 }
 
 func TestWheelOverRailMovesTheCursor(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
-	m.tabInFlight = false
+	m.pane.tabInFlight = false
 	res, _ := m.Update(wheel(3, headerRows+1, true))
 	m = res.(Model)
-	if m.list.cursor != 1 || m.detail.name != m.rows()[1].Name {
-		t.Errorf("wheel down over the rail: cursor %d pane %q", m.list.cursor, m.detail.name)
+	if m.list.cursor != 1 || m.pane.detail.name != m.rows()[1].Name {
+		t.Errorf("wheel down over the rail: cursor %d pane %q", m.list.cursor, m.pane.detail.name)
 	}
 	res, _ = m.Update(wheel(3, headerRows+1, false))
 	if res.(Model).list.cursor != 0 {
@@ -189,7 +189,7 @@ func TestWheelOverRailMovesTheCursor(t *testing.T) {
 
 func TestClickSelectsCardAndTab(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
-	m.tabInFlight = false
+	m.pane.tabInFlight = false
 	// Find the rail line of the third binding's name and click it.
 	lines := railLines(m.rows(), m.list.cursor, m.sort, m.now(), true, m.railWidth(), false)
 	target := -1
@@ -203,8 +203,8 @@ func TestClickSelectsCardAndTab(t *testing.T) {
 	m = res.(Model)
 	res, cmd := m.Update(click(3, headerRows+target))
 	m = res.(Model)
-	if m.list.cursor != 2 || m.detail.name != m.rows()[2].Name || cmd == nil {
-		t.Errorf("click on a card: cursor %d pane %q cmd %v", m.list.cursor, m.detail.name, cmd != nil)
+	if m.list.cursor != 2 || m.pane.detail.name != m.rows()[2].Name || cmd == nil {
+		t.Errorf("click on a card: cursor %d pane %q cmd %v", m.list.cursor, m.pane.detail.name, cmd != nil)
 	}
 	if m.screen != screenList {
 		t.Error("a click on the rail focuses the rail")
@@ -218,11 +218,11 @@ func TestClickSelectsCardAndTab(t *testing.T) {
 	b := m.rows()[2]
 	head := len(m.paneHead(&b))
 	sp := tabSpans()[tabDiff]
-	m.tabInFlight = false
+	m.pane.tabInFlight = false
 	res, _ = m.Update(click(m.railWidth()+railGap+sp[0]+1, headerRows+head))
 	m = res.(Model)
-	if m.detail.active != tabDiff || m.screen != screenDetail {
-		t.Errorf("click on the diff tab: active %v screen %v", m.detail.active, m.screen)
+	if m.pane.detail.active != tabDiff || m.screen != screenDetail {
+		t.Errorf("click on the diff tab: active %v screen %v", m.pane.detail.active, m.screen)
 	}
 	// Click the pane body: focus only.
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})

@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -24,16 +23,17 @@ type Model struct {
 	err    error         // last refresh error, shown in the footer
 	notice string        // sticky note (e.g. "webshop is gone"), cleared on keypress
 
-	// Two guards, not one. statusInFlight and tabInFlight are separate
-	// because a terminal read can block: a single shared
-	// guard would let one slow ReadAgent stall every list refresh behind it,
-	// freezing the fleet view for half a minute. Each is cleared by its own
-	// message.
+	// Two guards, not one. statusInFlight lives here and tabInFlight lives
+	// in the pane: they are separate because a terminal read can block, and
+	// a single shared guard would let one slow ReadAgent stall every list
+	// refresh behind it, freezing the fleet view for half a minute. Each is
+	// cleared by its own message.
 	statusInFlight bool
-	tabInFlight    bool
 
-	list   listModel
-	detail detailModel
+	list listModel
+	// pane is the detail pane's state and rendering (§4.4). syncPane lends
+	// it the fields it cannot own from Model on every call.
+	pane roundPane
 
 	// dash is the dashboard screen (§6 of the dashboard spec), a model of
 	// its own that the fleet hosts. dashSet is false until it is built,
@@ -92,6 +92,19 @@ func newModel(ctx context.Context, src Source, opts Options) Model {
 		railCols:       railDefault,
 		now:            time.Now,
 	}
+}
+
+// syncPane lends the pane everything Model owns and it does not: the source
+// and context its fetches use, the clock its ages read, the newest report it
+// resolves rows against, and its width and rows. It is called at the start of
+// every wrapper and in View before rendering.
+func (m *Model) syncPane() {
+	m.pane.src = m.src
+	m.pane.ctx = m.ctx
+	m.pane.now = m.now
+	m.pane.report = m.report
+	m.pane.width = m.paneWidth()
+	m.pane.rows = m.bodyRows()
 }
 
 // rows is the report's bindings in display order. Every index in the
@@ -158,103 +171,32 @@ func (m Model) paneVisible() bool {
 	return m.layout() == layoutSplit || m.screen == screenDetail
 }
 
+// visibleTabFetch keeps the paneVisible() guard; the fetch itself is the
+// pane's (§5.1).
 func (m Model) visibleTabFetch() tea.Cmd {
 	if !m.paneVisible() {
 		return nil
 	}
-	lines := m.detail.vp.Height
-	if lines < 1 {
-		lines = 1
-	}
-	t := m.detail.active
-	if t == tabTerminal && m.detail.live {
-		// A live terminal shows the builder's screen right now, so it
-		// refetches on every visible tick regardless of cache; a hist
-		// row's terminal is transcript rows already in the database --
-		// static, fetched once like every other tab (not tail-following).
-		return fetchFor(m.ctx, m.src, tabTerminal, m.detail.name, m.detail.round, lines, m.detail.live)
-	}
-	if !m.detail.cache[t].loaded {
-		return fetchFor(m.ctx, m.src, t, m.detail.name, m.detail.round, lines, m.detail.live)
-	}
-	return nil
+	m.syncPane()
+	return m.pane.visibleTabFetch()
 }
 
-// pointDetailAt re-targets the pane at the row keyed: key, round
-// (row.Round - 1), lastLogTS from row.Last, every cache cleared, every
-// parked scroll zeroed. The active tab is kept -- a human reading diffs
-// across bindings stays on diff. It issues the visible-tab fetch only if
-// tabInFlight is clear; a fetch already in flight for the previous
-// binding is discarded on arrival by tabMsg's name check, which exists
-// for exactly this. A no-op when the pane already shows key.
+// pointDetailAt delegates to the pane: the pane holds the state, Model lends
+// it the report and geometry, stores the result and returns its command
+// (§5.1). See roundPane.pointDetailAt for the rule.
 func (m Model) pointDetailAt(key string) (Model, tea.Cmd) {
-	if m.detail.name == key {
-		return m, nil
-	}
-	r := row(m.report, key)
-	if r == nil {
-		return m, nil
-	}
-	// #143: opening a binding's detail pane is what "viewed" means; the
-	// stamp is best-effort (each Source swallows its own errors) and must
-	// never block re-targeting the pane.
-	m.src.MarkViewed(key)
-	vp := viewport.New(m.paneWidth(), m.viewportHeight())
-	m.detail = detailModel{
-		name:     key,
-		round:    r.Round - 1,
-		rounds:   r.Round,
-		live:     true,
-		active:   m.detail.active,
-		vp:       vp,
-		headless: r.Headless != nil,
-		follow:   true,
-	}
-	if r.Last != nil {
-		m.detail.lastLogTS = r.Last.TS
-	}
-	m.fillViewport()
-	if m.tabInFlight {
-		return m, nil
-	}
-	if cmd := m.visibleTabFetch(); cmd != nil {
-		m.tabInFlight = true
-		return m, cmd
-	}
-	return m, nil
+	m.syncPane()
+	var cmd tea.Cmd
+	m.pane, cmd = m.pane.pointDetailAt(key)
+	return m, cmd
 }
 
-// pointDetailAtHist re-targets the pane at h, a database row not in the
-// live report (#172, §5.8): live false, round the newest -- every one of
-// h's rounds is closed, unlike a live row's round-1 rule -- rounds h.Rounds,
-// archivedAt from h, follow false (a hist row's terminal is transcript
-// rows, never tailed). Every cache cleared, the active tab kept, exactly
-// like pointDetailAt. A no-op when the pane already shows h.Name.
+// pointDetailAtHist delegates to the pane, like pointDetailAt (§5.1).
 func (m Model) pointDetailAtHist(h relevo.HistoryBinding) (Model, tea.Cmd) {
-	if m.detail.name == h.Name {
-		return m, nil
-	}
-	vp := viewport.New(m.paneWidth(), m.viewportHeight())
-	m.detail = detailModel{
-		name:       h.Name,
-		bindingID:  h.ID,
-		live:       false,
-		round:      h.Rounds,
-		rounds:     h.Rounds,
-		archivedAt: h.ArchivedAt,
-		active:     m.detail.active,
-		vp:         vp,
-		follow:     false,
-	}
-	m.fillViewport()
-	if m.tabInFlight {
-		return m, nil
-	}
-	if cmd := m.visibleTabFetch(); cmd != nil {
-		m.tabInFlight = true
-		return m, cmd
-	}
-	return m, nil
+	m.syncPane()
+	var cmd tea.Cmd
+	m.pane, cmd = m.pane.pointDetailAtHist(h)
+	return m, cmd
 }
 
 // pointAtRow dispatches rr to pointDetailAt or pointDetailAtHist, whichever
@@ -271,95 +213,115 @@ func (m Model) pointAtRow(rr railRow) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// fillViewport sets the viewport to the active tab's body, wrapped to the
-// viewport's width, keeping the current offset (the viewport clamps it).
-// Every SetContent goes through here so a resize re-wraps.
+// fillViewport delegates to the pane, after lending it the current geometry
+// (§5.1).
 func (m *Model) fillViewport() {
-	y := m.detail.vp.YOffset
-	if m.detail.name == "" {
-		// Nothing is pointed at, so nothing is loading: an empty fleet's
-		// pane stays blank rather than promising content.
-		m.detail.vp.SetContent("")
-		return
-	}
-	c := m.detail.cache[m.detail.active]
-	m.detail.vp.SetContent(wrapBody(bodyOf(m.detail.active, c, m.detail.headless), m.detail.vp.Width))
-	m.detail.vp.SetYOffset(y)
+	m.syncPane()
+	m.pane.fillViewport()
 }
 
+// maybeInvalidate keeps the guards and the gone branch; the pane does the
+// rest (§5.1). A hist row is never live: it is not in m.report to begin
+// with, and its data never changes underneath a human reading it, so there
+// is nothing here to invalidate against.
 func (m Model) maybeInvalidate() (Model, tea.Cmd) {
-	if !m.paneVisible() || m.detail.name == "" || !m.detail.live {
-		// A hist row is never live: it is not in m.report to begin with,
-		// and its data never changes underneath a human reading it, so
-		// there is nothing here to invalidate against.
+	if !m.paneVisible() || m.pane.detail.name == "" || !m.pane.detail.live {
 		return m, nil
 	}
-	r := row(m.report, m.detail.name)
-	if r == nil {
+	m.syncPane()
+	var cmd tea.Cmd
+	var gone bool
+	m.pane, cmd, gone = m.pane.invalidate()
+	if gone {
 		m.screen = screenList
-		m.notice = fmt.Sprintf("%s is gone", m.detail.name)
+		m.notice = fmt.Sprintf("%s is gone", m.pane.detail.name)
 		if m.layout() == layoutSplit {
 			if rows := m.railRows(); len(rows) > 0 {
 				return m.pointAtRow(rows[m.list.cursor])
 			}
 		}
-		return m, nil
-	}
-	if r.Last == nil {
-		return m, nil
-	}
-	if r.Last.TS.Equal(m.detail.lastLogTS) {
-		return m, nil
-	}
-
-	m.detail.lastLogTS = r.Last.TS
-	m.detail.round = r.Round - 1
-	m.detail.rounds = r.Round
-	for _, t := range []tab{tabPlan, tabReport, tabDiff, tabLog} {
-		m.detail.cache[t] = tabContent{} // loaded=false
-		m.detail.scroll[t] = 0           // reset parked offset on invalidation
-	}
-	if !m.tabInFlight {
-		cmd := m.visibleTabFetch()
-		if cmd != nil {
-			m.tabInFlight = true
-			return m, cmd
-		}
-	}
-	return m, nil
-}
-
-// stepRound moves detail.round by delta, clamped to [1, detail.rounds] --
-// "[" and "]" step a binding's rounds, live and archived alike (#183). At
-// either edge it is a no-op with no notice. Every tab's cache is
-// invalidated (a round-keyed fetch is meaningless against the old round's
-// reply) and the active tab is re-fetched.
-func (m Model) stepRound(delta int) (tea.Model, tea.Cmd) {
-	next := m.detail.round + delta
-	if next < 1 || next > m.detail.rounds {
-		return m, nil
-	}
-	m.detail.round = next
-	for t := tab(0); t < tabCount; t++ {
-		m.detail.cache[t] = tabContent{} // loaded=false
-		m.detail.scroll[t] = 0           // reset parked offset on invalidation
-	}
-	m.fillViewport()
-	if m.tabInFlight {
-		return m, nil
-	}
-	if cmd := m.visibleTabFetch(); cmd != nil {
-		m.tabInFlight = true
 		return m, cmd
 	}
-	return m, nil
+	return m, cmd
+}
+
+// stepRound delegates to the pane, keeping its old (tea.Model, tea.Cmd)
+// signature for every caller and test (§5.1).
+func (m Model) stepRound(delta int) (tea.Model, tea.Cmd) {
+	m.syncPane()
+	var cmd tea.Cmd
+	m.pane, cmd = m.pane.stepRound(delta)
+	return m, cmd
+}
+
+// paneHead, histPaneHead, tabBar, sourceLine, hintLine, detailHeader,
+// cycleTab, switchTab and paneView are the pane's own methods now (§5.1).
+// Model keeps a wrapper of every old name so every caller and test keeps
+// compiling: each lends the pane the current report and geometry, delegates,
+// and returns what the old method returned.
+
+func (m Model) paneHead(b *relevo.BindingStatus) []string {
+	m.syncPane()
+	return m.pane.paneHead(b)
+}
+
+func (m Model) histPaneHead() []string {
+	m.syncPane()
+	return m.pane.histPaneHead()
+}
+
+func (m Model) tabBar() []string {
+	m.syncPane()
+	return m.pane.tabBar()
+}
+
+func (m Model) sourceLine() string {
+	m.syncPane()
+	return m.pane.sourceLine()
+}
+
+func (m Model) hintLine(b *relevo.BindingStatus) (string, bool) {
+	m.syncPane()
+	return m.pane.hintLine(b)
+}
+
+func (m Model) detailHeader() string {
+	m.syncPane()
+	return m.pane.detailHeader()
+}
+
+func (m Model) cycleTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.syncPane()
+	var cmd tea.Cmd
+	m.pane, cmd = m.pane.cycleTab(msg)
+	return m, cmd
+}
+
+func (m Model) switchTab(next tab) (tea.Model, tea.Cmd) {
+	m.syncPane()
+	var cmd tea.Cmd
+	m.pane, cmd = m.pane.switchTab(next)
+	return m, cmd
+}
+
+// paneView draws exactly bodyRows() rows at width: head, tabs, source,
+// blank, viewport, with the hint replacing the last viewport row when it
+// applies. The viewport is resized to what is left after a head that grew
+// by foreign rows. The empty-fleet branch stays here; the rest is the
+// pane's.
+func (m Model) paneView(width int) string {
+	if m.empty() {
+		return strings.Join(emptyPaneBlock(width, m.bodyRows()), "\n")
+	}
+	m.syncPane()
+	return m.pane.view(width)
 }
 
 // setRail stores a new rail width, clamped, and re-fits the pane to the
 // width that leaves.
 func (m Model) setRail(cols int) (tea.Model, tea.Cmd) {
 	m.railCols = m.clampRail(cols)
-	m.detail.vp.Width = m.paneWidth()
+	m.pane.detail.vp.Width = m.paneWidth()
 	m.fillViewport()
 	m.list.top = m.railTop()
 	return m, m.save()
@@ -386,8 +348,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ready = true
-		m.detail.vp.Width = m.paneWidth()
-		m.detail.vp.Height = m.viewportHeight()
+		m.pane.detail.vp.Width = m.paneWidth()
+		m.pane.detail.vp.Height = m.viewportHeight()
 		m.fillViewport()
 		m.list.top = m.railTop()
 		m.dash.SetSize(msg.Width, msg.Height)
@@ -406,9 +368,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, fetchStatus(m.ctx, m.src, m.scope, m.opts.Here))
 		}
 
-		if !m.tabInFlight {
+		if !m.pane.tabInFlight {
 			if c := m.visibleTabFetch(); c != nil {
-				m.tabInFlight = true
+				m.pane.tabInFlight = true
 				cmds = append(cmds, c)
 			}
 		}
@@ -452,7 +414,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmds []tea.Cmd
 		if m.layout() == layoutSplit {
-			if rows := m.railRows(); len(rows) > 0 && m.detail.name != rows[m.list.cursor].name() {
+			if rows := m.railRows(); len(rows) > 0 && m.pane.detail.name != rows[m.list.cursor].name() {
 				var cmd tea.Cmd
 				m, cmd = m.pointAtRow(rows[m.list.cursor])
 				cmds = append(cmds, cmd)
@@ -482,30 +444,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.jumpFromDash(msg)
 
 	case tabMsg:
-		m.tabInFlight = false
+		m.pane.tabInFlight = false
 		if !m.paneVisible() {
 			return m, nil
 		}
-		if msg.name != m.detail.name {
-			return m, nil
-		}
-		// Every tab is round-keyed now (#183): plan, report, terminal and
-		// log all read the specific round fetchFor was called with, the
-		// same way diff always has. A reply for a round that is no longer
-		// the one on screen -- a slow fetch outlived by two presses of "]"
-		// -- is stale and must never land in the cache.
-		if msg.round != m.detail.round {
-			return m, nil
-		}
-		if msg.t != m.detail.active {
-			m.detail.cache[msg.t] = msg.content
-			return m, nil
-		}
-		m.detail.cache[msg.t] = msg.content
-		m.fillViewport()
-		if msg.t == tabTerminal && m.detail.follow {
-			m.detail.vp.GotoBottom()
-		}
+		m.syncPane()
+		m.pane = m.pane.onTab(msg)
 		return m, nil
 
 	case prefsSavedMsg:
@@ -669,14 +613,14 @@ func (m Model) jumpFromDash(msg dash.JumpMsg) (tea.Model, tea.Cmd) {
 	// The pick wins over the row's own newest round: re-point, drop every
 	// cached tab and fetch the active one for it. A reply for the round
 	// pointAtRow fetched is discarded by tabMsg's round check.
-	m.detail.round = msg.Round
+	m.pane.detail.round = msg.Round
 	for t := tab(0); t < tabCount; t++ {
-		m.detail.cache[t] = tabContent{}
-		m.detail.scroll[t] = 0
+		m.pane.detail.cache[t] = tabContent{}
+		m.pane.detail.scroll[t] = 0
 	}
 	m.fillViewport()
 	if c := m.visibleTabFetch(); c != nil {
-		m.tabInFlight = true
+		m.pane.tabInFlight = true
 		cmds = append(cmds, c)
 	}
 
@@ -787,7 +731,7 @@ func (m Model) footerView() string {
 	}
 	if m.paneVisible() {
 		for _, b := range m.report.Bindings {
-			if b.Key() != m.detail.name && b.Display == "NEEDS YOU" {
+			if b.Key() != m.pane.detail.name && b.Display == "NEEDS YOU" {
 				notes = append(notes, stateNeedsYouStyle.Render(b.Name+" NEEDS YOU"))
 			}
 		}

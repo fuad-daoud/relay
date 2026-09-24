@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -89,21 +88,6 @@ func wrapBody(body string, width int) string {
 		return body
 	}
 	return lipgloss.NewStyle().Width(width).Render(body)
-}
-
-// detailHeader is the detail pane's identity line (#183): name and round N
-// of M, plus "archived <date>" for a hist row the database recorded as
-// archived, plus "live" when the round on screen is a live binding's own
-// open (not yet closed) round.
-func (m Model) detailHeader() string {
-	s := fmt.Sprintf("%s · round %d of %d", m.detail.name, m.detail.round, m.detail.rounds)
-	if !m.detail.archivedAt.IsZero() {
-		s += " · archived " + m.detail.archivedAt.Format("2006-01-02")
-	}
-	if m.detail.live && m.detail.round == m.detail.rounds {
-		s += " · live"
-	}
-	return s
 }
 
 func (m Model) detailView() string {

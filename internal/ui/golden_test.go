@@ -189,8 +189,8 @@ func goldenDashModel(t *testing.T, width, height int, rep relevo.Report) Model {
 // "loading…".
 func feedTerminal(t *testing.T, m Model, name, body string) Model {
 	t.Helper()
-	m.detail.active = tabTerminal
-	res, _ := m.Update(tabMsg{name: name, round: m.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: body, at: railNow}})
+	m.pane.detail.active = tabTerminal
+	res, _ := m.Update(tabMsg{name: name, round: m.pane.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: body, at: railNow}})
 	return res.(Model)
 }
 
@@ -211,7 +211,7 @@ func TestGoldenViews(t *testing.T) {
 				// The pane points at the running-round binding, so the
 				// golden's header pins the live usage row (#234).
 				m, _ = m.pointDetailAt("atlas")
-				return feedTerminal(t, m, m.detail.name, terminalBody)
+				return feedTerminal(t, m, m.pane.detail.name, terminalBody)
 			},
 		},
 		{
@@ -221,7 +221,7 @@ func TestGoldenViews(t *testing.T) {
 					{Name: strings.Repeat("x", 40), Round: 1, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working"},
 				}
 				m := goldenModel(t, 140, 40, relevo.Report{Bindings: rows})
-				return feedTerminal(t, m, m.detail.name, terminalBody)
+				return feedTerminal(t, m, m.pane.detail.name, terminalBody)
 			},
 		},
 		{
@@ -263,7 +263,7 @@ func TestGoldenViews(t *testing.T) {
 				m := goldenModel(t, 80, 30, relevo.Report{Bindings: rows, Gated: gatedGates()})
 				res, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 				m = res.(Model)
-				return feedTerminal(t, m, m.detail.name, terminalBody)
+				return feedTerminal(t, m, m.pane.detail.name, terminalBody)
 			},
 		},
 		{
@@ -275,7 +275,7 @@ func TestGoldenViews(t *testing.T) {
 				rows := allStatesRows()[:2]
 				m := goldenAllScopeModel(t, 140, 40, relevo.Report{Bindings: rows}, histRows())
 				m, _ = m.pointDetailAt(rows[0].Name)
-				return feedTerminal(t, m, m.detail.name, terminalBody)
+				return feedTerminal(t, m, m.pane.detail.name, terminalBody)
 			},
 		},
 		{
@@ -300,8 +300,8 @@ func TestGoldenViews(t *testing.T) {
 				h := histRows()[0]
 				m, _ = m.pointDetailAtHist(h)
 				res, _ := m.Update(tabMsg{
-					name: h.Name, round: m.detail.round, t: tabPlan,
-					content: tabContent{loaded: true, round: m.detail.round, at: railNow, body: "# Round 3 plan\n\nDo the thing.\n"},
+					name: h.Name, round: m.pane.detail.round, t: tabPlan,
+					content: tabContent{loaded: true, round: m.pane.detail.round, at: railNow, body: "# Round 3 plan\n\nDo the thing.\n"},
 				})
 				return res.(Model)
 			},

@@ -17,7 +17,7 @@ func paneModel(t *testing.T, b relevo.BindingStatus, active tab) Model {
 	m := Model{width: 140, height: 40, ready: true, statusLoaded: true, sort: true,
 		now: func() time.Time { return railNow }}
 	m.report = relevo.Report{Bindings: []relevo.BindingStatus{b}}
-	m.detail = detailModel{name: b.Name, round: b.Round - 1, active: active,
+	m.pane.detail = detailModel{name: b.Name, round: b.Round - 1, active: active,
 		vp: viewport.New(m.paneWidth(), m.viewportHeight())}
 	return m
 }
@@ -144,48 +144,48 @@ func TestDiffStatAndColour(t *testing.T) {
 func TestSourceLinePerTab(t *testing.T) {
 	b := relevo.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
 	m := paneModel(t, b, tabReport)
-	m.detail.cache[tabReport] = tabContent{loaded: true, body: "x", round: 2, at: railNow.Add(-time.Hour)}
+	m.pane.detail.cache[tabReport] = tabContent{loaded: true, body: "x", round: 2, at: railNow.Add(-time.Hour)}
 	if got := stripANSI(m.sourceLine()); got != "report r2 · 13:02" {
 		t.Errorf("report source = %q", got)
 	}
-	m.detail.active = tabTerminal
-	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second)}
+	m.pane.detail.active = tabTerminal
+	m.pane.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second)}
 	if got := stripANSI(m.sourceLine()); got != "remote · captured 1s ago · 3 lines" {
 		t.Errorf("terminal source = %q", got)
 	}
 	b.Headless = &relevo.HeadlessInfo{LogPath: "/x/002-builder.log"}
 	m.report = relevo.Report{Bindings: []relevo.BindingStatus{b}}
-	m.detail.headless = true
-	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second),
+	m.pane.detail.headless = true
+	m.pane.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second),
 		transcript: true, logName: "002-builder.log"}
-	m.detail.follow = true
+	m.pane.detail.follow = true
 	if got := stripANSI(m.sourceLine()); got != "headless · 002-builder.log · 3 lines · following" {
 		t.Errorf("headless following source = %q", got)
 	}
-	m.detail.follow = false
+	m.pane.detail.follow = false
 	if got := stripANSI(m.sourceLine()); got != "headless · 002-builder.log · 3 lines · scrolled" {
 		t.Errorf("headless scrolled source = %q", got)
 	}
-	m.detail.headless = false
-	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second),
+	m.pane.detail.headless = false
+	m.pane.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second),
 		transcript: true, logName: "002-builder.log"}
-	m.detail.follow = true
+	m.pane.detail.follow = true
 	if got := stripANSI(m.sourceLine()); got != "pane · 002-builder.log · 3 lines · following" {
 		t.Errorf("pane transcript source = %q", got)
 	}
-	m.detail.follow = false
-	m.detail.active = tabDiff
-	m.detail.cache[tabDiff] = tabContent{loaded: true, body: "diff --git a/x b/x\n+a\n-b\n"}
+	m.pane.detail.follow = false
+	m.pane.detail.active = tabDiff
+	m.pane.detail.cache[tabDiff] = tabContent{loaded: true, body: "diff --git a/x b/x\n+a\n-b\n"}
 	if got := stripANSI(m.sourceLine()); got != "round 2 · 1 file · +1 −1" {
 		t.Errorf("diff source = %q", got)
 	}
-	m.detail.active = tabLog
-	m.detail.cache[tabLog] = tabContent{loaded: true, body: "e1\ne2"}
+	m.pane.detail.active = tabLog
+	m.pane.detail.cache[tabLog] = tabContent{loaded: true, body: "e1\ne2"}
 	if got := stripANSI(m.sourceLine()); got != "2 entries" {
 		t.Errorf("log source = %q", got)
 	}
-	m.detail.active = tabReport
-	m.detail.cache[tabReport] = tabContent{}
+	m.pane.detail.active = tabReport
+	m.pane.detail.cache[tabReport] = tabContent{}
 	if got := stripANSI(m.sourceLine()); got != "loading…" {
 		t.Errorf("unloaded source = %q", got)
 	}
@@ -199,11 +199,11 @@ func TestHintLineOnlyForBlockedTerminal(t *testing.T) {
 	if !ok || stripANSI(line) != "relevo: relevo status --name webshop" {
 		t.Errorf("hint = %q ok=%v", stripANSI(line), ok)
 	}
-	m.detail.active = tabReport
+	m.pane.detail.active = tabReport
 	if _, ok := m.hintLine(&b); ok {
 		t.Error("hint must only show on the terminal tab")
 	}
-	m.detail.active = tabTerminal
+	m.pane.detail.active = tabTerminal
 	b.Waiting.Cause = "halted"
 	if _, ok := m.hintLine(&b); ok {
 		t.Error("hint must only show for a blocked builder")
@@ -218,8 +218,8 @@ func TestPaneViewRowsAndWidth(t *testing.T) {
 	b := relevo.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
 		Waiting: &relevo.Waiting{Cause: "blocked", Hint: "relevo status --name webshop"}}
 	m := paneModel(t, b, tabTerminal)
-	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("screen line\n", 50)}
-	m.detail.vp.SetContent(bodyOf(tabTerminal, m.detail.cache[tabTerminal], false))
+	m.pane.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("screen line\n", 50)}
+	m.pane.detail.vp.SetContent(bodyOf(tabTerminal, m.pane.detail.cache[tabTerminal], false))
 	view := m.paneView(m.paneWidth())
 	lines := strings.Split(view, "\n")
 	if len(lines) != m.bodyRows() {
@@ -314,19 +314,19 @@ func TestBodyOfStylesOnlyHeadlessTerminal(t *testing.T) {
 func TestViewportReachesBottomOfLongLines(t *testing.T) {
 	b := relevo.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
 	m := paneModel(t, b, tabLog)
-	m.detail.vp.Width = 40
-	m.detail.vp.Height = 3
+	m.pane.detail.vp.Width = 40
+	m.pane.detail.vp.Height = 3
 	var lines []string
 	for i := 0; i < 5; i++ {
 		lines = append(lines, fmt.Sprintf("entry %d %s END%d", i, strings.Repeat("w ", 30), i))
 	}
-	m.detail.cache[tabLog] = tabContent{loaded: true, body: strings.Join(lines, "\n")}
+	m.pane.detail.cache[tabLog] = tabContent{loaded: true, body: strings.Join(lines, "\n")}
 	m.fillViewport()
-	m.detail.vp.GotoBottom()
-	if v := stripANSI(m.detail.vp.View()); !strings.Contains(v, "END4") {
+	m.pane.detail.vp.GotoBottom()
+	if v := stripANSI(m.pane.detail.vp.View()); !strings.Contains(v, "END4") {
 		t.Errorf("the last line must be reachable at the bottom, got:\n%s", v)
 	}
-	if m.detail.vp.TotalLineCount() <= 5 {
-		t.Errorf("wrapped content must have more logical lines than raw (%d)", m.detail.vp.TotalLineCount())
+	if m.pane.detail.vp.TotalLineCount() <= 5 {
+		t.Errorf("wrapped content must have more logical lines than raw (%d)", m.pane.detail.vp.TotalLineCount())
 	}
 }

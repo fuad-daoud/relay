@@ -113,16 +113,16 @@ func TestPointAtArchivedRowLoadsPlanFromDB(t *testing.T) {
 	m.scope = scopeAll
 
 	m, cmd := m.pointDetailAtHist(h)
-	if m.detail.live {
+	if m.pane.detail.live {
 		t.Error("live = true, want false for a hist row")
 	}
-	if m.detail.name != "fixture" {
-		t.Errorf("name = %q, want fixture", m.detail.name)
+	if m.pane.detail.name != "fixture" {
+		t.Errorf("name = %q, want fixture", m.pane.detail.name)
 	}
-	if m.detail.rounds != 3 || m.detail.round != 3 {
-		t.Errorf("round=%d rounds=%d, want round=3 rounds=3 (every round closed, newest default)", m.detail.round, m.detail.rounds)
+	if m.pane.detail.rounds != 3 || m.pane.detail.round != 3 {
+		t.Errorf("round=%d rounds=%d, want round=3 rounds=3 (every round closed, newest default)", m.pane.detail.round, m.pane.detail.rounds)
 	}
-	if m.detail.archivedAt.IsZero() {
+	if m.pane.detail.archivedAt.IsZero() {
 		t.Error("archivedAt must be set for an archived hist row")
 	}
 	if cmd == nil {
@@ -155,15 +155,15 @@ func TestArchivedTerminalTabShowsTranscriptRows(t *testing.T) {
 	rt, h := seedArchivedHistBinding(t)
 
 	m := histModel(t, rt, h)
-	if m.detail.follow {
+	if m.pane.detail.follow {
 		t.Error("follow = true, want false for a hist row (never tail-following)")
 	}
 
 	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
 	m = res.(Model)
-	m.tabInFlight = false
-	if m.detail.round != 2 {
-		t.Fatalf("round = %d, want 2", m.detail.round)
+	m.pane.tabInFlight = false
+	if m.pane.detail.round != 2 {
+		t.Fatalf("round = %d, want 2", m.pane.detail.round)
 	}
 
 	res, cmd := m.switchTab(tabTerminal)
@@ -175,13 +175,13 @@ func TestArchivedTerminalTabShowsTranscriptRows(t *testing.T) {
 	res, _ = m.Update(msg)
 	m = res.(Model)
 
-	if m.detail.follow {
+	if m.pane.detail.follow {
 		t.Error("follow must stay false after loading the terminal tab")
 	}
-	if !m.detail.cache[tabTerminal].transcript {
+	if !m.pane.detail.cache[tabTerminal].transcript {
 		t.Error("a hist row's terminal tab must render as transcript content")
 	}
-	if m.detail.cache[tabTerminal].body == "" {
+	if m.pane.detail.cache[tabTerminal].body == "" {
 		t.Error("expected rendered transcript rows, got empty body")
 	}
 }
@@ -228,17 +228,17 @@ func TestArchivedStepRoundRefetches(t *testing.T) {
 	m := histModel(t, rt, h)
 
 	for tb := tab(0); tb < tabCount; tb++ {
-		m.detail.cache[tb] = tabContent{loaded: true, body: "stale"}
+		m.pane.detail.cache[tb] = tabContent{loaded: true, body: "stale"}
 	}
-	m.tabInFlight = false
+	m.pane.tabInFlight = false
 
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
 	m = res.(Model)
-	if m.detail.round != 2 {
-		t.Fatalf("round = %d, want 2", m.detail.round)
+	if m.pane.detail.round != 2 {
+		t.Fatalf("round = %d, want 2", m.pane.detail.round)
 	}
 	for tb := tab(0); tb < tabCount; tb++ {
-		if m.detail.cache[tb].loaded {
+		if m.pane.detail.cache[tb].loaded {
 			t.Errorf("tab %v cache still loaded after stepping", tb)
 		}
 	}

@@ -52,7 +52,7 @@ func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.statusInFlight = true
-	m.tabInFlight = false
+	m.pane.tabInFlight = false
 
 	res, cmd := m.Update(tickMsg(time.Now()))
 	updated := res.(Model)
@@ -73,7 +73,7 @@ func TestSingleFlightTabInFlightStillIssuesStatus(t *testing.T) {
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.statusInFlight = false
-	m.tabInFlight = true
+	m.pane.tabInFlight = true
 
 	res, cmd := m.Update(tickMsg(time.Now()))
 	updated := res.(Model)
@@ -94,10 +94,10 @@ func TestSingleFlightTabInFlightBlocksSecondTabFetch(t *testing.T) {
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.active = tabTerminal
+	m.pane.detail.name = "webshop"
+	m.pane.detail.active = tabTerminal
 	m.statusInFlight = true
-	m.tabInFlight = true
+	m.pane.tabInFlight = true
 
 	_, cmd := m.Update(tickMsg(time.Now()))
 	batch := extractBatch(cmd)
@@ -168,9 +168,9 @@ func TestTabMsgMismatchedBindingDiscarded(t *testing.T) {
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 
 	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.active = tabReport
-	m.tabInFlight = true
+	m.pane.detail.name = "webshop"
+	m.pane.detail.active = tabReport
+	m.pane.tabInFlight = true
 
 	lateMsg := tabMsg{
 		name:  "other-binding",
@@ -185,14 +185,14 @@ func TestTabMsgMismatchedBindingDiscarded(t *testing.T) {
 	res, _ := m.Update(lateMsg)
 	updated := res.(Model)
 
-	if updated.tabInFlight {
+	if updated.pane.tabInFlight {
 		t.Error("tabMsg should clear tabInFlight")
 	}
-	if updated.detail.cache[tabReport].loaded {
+	if updated.pane.detail.cache[tabReport].loaded {
 		t.Error("cache should not be populated with mismatched binding response")
 	}
-	if updated.detail.cache[tabReport].body != "" {
-		t.Errorf("cache body should be empty, got %q", updated.detail.cache[tabReport].body)
+	if updated.pane.detail.cache[tabReport].body != "" {
+		t.Errorf("cache body should be empty, got %q", updated.pane.detail.cache[tabReport].body)
 	}
 }
 
@@ -211,11 +211,11 @@ func TestWindowSizeMsgSetsReady(t *testing.T) {
 	if updated.width != 100 || updated.height != 40 {
 		t.Errorf("expected 100x40, got %dx%d", updated.width, updated.height)
 	}
-	if updated.detail.vp.Width != 100 {
-		t.Errorf("expected vp width 100, got %d", updated.detail.vp.Width)
+	if updated.pane.detail.vp.Width != 100 {
+		t.Errorf("expected vp width 100, got %d", updated.pane.detail.vp.Width)
 	}
-	if want := updated.viewportHeight(); updated.detail.vp.Height != want {
-		t.Errorf("expected vp height %d, got %d", want, updated.detail.vp.Height)
+	if want := updated.viewportHeight(); updated.pane.detail.vp.Height != want {
+		t.Errorf("expected vp height %d, got %d", want, updated.pane.detail.vp.Height)
 	}
 }
 
@@ -243,9 +243,9 @@ func TestStaleRoundReplyDiscardedForDiff(t *testing.T) {
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.round = 4
-	m.detail.active = tabDiff
+	m.pane.detail.name = "webshop"
+	m.pane.detail.round = 4
+	m.pane.detail.active = tabDiff
 
 	staleMsg := tabMsg{
 		name:  "webshop",
@@ -260,11 +260,11 @@ func TestStaleRoundReplyDiscardedForDiff(t *testing.T) {
 	res, _ := m.Update(staleMsg)
 	updated := res.(Model)
 
-	if updated.detail.cache[tabDiff].loaded {
+	if updated.pane.detail.cache[tabDiff].loaded {
 		t.Error("stale diff tabMsg must be discarded and not update cache")
 	}
-	if updated.detail.cache[tabDiff].body != "" {
-		t.Errorf("expected empty cache body, got %q", updated.detail.cache[tabDiff].body)
+	if updated.pane.detail.cache[tabDiff].body != "" {
+		t.Errorf("expected empty cache body, got %q", updated.pane.detail.cache[tabDiff].body)
 	}
 }
 
@@ -277,9 +277,9 @@ func TestStaleRoundReplyDiscardedForReport(t *testing.T) {
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.round = 4
-	m.detail.active = tabReport
+	m.pane.detail.name = "webshop"
+	m.pane.detail.round = 4
+	m.pane.detail.active = tabReport
 
 	staleMsg := tabMsg{
 		name:  "webshop",
@@ -294,11 +294,11 @@ func TestStaleRoundReplyDiscardedForReport(t *testing.T) {
 	res, _ := m.Update(staleMsg)
 	updated := res.(Model)
 
-	if updated.detail.cache[tabReport].loaded {
+	if updated.pane.detail.cache[tabReport].loaded {
 		t.Error("stale report tabMsg must be discarded and not update cache")
 	}
-	if updated.detail.cache[tabReport].body != "" {
-		t.Errorf("expected empty cache body, got %q", updated.detail.cache[tabReport].body)
+	if updated.pane.detail.cache[tabReport].body != "" {
+		t.Errorf("expected empty cache body, got %q", updated.pane.detail.cache[tabReport].body)
 	}
 }
 
@@ -310,10 +310,10 @@ func TestMaybeInvalidateBlockedWhenTabInFlight(t *testing.T) {
 	ts := time.Now()
 
 	m.screen = screenDetail
-	m.detail.name = name
-	m.detail.active = tabReport
-	m.detail.lastLogTS = ts
-	m.tabInFlight = true
+	m.pane.detail.name = name
+	m.pane.detail.active = tabReport
+	m.pane.detail.lastLogTS = ts
+	m.pane.tabInFlight = true
 
 	rep := relevo.Report{
 		Bindings: []relevo.BindingStatus{
@@ -334,7 +334,7 @@ func TestMaybeInvalidateBlockedWhenTabInFlight(t *testing.T) {
 	if cmd != nil {
 		t.Error("maybeInvalidate must issue no fetch while tabInFlight is set")
 	}
-	if !updated.tabInFlight {
+	if !updated.pane.tabInFlight {
 		t.Error("tabInFlight must remain true")
 	}
 }
@@ -459,7 +459,7 @@ func TestEmptyFleetKeysDoNotFocusPane(t *testing.T) {
 	if !m.empty() {
 		t.Fatal("fixture must be empty")
 	}
-	startActive := m.detail.active
+	startActive := m.pane.detail.active
 
 	keys := []tea.KeyMsg{
 		{Type: tea.KeyTab},
@@ -474,8 +474,8 @@ func TestEmptyFleetKeysDoNotFocusPane(t *testing.T) {
 		if m.screen != screenList {
 			t.Errorf("key %q: screen = %v, want screenList", k.String(), m.screen)
 		}
-		if m.detail.active != startActive {
-			t.Errorf("key %q: detail.active changed to %v", k.String(), m.detail.active)
+		if m.pane.detail.active != startActive {
+			t.Errorf("key %q: detail.active changed to %v", k.String(), m.pane.detail.active)
 		}
 	}
 }
@@ -581,26 +581,26 @@ func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 	res, _ := m.Update(statusMsg{report: rep})
 	m = res.(Model)
 
-	if m.detail.round != 2 || m.detail.rounds != 3 {
-		t.Fatalf("after pointing: round=%d rounds=%d, want round=2 rounds=3", m.detail.round, m.detail.rounds)
+	if m.pane.detail.round != 2 || m.pane.detail.rounds != 3 {
+		t.Fatalf("after pointing: round=%d rounds=%d, want round=2 rounds=3", m.pane.detail.round, m.pane.detail.rounds)
 	}
 
 	// Populate every tab's cache so the invalidation is visible.
 	for tb := tab(0); tb < tabCount; tb++ {
-		m.detail.cache[tb] = tabContent{loaded: true, body: "stale"}
+		m.pane.detail.cache[tb] = tabContent{loaded: true, body: "stale"}
 	}
-	m.tabInFlight = false
+	m.pane.tabInFlight = false
 
 	for i := 0; i < 2; i++ {
 		res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
 		m = res.(Model)
-		m.tabInFlight = false
+		m.pane.tabInFlight = false
 	}
-	if m.detail.round != 1 {
-		t.Fatalf("after \"[\" twice: round = %d, want 1", m.detail.round)
+	if m.pane.detail.round != 1 {
+		t.Fatalf("after \"[\" twice: round = %d, want 1", m.pane.detail.round)
 	}
 	for tb := tab(0); tb < tabCount; tb++ {
-		if m.detail.cache[tb].loaded {
+		if m.pane.detail.cache[tb].loaded {
 			t.Errorf("tab %v cache still loaded after stepping back", tb)
 		}
 	}
@@ -608,18 +608,18 @@ func TestStepRoundBackRefetchesEveryTab(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
 		m = res.(Model)
-		m.tabInFlight = false
+		m.pane.tabInFlight = false
 	}
-	if m.detail.round != 3 {
-		t.Fatalf("after \"]\" three times: round = %d, want 3 (the open round)", m.detail.round)
+	if m.pane.detail.round != 3 {
+		t.Fatalf("after \"]\" three times: round = %d, want 3 (the open round)", m.pane.detail.round)
 	}
 
-	reportMsg := fetchReport(context.Background(), plannerSource{rt}, name, m.detail.round)().(tabMsg)
+	reportMsg := fetchReport(context.Background(), plannerSource{rt}, name, m.pane.detail.round)().(tabMsg)
 	wantReport := "round 3 is open; report arrives when it closes"
 	if reportMsg.content.empty != wantReport {
 		t.Errorf("report empty = %q, want %q", reportMsg.content.empty, wantReport)
 	}
-	diffMsg := fetchDiff(context.Background(), plannerSource{rt}, name, m.detail.round)().(tabMsg)
+	diffMsg := fetchDiff(context.Background(), plannerSource{rt}, name, m.pane.detail.round)().(tabMsg)
 	wantDiff := "diff is captured when round 3 closes"
 	if diffMsg.content.empty != wantDiff {
 		t.Errorf("diff empty = %q, want %q", diffMsg.content.empty, wantDiff)
@@ -633,28 +633,28 @@ func TestStepRoundEdgesNoop(t *testing.T) {
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.width, m.height, m.ready = 140, 40, true
-	m.detail.name = "webshop"
-	m.detail.round = 1
-	m.detail.rounds = 3
-	m.detail.active = tabReport
-	m.detail.cache[tabReport] = tabContent{loaded: true, body: "round 1"}
+	m.pane.detail.name = "webshop"
+	m.pane.detail.round = 1
+	m.pane.detail.rounds = 3
+	m.pane.detail.active = tabReport
+	m.pane.detail.cache[tabReport] = tabContent{loaded: true, body: "round 1"}
 
 	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
 	low := res.(Model)
-	if low.detail.round != 1 {
-		t.Errorf("\"[\" at round 1: round = %d, want 1 (no-op)", low.detail.round)
+	if low.pane.detail.round != 1 {
+		t.Errorf("\"[\" at round 1: round = %d, want 1 (no-op)", low.pane.detail.round)
 	}
-	if !low.detail.cache[tabReport].loaded {
+	if !low.pane.detail.cache[tabReport].loaded {
 		t.Error("\"[\" at round 1: cache must stay untouched (no-op)")
 	}
 
-	m.detail.round = 3
+	m.pane.detail.round = 3
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
 	high := res.(Model)
-	if high.detail.round != 3 {
-		t.Errorf("\"]\" at round 3 (rounds=3): round = %d, want 3 (no-op)", high.detail.round)
+	if high.pane.detail.round != 3 {
+		t.Errorf("\"]\" at round 3 (rounds=3): round = %d, want 3 (no-op)", high.pane.detail.round)
 	}
-	if !high.detail.cache[tabReport].loaded {
+	if !high.pane.detail.cache[tabReport].loaded {
 		t.Error("\"]\" at round 3: cache must stay untouched (no-op)")
 	}
 }
@@ -684,7 +684,7 @@ func TestPointDetailAtMarksViewed(t *testing.T) {
 	if _, ok := st.ViewedAt("webshop"); !ok {
 		t.Fatal("pointDetailAt did not stamp .viewed through the Source")
 	}
-	if m.detail.name != "webshop" {
-		t.Errorf("pointDetailAt must still re-target the pane: detail.name = %q", m.detail.name)
+	if m.pane.detail.name != "webshop" {
+		t.Errorf("pointDetailAt must still re-target the pane: detail.name = %q", m.pane.detail.name)
 	}
 }

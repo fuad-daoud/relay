@@ -135,13 +135,13 @@ func TestJumpFromDashPointsDetail(t *testing.T) {
 	if m.scope != scopeAll {
 		t.Errorf("jump to a hist-only binding: scope = %v, want scopeAll", m.scope)
 	}
-	if m.detail.name != "oldapi" {
-		t.Errorf("detail.name = %q, want oldapi", m.detail.name)
+	if m.pane.detail.name != "oldapi" {
+		t.Errorf("detail.name = %q, want oldapi", m.pane.detail.name)
 	}
-	if m.detail.round != 2 {
-		t.Errorf("detail.round = %d, want 2", m.detail.round)
+	if m.pane.detail.round != 2 {
+		t.Errorf("detail.round = %d, want 2", m.pane.detail.round)
 	}
-	if m.detail.live {
+	if m.pane.detail.live {
 		t.Error("detail.live = true for a hist-only binding")
 	}
 	if m.screen != screenList {
@@ -154,11 +154,11 @@ func TestJumpFromDashPointsDetail(t *testing.T) {
 	if m.scope != scopeAll {
 		t.Errorf("jump to a live binding: scope = %v, want it kept (all)", m.scope)
 	}
-	if m.detail.name != "persist" {
-		t.Errorf("detail.name = %q, want persist", m.detail.name)
+	if m.pane.detail.name != "persist" {
+		t.Errorf("detail.name = %q, want persist", m.pane.detail.name)
 	}
-	if m.detail.round != 1 {
-		t.Errorf("detail.round = %d, want 1", m.detail.round)
+	if m.pane.detail.round != 1 {
+		t.Errorf("detail.round = %d, want 1", m.pane.detail.round)
 	}
 
 	// A name in neither list is a notice and no screen change: empty the
@@ -192,8 +192,8 @@ func TestJumpFromDashTurnsScopeAll(t *testing.T) {
 	if !m.statusInFlight {
 		t.Error("turning scope all on must refresh the rail")
 	}
-	if m.detail.name != "oldapi" || m.detail.round != 2 {
-		t.Errorf("detail = %s r%d, want oldapi r2", m.detail.name, m.detail.round)
+	if m.pane.detail.name != "oldapi" || m.pane.detail.round != 2 {
+		t.Errorf("detail = %s r%d, want oldapi r2", m.pane.detail.name, m.pane.detail.round)
 	}
 }
 

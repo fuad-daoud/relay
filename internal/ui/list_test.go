@@ -463,11 +463,11 @@ func TestRenderErrorAndListErrorBlock(t *testing.T) {
 	// 5. Detail screen has footer marker and NO error block
 	m.screen = screenDetail
 	m.width = 80
-	m.detail.name = "webshop"
-	m.detail.active = tabReport
-	m.detail.vp = viewport.New(80, 20)
-	m.detail.cache[tabReport] = tabContent{loaded: true, body: "report content"}
-	m.detail.vp.SetContent(bodyOf(tabReport, m.detail.cache[tabReport], false))
+	m.pane.detail.name = "webshop"
+	m.pane.detail.active = tabReport
+	m.pane.detail.vp = viewport.New(80, 20)
+	m.pane.detail.cache[tabReport] = tabContent{loaded: true, body: "report content"}
+	m.pane.detail.vp.SetContent(bodyOf(tabReport, m.pane.detail.cache[tabReport], false))
 	detailOut := m.View()
 	if strings.Contains(detailOut, "client protocol") {
 		t.Errorf("detailView must NOT contain error block, got:\n%s", detailOut)

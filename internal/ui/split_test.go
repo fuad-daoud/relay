@@ -186,32 +186,32 @@ func TestSplitViewShape(t *testing.T) {
 	if !strings.Contains(p, "⏎ focus pane") || !strings.Contains(p, "s sort: attention") {
 		t.Errorf("split footer keys missing:\n%s", p)
 	}
-	if m.detail.name != "webshop" || m.detail.round != 3 {
-		t.Errorf("detail not pointed at the cursor: %+v", m.detail)
+	if m.pane.detail.name != "webshop" || m.pane.detail.round != 3 {
+		t.Errorf("detail not pointed at the cursor: %+v", m.pane.detail)
 	}
 }
 
 func TestPaneFollowsCursor(t *testing.T) {
 	m := splitModel(t, 140, 40, threeRows()...)
 	// The statusMsg pointed the pane at webshop and issued its fetch.
-	if !m.tabInFlight {
+	if !m.pane.tabInFlight {
 		t.Fatal("initial point must fetch")
 	}
-	m.tabInFlight = false
-	m.detail.active = tabDiff
-	m.detail.scroll[tabDiff] = 7
+	m.pane.tabInFlight = false
+	m.pane.detail.active = tabDiff
+	m.pane.detail.scroll[tabDiff] = 7
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = res.(Model)
-	if m.detail.name != "api" {
-		t.Errorf("after j the pane shows %q, want api", m.detail.name)
+	if m.pane.detail.name != "api" {
+		t.Errorf("after j the pane shows %q, want api", m.pane.detail.name)
 	}
-	if cmd == nil || !m.tabInFlight {
+	if cmd == nil || !m.pane.tabInFlight {
 		t.Error("moving the cursor must issue exactly one fetch for the new binding")
 	}
-	if m.detail.active != tabDiff {
+	if m.pane.detail.active != tabDiff {
 		t.Error("the active tab must survive the move")
 	}
-	if m.detail.scroll[tabDiff] != 0 || m.detail.cache[tabDiff].loaded {
+	if m.pane.detail.scroll[tabDiff] != 0 || m.pane.detail.cache[tabDiff].loaded {
 		t.Error("parked scrolls and caches must be cleared")
 	}
 	// With a fetch in flight, a second move issues none.
@@ -220,17 +220,17 @@ func TestPaneFollowsCursor(t *testing.T) {
 	if cmd != nil {
 		t.Error("a move while tabInFlight must not issue a second fetch")
 	}
-	if m.detail.name != "docs" {
-		t.Errorf("pane must still re-point: %q", m.detail.name)
+	if m.pane.detail.name != "docs" {
+		t.Errorf("pane must still re-point: %q", m.pane.detail.name)
 	}
 	// The reply for the binding the cursor left arrives: discarded, and
 	// the guard is released so the next tick can fetch for docs.
 	res, _ = m.Update(tabMsg{name: "webshop", round: 3, t: tabDiff, content: tabContent{loaded: true, body: "old"}})
 	m = res.(Model)
-	if m.detail.cache[tabDiff].loaded {
+	if m.pane.detail.cache[tabDiff].loaded {
 		t.Error("stale tabMsg for a previous binding must be discarded")
 	}
-	if m.tabInFlight {
+	if m.pane.tabInFlight {
 		t.Error("a stale reply still completes the fetch; the guard must be released")
 	}
 }
@@ -244,21 +244,21 @@ func TestResizeAcrossThreshold(t *testing.T) {
 	}
 	res, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	m = res.(Model)
-	if m.layout() != layoutStack || m.screen != screenDetail || m.detail.name != "webshop" {
-		t.Errorf("narrowing with the pane focused must land on the full-width detail of the same binding: layout=%v screen=%v name=%q", m.layout(), m.screen, m.detail.name)
+	if m.layout() != layoutStack || m.screen != screenDetail || m.pane.detail.name != "webshop" {
+		t.Errorf("narrowing with the pane focused must land on the full-width detail of the same binding: layout=%v screen=%v name=%q", m.layout(), m.screen, m.pane.detail.name)
 	}
-	if m.detail.vp.Width != 100 {
-		t.Errorf("viewport width after narrowing = %d", m.detail.vp.Width)
+	if m.pane.detail.vp.Width != 100 {
+		t.Errorf("viewport width after narrowing = %d", m.pane.detail.vp.Width)
 	}
 	// Back to the list, then widen: the pane must point at the cursor.
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = res.(Model)
-	m.tabInFlight = false
-	m.detail = detailModel{}
+	m.pane.tabInFlight = false
+	m.pane.detail = detailModel{}
 	res, cmd := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
-	if m.detail.name != "webshop" || cmd == nil {
-		t.Errorf("widening from the list must point the pane at the cursor and fetch: %+v", m.detail)
+	if m.pane.detail.name != "webshop" || cmd == nil {
+		t.Errorf("widening from the list must point the pane at the cursor and fetch: %+v", m.pane.detail)
 	}
 }
 
@@ -327,11 +327,11 @@ func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 	// test by moving to it, then to the terminal tab.
 	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = res.(Model)
-	m.tabInFlight = false
+	m.pane.tabInFlight = false
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m = res.(Model)
-	m.tabInFlight = false
-	if !m.detail.follow {
+	m.pane.tabInFlight = false
+	if !m.pane.detail.follow {
 		t.Fatal("a fresh terminal tab must follow")
 	}
 	body := func(n int) string {
@@ -341,9 +341,9 @@ func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 		}
 		return strings.TrimRight(b.String(), "\n")
 	}
-	res, _ = m.Update(tabMsg{name: "api", round: m.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: body(100)}})
+	res, _ = m.Update(tabMsg{name: "api", round: m.pane.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: body(100)}})
 	m = res.(Model)
-	if !m.detail.vp.AtBottom() {
+	if !m.pane.detail.vp.AtBottom() {
 		t.Error("following: a refresh must land at the bottom")
 	}
 	// Scroll up: follow clears.
@@ -351,22 +351,22 @@ func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 	m = res.(Model)
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	m = res.(Model)
-	if m.detail.follow {
+	if m.pane.detail.follow {
 		t.Error("scrolling up must stop following")
 	}
-	y := m.detail.vp.YOffset
-	res, _ = m.Update(tabMsg{name: "api", round: m.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: body(120)}})
+	y := m.pane.detail.vp.YOffset
+	res, _ = m.Update(tabMsg{name: "api", round: m.pane.detail.round, t: tabTerminal, content: tabContent{loaded: true, body: body(120)}})
 	m = res.(Model)
-	if m.detail.vp.YOffset != y {
-		t.Errorf("not following: a refresh must hold the offset (%d -> %d)", y, m.detail.vp.YOffset)
+	if m.pane.detail.vp.YOffset != y {
+		t.Errorf("not following: a refresh must hold the offset (%d -> %d)", y, m.pane.detail.vp.YOffset)
 	}
 	// Back to the bottom: follow resumes. The viewport's default keymap has
 	// no Home/End binding, so page down repeatedly until AtBottom().
-	for i := 0; i < 200 && !m.detail.vp.AtBottom(); i++ {
+	for i := 0; i < 200 && !m.pane.detail.vp.AtBottom(); i++ {
 		res, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
 		m = res.(Model)
 	}
-	if !m.detail.follow || !m.detail.vp.AtBottom() {
+	if !m.pane.detail.follow || !m.pane.detail.vp.AtBottom() {
 		t.Error("scrolling to the bottom must resume following")
 	}
 }
@@ -422,8 +422,8 @@ func TestRailResizeKeys(t *testing.T) {
 		}
 	}
 	// The pane's viewport follows the divider.
-	if m.detail.vp.Width != m.paneWidth() {
-		t.Errorf("viewport width %d, pane %d", m.detail.vp.Width, m.paneWidth())
+	if m.pane.detail.vp.Width != m.paneWidth() {
+		t.Errorf("viewport width %d, pane %d", m.pane.detail.vp.Width, m.paneWidth())
 	}
 }
 
@@ -434,8 +434,8 @@ func TestCompactToggleKeepsSelection(t *testing.T) {
 	name := m.rows()[m.list.cursor].Name
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m = res.(Model)
-	if !m.compact || m.rows()[m.list.cursor].Name != name || m.detail.name != name {
-		t.Errorf("c: compact %v cursor %q pane %q", m.compact, m.rows()[m.list.cursor].Name, m.detail.name)
+	if !m.compact || m.rows()[m.list.cursor].Name != name || m.pane.detail.name != name {
+		t.Errorf("c: compact %v cursor %q pane %q", m.compact, m.rows()[m.list.cursor].Name, m.pane.detail.name)
 	}
 	if !strings.Contains(stripANSI(m.View()), "c cards") {
 		t.Error("footer names the toggle's other state")
@@ -462,13 +462,13 @@ func TestCompactIgnoresResize(t *testing.T) {
 			t.Errorf("line %d is %d wide", i, w)
 		}
 	}
-	if m.detail.vp.Width != 140-railCompact-railGap {
-		t.Errorf("viewport must widen with the pane: %d", m.detail.vp.Width)
+	if m.pane.detail.vp.Width != 140-railCompact-railGap {
+		t.Errorf("viewport must widen with the pane: %d", m.pane.detail.vp.Width)
 	}
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m = res.(Model)
-	if m.detail.vp.Width != m.paneWidth() || m.railWidth() != before {
-		t.Errorf("back to cards: viewport %d pane %d rail %d", m.detail.vp.Width, m.paneWidth(), m.railWidth())
+	if m.pane.detail.vp.Width != m.paneWidth() || m.railWidth() != before {
+		t.Errorf("back to cards: viewport %d pane %d rail %d", m.pane.detail.vp.Width, m.paneWidth(), m.railWidth())
 	}
 }
 
@@ -490,7 +490,7 @@ func TestPaneHeadUsageAndSpendRows(t *testing.T) {
 	m := splitModel(t, 140, 40, rows...)
 	var b relevo.BindingStatus
 	for _, r := range rows {
-		if r.Name == m.detail.name {
+		if r.Name == m.pane.detail.name {
 			b = r
 		}
 	}
@@ -526,7 +526,7 @@ func TestPaneHeadLiveUsageRow(t *testing.T) {
 	m := splitModel(t, 140, 40, rows...)
 	var b relevo.BindingStatus
 	for _, r := range rows {
-		if r.Name == m.detail.name {
+		if r.Name == m.pane.detail.name {
 			b = r
 		}
 	}

@@ -71,7 +71,7 @@ func (m Model) hit(x, y int) (region, int, int) {
 		col = x - m.railWidth() - railGap
 	}
 	head := paneHeadRows
-	if b := row(m.report, m.detail.name); b != nil {
+	if b := row(m.report, m.pane.detail.name); b != nil {
 		head = len(m.paneHead(b))
 	}
 	if bodyRow == head {
@@ -131,12 +131,12 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if down {
-				m.detail.vp.LineDown(wheelLines)
+				m.pane.detail.vp.LineDown(wheelLines)
 			} else {
-				m.detail.vp.LineUp(wheelLines)
+				m.pane.detail.vp.LineUp(wheelLines)
 			}
-			if m.detail.active == tabTerminal {
-				m.detail.follow = m.detail.vp.AtBottom()
+			if m.pane.detail.active == tabTerminal {
+				m.pane.detail.follow = m.pane.detail.vp.AtBottom()
 			}
 			return m, nil
 		}
@@ -163,7 +163,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.screen = screenDetail
-			if t := tabAt(col); t >= 0 && t != m.detail.active {
+			if t := tabAt(col); t >= 0 && t != m.pane.detail.active {
 				return m.switchTab(t)
 			}
 			return m, nil

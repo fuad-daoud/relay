@@ -46,13 +46,13 @@ func TestEnteringDetailFetchesPlanTabAndNoOther(t *testing.T) {
 	if m.screen != screenDetail {
 		t.Fatalf("expected screenDetail, got %v", m.screen)
 	}
-	if m.detail.name != name {
-		t.Fatalf("expected detail.name %s, got %s", name, m.detail.name)
+	if m.pane.detail.name != name {
+		t.Fatalf("expected detail.name %s, got %s", name, m.pane.detail.name)
 	}
-	if m.detail.active != tabPlan {
-		t.Fatalf("expected active tabPlan, got %v", m.detail.active)
+	if m.pane.detail.active != tabPlan {
+		t.Fatalf("expected active tabPlan, got %v", m.pane.detail.active)
 	}
-	if !m.tabInFlight {
+	if !m.pane.tabInFlight {
 		t.Fatal("expected tabInFlight to be true on enter")
 	}
 
@@ -74,16 +74,16 @@ func TestSwitchingToUnloadedTabFetchesOnlyThatOne(t *testing.T) {
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.active = tabReport
-	m.detail.vp = viewport.New(80, 20)
+	m.pane.detail.name = "webshop"
+	m.pane.detail.active = tabReport
+	m.pane.detail.vp = viewport.New(80, 20)
 
 	// Switch to diff tab via key '4'
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
 	m = res.(Model)
 
-	if m.detail.active != tabDiff {
-		t.Fatalf("expected active tabDiff, got %v", m.detail.active)
+	if m.pane.detail.active != tabDiff {
+		t.Fatalf("expected active tabDiff, got %v", m.pane.detail.active)
 	}
 	if cmd == nil {
 		t.Fatal("expected non-nil fetch command for unloaded tab")
@@ -103,42 +103,42 @@ func TestScrollParkAndRestore(t *testing.T) {
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.active = tabReport
-	m.detail.vp = viewport.New(80, 20)
+	m.pane.detail.name = "webshop"
+	m.pane.detail.active = tabReport
+	m.pane.detail.vp = viewport.New(80, 20)
 
 	// Populate caches so switching doesn't trigger unloaded fetch
-	m.detail.cache[tabReport] = tabContent{loaded: true, body: strings.Repeat("report line\n", 50)}
-	m.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("terminal line\n", 50)}
-	m.detail.vp.SetContent(m.detail.cache[tabReport].body)
+	m.pane.detail.cache[tabReport] = tabContent{loaded: true, body: strings.Repeat("report line\n", 50)}
+	m.pane.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("terminal line\n", 50)}
+	m.pane.detail.vp.SetContent(m.pane.detail.cache[tabReport].body)
 
 	// Set scroll offset on report tab
-	m.detail.vp.YOffset = 18
+	m.pane.detail.vp.YOffset = 18
 
 	// Switch to terminal tab ('3')
 	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	m = res.(Model)
-	if m.detail.active != tabTerminal {
-		t.Fatalf("expected active tabTerminal, got %v", m.detail.active)
+	if m.pane.detail.active != tabTerminal {
+		t.Fatalf("expected active tabTerminal, got %v", m.pane.detail.active)
 	}
-	if m.detail.scroll[tabReport] != 18 {
-		t.Fatalf("expected parked scroll for tabReport to be 18, got %d", m.detail.scroll[tabReport])
+	if m.pane.detail.scroll[tabReport] != 18 {
+		t.Fatalf("expected parked scroll for tabReport to be 18, got %d", m.pane.detail.scroll[tabReport])
 	}
 
 	// Change offset on terminal tab
-	m.detail.vp.YOffset = 7
+	m.pane.detail.vp.YOffset = 7
 
 	// Switch back to report tab ('2')
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	m = res.(Model)
-	if m.detail.active != tabReport {
-		t.Fatalf("expected active tabReport, got %v", m.detail.active)
+	if m.pane.detail.active != tabReport {
+		t.Fatalf("expected active tabReport, got %v", m.pane.detail.active)
 	}
-	if m.detail.vp.YOffset != 18 {
-		t.Fatalf("expected restored YOffset on tabReport to be 18, got %d", m.detail.vp.YOffset)
+	if m.pane.detail.vp.YOffset != 18 {
+		t.Fatalf("expected restored YOffset on tabReport to be 18, got %d", m.pane.detail.vp.YOffset)
 	}
-	if m.detail.scroll[tabTerminal] != 7 {
-		t.Fatalf("expected parked scroll for tabTerminal to be 7, got %d", m.detail.scroll[tabTerminal])
+	if m.pane.detail.scroll[tabTerminal] != 7 {
+		t.Fatalf("expected parked scroll for tabTerminal to be 7, got %d", m.pane.detail.scroll[tabTerminal])
 	}
 }
 
@@ -171,30 +171,30 @@ func TestTabErrorDoesNotCorruptOtherTabs(t *testing.T) {
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.vp = viewport.New(80, 20)
+	m.pane.detail.name = "webshop"
+	m.pane.detail.vp = viewport.New(80, 20)
 
-	m.detail.cache[tabDiff] = tabContent{
+	m.pane.detail.cache[tabDiff] = tabContent{
 		loaded: true,
 		err:    errors.New("disk read failed"),
 	}
-	m.detail.cache[tabReport] = tabContent{
+	m.pane.detail.cache[tabReport] = tabContent{
 		loaded: true,
 		body:   "## Successful report content",
 	}
 
 	// Active tab diff shows error
-	m.detail.active = tabDiff
-	m.detail.vp.SetContent(bodyOf(tabDiff, m.detail.cache[tabDiff], false))
-	if !strings.Contains(m.detail.vp.View(), "error: disk read failed") {
-		t.Fatalf("expected error text in diff tab, got %q", m.detail.vp.View())
+	m.pane.detail.active = tabDiff
+	m.pane.detail.vp.SetContent(bodyOf(tabDiff, m.pane.detail.cache[tabDiff], false))
+	if !strings.Contains(m.pane.detail.vp.View(), "error: disk read failed") {
+		t.Fatalf("expected error text in diff tab, got %q", m.pane.detail.vp.View())
 	}
 
 	// Switch to report tab: it stays readable
 	res, _ := m.switchTab(tabReport)
 	m = res.(Model)
-	if !strings.Contains(m.detail.vp.View(), "Successful report content") {
-		t.Fatalf("expected report content in report tab, got %q", m.detail.vp.View())
+	if !strings.Contains(m.pane.detail.vp.View(), "Successful report content") {
+		t.Fatalf("expected report content in report tab, got %q", m.pane.detail.vp.View())
 	}
 }
 
@@ -203,9 +203,9 @@ func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.active = tabDiff
-	m.detail.vp = viewport.New(80, 20)
+	m.pane.detail.name = "webshop"
+	m.pane.detail.active = tabDiff
+	m.pane.detail.vp = viewport.New(80, 20)
 
 	// Width 100 keeps this in the stack layout (< splitMinWidth): the point
 	// of this test is that a resize reflows the viewport without losing
@@ -215,14 +215,14 @@ func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 60})
 	m = res.(Model)
 
-	if m.detail.active != tabDiff {
-		t.Fatalf("expected active tab to remain tabDiff, got %v", m.detail.active)
+	if m.pane.detail.active != tabDiff {
+		t.Fatalf("expected active tab to remain tabDiff, got %v", m.pane.detail.active)
 	}
-	if m.detail.vp.Width != 100 {
-		t.Fatalf("expected vp.Width 100, got %d", m.detail.vp.Width)
+	if m.pane.detail.vp.Width != 100 {
+		t.Fatalf("expected vp.Width 100, got %d", m.pane.detail.vp.Width)
 	}
-	if want := m.viewportHeight(); m.detail.vp.Height != want {
-		t.Fatalf("expected vp.Height %d, got %d", want, m.detail.vp.Height)
+	if want := m.viewportHeight(); m.pane.detail.vp.Height != want {
+		t.Fatalf("expected vp.Height %d, got %d", want, m.pane.detail.vp.Height)
 	}
 }
 
@@ -234,14 +234,14 @@ func TestPanicOnShrinkingContent(t *testing.T) {
 	m.ready = true
 	m.width = 80
 	m.height = 24
-	m.detail.name = "webshop"
-	m.detail.round = 2
-	m.detail.active = tabDiff
-	m.detail.vp = viewport.New(80, 20)
+	m.pane.detail.name = "webshop"
+	m.pane.detail.round = 2
+	m.pane.detail.active = tabDiff
+	m.pane.detail.vp = viewport.New(80, 20)
 
 	// Set content of 200 lines and scroll to offset 120
-	m.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
-	m.detail.vp.SetYOffset(120)
+	m.pane.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
+	m.pane.detail.vp.SetYOffset(120)
 
 	// New tabMsg delivers 3 lines
 	msg := tabMsg{
@@ -272,21 +272,21 @@ func TestSwitchTabBackIntoInvalidatedTabNoPanic(t *testing.T) {
 	m.ready = true
 	m.width = 80
 	m.height = 24
-	m.detail.name = "webshop"
-	m.detail.round = 2
-	m.detail.active = tabDiff
-	m.detail.vp = viewport.New(80, 20)
+	m.pane.detail.name = "webshop"
+	m.pane.detail.round = 2
+	m.pane.detail.active = tabDiff
+	m.pane.detail.vp = viewport.New(80, 20)
 
 	// Scroll deep on diff tab
-	m.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
-	m.detail.vp.SetYOffset(120)
+	m.pane.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
+	m.pane.detail.vp.SetYOffset(120)
 
 	// Switch away to terminal tab
 	res, _ := m.switchTab(tabTerminal)
 	m = res.(Model)
 
 	// Invalidate diff tab cache (e.g. round bump)
-	m.detail.cache[tabDiff] = tabContent{} // unloaded -> bodyOf returns "loading…"
+	m.pane.detail.cache[tabDiff] = tabContent{} // unloaded -> bodyOf returns "loading…"
 
 	// Switch back to diff tab
 	res, _ = m.switchTab(tabDiff)
@@ -304,14 +304,14 @@ func TestRefreshActiveTabPreservesLiveScroll(t *testing.T) {
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.round = 2
-	m.detail.active = tabTerminal
-	m.detail.vp = viewport.New(80, 20)
+	m.pane.detail.name = "webshop"
+	m.pane.detail.round = 2
+	m.pane.detail.active = tabTerminal
+	m.pane.detail.vp = viewport.New(80, 20)
 
 	// Initial terminal content with 100 lines
-	m.detail.vp.SetContent(strings.Repeat("line\n", 100))
-	m.detail.vp.SetYOffset(42)
+	m.pane.detail.vp.SetContent(strings.Repeat("line\n", 100))
+	m.pane.detail.vp.SetYOffset(42)
 
 	// Active tabMsg refresh with 100 lines
 	msg := tabMsg{
@@ -327,8 +327,8 @@ func TestRefreshActiveTabPreservesLiveScroll(t *testing.T) {
 	res, _ := m.Update(msg)
 	m = res.(Model)
 
-	if m.detail.vp.YOffset != 42 {
-		t.Fatalf("scroll discarded by a refresh of the active tab: YOffset = %d, want 42", m.detail.vp.YOffset)
+	if m.pane.detail.vp.YOffset != 42 {
+		t.Fatalf("scroll discarded by a refresh of the active tab: YOffset = %d, want 42", m.pane.detail.vp.YOffset)
 	}
 }
 
@@ -337,17 +337,17 @@ func TestInvalidationResetsParkedOffset(t *testing.T) {
 	rt := relevo.Runtime{Store: st}
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
-	m.detail.name = "webshop"
-	m.detail.round = 2
-	m.detail.live = true
-	m.detail.active = tabTerminal
-	m.detail.scroll[tabDiff] = 85
-	m.detail.scroll[tabReport] = 40
-	m.detail.scroll[tabLog] = 15
-	m.detail.scroll[tabTerminal] = 10
+	m.pane.detail.name = "webshop"
+	m.pane.detail.round = 2
+	m.pane.detail.live = true
+	m.pane.detail.active = tabTerminal
+	m.pane.detail.scroll[tabDiff] = 85
+	m.pane.detail.scroll[tabReport] = 40
+	m.pane.detail.scroll[tabLog] = 15
+	m.pane.detail.scroll[tabTerminal] = 10
 
 	ts := time.Now()
-	m.detail.lastLogTS = ts
+	m.pane.detail.lastLogTS = ts
 
 	rep := relevo.Report{
 		Bindings: []relevo.BindingStatus{
@@ -365,17 +365,17 @@ func TestInvalidationResetsParkedOffset(t *testing.T) {
 	res, _ := m.Update(statusMsg{report: rep})
 	m = res.(Model)
 
-	if m.detail.scroll[tabDiff] != 0 {
-		t.Errorf("expected tabDiff scroll reset to 0, got %d", m.detail.scroll[tabDiff])
+	if m.pane.detail.scroll[tabDiff] != 0 {
+		t.Errorf("expected tabDiff scroll reset to 0, got %d", m.pane.detail.scroll[tabDiff])
 	}
-	if m.detail.scroll[tabReport] != 0 {
-		t.Errorf("expected tabReport scroll reset to 0, got %d", m.detail.scroll[tabReport])
+	if m.pane.detail.scroll[tabReport] != 0 {
+		t.Errorf("expected tabReport scroll reset to 0, got %d", m.pane.detail.scroll[tabReport])
 	}
-	if m.detail.scroll[tabLog] != 0 {
-		t.Errorf("expected tabLog scroll reset to 0, got %d", m.detail.scroll[tabLog])
+	if m.pane.detail.scroll[tabLog] != 0 {
+		t.Errorf("expected tabLog scroll reset to 0, got %d", m.pane.detail.scroll[tabLog])
 	}
-	if m.detail.scroll[tabTerminal] != 10 {
-		t.Errorf("expected tabTerminal scroll preserved, got %d", m.detail.scroll[tabTerminal])
+	if m.pane.detail.scroll[tabTerminal] != 10 {
+		t.Errorf("expected tabTerminal scroll preserved, got %d", m.pane.detail.scroll[tabTerminal])
 	}
 }
 
@@ -403,10 +403,10 @@ func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 			m.screen = screenDetail
-			m.detail.name = name
-			m.detail.round = 3
-			m.detail.active = tabReport
-			m.detail.vp = viewport.New(80, 20)
+			m.pane.detail.name = name
+			m.pane.detail.round = 3
+			m.pane.detail.active = tabReport
+			m.pane.detail.vp = viewport.New(80, 20)
 
 			res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tc.key)})
 			m = res.(Model)
@@ -417,8 +417,8 @@ func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 			res, _ = m.Update(msg)
 			m = res.(Model)
 
-			if !m.detail.cache[tc.tab].loaded {
-				t.Fatalf("%s reply discarded: tab stays on %q forever", tc.name, bodyOf(tc.tab, m.detail.cache[tc.tab], false))
+			if !m.pane.detail.cache[tc.tab].loaded {
+				t.Fatalf("%s reply discarded: tab stays on %q forever", tc.name, bodyOf(tc.tab, m.pane.detail.cache[tc.tab], false))
 			}
 		})
 	}
@@ -437,10 +437,10 @@ func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.screen = screenDetail
-	m.detail.name = name
-	m.detail.round = 3
-	m.detail.active = tabReport
-	m.detail.vp = viewport.New(80, 20)
+	m.pane.detail.name = name
+	m.pane.detail.round = 3
+	m.pane.detail.active = tabReport
+	m.pane.detail.vp = viewport.New(80, 20)
 
 	tabKeys := []struct {
 		key string
@@ -463,7 +463,7 @@ func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 		res, _ = m.Update(msg)
 		m = res.(Model)
 
-		if !m.detail.cache[tk.t].loaded {
+		if !m.pane.detail.cache[tk.t].loaded {
 			t.Fatalf("tab %v reply discarded: cache not loaded", tk.t)
 		}
 	}

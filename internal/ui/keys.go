@@ -48,19 +48,19 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.setRail(m.railCols + d)
 	case "c":
 		m.compact = !m.compact
-		m.detail.vp.Width = m.paneWidth()
+		m.pane.detail.vp.Width = m.paneWidth()
 		m.fillViewport()
 		m.list.top = m.railTop()
 		return m, m.save()
 	case "1", "2", "3", "4", "5":
-		if m.detail.name == "" {
+		if m.pane.detail.name == "" {
 			return m, nil
 		}
 		if m.paneVisible() {
 			return m.switchTab(tab(msg.String()[0] - '1'))
 		}
 	case "[", "]":
-		if m.detail.name == "" {
+		if m.pane.detail.name == "" {
 			return m, nil
 		}
 		if m.paneVisible() {
@@ -111,11 +111,11 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.cycleTab(msg)
 	}
 	var cmd tea.Cmd
-	m.detail.vp, cmd = m.detail.vp.Update(msg)
-	if m.detail.active == tabTerminal {
+	m.pane.detail.vp, cmd = m.pane.detail.vp.Update(msg)
+	if m.pane.detail.active == tabTerminal {
 		// The tail rule: at the bottom means following; anywhere else
 		// means the human is reading and the refresh must hold still.
-		m.detail.follow = m.detail.vp.AtBottom()
+		m.pane.detail.follow = m.pane.detail.vp.AtBottom()
 	}
 	return m, cmd
 }
@@ -143,31 +143,5 @@ func (m Model) moveCursor(delta int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// cycleTab is tab / shift+tab.
-func (m Model) cycleTab(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyShiftTab || msg.String() == "shift+tab" || msg.String() == "back_tab" {
-		return m.switchTab((m.detail.active - 1 + tabCount) % tabCount)
-	}
-	return m.switchTab((m.detail.active + 1) % tabCount)
-}
-
-func (m Model) switchTab(next tab) (tea.Model, tea.Cmd) {
-	m.detail.scroll[m.detail.active] = m.detail.vp.YOffset // park
-	m.detail.active = next
-	c := m.detail.cache[next]
-	m.fillViewport()
-	m.detail.vp.SetYOffset(m.detail.scroll[next]) // restore
-	if next == tabTerminal && m.detail.follow {
-		m.detail.vp.GotoBottom()
-	}
-	if !c.loaded && !m.tabInFlight {
-		m.tabInFlight = true
-		lines := m.detail.vp.Height
-		if lines < 1 {
-			lines = 1
-		}
-		return m, fetchFor(m.ctx, m.src, next, m.detail.name,
-			m.detail.round, lines, m.detail.live)
-	}
-	return m, nil
-}
+// cycleTab and switchTab now live on roundPane (§5.1); Model keeps
+// wrappers of both names in model.go.
