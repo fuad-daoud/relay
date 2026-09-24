@@ -52,10 +52,11 @@ var (
 func ParseSince(s string, now time.Time) (time.Time, error) { return histq.ParseSince(s, now) }
 
 // TabEntries gathers the entries `relevo tab` sums, from rt's live bindings'
-// logs and then from its archives. An archive older than cut is skipped
-// whole, since every entry in it predates the archive itself. An unreadable
-// archive is reported through warn and skipped, not failed. It is the gather
-// half shared by the client's `relevo tab` and the server's `relevo serve tab`.
+// logs and then from its archived records. An archived record older than cut
+// is skipped whole, since every entry in it predates the archive itself. An
+// unreadable archived log is reported through warn and skipped, not failed. It
+// is the gather half shared by the client's `relevo history --tab` and the
+// server's `relevo serve tab` (P3d §4.4).
 func TabEntries(rt Runtime, cut time.Time, warn func(string)) ([]TabEntry, error) {
 	var entries []TabEntry
 	live, err := rt.Store.List()
@@ -71,21 +72,21 @@ func TabEntries(rt Runtime, cut time.Time, warn func(string)) ([]TabEntry, error
 			entries = append(entries, TabEntry{Binding: b.Name, Entry: e})
 		}
 	}
-	archives, err := rt.Store.ListArchives()
+	archived, err := rt.Store.ListArchived()
 	if err != nil {
 		return nil, err
 	}
-	for _, a := range archives {
-		if !cut.IsZero() && a.At.Before(cut) {
+	for _, a := range archived {
+		if !cut.IsZero() && a.ArchivedAt.Before(cut) {
 			continue // every entry in it predates the archive itself
 		}
-		log, err := rt.Store.ReadArchivedLog(a.Path)
+		log, err := rt.Store.ArchivedLog(a.RecordID)
 		if err != nil {
-			warn(fmt.Sprintf("%s: %v", a.Path, err))
+			warn(fmt.Sprintf("%s: %v", a.Binding.Name, err))
 			continue
 		}
 		for _, e := range log {
-			entries = append(entries, TabEntry{Binding: a.Name, Entry: e})
+			entries = append(entries, TabEntry{Binding: a.Binding.Name, Entry: e})
 		}
 	}
 	return entries, nil

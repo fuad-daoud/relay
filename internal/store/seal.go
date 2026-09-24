@@ -91,10 +91,14 @@ func (s *Store) StatFile(path string) (size int64, mtime time.Time, ok bool, err
 }
 
 // sealedLookup resolves path as <s.root>/<name>/<base>, with base a round
-// file's basename, and returns the store's database and the live record id of
-// the binding name. found is false when the path is not such a path, when the
-// binding has no live record, and when the root has no database at all -- so
-// a miss costs no error and leaves the caller's own ErrNotExist in place.
+// file's basename, and returns the store's database and the record id whose
+// round_file rows hold it: the live record of the binding name, or -- when the
+// name has no live record -- the name's most recently archived one, which is
+// where archive() put its round files when it freed the name (P3d §4.1).
+//
+// found is false when the path is not such a path, when the name has neither
+// a live nor an archived record, and when the root has no database at all --
+// so a miss costs no error and leaves the caller's own ErrNotExist in place.
 func (s *Store) sealedLookup(path string) (d *db.DB, recordID, base string, found bool, err error) {
 	base = filepath.Base(path)
 	if !roundBaseRe.MatchString(base) {
@@ -110,8 +114,14 @@ func (s *Store) sealedLookup(path string) (d *db.DB, recordID, base string, foun
 		return nil, "", "", false, err
 	}
 	rec, ok, err := d.RecordGet(filepath.Base(dir))
-	if err != nil || !ok {
+	if err != nil {
 		return nil, "", "", false, err
+	}
+	if !ok {
+		rec, ok, err = d.RecordGetArchivedByName(filepath.Base(dir))
+		if err != nil || !ok {
+			return nil, "", "", false, err
+		}
 	}
 	return d, rec.ID, base, true, nil
 }

@@ -39,8 +39,8 @@ func TestUnbindText(t *testing.T) {
 	}{
 		{"deleted, no worktree", UnbindResult{},
 			"unbound webshop"},
-		{"archived", UnbindResult{ArchivedTo: "/a/webshop.tar.gz"},
-			"archived webshop to /a/webshop.tar.gz"},
+		{"archived", UnbindResult{Archived: true},
+			"archived webshop"},
 		{"worktree removed", UnbindResult{WorktreeRemoved: "/w/webshop"},
 			"unbound webshop\nremoved worktree /w/webshop"},
 		{"worktree kept", UnbindResult{WorktreeKept: "/w/webshop", KeptReason: "uncommitted changes"},
@@ -60,8 +60,8 @@ func TestUnbindTextProcessLines(t *testing.T) {
 	if got != "unbound x\nstopped builder process 4242" {
 		t.Errorf("stopped: %q", got)
 	}
-	got = UnbindText("x", UnbindResult{ArchivedTo: "/a/x.tgz", ProcessErr: "pid 4242: SIGTERM: operation not permitted"})
-	if got != "archived x to /a/x.tgz\ncould not stop builder process (pid 4242: SIGTERM: operation not permitted); check for it yourself" {
+	got = UnbindText("x", UnbindResult{Archived: true, ProcessErr: "pid 4242: SIGTERM: operation not permitted"})
+	if got != "archived x\ncould not stop builder process (pid 4242: SIGTERM: operation not permitted); check for it yourself" {
 		t.Errorf("failed: %q", got)
 	}
 	// No process, no line: existing output is unchanged.

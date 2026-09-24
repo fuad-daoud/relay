@@ -1136,7 +1136,7 @@ func TestUnbindTeardown(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Unbind: %v", err)
 		}
-		if res.ArchivedTo != "" || res.WorktreeRemoved != "" || res.WorktreeKept != "" || res.KeptReason != "" {
+		if res.Archived || res.WorktreeRemoved != "" || res.WorktreeKept != "" || res.KeptReason != "" {
 			t.Errorf("expected all-zero result for ordinary binding unbind, got %+v", res)
 		}
 		if _, err := rt.Store.Load("webshop"); !errors.Is(err, store.ErrNotFound) {

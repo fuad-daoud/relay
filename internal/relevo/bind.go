@@ -696,7 +696,7 @@ func worktreeTeardown(ctx context.Context, rt Runtime, b store.Binding, dryRun b
 // worktree. A kept worktree is the important case: it means the fork's tree
 // still holds uncommitted work, so relevo left it alone and the human decides.
 type UnbindResult struct {
-	ArchivedTo      string // archive path, or "" when deleted
+	Archived        bool   // true when the binding was archived rather than deleted
 	WorktreeRemoved string // worktree relevo removed, or ""
 	WorktreeKept    string // worktree relevo refused to remove, or ""
 	KeptReason      string // why it was kept; "" when nothing was kept
@@ -711,9 +711,9 @@ type UnbindResult struct {
 // Unbind clears away one binding's state, leaving its builder process and
 // worktree release to the paths below.
 //
-// When archive is set the binding's directory is moved aside rather than
-// deleted, which frees the name for a fresh bind while keeping log.jsonl and
-// every round file — the record of what the planner actually told the builder.
+// When archive is set the binding's record is archived rather than deleted,
+// which frees the name for a fresh bind while its log and every round file
+// survive as rows — the record of what the planner actually told the builder.
 // If relevo created a git worktree for this binding, Unbind removes it provided
 // it is clean, never removing the branch.
 func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindResult, error) {
@@ -760,11 +760,10 @@ func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindR
 	res.WorktreeGone = outcome.Gone
 
 	if archive {
-		dest, err := rt.Store.Archive(name)
-		if err != nil {
+		if _, err := rt.Store.Archive(name); err != nil {
 			return res, err
 		}
-		res.ArchivedTo = dest
+		res.Archived = true
 	} else {
 		if err := rt.Store.Delete(name); err != nil {
 			return res, err

@@ -74,7 +74,7 @@ func TestGCDryRunChangesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
-	if len(got) != 1 || got[0].Deleted || got[0].ArchivedTo != "" {
+	if len(got) != 1 || got[0].Deleted || got[0].Archived {
 		t.Fatalf("dry run must report without acting, got %+v", got)
 	}
 	if _, err := rt.Store.Load("finished"); err != nil {
@@ -95,14 +95,19 @@ func TestGCArchivesByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
-	if len(got) != 1 || got[0].ArchivedTo == "" || got[0].Deleted {
+	if len(got) != 1 || !got[0].Archived || got[0].Deleted {
 		t.Fatalf("gc result = %+v, want an archive not a delete", got)
 	}
-	if !strings.HasSuffix(got[0].ArchivedTo, ".tar.gz") {
-		t.Errorf("archive path = %q, want a .tar.gz", got[0].ArchivedTo)
+	archived, err := rt.Store.ListArchived()
+	if err != nil {
+		t.Fatalf("ListArchived: %v", err)
 	}
-	if _, err := os.Stat(got[0].ArchivedTo); err != nil {
-		t.Errorf("archive missing: %v", err)
+	if len(archived) != 1 || archived[0].Binding.Name != "finished" {
+		t.Fatalf("ListArchived = %+v, want the archived binding", archived)
+	}
+	events, err := rt.Store.ArchivedLog(archived[0].RecordID)
+	if err != nil || len(events) != 1 || events[0].Kind != store.KindPlan {
+		t.Errorf("ArchivedLog = %+v, %v; want the plan entry the archive kept", events, err)
 	}
 }
 
@@ -211,8 +216,8 @@ func TestGCAfterDoneReportsGone(t *testing.T) {
 	if gcRes[0].WorktreeGone != wt {
 		t.Errorf("GC WorktreeGone = %q, want %q", gcRes[0].WorktreeGone, wt)
 	}
-	if gcRes[0].ArchivedTo == "" {
-		t.Error("GC ArchivedTo is empty, want archive path")
+	if !gcRes[0].Archived {
+		t.Error("GC Archived is false, want the binding archived")
 	}
 }
 
@@ -346,17 +351,16 @@ func TestGCDeleteRemovesTheDirectory(t *testing.T) {
 	if !got[0].Deleted {
 		t.Errorf("Deleted = false, want true")
 	}
-	if got[0].ArchivedTo != "" {
-		t.Errorf("ArchivedTo = %q, want empty", got[0].ArchivedTo)
+	if got[0].Archived {
+		t.Error("Archived = true, want a delete")
 	}
 
 	if _, err := rt.Store.Load("finished"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("binding state still exists in store: %v", err)
 	}
 
-	archiveDir := rt.Store.ArchiveDir()
-	if entries, err := os.ReadDir(archiveDir); err == nil && len(entries) > 0 {
-		t.Errorf("expected no tarball in archive dir, found %d entries", len(entries))
+	if archived, err := rt.Store.ListArchived(); err != nil || len(archived) != 0 {
+		t.Errorf("ListArchived = %+v, %v; want nothing archived", archived, err)
 	}
 }
 
@@ -396,7 +400,7 @@ func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
 	if fg.dirtyCalls != 0 {
 		t.Errorf("dirtyCalls = %d, want 0", fg.dirtyCalls)
 	}
-	if r.ArchivedTo == "" || r.Deleted {
+	if !r.Archived || r.Deleted {
 		t.Errorf("binding was not archived: %+v", r)
 	}
 }

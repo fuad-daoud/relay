@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -133,6 +134,10 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// runs before the no-bindings early return: a machine whose sessions have
 	// all ended is exactly the one left carrying stale records.
 	d.safely("planner prune", func() { d.prunePlanners() })
+	// Before the first tick of this process, and after the tarball import
+	// ListArchived runs, every archived record the mirror has not seen is
+	// ingested (P3d §4.2, §4.5).
+	archivedMirrorOnce.Do(func() { mirrorArchived(ctx, d.rt) })
 
 	bindings, err := d.rt.Store.List()
 	if err != nil {
@@ -319,6 +324,56 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 
 		return tx.Save(next)
 	})
+}
+
+// archivedMirrorOnce runs the archived-record mirror feed once per process,
+// before the daemon's first tick (P3d §4.5).
+var archivedMirrorOnce sync.Once
+
+// mirrorArchived feeds every archived record the mirror has not seen into the
+// database. The tarball import runs inside ListArchived and therefore first, so
+// a root upgraded from a pre-P3d relevo has its tarballs imported before
+// anything looks for archived records.
+//
+// Each record is keyed by the kv row "ingested.archive.<recordID>": the key is
+// put only after a successful ingest, so a failure is logged and retried by
+// the next process rather than lost.
+func mirrorArchived(ctx context.Context, rt Runtime) {
+	if rt.DB == nil {
+		return
+	}
+
+	archived, err := rt.Store.ListArchived()
+	if err != nil {
+		slog.Warn("mirror: list archived", "err", err)
+		return
+	}
+
+	deps := IngestDeps(rt)
+	for _, a := range archived {
+		key := "ingested.archive." + a.RecordID
+		if _, ok, kerr := rt.DB.KVGet(key); kerr != nil {
+			slog.Warn("mirror: read archived cursor", "record", a.RecordID, "err", kerr)
+			continue
+		} else if ok {
+			continue
+		}
+
+		stats, ierr := ingest.Ingest(ctx, ingest.ArchivedSource(rt.Store, a.RecordID), rt.DB, deps)
+		if ierr != nil {
+			slog.Warn("mirror: ingest archived", "binding", a.Binding.Name, "err", ierr)
+			continue
+		}
+		if perr := rt.DB.KVPut(key, []byte("true")); perr != nil {
+			slog.Warn("mirror: record archived cursor", "record", a.RecordID, "err", perr)
+			continue
+		}
+		if stats != (ingest.Stats{}) {
+			slog.Info("ingest", "binding", a.Binding.Name, "archived", true,
+				"rounds", stats.Rounds, "events", stats.Events,
+				"artifacts", stats.Artifacts, "transcript", stats.TranscriptRecords)
+		}
+	}
 }
 
 // sealRounds seals every sealable closed round of one binding (P3c §4.3):

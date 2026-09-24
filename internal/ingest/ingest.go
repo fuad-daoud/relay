@@ -315,7 +315,7 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 			_, path := src.Origin()
 			p := path
 			archivePath = &p
-			if ts, ok := src.(*tarSource); ok {
+			if ts, ok := src.(archivedAtter); ok {
 				if at, found := ts.ArchivedAt(); found {
 					archivedAt = &at
 				}

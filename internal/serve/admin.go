@@ -183,7 +183,7 @@ type GCAbandonedResult struct {
 	Label    string
 	Name     string
 	LastSeen time.Time
-	Archive  string // path, "" on dry run
+	Archive  bool // true when archived; false on a dry run
 }
 
 // GCAbandoned unbinds (archives) owned bindings that are older than olderThan and not running.
@@ -233,13 +233,13 @@ func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now ti
 				continue
 			}
 
-			archivePath := ""
+			archived := false
 			if !dryRun {
 				res, err := relevo.Unbind(ctx, rt, b.Name, true)
 				if err != nil {
 					return nil, err
 				}
-				archivePath = res.ArchivedTo
+				archived = res.Archived
 			}
 
 			results = append(results, GCAbandonedResult{
@@ -247,7 +247,7 @@ func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now ti
 				Label:    label,
 				Name:     b.Name,
 				LastSeen: lastSeen,
-				Archive:  archivePath,
+				Archive:  archived,
 			})
 		}
 	}

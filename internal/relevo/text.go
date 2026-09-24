@@ -124,8 +124,8 @@ func dryRunBuilderLine(d DryRun) string {
 // binding, then at most one for its worktree, then at most one for a headless process.
 func UnbindText(name string, res UnbindResult) string {
 	var lines []string
-	if res.ArchivedTo != "" {
-		lines = append(lines, fmt.Sprintf("archived %s to %s", name, res.ArchivedTo))
+	if res.Archived {
+		lines = append(lines, fmt.Sprintf("archived %s", name))
 	} else {
 		lines = append(lines, fmt.Sprintf("unbound %s", name))
 	}

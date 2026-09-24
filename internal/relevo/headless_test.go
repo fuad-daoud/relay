@@ -2270,7 +2270,7 @@ func TestUnbindHeadlessKillFailureIsReportedNotFatal(t *testing.T) {
 	if !strings.Contains(text, fmt.Sprintf("could not stop builder process (pid %d", b.Builder.PID)) {
 		t.Errorf("UnbindText = %q, want the failure line", text)
 	}
-	if res.ArchivedTo == "" {
+	if !res.Archived {
 		t.Error("the archive still happens")
 	}
 }

@@ -151,6 +151,108 @@ func (d *DB) RecordList() ([]Record, error) {
 	return out, nil
 }
 
+// RecordListArchived returns every archived row, oldest archived_at first and
+// by name within one stamp. A record archived by RecordArchive is invisible to
+// RecordGet and RecordList; this is the reader that brings it back for
+// `relevo tab`, `relevo stats` and the daemon's mirror feed (P3d §4.1).
+func (d *DB) RecordListArchived() ([]Record, error) {
+	rows, err := d.sqlDB.QueryContext(context.Background(),
+		`SELECT `+recordCols+` FROM binding_record WHERE archived_at IS NOT NULL
+			ORDER BY archived_at ASC, name ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("db: record list archived: %w", mapBusy(err))
+	}
+	defer rows.Close()
+
+	var out []Record
+	for rows.Next() {
+		r, err := scanRecord(rows)
+		if err != nil {
+			return nil, fmt.Errorf("db: record list archived: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db: record list archived: %w", mapBusy(err))
+	}
+	return out, nil
+}
+
+// RecordGetByID returns the row with this id, live or archived, and whether it
+// was found. It is how the archive source reads the record a tarball import or
+// a gc archive minted, when the caller holds the record id rather than the
+// name (P3d §4.5).
+func (d *DB) RecordGetByID(id string) (Record, bool, error) {
+	r, err := scanRecord(d.sqlDB.QueryRowContext(context.Background(),
+		`SELECT `+recordCols+` FROM binding_record WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Record{}, false, nil
+	}
+	if err != nil {
+		return Record{}, false, fmt.Errorf("db: record get by id %q: %w", id, mapBusy(err))
+	}
+	return r, true, nil
+}
+
+// RecordCounts returns how many binding_record rows are live and how many are
+// archived. It is what doctor's `database` row prints (P3d §4.7).
+func (d *DB) RecordCounts() (live, archived int, err error) {
+	var total, liveCount int
+	if err := d.sqlDB.QueryRowContext(context.Background(),
+		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN archived_at IS NULL THEN 1 ELSE 0 END), 0)
+			FROM binding_record`).Scan(&total, &liveCount); err != nil {
+		return 0, 0, fmt.Errorf("db: record counts: %w", mapBusy(err))
+	}
+	return liveCount, total - liveCount, nil
+}
+
+// RecordGetArchivedByName returns the most recently archived row for name,
+// and whether one exists. A name may be archived more than once -- the name is
+// reused after each archive -- and this is the one whose sealed round files a
+// path under the old binding directory names (internal/store.sealedLookup,
+// P3d §4.1).
+func (d *DB) RecordGetArchivedByName(name string) (Record, bool, error) {
+	r, err := scanRecord(d.sqlDB.QueryRowContext(context.Background(),
+		`SELECT `+recordCols+` FROM binding_record
+			WHERE name = ? AND archived_at IS NOT NULL
+			ORDER BY archived_at DESC, id ASC LIMIT 1`, name))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Record{}, false, nil
+	}
+	if err != nil {
+		return Record{}, false, fmt.Errorf("db: record get archived %q: %w", name, mapBusy(err))
+	}
+	return r, true, nil
+}
+
+// RecordPutArchived inserts one archived row directly, with archived_at set:
+// the tarball import (§4.2) mints a record that was never live. RecordPut is
+// the wrong tool on a name a live binding already holds -- its lookup is
+// `WHERE name = ? AND archived_at IS NULL`, so it would update that live row
+// and RecordArchive would then archive it.
+func (t *Tx) RecordPutArchived(r Record, at time.Time) (string, error) {
+	id := r.ID
+	if id == "" {
+		id = NewID()
+	}
+	createdAt := r.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = at
+	}
+	updatedAt := r.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = at
+	}
+	if _, err := t.exec(`INSERT INTO binding_record
+			(id, owner, name, state, round, cwd, record_json, created_at, updated_at, viewed_at, archived_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		id, r.Owner, r.Name, r.State, r.Round, r.CWD, r.JSON,
+		formatTime(createdAt), formatTime(updatedAt), nullableTime(r.ViewedAt), formatTime(at)); err != nil {
+		return "", fmt.Errorf("db: record put archived %q: %w", r.Name, mapBusy(err))
+	}
+	return id, nil
+}
+
 // RecordPut inserts or updates the live row for r.Name. A hit keeps the row's
 // id and its viewed_at -- and its created_at, which is the binding's own
 // creation stamp, not this write's -- and takes r's owner with the other

@@ -1,16 +1,12 @@
 package store
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -402,12 +398,13 @@ func (t *Tx) List() ([]Binding, error) {
 
 // Delete removes a binding under the held lock.
 func (t *Tx) Delete(name string) error {
-	return t.s.remove(name)
+	return t.remove(name)
 }
 
-// Archive moves a binding aside under the held lock, returning its new path.
+// Archive archives a binding under the held lock, returning "" for the path
+// it used to write a tarball at (P3d §4.1).
 func (t *Tx) Archive(name string) (string, error) {
-	return t.s.archive(name)
+	return t.archive(name)
 }
 
 // Unexported methods implement the actual logic, assuming lock is held via Tx.
@@ -624,77 +621,14 @@ func loadBindingFile(root, name string) (Binding, error) {
 	return decodeBinding(raw, name)
 }
 
-// ArchiveDir is where archived bindings are kept. It lives inside the state
-// root but List skips it, since it holds no live bindings.
+// ArchiveDir is where a pre-P3d relevo kept archived bindings as
+// <name>-<stamp>.tar.gz. Nothing writes it any more: it is the one-time
+// import's input, and its only caller is importTarballs (P3d §4.2).
 func (s *Store) ArchiveDir() string { return filepath.Join(s.root, archiveDirName) }
 
-// Archive is one gc'd binding under ArchiveDir, named <name>-<stamp>.tar.gz.
-type Archive struct {
-	Name string
-	At   time.Time
-	Path string
-}
-
-// archiveStampLayout is the stamp archive() writes into the file name.
+// archiveStampLayout is the stamp a tarball's file name carries, and the
+// archived_at the import gives the record it makes from it (P3d §4.2).
 const archiveStampLayout = "20060102-150405"
-
-// ListArchives returns every archive, oldest first. Files that do not
-// match the name pattern are ignored.
-func (s *Store) ListArchives() ([]Archive, error) {
-	names, err := filepath.Glob(filepath.Join(s.ArchiveDir(), "*.tar.gz"))
-	if err != nil {
-		return nil, err
-	}
-	var out []Archive
-	for _, p := range names {
-		base := strings.TrimSuffix(filepath.Base(p), ".tar.gz")
-		// The stamp is the last 15 bytes: YYYYMMDD-HHMMSS, preceded by '-'.
-		if len(base) < len(archiveStampLayout)+2 {
-			continue
-		}
-		cut := len(base) - len(archiveStampLayout)
-		if base[cut-1] != '-' {
-			continue
-		}
-		at, err := time.Parse(archiveStampLayout, base[cut:])
-		if err != nil {
-			continue
-		}
-		out = append(out, Archive{Name: base[:cut-1], At: at.UTC(), Path: p})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
-	return out, nil
-}
-
-// ReadArchivedLog returns the entries of the <name>/log.jsonl member of an
-// archive, nil when the archive has no such member. It reads the tarball
-// only as far as that member.
-func (s *Store) ReadArchivedLog(path string) ([]LogEntry, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	defer gz.Close()
-	tr := tar.NewReader(gz)
-	for {
-		h, err := tr.Next()
-		if err == io.EOF {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		if filepath.Base(h.Name) != "log.jsonl" || strings.Count(strings.Trim(h.Name, "/"), "/") != 1 {
-			continue
-		}
-		return decodeLog(tr)
-	}
-}
 
 // DBPath is relevo's sqlite database file (docs/specs/2026-09-20-persistence-design.md
 // §4), the one record for bindings, config and the small stores (P3b plan D2:
@@ -746,213 +680,52 @@ func (s *Store) VerifyWorktreePath(name string, round int) string {
 	return filepath.Join(s.WorktreeDir(), ".verify", fmt.Sprintf("%s-%03d", name, round))
 }
 
-// archive packs a binding's directory into a gzipped tarball and removes the
-// directory, so the name frees for a fresh bind while log.jsonl and every
-// round file survive. Relevo's state is small text, which gzips well enough
-// that a long history of archived bindings stays negligible on disk.
+// archive marks a binding's record archived and removes its directory, so the
+// name frees for a fresh bind while its log and every round file survive as
+// rows. Every round's NNN-* files are sealed into round_file first, ignoring
+// Sealable: the caller has already stopped the builder, and nothing that still
+// reads an open round is in flight.
 //
-// It returns the path of the tarball it wrote.
-func (s *Store) archive(name string) (string, error) {
+// It returns "" for the path: nothing is tarred any more (P3d §4.1).
+func (t *Tx) archive(name string) (string, error) {
+	s := t.s
 	if err := ValidName(name); err != nil {
 		return "", err
 	}
-	// The import runs before the files below are written, so nothing
-	// archive itself materialises can be imported (§4.4).
-	if err := s.importPresent(name); err != nil {
+	// load adopts a present bind.json/log.jsonl first and is the ErrNotFound
+	// check, exactly as it was before the tarball went (§4.1 step 1).
+	if _, err := s.load(name); err != nil {
 		return "", err
 	}
-	b, err := s.load(name)
-	if err != nil {
+
+	// A SealAll read error fails the archive and leaves the directory alone;
+	// today a tar error did the same (§6).
+	if _, err := t.SealAll(name); err != nil {
 		return "", err
 	}
+
 	d, err := s.dbForWrite()
 	if err != nil {
 		return "", err
 	}
-	rec, ok, err := d.RecordGet(name)
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "", fmt.Errorf("%s: %w", name, ErrNotFound)
-	}
-
-	if err := os.MkdirAll(s.ArchiveDir(), bindingDirMode); err != nil {
-		return "", fmt.Errorf("create archive dir: %w", err)
-	}
-
-	// Materialise the record as the files the tarball has always held, so
-	// TarSource, ReadArchivedLog, TabEntries and `db backfill` are unchanged
-	// (§4.4).
-	rawBinding, err := json.MarshalIndent(b, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("marshal binding %q: %w", name, err)
-	}
-	if err := writeFileAtomic(s.bindingPath(name), rawBinding, bindingFileMode); err != nil {
-		return "", err
-	}
-	events, err := d.EventsOf(rec.ID, 0)
-	if err != nil {
-		return "", fmt.Errorf("read log for %q: %w", name, err)
-	}
-	var logBuf []byte
-	for _, ev := range events {
-		logBuf = append(logBuf, ev.JSON...)
-		logBuf = append(logBuf, '\n')
-	}
-	if err := writeFileAtomic(s.logPath(name), logBuf, bindingFileMode); err != nil {
-		return "", err
-	}
-
-	// A sealed round's files are rows, not files (P3c §4.4): write them back
-	// into the directory so the tarball keeps today's layout.
-	if err := materialiseSealed(d, s.Dir(name), rec.ID); err != nil {
-		return "", err
-	}
-
-	dest := filepath.Join(s.ArchiveDir(),
-		fmt.Sprintf("%s-%s.tar.gz", name, time.Now().UTC().Format("20060102-150405")))
-
-	if err := tarGzDir(s.Dir(name), name, dest); err != nil {
-		return "", err
-	}
-
 	if err := d.RecordArchive(name, time.Now().UTC()); err != nil {
 		return "", err
 	}
 
-	// Only once the archive is safely on disk: losing the directory to a
-	// half-written tarball would destroy the record this exists to keep.
 	if err := os.RemoveAll(s.Dir(name)); err != nil {
 		return "", fmt.Errorf("remove archived binding %q: %w", name, err)
 	}
 
-	return dest, nil
+	return "", nil
 }
 
-// materialiseSealed writes back into dir every sealed round file of recordID
-// that is not already there, with its body and its own mtime. It is what
-// keeps archive()'s tarball at the layout it has always had once a round's
-// files became rows (P3c §4.4). A file present on disk is left exactly as it
-// is; a file with no row is skipped.
-func materialiseSealed(d *db.DB, dir, recordID string) error {
-	names, err := d.RoundFileList(recordID)
-	if err != nil {
-		return err
-	}
-	for _, base := range names {
-		dst := filepath.Join(dir, base)
-		if _, err := os.Stat(dst); err == nil {
-			continue
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("stat %s: %w", base, err)
-		}
-
-		body, mtime, ok, err := d.RoundFileGet(recordID, base)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			continue
-		}
-		if err := os.WriteFile(dst, body, bindingFileMode); err != nil {
-			return fmt.Errorf("materialise %s: %w", base, err)
-		}
-		if err := os.Chmod(dst, bindingFileMode); err != nil {
-			return fmt.Errorf("materialise %s: %w", base, err)
-		}
-		if !mtime.IsZero() {
-			if err := os.Chtimes(dst, mtime, mtime); err != nil {
-				return fmt.Errorf("materialise %s: %w", base, err)
-			}
-		}
-	}
-	return nil
-}
-
-// tarGzDir writes the flat contents of dir into a gzipped tar at dest, under
-// the given prefix. It streams to a temp file in the destination directory and
-// renames only after a clean close, so a crash cannot leave a truncated
-// archive that looks complete.
-func tarGzDir(dir, prefix, dest string) (err error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("read binding dir %s: %w", dir, err)
-	}
-
-	tmp, err := os.CreateTemp(filepath.Dir(dest), ".tmp-archive-*")
-	if err != nil {
-		return fmt.Errorf("create temp archive: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			tmp.Close()
-			os.Remove(tmp.Name())
-		}
-	}()
-
-	gz := gzip.NewWriter(tmp)
-	tw := tar.NewWriter(gz)
-
-	for _, e := range entries {
-		if e.IsDir() {
-			continue // binding directories are flat
-		}
-		if err = addArchiveFile(tw, dir, prefix, e); err != nil {
-			return err
-		}
-	}
-
-	if err = tw.Close(); err != nil {
-		return fmt.Errorf("close tar writer: %w", err)
-	}
-	if err = gz.Close(); err != nil {
-		return fmt.Errorf("close gzip writer: %w", err)
-	}
-	if err = tmp.Close(); err != nil {
-		return fmt.Errorf("close archive: %w", err)
-	}
-	if err = os.Rename(tmp.Name(), dest); err != nil {
-		return fmt.Errorf("rename archive into place: %w", err)
-	}
-
-	return nil
-}
-
-func addArchiveFile(tw *tar.Writer, dir, prefix string, e os.DirEntry) error {
-	info, err := e.Info()
-	if err != nil {
-		return fmt.Errorf("stat %s: %w", e.Name(), err)
-	}
-	if info.Size() > maxArchiveFileBytes {
-		return fmt.Errorf("%s is %d bytes, over the %d byte archive limit",
-			e.Name(), info.Size(), maxArchiveFileBytes)
-	}
-
-	hdr, err := tar.FileInfoHeader(info, "")
-	if err != nil {
-		return fmt.Errorf("tar header for %s: %w", e.Name(), err)
-	}
-	hdr.Name = filepath.Join(prefix, e.Name())
-
-	if err := tw.WriteHeader(hdr); err != nil {
-		return fmt.Errorf("write tar header for %s: %w", e.Name(), err)
-	}
-
-	f, err := os.Open(filepath.Join(dir, e.Name()))
-	if err != nil {
-		return fmt.Errorf("open %s: %w", e.Name(), err)
-	}
-	defer f.Close()
-
-	if _, err := io.Copy(tw, f); err != nil {
-		return fmt.Errorf("copy %s into archive: %w", e.Name(), err)
-	}
-
-	return nil
-}
-
-func (s *Store) remove(name string) error {
+// remove deletes a binding under the held lock: its record, its directory and
+// -- through the record's own cascade -- its events and sealed round files.
+//
+// Like archive it seals every round's NNN-* files first (§4.1), so the same
+// rule holds on both paths: nothing leaves a binding unsealed.
+func (t *Tx) remove(name string) error {
+	s := t.s
 	if err := ValidName(name); err != nil {
 		return err
 	}
@@ -968,7 +741,11 @@ func (s *Store) remove(name string) error {
 		return err
 	}
 	if ok {
-		// The events go with the row, through ON DELETE CASCADE (§4.4).
+		if _, err := t.SealAll(name); err != nil {
+			return err
+		}
+		// The events and sealed files go with the row, through ON DELETE
+		// CASCADE (§4.4).
 		if err := d.RecordDelete(name); err != nil {
 			return err
 		}
