@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/legacy"
 )
@@ -181,6 +182,55 @@ func TestStreamDrainedLegacyTrailer(t *testing.T) {
 	held.Builder.StreamOffset = 0
 	if s.StreamDrained(held, 3) {
 		t.Error("StreamDrained with payload bytes after the cursor = true, want false")
+	}
+}
+
+// TestStreamDrainedStaleStreamWithTrailer pins the live zen case: the
+// pre-rename drain stopped mid-line, three bytes before the trailer, so the
+// unrendered tail is not trailer-only. With the exit trailer present the
+// builder is gone, and once the stream has been quiet for staleStreamAfter
+// the round may seal; a freshly written one still waits.
+func TestStreamDrainedStaleStreamWithTrailer(t *testing.T) {
+	s := New(t.TempDir())
+	b := newBinding("gomaxprocs", "/home/dev/gomaxprocs")
+	b.Round = 3
+	b.Builder.StreamRound = 2
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	body := []byte(`{"type":"step","part":{"time":{"end":1}}}` + "\n\n" +
+		legacy.RusageTrailer + "cpu_usec=1 mem_peak=2\n\n" +
+		legacy.ExitTrailer + "0\n")
+	path := s.BuilderStreamPath(b.Name, 2)
+	if err := os.WriteFile(path, body, bindingFileMode); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	b.Builder.StreamOffset = int64(bytes.Index(body, []byte("}}}")))
+
+	if s.StreamDrained(b, 2) {
+		t.Error("StreamDrained of a just-written stream with payload bytes after the cursor = true, want false")
+	}
+
+	old := time.Now().Add(-staleStreamAfter - time.Minute)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if !s.StreamDrained(b, 2) {
+		t.Error("StreamDrained of a stale stream carrying its exit trailer = false, want true")
+	}
+
+	// Without an exit trailer, a stale stream still holds the round: the
+	// builder may be alive and silent.
+	if err := os.WriteFile(path, []byte(`{"type":"step"}`+"\n"), bindingFileMode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	b.Builder.StreamOffset = 0
+	if s.StreamDrained(b, 2) {
+		t.Error("StreamDrained of a stale stream with no exit trailer = true, want false")
 	}
 }
 
