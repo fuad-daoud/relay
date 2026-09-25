@@ -872,3 +872,101 @@ func (d *DB) Stats() (Stats, error) {
 		NewestRound: newestRound,
 	}, nil
 }
+
+// RecentEvents returns events since `since`, across all bindings, ordered ts DESC, seq DESC.
+// limit <= 0 means no limit.
+func (d *DB) RecentEvents(since time.Time, limit int) ([]EventLogRow, error) {
+	q := `SELECT event.ts, event.seq, event.kind, event.note, event.entry_json,
+			binding.name, event.round_id,
+			round.number, round.started_at, round.closed_at,
+			round.in_tokens, round.cache_tokens, round.write_tokens, round.out_tokens
+		FROM event
+		JOIN binding ON event.binding_id = binding.id
+		LEFT JOIN round ON event.round_id = round.id
+		WHERE event.ts >= ?
+		ORDER BY event.ts DESC, event.seq DESC`
+	args := []any{formatTime(since)}
+	if limit > 0 {
+		q += ` LIMIT ?`
+		args = append(args, limit)
+	}
+
+	rows, err := d.sqlDB.QueryContext(context.Background(), q, args...)
+	if isMissingTable(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("db: recent events: %w", mapBusy(err))
+	}
+	defer rows.Close()
+
+	var out []EventLogRow
+	for rows.Next() {
+		var r EventLogRow
+		var tsStr string
+		var note, roundID sql.NullString
+		var roundNum sql.NullInt64
+		var startedAt, closedAt sql.NullString
+		var inTokens, cacheTokens, writeTokens, outTokens sql.NullInt64
+
+		if err := rows.Scan(&tsStr, &r.Seq, &r.Kind, &note, &r.EntryJSON,
+			&r.BindingName, &roundID,
+			&roundNum, &startedAt, &closedAt,
+			&inTokens, &cacheTokens, &writeTokens, &outTokens); err != nil {
+			return nil, fmt.Errorf("db: recent events: %w", mapBusy(err))
+		}
+
+		parsedTS, err := parseTime(tsStr)
+		if err != nil {
+			return nil, fmt.Errorf("db: recent events: %w", err)
+		}
+		r.TS = parsedTS
+
+		if note.Valid {
+			v := note.String
+			r.Note = &v
+		}
+		if roundID.Valid {
+			v := roundID.String
+			r.RoundID = &v
+		}
+		if roundNum.Valid {
+			n := int(roundNum.Int64)
+			r.Round = &n
+		}
+		if closedAt.Valid && startedAt.Valid {
+			st, err := parseTime(startedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("db: recent events: %w", err)
+			}
+			ct, err := parseTime(closedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("db: recent events: %w", err)
+			}
+			ms := ct.Sub(st).Milliseconds()
+			r.DurationMS = &ms
+		}
+		if inTokens.Valid || cacheTokens.Valid || writeTokens.Valid || outTokens.Valid {
+			var sum int64
+			if inTokens.Valid {
+				sum += inTokens.Int64
+			}
+			if cacheTokens.Valid {
+				sum += cacheTokens.Int64
+			}
+			if writeTokens.Valid {
+				sum += writeTokens.Int64
+			}
+			if outTokens.Valid {
+				sum += outTokens.Int64
+			}
+			r.Tokens = &sum
+		}
+
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db: recent events: %w", mapBusy(err))
+	}
+	return out, nil
+}

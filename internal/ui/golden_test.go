@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/history"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/stats"
@@ -430,6 +431,116 @@ func goldenRoundsModel(t *testing.T, width, height int) Model {
 	return res.(Model)
 }
 
+func logFixtureEvents() []db.EventLogRow {
+	r1, r2, r17, r5 := "r1", "r2", "r17", "r5"
+	n1, n2, n17, n5 := 1, 2, 17, 5
+	t2, d2 := int64(154000), int64(45000)
+	t3, d3 := int64(138000), int64(65000)
+	ty1, dy1 := int64(1200000), int64(27*60000)
+
+	yesterday := railNow.AddDate(0, 0, -1)
+	at := func(hour, min int) time.Time {
+		return time.Date(railNow.Year(), railNow.Month(), railNow.Day(), hour, min, 0, 0, railNow.Location())
+	}
+	atY := func(hour, min int) time.Time {
+		return time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), hour, min, 0, 0, yesterday.Location())
+	}
+
+	s := func(str string) *string { return &str }
+
+	return []db.EventLogRow{
+		// Today
+		{TS: at(13, 45).Add(time.Second), Seq: 2, Kind: "pick", Note: s("picked gemini-3.8-flash-high for builder: order #1"), BindingName: "oc-live", RoundID: &r1, Round: &n1},
+		{TS: at(13, 45), Seq: 1, Kind: "plan", EntryJSON: `{"tier":"yolo"}`, BindingName: "oc-live", RoundID: &r1, Round: &n1},
+
+		{TS: at(13, 30).Add(time.Second), Seq: 2, Kind: "diff", Note: s("1 file, +1 -0; 1 commit, clean"), BindingName: "haiku", RoundID: &r2, Round: &n2},
+		{TS: at(13, 30), Seq: 1, Kind: "report", EntryJSON: `{"outcome":"done"}`, BindingName: "haiku", RoundID: &r2, Round: &n2, Tokens: &t2, DurationMS: &d2},
+
+		{TS: at(13, 10).Add(time.Second), Seq: 2, Kind: "diff", Note: s("1 file, +1 -0; no commits, dirty"), BindingName: "question", RoundID: &r1, Round: &n1},
+		{TS: at(13, 10), Seq: 1, Kind: "report", EntryJSON: `{"outcome":"halted","halted_at":"step 2"}`, BindingName: "question", RoundID: &r1, Round: &n1, Tokens: &t3, DurationMS: &d3},
+
+		{TS: at(12, 40).Add(time.Second), Seq: 2, Kind: "drift", Note: s("36 files, +3187, -45"), BindingName: "ck-d2-stats", RoundID: &r17, Round: &n17},
+		{TS: at(12, 40), Seq: 1, Kind: "plan", EntryJSON: `{"tier":"yolo"}`, BindingName: "ck-d2-stats", RoundID: &r17, Round: &n17},
+
+		{TS: at(12, 15), Seq: 1, Kind: "switch", Note: s("switched builder (exited (code 0) without a report): picked glm-5.3-flash for builder: order #6"), BindingName: "oc-496", RoundID: &r2, Round: &n2},
+
+		{TS: at(12, 14), Seq: 1, Kind: "exit", Note: s("without a report (code 0)"), BindingName: "oc-496", RoundID: &r2, Round: &n2},
+
+		// Yesterday
+		{TS: atY(16, 30).Add(time.Second), Seq: 2, Kind: "diff", Note: s("4 files, +80 -12; 2 commits, clean"), BindingName: "persist", RoundID: &r5, Round: &n5},
+		{TS: atY(16, 30), Seq: 1, Kind: "report", EntryJSON: `{"outcome":"done"}`, BindingName: "persist", RoundID: &r5, Round: &n5, Tokens: &ty1, DurationMS: &dy1},
+
+		{TS: atY(14, 45), Seq: 1, Kind: "plan", BindingName: "persist", RoundID: &r5, Round: &n5},
+	}
+}
+
+func logFixtureHist() history.History {
+	at := func(hour, min int) time.Time {
+		return time.Date(railNow.Year(), railNow.Month(), railNow.Day(), hour, min, 0, 0, railNow.Location())
+	}
+	return history.History{
+		Events: []history.Event{
+			{
+				At:       at(11, 50),
+				Kind:     ledger.RateLimited,
+				Provider: "cline-pass",
+				Note:     "weekly Clinepass limit reached, resets in 1d 4h",
+			},
+		},
+	}
+}
+
+func logFixtureRevs() []db.RevisionRow {
+	yesterday := railNow.AddDate(0, 0, -1)
+	atY := func(hour, min int) time.Time {
+		return time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), hour, min, 0, 0, yesterday.Location())
+	}
+	return []db.RevisionRow{
+		{
+			Rev:     12,
+			At:      atY(15, 0),
+			Message: "set candidates",
+		},
+	}
+}
+
+// goldenLogModel hosts the persistent event log view, reached through
+// the shell's start command so the breadcrumb reads relevo › log.
+func goldenLogModel(t *testing.T, width, height int) Model {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	st := store.New(t.TempDir())
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st, DB: d}},
+		Options{Interval: time.Second, Start: "log", Version: goldenVersion})
+	m.now = func() time.Time { return railNow }
+	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+	m = res.(Model)
+	m.statusInFlight = false
+	res, cmd := m.Update(statusMsg{report: relevo.Report{}})
+	m = drain(t, res.(Model), cmd)
+	if _, ok := m.top().(logView); !ok {
+		t.Fatalf("Start=log must replace the stack, top is %T", m.top())
+	}
+	m.actionLog = []actionEntry{
+		{
+			At:   time.Date(railNow.Year(), railNow.Month(), railNow.Day(), 11, 20, 0, 0, railNow.Location()),
+			Verb: "gate",
+			Text: "gated google until 22:00",
+		},
+	}
+	res, _ = m.Update(eventLogMsg{
+		events: logFixtureEvents(),
+		hist:   logFixtureHist(),
+		revs:   logFixtureRevs(),
+		at:     railNow,
+	})
+	return res.(Model)
+}
+
 // goldenStatsModel hosts the stats view, reached through the shell's start
 // command so the breadcrumb reads relevo › stats, and feeds it a report.
 func goldenStatsModel(t *testing.T, width, height int, rep stats.Report) Model {
@@ -692,6 +803,10 @@ func TestGoldenViews(t *testing.T) {
 		{
 			name: "rounds", width: 160, height: 40,
 			build: func(t *testing.T) Model { return goldenRoundsModel(t, 160, 40) },
+		},
+		{
+			name: "log-132", width: 132, height: 34,
+			build: func(t *testing.T) Model { return goldenLogModel(t, 132, 34) },
 		},
 		{
 			name: "cmdline-open", width: 140, height: 40,

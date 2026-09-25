@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
 )
@@ -32,6 +33,27 @@ func dashStyles() dash.Styles {
 		Archived:  archivedStyle,
 		Attention: stateNeedsYouStyle,
 		Live:      stateActiveStyle,
+		Strong:    textStyle.Bold(true),
+		Accent:    accentStyle,
+		Warn:      warnStyle,
+		Ok:        greenStyle,
+		Danger:    redStyle,
+		Grid:      gridStyle,
+		Chip:      chipAccentStyle,
+	}
+}
+
+// runningRounds builds a lookup for rounds currently running in the working group.
+func runningRounds(env Env) func(string, int) bool {
+	m := make(map[string]int)
+	for _, b := range env.Report.Bindings {
+		if groupOf(b) == groupWorking {
+			m[b.Name] = b.Round
+		}
+	}
+	return func(name string, n int) bool {
+		r, ok := m[name]
+		return ok && r == n
 	}
 }
 
@@ -43,6 +65,7 @@ func newRoundsView(env Env, query, sortKey string) (View, tea.Cmd, error) {
 	}
 	d := dash.New(env.Src.Base().DB, time.Local, envNow(env), query, sortKey)
 	d.Embedded = true
+	d.Running = runningRounds(env)
 	d.Names = env.Src.Base().Candidates.NameOf
 	d.SetStyles(dashStyles())
 	d.SetSize(env.Width, bodyHeight(env))
@@ -58,27 +81,48 @@ func (r roundsView) Crumbs() []string { return []string{"rounds"} }
 
 func (r roundsView) Capturing() bool { return r.dash.Editing() }
 
-// Context names the applied query, or "all rounds", and the regroup axis
-// when there is one (§5.4).
+func clip(s string, width int) string { return clipName(s, width) }
+
+// Context names the summary line or problem, and the regroup axis or sort key (§5.5).
 func (r roundsView) Context(env Env) (string, string) {
-	left := "query: " + r.dash.QueryText()
-	if r.dash.QueryText() == "" {
-		left = "all rounds"
+	r.dash.Running = runningRounds(env)
+	var right string
+	if f := r.dash.FilterText(); f != "" {
+		right += dimStyle.Render("/ "+clip(f, 40)) + "   "
 	}
-	right := ""
 	if axis := r.dash.GroupAxis(); axis != "" {
-		right = "by " + axis
+		axisLabel := axis
+		if axis == "builder" {
+			axisLabel = "candidate"
+		}
+		right += faintStyle.Render("by ") + chip(chipAccentStyle, axisLabel)
+	} else {
+		right += faintStyle.Render("sort ") + dimStyle.Render(r.dash.SortLabel())
+	}
+	right += "   "
+
+	var left string
+	if p := r.dash.Problem(); p != "" {
+		left = "   " + errorStyle.Render(p)
+	} else {
+		maxW := env.Width - 3 - lipgloss.Width(right) - 3
+		left = "   " + r.dash.SummaryLine(maxW)
 	}
 	return left, right
 }
 
 func (r roundsView) Keys() []KeyHelp {
+	enterHelp := "open round"
+	if r.dash.GroupAxis() != "" {
+		enterHelp = "expand"
+	}
 	return []KeyHelp{
+		{"↑↓", "move"},
+		{"enter", enterHelp},
 		{"/", "filter"},
 		{"b", "regroup"},
 		{"s", "sort"},
 		{"S", "flip"},
-		{"enter", "open"},
 		{"r", "refresh"},
 	}
 }
@@ -126,6 +170,7 @@ func (r roundsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 
 // Body is the dashboard grid, sized to the shell's body box.
 func (r roundsView) Body(env Env, width, height int) string {
+	r.dash.Running = runningRounds(env)
 	r.dash.SetSize(width, height)
 	return r.dash.View()
 }

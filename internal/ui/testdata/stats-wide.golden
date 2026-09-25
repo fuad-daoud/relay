@@ -25,7 +25,7 @@
       0 └─────────────┴────────────────────────────────────┴────────────────────────────────────┴────────────────────────────────────┴───────────────────────   
                     09-16                                09-17                                09-18                                09-19                        
                                                                                                                                                                 
-   CANDIDATE                               RNDS  DONE   IN/RND  OUT/RND  CACHE   REPO                                          RNDS   TOKENS  % TOKENS          
+   CANDIDATE                               RNDS  DONE   IN/RND  OUT/RND  CACHE   REPO                                          RNDS   TOKENS         % TOKENS   
    opencode/cline-pass/deepseek-v4.1-fla…     5   75%   557.5k      10k    99%   fuad-daoud/relevo                                5     2.4M  ▇▇▇▇▇▇▇▇▇▇  96%   
    agy/antigravity/claude-sonnet-4-6          2  100%     210k      10k    95%   (no repo)                                        1     100k               4%   
                                                                                                                                                                 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -229,5 +230,105 @@ func TestRoundsSavePrefsOnChange(t *testing.T) {
 	m = drain(t, m, cmd)
 	if got := loadPrefs(ps).Dashboard; got != "harness:agy" {
 		t.Errorf("saved Dashboard = %q, want harness:agy", got)
+	}
+}
+
+func TestRoundsContextSummary(t *testing.T) {
+	m := goldenRoundsModel(t, 160, 40)
+	rv, ok := m.top().(roundsView)
+	if !ok {
+		t.Fatalf("top is %T, want roundsView", m.top())
+	}
+	left, right := rv.Context(m.env())
+	leftPlain := stripANSI(left)
+	if !strings.Contains(leftPlain, "3 rounds") {
+		t.Errorf("left = %q, want '3 rounds'", leftPlain)
+	}
+	if strings.Contains(leftPlain, "$") {
+		t.Errorf("left = %q contains $", leftPlain)
+	}
+	rightPlain := stripANSI(right)
+	if !strings.Contains(rightPlain, "sort newest") {
+		t.Errorf("right = %q, want 'sort newest'", rightPlain)
+	}
+
+	// After b, the right has by and binding
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	m = drain(t, res.(Model), cmd)
+	rv = m.top().(roundsView)
+	_, right = rv.Context(m.env())
+	rightPlain = stripANSI(right)
+	if !strings.Contains(rightPlain, "by") || !strings.Contains(rightPlain, "binding") {
+		t.Errorf("after b: right = %q, want 'by' and 'binding'", rightPlain)
+	}
+}
+
+func TestRoundsRunningFromReport(t *testing.T) {
+	m := goldenRoundsModel(t, 160, 40)
+	rows := dashRows()
+	for i := range rows {
+		if rows[i].BindingName == "persist" && rows[i].Number == 5 {
+			rows[i].Outcome = db.OutcomeOpen
+		}
+	}
+	res, _ := m.Update(dash.RowsMsg{Rows: rows, At: railNow})
+	m = res.(Model)
+
+	b := relevo.BindingStatus{
+		Name:          "persist",
+		Round:         5,
+		Display:       "ACTIVE",
+		BuilderStatus: "working",
+	}
+	res, cmd := m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{b}}})
+	m = drain(t, res.(Model), cmd)
+
+	body := m.View()
+	bodyPlain := stripANSI(body)
+	if !strings.Contains(bodyPlain, "running") {
+		t.Errorf("body does not contain 'running':\n%s", bodyPlain)
+	}
+}
+
+func TestRoundsContextFitsAt100(t *testing.T) {
+	m := goldenRoundsModel(t, 100, 40)
+	rows := append([]db.RoundRow(nil), dashRows()...)
+	pStr := func(s string) *string { return &s }
+	pInt64 := func(n int64) *int64 { return &n }
+	extraOutcomes := []struct {
+		outcome string
+		report  *string
+	}{
+		{db.OutcomeReported, pStr("done")},
+		{db.OutcomeHalted, nil},
+		{db.OutcomeReported, pStr("blocked")},
+		{db.OutcomeExited, nil},
+		{db.OutcomeSwitched, nil},
+	}
+	for i, eo := range extraOutcomes {
+		rows = append(rows, db.RoundRow{
+			BindingID:     "b-extra",
+			BindingName:   "extra",
+			Number:        10 + i,
+			StartedAt:     railNow.Add(-time.Duration(i+1) * time.Hour),
+			Outcome:       eo.outcome,
+			ReportOutcome: eo.report,
+			InTokens:      pInt64(500_000),
+		})
+	}
+	res, _ := m.Update(dash.RowsMsg{Rows: rows, At: railNow})
+	m = res.(Model)
+
+	rv, ok := m.top().(roundsView)
+	if !ok {
+		t.Fatalf("top is %T, want roundsView", m.top())
+	}
+	left, right := rv.Context(m.env())
+	if w := lipgloss.Width(left) + lipgloss.Width(right); w > 100 {
+		t.Errorf("total width = %d > 100 (left=%d, right=%d)", w, lipgloss.Width(left), lipgloss.Width(right))
+	}
+	rightPlain := stripANSI(right)
+	if !strings.Contains(rightPlain, "sort newest") {
+		t.Errorf("right = %q, want 'sort newest'", rightPlain)
 	}
 }

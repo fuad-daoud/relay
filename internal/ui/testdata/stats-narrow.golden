@@ -23,7 +23,7 @@
    opencode/cline-pass/deepseek-v4.1-flash                       5   75%   557.5k      10k    99%   
    agy/antigravity/claude-sonnet-4-6                             2  100%     210k      10k    95%   
                                                                                                     
-   REPO                                                            RNDS   TOKENS  % TOKENS          
+   REPO                                                            RNDS   TOKENS         % TOKENS   
    fuad-daoud/relevo                                                  5     2.4M  ▇▇▇▇▇▇▇▇▇▇  96%   
    (no repo)                                                          1     100k               4%   
 

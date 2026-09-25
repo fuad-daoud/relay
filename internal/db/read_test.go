@@ -624,3 +624,123 @@ func TestStatsCounts(t *testing.T) {
 		t.Errorf("SizeBytes = %d, want > 0", stats.SizeBytes)
 	}
 }
+
+func TestRecentEvents(t *testing.T) {
+	d := openTestDB(t)
+	now := time.Now().Truncate(time.Millisecond)
+
+	binding1ID, err := d.UpsertBinding(newTestBinding("atlas", now.Add(-time.Hour)))
+	if err != nil {
+		t.Fatalf("UpsertBinding 1: %v", err)
+	}
+	binding2ID, err := d.UpsertBinding(newTestBinding("webshop", now.Add(-time.Hour)))
+	if err != nil {
+		t.Fatalf("UpsertBinding 2: %v", err)
+	}
+
+	// Reported round with tokens
+	r1 := newTestRound(binding1ID, 1, OutcomeReported)
+	r1.StartedAt = now.Add(-30 * time.Minute)
+	ct := now.Add(-20 * time.Minute)
+	r1.ClosedAt = &ct
+	in := int64(100)
+	cache := int64(200)
+	write := int64(300)
+	out := int64(400)
+	r1.InTokens = &in
+	r1.CacheTokens = &cache
+	r1.WriteTokens = &write
+	r1.OutTokens = &out
+	round1ID, err := d.UpsertRound(r1)
+	if err != nil {
+		t.Fatalf("UpsertRound 1: %v", err)
+	}
+
+	// Open round without tokens
+	r2 := newTestRound(binding2ID, 2, OutcomeOpen)
+	r2.StartedAt = now.Add(-10 * time.Minute)
+	round2ID, err := d.UpsertRound(r2)
+	if err != nil {
+		t.Fatalf("UpsertRound 2: %v", err)
+	}
+
+	since := now.Add(-15 * time.Minute)
+
+	evs1 := []Event{
+		// Event 1: before since (atlas, round 1)
+		{BindingID: binding1ID, RoundID: &round1ID, Seq: 1, TS: now.Add(-20 * time.Minute), Kind: "plan", Direction: "planner_to_builder", EntryJSON: "{}"},
+		// Event 2: after since (atlas, round 1)
+		{BindingID: binding1ID, RoundID: &round1ID, Seq: 2, TS: now.Add(-10 * time.Minute), Kind: "report", Direction: "builder_to_planner", EntryJSON: `{"outcome":"done"}`},
+	}
+	if _, err := d.AppendEvents(binding1ID, evs1); err != nil {
+		t.Fatalf("AppendEvents 1: %v", err)
+	}
+
+	evs2 := []Event{
+		// Event 3: after since (webshop, round 2)
+		{BindingID: binding2ID, RoundID: &round2ID, Seq: 1, TS: now.Add(-5 * time.Minute), Kind: "plan", Direction: "planner_to_builder", EntryJSON: "{}"},
+		// Event 4: after since (webshop, round 2)
+		{BindingID: binding2ID, RoundID: &round2ID, Seq: 2, TS: now.Add(-2 * time.Minute), Kind: "switch", Direction: "system", EntryJSON: "{}"},
+	}
+	if _, err := d.AppendEvents(binding2ID, evs2); err != nil {
+		t.Fatalf("AppendEvents 2: %v", err)
+	}
+
+	// Read since
+	got, err := d.RecentEvents(since, 0)
+	if err != nil {
+		t.Fatalf("RecentEvents: %v", err)
+	}
+
+	// Assert only the three since `since` come back, newest first
+	if len(got) != 3 {
+		t.Fatalf("got %d events, want 3", len(got))
+	}
+
+	// Newest first: Event 4 (-2m, webshop), Event 3 (-5m, webshop), Event 2 (-10m, atlas)
+	if got[0].Kind != "switch" || got[0].BindingName != "webshop" {
+		t.Errorf("got[0] = %+v, want switch on webshop", got[0])
+	}
+	if got[1].Kind != "plan" || got[1].BindingName != "webshop" {
+		t.Errorf("got[1] = %+v, want plan on webshop", got[1])
+	}
+	if got[2].Kind != "report" || got[2].BindingName != "atlas" {
+		t.Errorf("got[2] = %+v, want report on atlas", got[2])
+	}
+
+	// Binding names are correct
+	// Round is set
+	if got[0].Round == nil || *got[0].Round != 2 {
+		t.Errorf("got[0].Round = %v, want 2", got[0].Round)
+	}
+	if got[2].Round == nil || *got[2].Round != 1 {
+		t.Errorf("got[2].Round = %v, want 1", got[2].Round)
+	}
+
+	// Tokens is the sum for round 1 (100+200+300+400 = 1000)
+	if got[2].Tokens == nil || *got[2].Tokens != 1000 {
+		t.Errorf("got[2].Tokens = %v, want 1000", got[2].Tokens)
+	}
+
+	// DurationMS is non-nil for round 1 (10 minutes = 600,000 ms)
+	if got[2].DurationMS == nil || *got[2].DurationMS != 600_000 {
+		t.Errorf("got[2].DurationMS = %v, want 600000", got[2].DurationMS)
+	}
+
+	// DurationMS is nil for the open round
+	if got[0].DurationMS != nil {
+		t.Errorf("got[0].DurationMS = %v, want nil for open round", got[0].DurationMS)
+	}
+	if got[1].DurationMS != nil {
+		t.Errorf("got[1].DurationMS = %v, want nil for open round", got[1].DurationMS)
+	}
+
+	// Limit caps the result
+	limited, err := d.RecentEvents(since, 2)
+	if err != nil {
+		t.Fatalf("RecentEvents(limit 2): %v", err)
+	}
+	if len(limited) != 2 {
+		t.Fatalf("len(limited) = %d, want 2", len(limited))
+	}
+}

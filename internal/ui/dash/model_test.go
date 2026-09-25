@@ -251,7 +251,7 @@ func TestSortCyclesAndFlips(t *testing.T) {
 	if m.SortKey() != "started" {
 		t.Errorf("SortKey = %q, want started", m.SortKey())
 	}
-	for _, want := range []string{"cost", "tokens", "duration", "commits", "started"} {
+	for _, want := range []string{"tokens", "duration", "commits", "started"} {
 		res, _ := m.Update(key("s"))
 		m = res
 		if m.SortKey() != want {
@@ -267,20 +267,20 @@ func TestSortCyclesAndFlips(t *testing.T) {
 		t.Error("S did not flip the direction")
 	}
 
-	// The sort is real: by cost descending api's $9.10 (unknown basis, but
-	// still its recorded cost) leads; by cost ascending persist r5 ($0.42).
+	// The sort is real: by tokens descending api's 2.0M leads;
+	// by tokens ascending persist r4 (500k).
 	desc := feed(t, newTestModel(t, ""))
-	desc.sortKey, desc.sortDesc = "cost", true
+	desc.sortKey, desc.sortDesc = "tokens", true
 	if got := desc.visible()[0].row.BindingName; got != "api" {
-		t.Errorf("cost desc: first row %q, want api", got)
+		t.Errorf("tokens desc: first row %q, want api", got)
 	}
 	asc := feed(t, newTestModel(t, ""))
-	asc.sortKey, asc.sortDesc = "cost", false
-	if got := asc.visible()[0].row.Number; got != 5 {
-		t.Errorf("cost asc: first row r%d, want r5", got)
+	asc.sortKey, asc.sortDesc = "tokens", false
+	if got := asc.visible()[0].row.Number; got != 4 {
+		t.Errorf("tokens asc: first row r%d, want r4", got)
 	}
 
-	// Grouped, s cycles the group keys: the default is cost, so the first
+	// Grouped, s cycles the group keys: the default is tokens, so the first
 	// press lands on rounds.
 	g := feed(t, newTestModel(t, "by:builder"))
 	if g.groupedLevel() != true {
@@ -300,38 +300,38 @@ func TestSortCyclesAndFlips(t *testing.T) {
 
 func TestCursorBoundsAndExpansion(t *testing.T) {
 	m := feed(t, newTestModel(t, ""))
-	if len(m.visible()) != 3 {
-		t.Fatalf("flat: %d visible lines, want 3", len(m.visible()))
+	if len(m.visible()) != 6 {
+		t.Fatalf("flat: %d visible lines, want 6", len(m.visible()))
 	}
 	res, _ := m.Update(special(tea.KeyUp))
 	m = res
-	if m.cursor != 0 {
-		t.Errorf("up at the top: cursor = %d, want 0", m.cursor)
+	if m.cursor != 1 {
+		t.Errorf("up at the top: cursor = %d, want 1", m.cursor)
 	}
 	res, _ = m.Update(special(tea.KeyEnd))
 	m = res
-	if m.cursor != 2 {
-		t.Errorf("end: cursor = %d, want 2", m.cursor)
+	if m.cursor != 5 {
+		t.Errorf("end: cursor = %d, want 5", m.cursor)
 	}
 	res, _ = m.Update(special(tea.KeyDown))
 	m = res
-	if m.cursor != 2 {
-		t.Errorf("down at the bottom: cursor = %d, want 2", m.cursor)
+	if m.cursor != 5 {
+		t.Errorf("down at the bottom: cursor = %d, want 5", m.cursor)
 	}
 	res, _ = m.Update(special(tea.KeyHome))
 	m = res
-	if m.cursor != 0 {
-		t.Errorf("home: cursor = %d, want 0", m.cursor)
+	if m.cursor != 1 {
+		t.Errorf("home: cursor = %d, want 1", m.cursor)
 	}
 	res, _ = m.Update(special(tea.KeyPgDown))
 	m = res
-	if m.cursor != 2 {
-		t.Errorf("pgdown: cursor = %d, want 2", m.cursor)
+	if m.cursor != 5 {
+		t.Errorf("pgdown: cursor = %d, want 5", m.cursor)
 	}
 	res, _ = m.Update(special(tea.KeyPgUp))
 	m = res
-	if m.cursor != 0 {
-		t.Errorf("pgup: cursor = %d, want 0", m.cursor)
+	if m.cursor != 1 {
+		t.Errorf("pgup: cursor = %d, want 1", m.cursor)
 	}
 
 	g := feed(t, newTestModel(t, "by:builder"))
