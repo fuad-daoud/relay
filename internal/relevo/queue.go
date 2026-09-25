@@ -36,11 +36,18 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 
 		prompt := composePrompt(b, rt.Store.PlanPath(name, b.Round), rt.Store.ReportPath(name, b.Round), rt.Store.DonePath(name, b.Round))
 
+		reason := ""
+		if _, gated := gatedBuilder(rt, b); gated {
+			reason = "gated while queued"
+		} else if staleBuilder(rt, b) {
+			reason = "candidate " + b.BuilderCandidate + " is no longer configured"
+		}
+
 		var switched bool
 		var startErr error
-		if _, gated := gatedBuilder(rt, b); gated {
+		if reason != "" {
 			switched = true
-			b, startErr = switchBuilder(ctx, rt, tx, b, "gated while queued", false /*closeOld*/, false /*counted*/)
+			b, startErr = switchBuilder(ctx, rt, tx, b, reason, false /*closeOld*/, false /*counted*/)
 		} else {
 			b, startErr = startRound(ctx, rt, tx, b, prompt)
 		}
@@ -63,7 +70,7 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 		age := rt.Now().Sub(b.QueuedAt).Round(time.Second)
 		note := fmt.Sprintf("started after %s queued", age)
 		if switched {
-			note = fmt.Sprintf("started after %s queued (switched: %s)", age, "gated while queued")
+			note = fmt.Sprintf("started after %s queued (switched: %s)", age, reason)
 		}
 		b.RoundStartedAt = rt.Now()
 		b.QueuedAt = time.Time{}

@@ -120,6 +120,18 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 	baseline, head := CaptureBaseline(ctx, rt, b)
 	prompt := composePrompt(b, planPath, rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
 
+	// A repair round must not be handed to a candidate the configured set no
+	// longer holds: pick again first, exactly as a switch does.
+	b, res, err := repickStale(rt, b, false)
+	if err != nil {
+		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
+	}
+	if res != nil {
+		if err := tx.AppendLog(b.Name, pickEntry(rt.Now().UTC(), b.Round, bindingRole(b), *res)); err != nil {
+			return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
+		}
+	}
+
 	started, err := startRound(ctx, rt, tx, b, prompt)
 	if err != nil {
 		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
