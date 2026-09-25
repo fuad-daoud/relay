@@ -261,9 +261,9 @@ func TestSealRoundMovesOneRound(t *testing.T) {
 		"003-aabbccdd-findings.md": []byte("the findings\n"),
 	}
 	kept := map[string][]byte{
-		"002-plan.md":   []byte("round 2\n"),
-		"004-plan.md":   []byte("the open round\n"),
-		"land-gate.log": []byte("not a round file\n"),
+		"002-plan.md": []byte("round 2\n"),
+		"004-plan.md": []byte("the open round\n"),
+		"notes.txt":   []byte("not a round file\n"),
 	}
 	for name, body := range sealed {
 		if err := os.WriteFile(filepath.Join(s.Dir("webshop"), name), body, bindingFileMode); err != nil {

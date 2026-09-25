@@ -303,11 +303,7 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   with `--stat` and `--round`, and defaults to the currently open round where plain
   `relevo show --diff` defaults to the newest completed one. Pass `--anchors` to prefix
   each hunk and each `' '`/`'+'` line with its `path:line`, ready to quote into a
-  review comments file (see "Reviewing a round" below).
-- `relevo review [NAME|--name N] --file comments.md [--round R] [--out PATH] [--send]` —
-  turn a `path:line: comment` comments file into a follow-up plan, one task per
-  anchored comment quoting its hunk from the round's diff. Not destructive, so
-  it falls back to the CWD's binding. See "Reviewing a round" below.
+  review comment (see "Reviewing a round" below).
 - `relevo status [NAME|--name N] [--json] [--all] [--line]` — one row per binding: round, display state, the builder's own status, the last relayed event and anything pending. `--line` is the one-row-per-binding form Claude Code's status line runs (see [Status line](#status-line)). Rows are attention-first -- NEEDS YOU, ACTIVE, PAUSED, DONE, stale first within a group, newest last-event first -- the same order `relevo ui` has always used, so the two never disagree. Naming a binding shows only that one. Bindings marked DONE are hidden by default and the footer names how many are hidden.
   While a round is open a row also shows the round's live diff against its baseline (`+120/-30 in 6`, `(shared tree)` for a `--cwd` binding sharing the planner's own working tree), an ACTIVE row's `quiet <age>` since its last progress sample, and `●new` when the binding's newest report is unread (its record's `viewed_at` stamp is older than the newest report).
   `--json` also carries fields the prose above does not spell out:
@@ -379,12 +375,6 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   absorbs it and fast-forwards `B` to it; relevo never deletes the adopted
   branch; the server's `relevo/<name>` ref is deleted by `unbind --done` once it is on a
   remote-tracking ref.
-  `relevo bind --from` with `--branch` is not available yet.
-- `relevo bind --from <source>@R --name N [--builder CANDIDATE] [--cwd DIR] [--feature LABEL]` —
-  branch a new binding from an earlier round of an existing binding, copying
-  round history and artifacts through round R and launching a fresh builder in a
-  dedicated git worktree (or in `--cwd`). `--feature` defaults to the source
-  binding's own.
 - `relevo config` — show the actors, the current pick and the configured
   candidates, in three blocks; `relevo config --probe` runs each candidate
   once and records its time to first output.
@@ -407,9 +397,6 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   `--pick` chooses from a list in the terminal.
 - `relevo stop NAME|--name N` — kill the builder process and close its open
   round without a report. See [Stopping a round](#stopping-a-round).
-- `relevo land NAME|--name N [--onto REF] [--pr] [--merge] [--no-gate] [--force]` —
-  rebase the binding's branch onto its base, run the gate, push, and open or
-  print the PR. See [Landing a branch](#landing-a-branch).
 - `relevo unbind NAME|--name N|--pick [--archive]` — forget a binding, deleting its directory or
   archiving its record first. `--pick` chooses from a list in the terminal.
 
@@ -460,11 +447,11 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
 - `relevo version` — the build's version.
 
 Every binding-scoped command takes its binding either positionally or as
-`--name`; naming it both ways at once is refused. `send` and `review` fall
+`--name`; naming it both ways at once is refused. `send` falls
 back to whichever binding owns the current working directory, and a bare
 `relevo status` lists them all. Naming one is **required** for `done`,
-`stop`, `land` and `unbind`: those act on a specific loop — `stop` kills a
-process, the others end or land one — and they refuse to guess (see below).
+`stop` and `unbind`: those act on a specific loop — `stop` kills a
+process, the others end one — and they refuse to guess (see below).
 
 ### Renamed commands
 
@@ -481,7 +468,6 @@ name exits 2 and names its replacement:
 | `relevo client` | `relevo config server` |
 | `relevo servers` | `relevo config server list` |
 | `relevo add` | `relevo bind --worktree` |
-| `relevo fork` | `relevo bind --from <source>@<round>` |
 | `relevo diff` | `relevo show --diff` |
 | `relevo log` | `relevo show --log` |
 | `relevo gc` | `relevo unbind --done` |
@@ -510,26 +496,6 @@ auth.go:41  	if u == "" {
 auth.go:42 +		return errEmptyUser
 auth.go:43  	}
 ```
-
-A comments file is one `path:line: text` per line; a line without an anchor
-is a general comment:
-
-```
-auth.go:42: return a typed error, not errEmptyUser directly
-auth.go:43: this brace can go too, see the hunk above
-wire the new error into the CLI's exit code table
-```
-
-`relevo review NAME --file comments.md [--round R] [--out PATH] [--send]`
-validates every anchor against that round's diff — an anchor the diff does
-not have is refused before anything is written — and renders a plan with one
-task per anchored comment, quoting the anchored hunk (three lines of context
-either side) and the comment verbatim, plus a "General comments" section for
-the unanchored lines. It writes the plan to `--out`, or by default
-`<binding dir>/NNN-review-plan.md` (`NNN` the reviewed round), and prints the
-path. `--send` hands that plan to the builder as the next round, the same as
-`relevo send --file`. The rendered plan opens with "Fix ONLY what these
-comments ask" — delete that line if the round should be broader.
 
 ### The report block
 
@@ -843,8 +809,7 @@ round's failure carries its detail to the client.
 
 What is refused: `--cwd` cannot be combined with `--server` (a remote binding
 is always created fresh, never bound to an existing directory); `relevo ask`
-("consults are local-only"); `relevo bind --from` from a remote source ("--from across
-servers is not supported"); and `relevo bind --resume --rebind` (or
+("consults are local-only"); and `relevo bind --resume --rebind` (or
 `--builder`) against a remote binding ("cannot change a remote
 builder; unbind and re-create" -- a binding's mode is fixed at creation, the same
 rule a headless binding follows). `relevo done` and `relevo unbind` tell the
@@ -904,11 +869,6 @@ Relevo does not sequence them and does not merge their trees. The planner
 decides how many builders it needs, which run in parallel and which wait, and
 integrates the results — relevo only carries plans out and reports back.
 
-**`relevo bind --worktree` is not `relevo bind --from`.** A `--from` bind continues a timeline: it copies
-round history through a chosen round and starts at the round after it. A peer
-starts at round 1 with an empty log, because it is not a continuation of
-anything.
-
 Headless builders are the cheap way to run several: no terminal per builder,
 no idle harness holding memory. `relevo bind --worktree --name api` gives a peer its own
 worktree and a fresh process per round.
@@ -945,20 +905,6 @@ never reconsidered, since a round's artifacts are final once it closes.
 Result included; `relevo edge rm <source> <id>` drops one -- removing a fired
 edge is fine. Builders never declare edges; the CLI is the planner's.
 
-### Forking a binding
-
-`relevo bind --from` branches a new binding from an earlier round of an existing binding:
-
-```
-relevo bind --from webshop@2 --name webshop-alt
-```
-
-- **What is copied:** Round history up through the round `--from` names (`SRC@R`): every log entry through R (marked confirmed, with nothing pending) and the round files through R (`NNN-plan.md`, `NNN-report.md`, `NNN-question.md`, `NNN-diff.patch`). The new binding is a fresh record in the database.
-- **What is not copied:** Working tree code state is not rewound. By default, relevo creates a fresh git worktree at `~/.local/state/relevo/.worktrees/<new-name>` on a new branch `relevo/<new-name>` cut from current `HEAD` of the source repository. Pass `--cwd DIR` to bind to an existing directory instead.
-- **State layout:** Relevo keeps worktrees it creates under `.worktrees/` in the state root (`~/.local/state/relevo/.worktrees/`).
-- **Teardown rule:** Relevo removes a worktree it created only when it is clean (`git status` reports no untracked or uncommitted changes), and removes the branch only through `unbind --done`, once it is pushed. If uncommitted edits remain or git is unavailable, `relevo unbind` and `relevo unbind --done` leave the worktree untouched and report the exact command to inspect or remove it manually.
-
-
 ### Stopping a round
 
 `relevo stop` ends an open round on purpose. The builder runs with no stdin, so
@@ -982,56 +928,6 @@ both sides only the round ends. A round still queued on the server is dropped
 from the queue instead, since there is no process to kill. A server that
 predates this refuses the request with a pointer to `relevo unbind webshop`,
 which stops the round and drops the binding.
-
-### Landing a branch
-
-`relevo land <name>` is the mechanical version of the sequence a planner
-types by hand after a green round. It runs, in order, and stops at the first
-failure with **nothing pushed** except where noted:
-
-```
-relevo land webshop            # fetch, rebase onto origin/main, gate, push, print the PR command
-relevo land webshop --pr       # ... and run `gh pr create --head relevo/webshop --base main --fill`
-relevo land webshop --merge    # merge origin/main in instead of rebasing (no rewrite, no force)
-relevo land webshop --onto trunk   # for a binding that recorded no base branch
-relevo land webshop --force    # land while a round is still open
-relevo land webshop --no-gate  # skip the gate for this land (the result says "skipped")
-```
-
-1. **Preconditions.** The binding must be a local binding with a worktree of
-   its own (`--cwd` bindings have none), must not be `PAUSED` or `DONE`, and
-   must have a clean tree -- `land` will not commit for you, and it will not
-   rebase a tree a builder is still writing to. A round still open is refused
-   unless you pass `--force`.
-2. **Fetch and rebase.** `git fetch origin <base>`, then
-   `git rebase origin/<base>`. A conflict aborts the rebase, lists the
-   conflicting paths, changes nothing and exits **3**.
-3. **Gate.** The binding's gate runs on the rebased tree (`sh -c "<gate>
-   2>&1"`), with its output in `~/.local/state/relevo/<name>/land-gate.log`. A
-   failing gate pushes nothing and exits **2**.
-4. **Push.** `git push -u origin <branch>`, with `--force-with-lease` when the
-   branch already exists on the remote -- the rebase rewrote it.
-5. **PR.** With `--pr` and `gh` on PATH, `gh pr create --head <branch> --base
-   <base> --fill` runs and its URL is recorded. Otherwise the exact command is
-   printed for you to run. If `gh` fails *after* the push, relevo says so: the
-   branch is on origin, and only the PR is missing.
-6. **Log.** `landed <branch> -> <base> [pr <url>]`, with the time recorded on
-   the binding. `relevo status` then shows `landed` on the round line until the
-   next `relevo send` clears it.
-
-The base *branch* is recorded at `bind` time: the branch the source
-checkout had checked out (e.g. `main`). An older binding, a `--cwd` binding,
-and a `--branch` adoption have none, so `land` asks you for `--onto`. Use
-`--merge` when the branch must keep its history or when someone else may be
-working on top of it; the base is then merged in rather than rebased onto, and
-because nothing is rewritten the push needs no lease.
-
-**`land` never merges a pull request, and never deletes a branch or a
-worktree.** It is the mechanical half of the job and stops at the PR. Merging
-is a separate, deliberate act: merge only after `gh pr checks <n> --watch`
-has finished with every job passing -- a green first job is not a green CI
-(the rule in `CLAUDE.md`, repeated here because `land` is where it is easiest
-to forget).
 
 ### Cleaning up finished bindings
 
@@ -1091,7 +987,7 @@ own `git gc`.
 repository it works in (the origin URL, normalised, and the git common
 directory — best-effort, so a directory git can't read leaves this blank
 rather than failing the command), the `--feature` label grouping it with
-other bindings (a `--from` bind inherits its source's unless you pass your own), which
+other bindings, which
 binding and round it was forked from, and the planner's own harness
 transcript file path, when relevo can locate one at bind time. None of this
 changes what you see day to day; it exists for `relevo history`, the ui's
@@ -1112,8 +1008,7 @@ The state root holds only what cannot be a row:
 - `.daemon.lock` and the per-root `.lock`, the two flocks the daemon and every
   command take;
 - `.worktrees/`, the git worktrees relevo creates;
-- one directory per binding, holding the files of a round that is still open
-  (and a `land-gate.log` from the last `relevo land`);
+- one directory per binding, holding the files of a round that is still open;
 - on a server, `serve/repos/` (the bare repos), `serve/tmp/` (in-flight request
   bodies) and `serve/bindings/<owner>/` (one directory per owner).
 
@@ -1374,9 +1269,7 @@ With `--builder` omitted, relevo decides, by one rule:
 
 When every candidate serving the actor is gated or `off`, relevo refuses and
 says why each one is; an explicit `--builder` still bypasses that. The same
-rule applies to `relevo bind --worktree`, `relevo bind --from` (which first
-inherits the source's candidate -- an inherited token counts as explicit) and
-`relevo ask --candidate`.
+rule applies to `relevo bind --worktree` and `relevo ask --candidate`.
 
 Every choice is written down. `bind` and `ask` print one
 line saying what was picked and why, and the same line lands in the
@@ -1566,8 +1459,7 @@ shape is refused when the config loads.
 
 - A new **reader** actor runs with `relevo ask --actor <name>`; a new
   **writer** actor runs as a binding's actor: `relevo bind --worktree --actor
-  <name>` or `relevo bind --actor <name>`. Every round of that binding runs it,
-  and `relevo bind --from` keeps it.
+  <name>` or `relevo bind --actor <name>`. Every round of that binding runs it.
 
 With `relevo bind --worktree --server S --actor <r>`, the server resolves `<r>`
 against **its own** actors section, and your local sections do not travel. A
@@ -1742,8 +1634,6 @@ When starting an agent, relevo resolves the permission tier through a precedence
 
 The result is then capped by the policy's `max_tier`.
 
-When branching a binding (`relevo bind --from`), if `--tier` is omitted, the new binding inherits the source binding's configured `tier`.
-
 For consults (`relevo ask`), tier resolves from the candidate's `tier`, the actor's `tier`, or `harness`. Consults accept no `--tier` flag, and a consult requesting `yolo` requires `max_tier: "yolo"` in the policy section since `ask` has no `--allow-yolo` flag.
 
 ### Per-round tiers
@@ -1790,8 +1680,7 @@ halt -- until the gate finishes or times out.
 
 Configure it with `--gate '<cmd>'` on `relevo bind` or `relevo bind
 --worktree`; `--no-gate` opts a binding out of the policy section's `gate.default`
-(see above) even when one is configured machine-wide. `relevo bind --from` without
-`--gate`/`--no-gate` inherits the source binding's gate. Omitting both flags
+(see above) even when one is configured machine-wide. Omitting both flags
 on `bind` falls back to `gate.default`, `""` meaning no gate at all --
 bindings written before this feature have no gate and are unaffected.
 
@@ -1877,7 +1766,7 @@ A failing gate does nothing on its own: the round closes, the report goes to
 the planner, and a human judges the diff. A binding can opt into a **repair
 round** instead, with `--regate N` on `relevo bind`
 or `relevo send`, or with `"regate": N` under `gate` in the policy section (the
-default for new bindings, which `relevo bind --from` inherits from its source). `N` is
+default for new bindings). `N` is
 how many repair rounds relevo may open after failing gates; `0` -- the default
 -- turns the loop off, and `--regate` on a binding with no gate is accepted and
 inert, since a binding with no gate never fails one.

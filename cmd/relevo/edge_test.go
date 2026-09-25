@@ -8,7 +8,7 @@ import (
 // TestEdgeAddRequiresFlags pins that `relevo edge add` without a required
 // flag -- or without the source positional -- is refused before a runtime is
 // built, so a CI runner with no harness binary still fails on the missing flag
-// rather than on the environment (mirrors cmdReview's --file check).
+// rather than on the environment.
 func TestEdgeAddRequiresFlags(t *testing.T) {
 	cases := []struct {
 		name string
