@@ -611,7 +611,7 @@ func fleetRowLine(b relevo.BindingStatus, g fleetGroup, selected bool, now time.
 	switch {
 	case strings.HasPrefix(b.BuilderStatus, "exited") || strings.HasPrefix(b.BuilderStatus, "stalled"):
 		nowStyled = redStyle.Render(nowText)
-	case b.Unread && (g == groupIdle || g == groupDone):
+	case b.Unread && g == groupIdle:
 		nowStyled = accentStyle.Render(nowText)
 	case selected:
 		nowStyled = textStyle.Render(nowText)
@@ -680,10 +680,6 @@ func doneFoldLine(rows []relevo.BindingStatus, now time.Time, width int) string 
 
 // cardLines renders the 5-line detail card at the top of the body (§2.3).
 func (f fleetView) cardLines(env Env, b relevo.BindingStatus, width int) []string {
-	cardW := width - 2
-	if cardW < 20 {
-		cardW = 20
-	}
 	g := groupOf(b)
 
 	// Top line
@@ -695,14 +691,7 @@ func (f fleetView) cardLines(env Env, b relevo.BindingStatus, width int) []strin
 	if b.Round == 0 {
 		roundPart = rn
 	}
-
-	topPrefix := borderStyle.Render("╭─ ") + accentStyle.Bold(true).Render(b.Key()) + "  " + faintStyle.Render(roundPart) + " "
-	usedTopW := lipgloss.Width("╭─ ") + lipgloss.Width(b.Key()) + 2 + lipgloss.Width(roundPart) + 1 + lipgloss.Width("╮")
-	dashes := cardW - usedTopW
-	if dashes < 0 {
-		dashes = 0
-	}
-	line1 := " " + topPrefix + borderStyle.Render(strings.Repeat("─", dashes)) + borderStyle.Render("╮")
+	title := accentStyle.Bold(true).Render(b.Key()) + "  " + faintStyle.Render(roundPart)
 
 	// Meta line
 	var metaParts []string
@@ -728,80 +717,51 @@ func (f fleetView) cardLines(env Env, b relevo.BindingStatus, width int) []strin
 	if s := spendCell(b); s != "" {
 		metaParts = append(metaParts, mutedStyle.Render(s))
 	}
-
 	metaContent := "  " + strings.Join(metaParts, mutedStyle.Render("  ·  "))
-	metaPad := (cardW - 2) - lipgloss.Width(metaContent)
-	if metaPad < 0 {
-		metaPad = 0
-	}
-	line2 := " " + borderStyle.Render("│") + metaContent + strings.Repeat(" ", metaPad) + borderStyle.Render("│")
-
-	// Blank bordered line
-	line3 := " " + borderStyle.Render("│") + strings.Repeat(" ", cardW-2) + borderStyle.Render("│")
 
 	// Keys line
-	type cardKeyHelp struct{ key, label string }
-	var cardKeys []cardKeyHelp
+	var cardKeys []KeyHelp
 	if env.Actions == nil {
-		cardKeys = []cardKeyHelp{{"enter", "open round"}}
+		cardKeys = []KeyHelp{{"enter", "open round"}}
 	} else {
 		switch g {
 		case groupNeedsYou:
-			cardKeys = []cardKeyHelp{
+			cardKeys = []KeyHelp{
 				{"enter", "open round"},
 				{"s", "send the next plan"},
 				{"o", "shell"},
 				{"x", "stop"},
 			}
 		case groupWorking:
-			cardKeys = []cardKeyHelp{
+			cardKeys = []KeyHelp{
 				{"enter", "open round"},
 				{"x", "stop"},
 				{"g", "gate"},
 				{"o", "shell"},
 			}
 		case groupIdle:
-			cardKeys = []cardKeyHelp{
+			cardKeys = []KeyHelp{
 				{"s", "send the next plan"},
 				{"enter", "open round"},
 				{"D", "done"},
 				{"o", "shell"},
 			}
 		case groupHeld, groupOther:
-			cardKeys = []cardKeyHelp{
+			cardKeys = []KeyHelp{
 				{"enter", "open round"},
 				{"s", "send"},
 				{"D", "done"},
 			}
 		case groupDone:
-			cardKeys = []cardKeyHelp{
+			cardKeys = []KeyHelp{
 				{"enter", "open round"},
 				{"u", "unbind"},
 			}
 		}
 	}
+	keysContent := cardKeysRow(cardKeys)
 
-	var keyChips []string
-	for _, ck := range cardKeys {
-		keyChips = append(keyChips, chip(kbdStyle, ck.key)+" "+mutedStyle.Render(ck.label))
-	}
-	keysContent := "   " + strings.Join(keyChips, "      ")
-	keysPad := (cardW - 2) - lipgloss.Width(keysContent)
-	if keysPad < 0 {
-		keysPad = 0
-	}
-	line4 := " " + borderStyle.Render("│") + keysContent + strings.Repeat(" ", keysPad) + borderStyle.Render("│")
-
-	// Bottom line
-	line5 := " " + borderStyle.Render("╰"+strings.Repeat("─", cardW-2)+"╯")
-
-	return []string{
-		fit(line1, width),
-		fit(line2, width),
-		fit(line3, width),
-		fit(line4, width),
-		fit(line5, width),
-	}
+	return renderCard(width, title, "", []string{metaContent, "", keysContent})
 }
 
 // gatedLine renders the provider gate notice as the last line of the body (§2.3).

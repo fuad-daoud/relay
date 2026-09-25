@@ -25,7 +25,7 @@ const (
 )
 
 // tabTitles indexes by tab and is used by both the tab bar and the tests.
-var tabTitles = [tabCount]string{"plan", "report", "terminal", "diff", "log"}
+var tabTitles = [tabCount]string{"plan", "report", "transcript", "diff", "log"}
 
 // tabContent is one tab's rendered body plus why it might be empty.
 //

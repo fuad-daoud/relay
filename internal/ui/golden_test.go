@@ -333,6 +333,77 @@ func goldenArchivedRoundModel(t *testing.T, width, height int) Model {
 	return res.(Model)
 }
 
+// realRoundModel pushes the round view for spool-db with realistic data (§8).
+func realRoundModel(t *testing.T, width, height int) Model {
+	t.Helper()
+	rep := realFleetReport()
+	for i := range rep.Bindings {
+		if rep.Bindings[i].Name == "spool-db" {
+			rep.Bindings[i].Display = "ACTIVE"
+			rep.Bindings[i].BuilderStatus = "working"
+			rep.Bindings[i].Round = 1
+			rep.Bindings[i].PlanRound = 1
+			rep.Bindings[i].Spend = nil
+			rep.Bindings[i].BuilderName = "gemini-3.8-flash-high"
+			rep.Bindings[i].PlannerName = "architect-2"
+			rep.Bindings[i].Branch = "relevo/spool-db"
+			rep.Bindings[i].Headless = &relevo.HeadlessInfo{
+				PID:       1401366,
+				StartedAt: railNow.Add(-5 * time.Minute),
+			}
+			rep.Bindings[i].RoundStart = railNow.Add(-5 * time.Minute)
+			rep.Bindings[i].QuietFor = "17s"
+			rep.Bindings[i].LiveUsage = &usage.Usage{
+				Model:      "gemini-3.8-flash-high",
+				DurationMS: 5 * 60_000,
+				Samples:    1,
+				Tokens:     usage.Tokens{In: 718_000, CacheRead: 4_200_000, Out: 64_000},
+				Cost:       usage.Cost{Basis: usage.Unknown},
+				Note:       "no price",
+			}
+			break
+		}
+	}
+	m := goldenActionModel(t, width, height, &fakeActions{}, rep)
+	m = pointer(t, m, "spool-db")
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = drain(t, res.(Model), cmd)
+
+	planBody := "# Round diff and consult findings go straight into round_file\n\nDate: 2026-09-24. Base: origin/main `b66c6fcc` (#441).\nThere is **one round** in this plan. builder.log, NNN-<id>-ask.md and NNN-plan.md\nare out of scope. Do not touch them.\n\n## Scope\n\n- builder.log is out of scope.\n- Do not touch them.\n\n```go\nfunc main() {}\n```\n"
+	res, _ = m.Update(tabMsg{
+		name:    "spool-db",
+		round:   1,
+		t:       tabPlan,
+		content: tabContent{loaded: true, round: 1, at: railNow.Add(-5 * time.Minute), body: planBody},
+	})
+	return res.(Model)
+}
+
+// realRoundNeedsYouModel pushes the round view for fix-433 in NEEDS YOU state (§8).
+func realRoundNeedsYouModel(t *testing.T, width, height int) Model {
+	t.Helper()
+	rep := realFleetReport()
+	for i := range rep.Bindings {
+		if rep.Bindings[i].Name == "fix-433" {
+			rep.Bindings[i].PlanRound = 2
+			break
+		}
+	}
+	m := goldenActionModel(t, width, height, &fakeActions{}, rep)
+	m = pointer(t, m, "fix-433")
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = drain(t, res.(Model), cmd)
+
+	planBody := "# Fix 433 Plan\n\nDedupe bindings across stores.\n"
+	res, _ = m.Update(tabMsg{
+		name:    "fix-433",
+		round:   2,
+		t:       tabPlan,
+		content: tabContent{loaded: true, round: 2, at: railNow.Add(-3 * time.Minute), body: planBody},
+	})
+	return res.(Model)
+}
+
 // goldenRoundsModel hosts the dashboard with its rows fed, reached through
 // the shell's start command so the breadcrumb reads relevo › rounds, as the
 // real `:rounds` does (A5).
@@ -477,6 +548,18 @@ func TestGoldenViews(t *testing.T) {
 		{
 			name: "round-archived", width: 140, height: 40,
 			build: func(t *testing.T) Model { return goldenArchivedRoundModel(t, 140, 40) },
+		},
+		{
+			name: "round-real-132", width: 132, height: 34,
+			build: func(t *testing.T) Model { return realRoundModel(t, 132, 34) },
+		},
+		{
+			name: "round-real-100", width: 100, height: 30,
+			build: func(t *testing.T) Model { return realRoundModel(t, 100, 30) },
+		},
+		{
+			name: "round-needs-you", width: 132, height: 34,
+			build: func(t *testing.T) Model { return realRoundNeedsYouModel(t, 132, 34) },
 		},
 		{
 			name: "rounds", width: 160, height: 40,

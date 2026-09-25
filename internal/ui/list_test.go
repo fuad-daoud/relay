@@ -60,12 +60,12 @@ func TestFleetWindowTopLines(t *testing.T) {
 // TestBodyHeight ports the old bodyRows budget to frame.bodyHeight.
 func TestBodyHeight(t *testing.T) {
 	env := Env{Height: 24}
-	if got := bodyHeight(env); got != 20 {
-		t.Errorf("height 24, no error: bodyHeight = %d, want 20", got)
+	if got := bodyHeight(env); got != 19 {
+		t.Errorf("height 24, no error: bodyHeight = %d, want 19", got)
 	}
 	env.ErrRows = 2
-	if got := bodyHeight(env); got != 18 {
-		t.Errorf("height 24, two-line error: bodyHeight = %d, want 18", got)
+	if got := bodyHeight(env); got != 17 {
+		t.Errorf("height 24, two-line error: bodyHeight = %d, want 17", got)
 	}
 	env = Env{Height: 2}
 	if got := bodyHeight(env); got != 0 {

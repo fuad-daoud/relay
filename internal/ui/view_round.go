@@ -2,9 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -15,12 +17,13 @@ func envNow(env Env) func() time.Time { return func() time.Time { return env.Now
 // newRoundPane builds a pane lent everything Env carries (§4.4, R2.4).
 func newRoundPane(env Env) roundPane {
 	return roundPane{
-		src:    env.Src,
-		ctx:    env.Ctx,
-		now:    envNow(env),
-		report: env.Report,
-		width:  env.Width,
-		rows:   bodyHeight(env),
+		src:     env.Src,
+		ctx:     env.Ctx,
+		now:     envNow(env),
+		report:  env.Report,
+		width:   env.Width,
+		rows:    bodyHeight(env),
+		actions: env.Actions != nil,
 	}
 }
 
@@ -30,6 +33,7 @@ func newRoundPane(env Env) roundPane {
 // fetch is issued (§4.5, R2.4).
 func newRoundView(env Env, key string, round int) (View, tea.Cmd) {
 	p := newRoundPane(env)
+	p.actions = env.Actions != nil
 	var cmd tea.Cmd
 	p, cmd = p.pointDetailAt(key)
 	if round > 0 {
@@ -59,6 +63,7 @@ func newRoundView(env Env, key string, round int) (View, tea.Cmd) {
 // pointDetailAtHist. round == 0 means the default (Rounds) (§4.5, R2.4).
 func newHistRoundView(env Env, h relevo.HistoryBinding, round int) (View, tea.Cmd) {
 	p := newRoundPane(env)
+	p.actions = false
 	var cmd tea.Cmd
 	p, cmd = p.pointDetailAtHist(h)
 	if round > 0 {
@@ -102,6 +107,15 @@ func paneRound(r relevo.BindingStatus) int {
 	return r.Round - 1
 }
 
+// roundsOf returns the count of sent rounds (§2.2): r.PlanRound when it is > 0,
+// else r.Round.
+func roundsOf(r relevo.BindingStatus) int {
+	if r.PlanRound > 0 {
+		return r.PlanRound
+	}
+	return r.Round
+}
+
 // roundView is the full-screen round detail: today's pane, hosted as a
 // view (§4.5).
 type roundView struct {
@@ -113,12 +127,155 @@ func (r roundView) Crumbs() []string {
 	return []string{r.pane.detail.name, fmt.Sprintf("r%d", r.pane.detail.round)}
 }
 
-// Context is the pane's identity line on the left, nothing on the right.
+// Context is the context row (§2.2).
 func (r roundView) Context(env Env) (string, string) {
-	return r.pane.detailHeader(), ""
+	b := row(env.Report, r.pane.detail.name)
+
+	rightText := fmt.Sprintf("round %d of %d", r.pane.detail.round, r.pane.detail.rounds)
+	if !r.pane.detail.archivedAt.IsZero() {
+		rightText += " · archived " + r.pane.detail.archivedAt.Format("2006-01-02")
+	} else if b != nil && r.pane.detail.live && r.pane.detail.round == r.pane.detail.rounds && b.RoundEnd.IsZero() {
+		rightText += " · live"
+	}
+	right := faintStyle.Render(rightText) + " "
+
+	if b == nil || !r.pane.detail.live {
+		left := "   " + mutedStyle.Render(r.pane.detailHeader())
+		if lipgloss.Width(left)+1+lipgloss.Width(right) > env.Width {
+			right = ""
+		}
+		return left, right
+	}
+
+	now := env.Now
+	g := groupOf(*b)
+	var pStyle lipgloss.Style
+	var pWord string
+	switch g {
+	case groupNeedsYou:
+		pStyle = chipWarnStyle.Bold(true)
+		pWord = "needs you"
+	case groupWorking:
+		pStyle = chipGreenStyle.Bold(true)
+		pWord = "working"
+	case groupIdle:
+		pStyle = kbdStyle
+		pWord = "idle"
+	case groupHeld:
+		pStyle = kbdStyle
+		pWord = "on hold"
+	case groupDone:
+		pStyle = kbdStyle
+		pWord = "done"
+	default:
+		pStyle = kbdStyle
+		pWord = strings.ToLower(b.Display)
+	}
+
+	var ageStr string
+	if g == groupWorking {
+		if a := ago(b.RoundStart, now); a != "" {
+			ageStr = textStyle.Bold(true).Render(a)
+			if b.QuietFor != "" {
+				ageStr += mutedStyle.Render(" · quiet " + b.QuietFor)
+			}
+		} else if b.QuietFor != "" {
+			ageStr = mutedStyle.Render("quiet " + b.QuietFor)
+		}
+	} else {
+		rn := rowNow(*b, now)
+		if b.Round > 0 {
+			rn = strings.TrimPrefix(rn, fmt.Sprintf("r%d · ", b.Round))
+		}
+		ageStr = textStyle.Render(rn)
+	}
+
+	// 1. pill; 2. age; 3. candidate; 4. planner; 5. branch; 6. dirty.
+	partPill := "   " + chip(pStyle, pWord)
+	partAge := "   " + ageStr
+	partCandidate := "      " + textStyle.Render(candidateText(*b))
+
+	plannerWord := plannerCell(*b)
+	if b.OwnerLabel != "" {
+		plannerWord = "client " + b.OwnerLabel
+	}
+	partPlanner := faintStyle.Render("  ·  ") + mutedStyle.Render(plannerWord)
+
+	branch := b.Branch
+	if branch == "" {
+		branch = repoCell(*b)
+	}
+	partBranch := faintStyle.Render("  ·  ") + mutedStyle.Render(branch)
+
+	var partDirty string
+	if b.Dirty {
+		partDirty = faintStyle.Render("  ·  ") + redStyle.Render("dirty")
+	}
+
+	hasDirty := b.Dirty
+	hasBranch := branch != ""
+	hasPlanner := plannerWord != ""
+	hasCandidate := true
+
+	buildLeft := func() string {
+		s := partPill + partAge
+		if hasCandidate {
+			s += partCandidate
+		}
+		if hasPlanner {
+			s += partPlanner
+		}
+		if hasBranch {
+			s += partBranch
+		}
+		if hasDirty {
+			s += partDirty
+		}
+		return s
+	}
+
+	left := buildLeft()
+
+	if lipgloss.Width(left)+1+lipgloss.Width(right) > env.Width {
+		right = ""
+	}
+
+	if hasDirty && lipgloss.Width(left) > env.Width {
+		hasDirty = false
+		left = buildLeft()
+	}
+	if hasBranch && lipgloss.Width(left) > env.Width {
+		hasBranch = false
+		left = buildLeft()
+	}
+	if hasPlanner && lipgloss.Width(left) > env.Width {
+		hasPlanner = false
+		left = buildLeft()
+	}
+	if hasCandidate && lipgloss.Width(left) > env.Width {
+		hasCandidate = false
+		left = buildLeft()
+	}
+
+	return left, right
 }
 
 func (r roundView) Keys() []KeyHelp {
+	keys := []KeyHelp{
+		{"tab", "next tab"},
+		{"[ ]", "round"},
+	}
+	if r.actions {
+		keys = append(keys,
+			KeyHelp{"x", "stop"},
+			KeyHelp{"g", "gate"},
+			KeyHelp{"o", "shell"},
+		)
+	}
+	return keys
+}
+
+func (r roundView) HelpKeys() []KeyHelp {
 	keys := []KeyHelp{
 		{"tab", "next tab"},
 		{"1-5", "tab"},
@@ -128,13 +285,13 @@ func (r roundView) Keys() []KeyHelp {
 	if r.actions {
 		keys = append(keys,
 			KeyHelp{"s", "send"},
+			KeyHelp{"E", "edit+send"},
 			KeyHelp{"x", "stop"},
 			KeyHelp{"D", "done"},
 			KeyHelp{"u", "unbind"},
 			KeyHelp{"g", "gate"},
 			KeyHelp{"o", "shell"},
-			KeyHelp{"E", "edit+send"},
-			KeyHelp{"r", "retry"},
+			KeyHelp{"r", "retry on…"},
 		)
 	}
 	return keys
@@ -149,6 +306,7 @@ func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	r.pane.now = envNow(env)
 	r.pane.width = env.Width
 	r.pane.rows = bodyHeight(env)
+	r.pane.actions = r.actions
 	switch msg := msg.(type) {
 	case tickMsg:
 		if !r.pane.tabInFlight {
@@ -198,7 +356,8 @@ func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		r.pane.width = env.Width
 		r.pane.rows = bodyHeight(env)
-		r.pane.detail.vp.Width = env.Width
+		r.pane.actions = r.actions
+		r.pane.detail.vp.Width = r.pane.contentWidth()
 		r.pane.detail.vp.Height = r.pane.viewportHeight()
 		r.pane.fillViewport()
 		return r, nil
@@ -251,5 +410,6 @@ func (r roundView) Body(env Env, width, height int) string {
 	r.pane.rows = height
 	r.pane.report = env.Report
 	r.pane.now = envNow(env)
+	r.pane.actions = r.actions
 	return r.pane.view(width)
 }

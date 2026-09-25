@@ -218,8 +218,8 @@ func TestWindowSizeMsgSetsReady(t *testing.T) {
 	if want := bodyHeight(Env{Height: 40}); got.pane.rows != want {
 		t.Errorf("round view rows = %d, want %d", got.pane.rows, want)
 	}
-	if got.pane.detail.vp.Width != 100 {
-		t.Errorf("expected vp width 100, got %d", got.pane.detail.vp.Width)
+	if got.pane.detail.vp.Width != got.pane.contentWidth() {
+		t.Errorf("expected vp.Width %d (contentWidth), got %d", got.pane.contentWidth(), got.pane.detail.vp.Width)
 	}
 }
 
@@ -560,7 +560,7 @@ func TestPointDetailAtOpensOnPlanRound(t *testing.T) {
 	if rvIdle.pane.detail.round != 2 {
 		t.Errorf("idle detail.round = %d, want 2", rvIdle.pane.detail.round)
 	}
-	if rvIdle.pane.detail.rounds != 3 {
-		t.Errorf("idle detail.rounds = %d, want 3", rvIdle.pane.detail.rounds)
+	if rvIdle.pane.detail.rounds != 2 {
+		t.Errorf("idle detail.rounds = %d, want 2 (§2.2)", rvIdle.pane.detail.rounds)
 	}
 }

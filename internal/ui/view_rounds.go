@@ -182,7 +182,7 @@ func execLine(line string, env Env, p prefs) tea.Cmd {
 		if err != nil {
 			return notice("no database: " + err.Error())
 		}
-		return tea.Batch(root(v), init)
+		return rootThen(init, v)
 	case "round":
 		if len(args) == 0 {
 			return notice(`unknown binding ""`)
@@ -203,7 +203,7 @@ func execLine(line string, env Env, p prefs) tea.Cmd {
 			return notice(fmt.Sprintf("unknown binding %q", key))
 		}
 		v, cmd := newRoundView(env, key, n)
-		return tea.Batch(root(newFleetView(p.Sort != "name").withActions(env.Actions != nil), v), cmd)
+		return rootThen(cmd, newFleetView(p.Sort != "name").withActions(env.Actions != nil), v)
 	case "stats":
 		window := "30d"
 		if len(args) > 0 {
@@ -218,7 +218,7 @@ func execLine(line string, env Env, p prefs) tea.Cmd {
 		if err != nil {
 			return notice("no database: " + err.Error())
 		}
-		return tea.Batch(root(v), init)
+		return rootThen(init, v)
 	case "ungate":
 		if len(args) == 0 {
 			return notice("usage: ungate <provider|candidate>")

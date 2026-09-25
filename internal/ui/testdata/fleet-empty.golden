@@ -1,11 +1,11 @@
   ◆ relevo    fleet                                                                                                    v0.13.0-28    14:02  
+                                                                                                                                            
    0 live                                                                                                  sort attention · refreshed 0s ago
 no bindings                                                                                                                                 
                                                                                                                                             
   relevo bind                   put a builder on this tree                                                                                  
   relevo bind --worktree        put a builder on its own worktree                                                                           
   relevo config                 list what can be bound                                                                                      
-                                                                                                                                            
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             

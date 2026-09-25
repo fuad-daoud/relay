@@ -29,7 +29,7 @@ func TestTabOrderStartsWithPlan(t *testing.T) {
 	if tabPlan != 0 {
 		t.Fatalf("tabPlan = %d, want 0 (first in the tab order)", tabPlan)
 	}
-	wantOrder := [tabCount]string{"plan", "report", "terminal", "diff", "log"}
+	wantOrder := [tabCount]string{"plan", "report", "transcript", "diff", "log"}
 	if tabTitles != wantOrder {
 		t.Fatalf("tabTitles = %v, want %v", tabTitles, wantOrder)
 	}

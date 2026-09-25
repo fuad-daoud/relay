@@ -1,4 +1,5 @@
   ◆ relevo    stats                                                            v0.13.0-28    14:02  
+                                                                                                    
 6 rounds · $1.40 + 1 on plan · 2.5M tok · median 27m                                      window 30d
 ── candidates ──────────────────────────────────────────────────────────────────────────────────────
    NAME                      RNDS  DONE  HALT   MED   TTFT   $/RND                                  
@@ -25,6 +26,5 @@ active  gemini-3.8-flash-high rate-limited until Oct 19 12:00
                                     RNDS    COST  HALT  RNDS/LAND                                   
      cockpit                           3   $0.90     0        2.0                                   
 ── outcomes ────────────────────────────────────────────────────────────────────────────────────────
-rounds   reported 4 · halted 1 · switched 0 · exited 0 · no report 0 · open 1                       
 
  w  window      tab  panel      ↑↓  move      :  command      ?  all keys      q  quit              
