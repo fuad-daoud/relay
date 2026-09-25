@@ -21,6 +21,26 @@ let notFound = false;
 const showCache = new Map<string, string>();
 const historyCache = new Map<string, any[]>();
 
+function invalidateBindingBodies(name: string) {
+  const prefix = `${name}:`;
+  for (const k of showCache.keys()) {
+    if (k.startsWith(prefix)) {
+      showCache.delete(k);
+    }
+  }
+  const showPrefix = `show:${prefix}`;
+  for (const f of failedFetches) {
+    if (f.startsWith(showPrefix)) {
+      failedFetches.delete(f);
+    }
+  }
+  for (const k of storeSigs.keys()) {
+    if (k.startsWith(showPrefix)) {
+      storeSigs.delete(k);
+    }
+  }
+}
+
 let updateStoreFn: (() => void) | null = null;
 const storeSigs = new Map<string, string>();
 
@@ -138,8 +158,6 @@ async function pollStatus(api: any) {
   if (plannerBySession.get(currentSessionID) === "pending" && !isRelevoRoute) return;
 
   inFlight = true;
-  // A failed fetch is retried on the next poll tick, not on the next render.
-  resetFailedFetches();
   const plannerEntry = plannerBySession.get(currentSessionID);
   const plannerID = plannerEntry && typeof plannerEntry === "object" ? plannerEntry.id : undefined;
 
@@ -154,11 +172,19 @@ async function pollStatus(api: any) {
         currentDocAt = Date.now();
         failures = 0;
 
-        // Run toasts comparing with prevRows
+        // Run toasts comparing with prevRows, and invalidate bodies on row changes
         if (!isFirstDoc && Array.isArray(doc.rows)) {
           for (const row of doc.rows) {
             const prev = prevRows.get(row.name);
             if (prev) {
+              if (
+                row.last_ts !== prev.last_ts ||
+                row.report_round !== prev.report_round ||
+                row.report_in !== prev.report_in ||
+                row.round !== prev.round
+              ) {
+                invalidateBindingBodies(row.name);
+              }
               if (row.needs_you && !prev.needs_you) {
                 api.ui.toast.show({
                   variant: "warning",
@@ -186,9 +212,16 @@ async function pollStatus(api: any) {
           }
         }
 
-        // If open binding route log tab is visible, refresh it
+        // The open round's log and transcript tabs refetch on each poll while the
+        // row is not report_in and its display is ACTIVE (the round is running)
         if (currentRoute === "relevo.binding" && currentRouteParams?.name) {
-          fetchShow(currentRouteParams.name, currentRouteParams.round, "log", true);
+          const openName = currentRouteParams.name;
+          const openRow = Array.isArray(doc.rows) ? doc.rows.find((r: any) => r.name === openName) : undefined;
+          if (openRow && !openRow.report_in && (openRow.display || "ACTIVE") === "ACTIVE") {
+            const openRound = currentRouteParams.round !== undefined ? currentRouteParams.round : (openRow.report_round || openRow.round || 1);
+            void fetchShow(openName, openRound, "log", true);
+            void fetchShow(openName, openRound, "transcript", true);
+          }
         }
 
         updateStore("status", res.stdout);
@@ -291,12 +324,21 @@ async function fetchShow(name: string, round?: number, tab = "report", force = f
       try {
         const data = JSON.parse(res.stdout);
         const text = data.Text || "";
-        showCache.set(key, text);
-        updateStore(`show:${key}`, text);
-        return text;
+        if (!data.Missing && text.length > 0) {
+          showCache.set(key, text);
+          updateStore(`show:${key}`, text);
+          return text;
+        } else {
+          showCache.delete(key);
+          failedFetches.add(fetcher);
+          updateStore(`show:${key}`, "");
+          return "";
+        }
       } catch {}
     }
+    showCache.delete(key);
     failedFetches.add(fetcher);
+    updateStore(`show:${key}`, "");
     return cached;
   } finally {
     inflightFetches.delete(fetcher);
@@ -870,10 +912,180 @@ export default {
 
         const warningColor = paint(api, "text.feedback.warning.base");
         const successColor = paint(api, "text.feedback.success.base");
+        const errorColor = paint(api, "text.feedback.error.base") || warningColor;
         const mutedColor = paint(api, "text.muted");
         const infoColor = paint(api, "text.feedback.info.base") || mutedColor;
         const baseColor = paint(api, "text.base");
         const interactiveColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || warningColor;
+        const accentColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || interactiveColor;
+        const codeColor = paint(api, "markdown.code") || paint(api, "syntax.string") || successColor;
+
+        const renderInline = (str: string) => {
+          if (!str) return [];
+          const parts = str.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+          return parts.filter(Boolean).map((part) => {
+            if (part.startsWith("`") && part.endsWith("`") && part.length >= 2) {
+              return <text fg={codeColor}>{part.slice(1, -1)}</text>;
+            }
+            if (part.startsWith("**") && part.endsWith("**") && part.length >= 4) {
+              return (
+                <text fg={baseColor}>
+                  <b>{part.slice(2, -2)}</b>
+                </text>
+              );
+            }
+            return <text fg={baseColor}>{part}</text>;
+          });
+        };
+
+        const renderMarkdownLines = (text: string) => {
+          const lines = text.split("\n");
+          let inFencedBlock = false;
+          return lines.map((line) => {
+            if (line.trim().startsWith("```")) {
+              inFencedBlock = !inFencedBlock;
+              return (
+                <box flexDirection="row">
+                  <text fg={mutedColor}>{line || " "}</text>
+                </box>
+              );
+            }
+            if (inFencedBlock) {
+              return (
+                <box flexDirection="row">
+                  <text fg={codeColor}>{line || " "}</text>
+                </box>
+              );
+            }
+            if (/^#{1,6}(?:\s.*|$)/.test(line)) {
+              return (
+                <box flexDirection="row">
+                  <text fg={accentColor}>
+                    <b>{line || " "}</b>
+                  </text>
+                </box>
+              );
+            }
+            if (/^\s*>/.test(line)) {
+              return (
+                <box flexDirection="row">
+                  <text fg={mutedColor}>{line || " "}</text>
+                </box>
+              );
+            }
+            const listMatch = line.match(/^(\s*(?:[-*]|\d+\.))(\s+.*|$)/);
+            if (listMatch) {
+              const marker = listMatch[1];
+              const rest = listMatch[2] || "";
+              return (
+                <box flexDirection="row">
+                  <text fg={accentColor}>{marker}</text>
+                  {renderInline(rest)}
+                </box>
+              );
+            }
+            if (line === "") {
+              return (
+                <box flexDirection="row">
+                  <text fg={baseColor}> </text>
+                </box>
+              );
+            }
+            return (
+              <box flexDirection="row">
+                {renderInline(line)}
+              </box>
+            );
+          });
+        };
+
+        const renderTranscriptLine = (line: string) => {
+          const toolMatch = line.match(/^(\s*●\s+\S+)(.*)$/);
+          if (toolMatch) {
+            return (
+              <box flexDirection="row">
+                <text fg={accentColor}>{toolMatch[1]}</text>
+                {toolMatch[2] ? <text fg={baseColor}>{toolMatch[2]}</text> : null}
+              </box>
+            );
+          }
+          if (/^\s*⎿\s+(?:error|err)\b/.test(line)) {
+            return (
+              <box flexDirection="row">
+                <text fg={errorColor}>{line}</text>
+              </box>
+            );
+          }
+          const okMatch = line.match(/^(\s*⎿\s+)(ok)(:?.*)$/);
+          if (okMatch) {
+            return (
+              <box flexDirection="row">
+                <text fg={mutedColor}>{okMatch[1]}</text>
+                <text fg={successColor}>{okMatch[2]}</text>
+                {okMatch[3] ? <text fg={mutedColor}>{okMatch[3]}</text> : null}
+              </box>
+            );
+          }
+          if (/^\s*⎿/.test(line)) {
+            return (
+              <box flexDirection="row">
+                <text fg={mutedColor}>{line}</text>
+              </box>
+            );
+          }
+          return (
+            <box flexDirection="row">
+              <text fg={baseColor}>{line || " "}</text>
+            </box>
+          );
+        };
+
+        const renderLogLine = (line: string) => {
+          const tsMatch = line.match(/^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)(.*)$/);
+          if (tsMatch) {
+            const ts = tsMatch[1];
+            const rest = tsMatch[2];
+            const dirMatch = rest.match(/^(.*?\b)(to_builder|to_planner)(\b.*)$/);
+            if (dirMatch) {
+              return (
+                <box flexDirection="row">
+                  <text fg={mutedColor}>{ts}</text>
+                  {dirMatch[1] ? <text fg={baseColor}>{dirMatch[1]}</text> : null}
+                  <text fg={accentColor}>{dirMatch[2]}</text>
+                  {dirMatch[3] ? <text fg={baseColor}>{dirMatch[3]}</text> : null}
+                </box>
+              );
+            }
+            return (
+              <box flexDirection="row">
+                <text fg={mutedColor}>{ts}</text>
+                {rest ? <text fg={baseColor}>{rest}</text> : null}
+              </box>
+            );
+          }
+          const dirMatch = line.match(/^(.*?\b)(to_builder|to_planner)(\b.*)$/);
+          if (dirMatch) {
+            return (
+              <box flexDirection="row">
+                {dirMatch[1] ? <text fg={baseColor}>{dirMatch[1]}</text> : null}
+                <text fg={accentColor}>{dirMatch[2]}</text>
+                {dirMatch[3] ? <text fg={baseColor}>{dirMatch[3]}</text> : null}
+              </box>
+            );
+          }
+          if (/^\s*⎿/.test(line)) {
+            return (
+              <box flexDirection="row">
+                <text fg={mutedColor}>{line}</text>
+              </box>
+            );
+          }
+          return (
+            <box flexDirection="row">
+              <text fg={baseColor}>{line || " "}</text>
+            </box>
+          );
+        };
 
         // No binding in the route params: one line, and start no fetch.
         if (!name) {
@@ -1017,9 +1229,31 @@ export default {
               <Show keyed when={`${name}:${round}:${currentTab}`}>
                 <scrollbox flexGrow={1} minHeight={0} focusable focused onKeyDown={onKey}>
                   {currentTab === "plan" || currentTab === "report" ? (
-                    <markdown content={tabContent || `(no ${currentTab})`} width="100%" />
+                    tabContent ? (
+                      <box flexDirection="column">
+                        {renderMarkdownLines(tabContent)}
+                      </box>
+                    ) : (
+                      <text>{`(no ${currentTab})`}</text>
+                    )
                   ) : currentTab === "diff" ? (
                     <code content={tabContent || `(no diff)`} filetype="diff" width="100%" />
+                  ) : currentTab === "transcript" ? (
+                    tabContent ? (
+                      <box flexDirection="column">
+                        {tabContent.split("\n").map(renderTranscriptLine)}
+                      </box>
+                    ) : (
+                      <text>{`(no ${currentTab})`}</text>
+                    )
+                  ) : currentTab === "log" ? (
+                    tabContent ? (
+                      <box flexDirection="column">
+                        {tabContent.split("\n").map(renderLogLine)}
+                      </box>
+                    ) : (
+                      <text>{`(no ${currentTab})`}</text>
+                    )
                   ) : (
                     <text>{tabContent || `(no ${currentTab})`}</text>
                   )}
