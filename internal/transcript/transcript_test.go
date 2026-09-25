@@ -56,7 +56,7 @@ func TestRenderRules(t *testing.T) {
 	}{
 		"empty":               {"claude", "", nil},
 		"blank":               {"claude", "   ", nil},
-		"non-json":            {"claude", "relevo-exit:0", []string{"relevo-exit:0"}},
+		"non-json":            {"claude", "plain text", []string{"plain text"}},
 		"json but not object": {"claude", `["a"]`, []string{`["a"]`}},
 		"broken json":         {"agy", `{"event":`, []string{`{"event":`}},
 		"unknown type":        {"claude", `{"type":"brand_new"}`, []string{"[brand_new]"}},
@@ -68,6 +68,60 @@ func TestRenderRules(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if got := Render(c.kind, []byte(c.line)); !reflect.DeepEqual(got, c.want) {
 				t.Errorf("Render(%q, %q) = %q, want %q", c.kind, c.line, got, c.want)
+			}
+		})
+	}
+}
+
+// TestRenderDropsSupervisorTrailers: the lines the supervisor appends after
+// the builder exits -- a rusage trailer and an exit trailer, in the current
+// spellings or the pre-rename ones -- are relevo's own bookkeeping, not the
+// builder's, so a rendered transcript carries none of them and every other
+// line is unchanged. A line that merely contains a prefix in the middle is
+// the builder's own text and stays (TestRenderTrailerRule).
+func TestRenderDropsSupervisorTrailers(t *testing.T) {
+	body := map[string]string{
+		"claude":   `{"type":"assistant","message":{"content":[{"type":"text","text":"the answer"}]}}`,
+		"agy":      `{"event":"result","result":{"status":"SUCCESS","response":"the answer","denied_actions":[]}}`,
+		"opencode": `{"type":"text","part":{"type":"text","text":"the answer"}}`,
+		"codex":    `{"type":"item.completed","item":{"type":"agent_message","text":"the answer"}}`,
+	}
+	trailers := map[string][]string{
+		"relevo": {"relevo-rusage:cpu_usec=4982568 mem_peak=348131328", "relevo-exit:0"},
+		"legacy": {"relay-rusage:cpu_usec=4982568 mem_peak=348131328", "relay-exit:0"}, // name-guard: legacy
+	}
+	for _, kind := range []string{"claude", "agy", "opencode", "codex"} {
+		for name, lines := range trailers {
+			t.Run(kind+"/"+name, func(t *testing.T) {
+				var got []string
+				for _, line := range append([]string{body[kind]}, lines...) {
+					got = append(got, Render(kind, []byte(line))...)
+				}
+				if want := Render(kind, []byte(body[kind])); !reflect.DeepEqual(got, want) {
+					t.Errorf("rendered = %q, want %q without the trailers", got, want)
+				}
+			})
+		}
+	}
+}
+
+// TestRenderTrailerRule: only a line that starts with a trailer prefix after
+// trimming is dropped; the prefix inside a line is the builder's own text.
+func TestRenderTrailerRule(t *testing.T) {
+	cases := map[string]struct {
+		line string
+		want []string
+	}{
+		"indented exit trailer":  {"   relevo-exit:0", nil},
+		"rusage trailer":         {"relevo-rusage:cpu_usec=1", nil},
+		"trailing whitespace":    {"relevo-exit:3  \t", nil},
+		"prefix in the middle":   {"the builder echoed relevo-exit:0", []string{"the builder echoed relevo-exit:0"}},
+		"exit word is not a hit": {"exiting:0", []string{"exiting:0"}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := Render("claude", []byte(c.line)); !reflect.DeepEqual(got, c.want) {
+				t.Errorf("Render(%q) = %q, want %q", c.line, got, c.want)
 			}
 		})
 	}
