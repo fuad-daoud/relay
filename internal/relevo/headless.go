@@ -27,6 +27,12 @@ import (
 // edits.
 var ErrBuilderBusy = errors.New("builder's previous process is still running; wait for its report, or relevo done")
 
+// ErrScopeActive reports a send refused because this round's systemd scope
+// unit is still loaded: a builder for the round is already alive, most
+// likely started by an earlier send whose bookkeeping failed (#445). Nothing
+// was spawned and nothing was saved.
+var ErrScopeActive = errors.New("this round's builder scope is still running")
+
 // handleOf is the endpoint's stored process fields as the Runner's handle.
 // StartedAt is Unix seconds on the endpoint (store spec §3.1, amended).
 func handleOf(e store.Endpoint) ProcHandle {

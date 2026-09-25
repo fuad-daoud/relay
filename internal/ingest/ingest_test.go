@@ -723,6 +723,56 @@ func TestIngestPlannerTranscript(t *testing.T) {
 	}
 }
 
+// txProbingGitFacts records the RepoFacts call and, from inside it, opens a
+// transaction on the same *db.DB Ingest is about to write with -- exactly the
+// lock contention #436 is about.
+type txProbingGitFacts struct {
+	d      *db.DB
+	called bool
+	txErr  error
+}
+
+func (f *txProbingGitFacts) RepoFacts(ctx context.Context, dir string) (string, string, error) {
+	f.called = true
+	f.txErr = f.d.Tx(func(*db.Tx) error { return nil })
+	return "git@github.com:o/r.git", "/work/fixture/.git", nil
+}
+
+// TestIngestResolvesGitAndSessionsOutsideTheTransaction pins #436: the git
+// facts and the planner-session lookup run before Ingest opens its write
+// transaction, so neither holds the db's write lock while it shells out to
+// git or searches the disk. Before the fix, each fake's own Tx on the same
+// *db.DB hits the busy lock the outer transaction already holds.
+func TestIngestResolvesGitAndSessionsOutsideTheTransaction(t *testing.T) {
+	dir := copyLegacyFixture(t)
+	d := openTestDB(t)
+
+	git := &txProbingGitFacts{d: d}
+	sessCalled := false
+	var sessTxErr error
+	sessions := func(kind, sessionID string) (string, bool) {
+		sessCalled = true
+		sessTxErr = d.Tx(func(*db.Tx) error { return nil })
+		return "", false
+	}
+
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{Git: git, Sessions: sessions}); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	if !git.called {
+		t.Error("GitFacts.RepoFacts was not called")
+	}
+	if !sessCalled {
+		t.Error("Sessions was not called")
+	}
+	if git.txErr != nil {
+		t.Errorf("Tx inside GitFacts.RepoFacts: %v, want nil (no write lock held)", git.txErr)
+	}
+	if sessTxErr != nil {
+		t.Errorf("Tx inside Sessions: %v, want nil (no write lock held)", sessTxErr)
+	}
+}
+
 // TestIngestWritesNoRoundFileMirror pins D3b's new behaviour: ingest no
 // longer mirrors round files into `artifact` rows or into round transcript
 // rows. Every artifact row that exists must be an answer, and no

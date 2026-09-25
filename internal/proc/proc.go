@@ -197,6 +197,8 @@ type Runner struct {
 
 var _ relevo.Runner = (*Runner)(nil)
 
+var _ relevo.ScopeProber = (*Runner)(nil)
+
 // New returns a Runner with the default grace.
 func New() *Runner { return &Runner{} }
 

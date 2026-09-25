@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -286,6 +287,11 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	return pf, nil
 }
 
+// sendAfterSpawn is a test seam: nil in production. When non-nil, Send calls
+// it right after startRound succeeds, and a non-nil return fails the send
+// from that point. It exists only so a test can inject a post-spawn failure.
+var sendAfterSpawn func(name string) error
+
 // Send copies the planner's plan into relevo state and hands it to the builder
 // as the prompt of a fresh process started in the binding's tree (#99). It
 // returns a SendResult describing the round and any between-rounds drift.
@@ -309,6 +315,12 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	// read-only preflight and is taken here, before the lock.
 	baseline, baselineHead := CaptureBaseline(ctx, rt, pf.b)
 	hintRound := pf.b.Round
+
+	// spawned is the process startRound launched, if any: the deferred
+	// failure path after the lock stops a builder this send started but
+	// could not finish recording (#436).
+	var spawned *ProcHandle
+	spawnRound := 0
 
 	var round int
 	var driftLineOut string
@@ -391,6 +403,25 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 
 		late := false
 		if !deferred {
+			// A live scope for this round means a builder for it is already
+			// alive -- most likely an earlier send started one whose writes
+			// failed (#445). Refuse before spawning a second one; nothing is
+			// saved and the staged plan is removed, like the tier-unsupported
+			// branch below.
+			if rt.Scope != nil {
+				if p, ok := rt.Runner.(ScopeProber); ok {
+					unit := scopeUnitName(b)
+					active, perr := p.ScopeActive(ctx, unit)
+					if perr != nil {
+						slog.Debug("scope probe", "unit", unit, "err", perr)
+					}
+					if active {
+						_ = os.Remove(planPath)
+						return fmt.Errorf("binding %q round %d: scope %s.scope is still running -- a builder for this round is already alive (an earlier send may have started it); inspect it with systemctl --user status %s.scope, and relevo stop %s ends it: %w",
+							name, b.Round, unit, unit, name, ErrScopeActive)
+					}
+				}
+			}
 			started, err := startRound(ctx, rt, tx, b, text)
 			if err != nil {
 				if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
@@ -417,6 +448,14 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 				return err
 			}
 			b = started
+			h := handleOf(started.Builder)
+			spawned = &h
+			spawnRound = b.Round
+			if sendAfterSpawn != nil {
+				if err := sendAfterSpawn(name); err != nil {
+					return err
+				}
+			}
 		}
 
 		// The pick entry is filed under the new round, before its plan entry,
@@ -515,6 +554,19 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		return tx.Save(b)
 	})
 	if err != nil {
+		if spawned != nil {
+			// The process is running but the send could not record it: stop
+			// it, and say so in its log, before returning (#436). The
+			// binding's writes rolled back, so the previous state stands and
+			// the planner may resend.
+			kerr := rt.Runner.Kill(context.WithoutCancel(ctx), *spawned)
+			appendLogMarker(rt.Store.BuilderLogPath(name, spawnRound), rt.Now(),
+				"send failed after spawn; builder stopped: "+err.Error())
+			if kerr != nil {
+				return SendResult{}, fmt.Errorf("%w; and stopping the builder it started (pid %d) failed: %v", err, spawned.PID, kerr)
+			}
+			return SendResult{}, fmt.Errorf("%w; the builder it started (pid %d) was stopped", err, spawned.PID)
+		}
 		return SendResult{}, err
 	}
 

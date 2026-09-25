@@ -154,6 +154,25 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 
 	kind, _ := src.Origin()
 
+	// Resolve git facts and the planner's transcript locator before the
+	// transaction opens. repoRefFromGit shells out to git and deps.Sessions
+	// searches the disk; holding the write lock across either starves every
+	// other writer (#436). Both are read-only, so they belong outside, and
+	// the one transaction below only writes what they returned.
+	ref := b.RepoRef
+	if ref == nil && deps.Git != nil {
+		ref = repoRefFromGit(ctx, deps.Git, b.CWD)
+		if ref == nil && b.Repo != "" {
+			ref = repoRefFromGit(ctx, deps.Git, b.Repo)
+		}
+	}
+	plannerLocator := b.Planner.TranscriptLocator
+	if plannerLocator == "" && deps.Sessions != nil && b.Planner.SessionID != "" && kind == "live" {
+		if p, ok := deps.Sessions(b.Planner.Kind, b.Planner.SessionID); ok {
+			plannerLocator = p
+		}
+	}
+
 	var stats Stats
 	err = d.Tx(func(tx *db.Tx) error {
 		// -- repo
@@ -164,13 +183,9 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 		// gc'd; else null. Applied for archive sources too -- an archived
 		// binding's b.CWD is always gone, so the b.Repo fallback is its
 		// only path to a repo row.
-		ref := b.RepoRef
-		if ref == nil && deps.Git != nil {
-			ref = repoRefFromGit(ctx, deps.Git, b.CWD)
-			if ref == nil && b.Repo != "" {
-				ref = repoRefFromGit(ctx, deps.Git, b.Repo)
-			}
-		}
+		//
+		// ref is resolved before this transaction opens (#436), so the git
+		// calls never run under the write lock.
 		var repoID *string
 		if ref != nil && (ref.OriginURL != "" || ref.CommonDir != "") {
 			id, rerr := tx.UpsertRepo(db.Repo{
@@ -432,13 +447,11 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 		}
 
 		// -- planner transcript
+		//
+		// plannerLocator was resolved before this transaction opens (#436),
+		// so deps.Sessions never runs under the write lock.
 		if plannerID != nil && kind == "live" {
-			locator := b.Planner.TranscriptLocator
-			if locator == "" && deps.Sessions != nil {
-				if p, ok := deps.Sessions(b.Planner.Kind, b.Planner.SessionID); ok {
-					locator = p
-				}
-			}
+			locator := plannerLocator
 			if locator != "" {
 				if _, statErr := os.Stat(locator); statErr == nil {
 					key := "planner::" + locator

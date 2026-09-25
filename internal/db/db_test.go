@@ -280,6 +280,111 @@ func TestTxRollsBackOnError(t *testing.T) {
 	}
 }
 
+// TestTxRetriesABusyBegin pins §5A: a BEGIN IMMEDIATE that fails busy while
+// another writer holds the lock is retried until that writer lets go, and fn
+// still runs exactly once.
+func TestTxRetriesABusyBegin(t *testing.T) {
+	oldTimeout, oldRetry := busyTimeoutMS, beginRetryFor
+	busyTimeoutMS, beginRetryFor = 20, 3*time.Second
+	t.Cleanup(func() { busyTimeoutMS, beginRetryFor = oldTimeout, oldRetry })
+
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d1, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open d1: %v", err)
+	}
+	defer d1.Close()
+	d2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open d2: %v", err)
+	}
+	defer d2.Close()
+
+	holding := make(chan struct{})
+	var once sync.Once
+	d1Done := make(chan error, 1)
+	go func() {
+		d1Done <- d1.Tx(func(tx *Tx) error {
+			once.Do(func() { close(holding) })
+			time.Sleep(300 * time.Millisecond)
+			return nil
+		})
+	}()
+	<-holding
+
+	var mu sync.Mutex
+	runs := 0
+	err = d2.Tx(func(tx *Tx) error {
+		mu.Lock()
+		runs++
+		mu.Unlock()
+		return nil
+	})
+	if cerr := <-d1Done; cerr != nil {
+		t.Fatalf("d1.Tx: %v", cerr)
+	}
+	if err != nil {
+		t.Fatalf("d2.Tx = %v, want nil (it must retry past d1's lock)", err)
+	}
+	if runs != 1 {
+		t.Errorf("d2's fn ran %d times, want exactly 1", runs)
+	}
+}
+
+// TestTxGivesUpOnABusyBeginAfterTheDeadline pins §5A's bound: once
+// beginRetryFor has elapsed the busy error comes back exactly as it always
+// did, and fn never ran.
+func TestTxGivesUpOnABusyBeginAfterTheDeadline(t *testing.T) {
+	oldTimeout, oldRetry := busyTimeoutMS, beginRetryFor
+	busyTimeoutMS, beginRetryFor = 20, 200*time.Millisecond
+	t.Cleanup(func() { busyTimeoutMS, beginRetryFor = oldTimeout, oldRetry })
+
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d1, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open d1: %v", err)
+	}
+	defer d1.Close()
+	d2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open d2: %v", err)
+	}
+	defer d2.Close()
+
+	holding := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	d1Done := make(chan error, 1)
+	go func() {
+		d1Done <- d1.Tx(func(tx *Tx) error {
+			once.Do(func() { close(holding) })
+			<-release
+			return nil
+		})
+	}()
+	<-holding
+
+	ran := false
+	err = d2.Tx(func(tx *Tx) error {
+		ran = true
+		return nil
+	})
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("d2.Tx = %v, want errors.Is(..., ErrBusy)", err)
+	}
+	if !strings.Contains(err.Error(), "db: tx begin") {
+		t.Errorf("d2.Tx error = %q, want it to contain %q", err, "db: tx begin")
+	}
+	if ran {
+		t.Error("d2's fn ran, but its BEGIN never succeeded")
+	}
+
+	close(release)
+	if cerr := <-d1Done; cerr != nil {
+		t.Fatalf("d1.Tx: %v", cerr)
+	}
+}
+
 // TestBackupToCopiesEveryRowAndRefusesAnExistingPath pins BackupTo's contract:
 // the copy opens with Open and holds the same row counts as the source, the
 // file is owner-only, and a path that already exists is refused with an error

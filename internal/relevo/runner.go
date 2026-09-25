@@ -142,6 +142,18 @@ type Runner interface {
 	Rusage(ctx context.Context, h ProcHandle, streamPath string) (ProcRusage, bool)
 }
 
+// ScopeProber is the optional half of a Runner that can say whether a
+// systemd scope unit is still occupying its name (#445). Callers type-assert
+// Runtime.Runner to it; a Runner that lacks it, or whose probe errors, is
+// treated as "no scope is active".
+type ScopeProber interface {
+	// ScopeActive reports whether the scope unit <unit>.scope is loaded and not
+	// yet gone: ActiveState is active, activating, deactivating or reloading.
+	// unit is the base name scopeUnitName returns (no ".scope").
+	// An error means "could not tell"; callers treat it as not active.
+	ScopeActive(ctx context.Context, unit string) (bool, error)
+}
+
 // ErrRunnerUnavailable is returned by a headless path when Runtime.Runner is
 // nil: the binary was built or the runtime assembled without one.
 var ErrRunnerUnavailable = errors.New("no process runner configured")
