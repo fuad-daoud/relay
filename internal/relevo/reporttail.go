@@ -97,6 +97,23 @@ func parseReportTail(report []byte) (ReportTail, bool, string) {
 			if val == "" {
 				setList(&tail, key, nil)
 				openList = key
+			} else if strings.HasPrefix(val, "[") && flowListDepth(val) > 0 {
+				openLine := i
+				depth := flowListDepth(val)
+				joined := val
+				for depth > 0 {
+					i++
+					if i >= closeIdx {
+						return ReportTail{}, false, fmt.Sprintf("tail: line %d: %s list is not closed", openLine+1, key)
+					}
+					cont := strings.TrimSpace(stripComment(lines[i]))
+					if cont == "" {
+						continue
+					}
+					joined += " " + cont
+					depth += flowListDepth(cont)
+				}
+				setList(&tail, key, parseListValue(joined))
 			} else {
 				setList(&tail, key, parseListValue(val))
 			}
@@ -284,4 +301,26 @@ func splitListElements(s string) []string {
 	}
 	elements = append(elements, current.String())
 	return elements
+}
+
+func flowListDepth(s string) int {
+	var depth int
+	var inQuote rune
+
+	for _, r := range s {
+		if inQuote != 0 {
+			if r == inQuote {
+				inQuote = 0
+			}
+		} else {
+			if r == '"' || r == '\'' {
+				inQuote = r
+			} else if r == '[' {
+				depth++
+			} else if r == ']' {
+				depth--
+			}
+		}
+	}
+	return depth
 }

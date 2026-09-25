@@ -430,4 +430,62 @@ status: done
 			t.Fatalf("expected status: done, got %s", tail.Status)
 		}
 	})
+
+	t.Run("flow list over several lines", func(t *testing.T) {
+		input := "```relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: [\n  \"cmd/relevo/client.go\",\n  \"internal/relevo/send.go\"\n]\ncommands_run: [\"make check\"]\n```\n"
+		tail, ok := ParseReportTail([]byte(input))
+		if !ok {
+			t.Fatalf("expected ok=true, got false")
+		}
+		if tail.Status != OutcomeDone {
+			t.Errorf("status = %q, want %q", tail.Status, OutcomeDone)
+		}
+		if !tail.ChangedPathsSet {
+			t.Errorf("ChangedPathsSet = false, want true")
+		}
+		wantPaths := []string{"cmd/relevo/client.go", "internal/relevo/send.go"}
+		if !reflect.DeepEqual(tail.ChangedPaths, wantPaths) {
+			t.Errorf("changed_paths = %+v, want %+v", tail.ChangedPaths, wantPaths)
+		}
+		wantCommands := []string{"make check"}
+		if !reflect.DeepEqual(tail.CommandsRun, wantCommands) {
+			t.Errorf("commands_run = %+v, want %+v", tail.CommandsRun, wantCommands)
+		}
+	})
+
+	t.Run("flow list over several lines with a trailing comma and the first item on the key line", func(t *testing.T) {
+		input := "```relevo\nstatus: done\nnot_done: [\"a\",\n\"b\",\n]\n```\n"
+		tail, ok := ParseReportTail([]byte(input))
+		if !ok {
+			t.Fatalf("expected ok=true, got false")
+		}
+		wantNotDone := []string{"a", "b"}
+		if !reflect.DeepEqual(tail.NotDone, wantNotDone) {
+			t.Errorf("not_done = %+v, want %+v", tail.NotDone, wantNotDone)
+		}
+	})
+
+	t.Run("flow list whose items contain brackets inside quotes", func(t *testing.T) {
+		input := "```relevo\nstatus: done\nchanged_paths: [\n\"docs/[draft].md\",\n\"x.go\"\n]\n```\n"
+		tail, ok := ParseReportTail([]byte(input))
+		if !ok {
+			t.Fatalf("expected ok=true, got false")
+		}
+		wantPaths := []string{"docs/[draft].md", "x.go"}
+		if !reflect.DeepEqual(tail.ChangedPaths, wantPaths) {
+			t.Errorf("changed_paths = %+v, want %+v", tail.ChangedPaths, wantPaths)
+		}
+	})
+
+	t.Run("unclosed flow list", func(t *testing.T) {
+		input := "```relevo\nstatus: done\nchanged_paths: [\n\"a.go\",\n```\n"
+		_, ok, reason := parseReportTail([]byte(input))
+		if ok {
+			t.Fatalf("expected ok=false")
+		}
+		wantReason := "tail: line 3: changed_paths list is not closed"
+		if reason != wantReason {
+			t.Fatalf("reason = %q, want %q", reason, wantReason)
+		}
+	})
 }
