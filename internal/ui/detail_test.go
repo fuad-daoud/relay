@@ -367,3 +367,63 @@ func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeText(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"vt", "a\x0bb", "a\uFFFDb"},
+		{"ff", "a\x0cb", "a\uFFFDb"},
+		{"crlf", "a\r\nb", "a\nb"},
+		{"lone cr", "a\rb", "ab"},
+		{"tab", "a\tb", "a    b"},
+		{"esc sequence", "a\x1b[2Jb", "a\uFFFD[2Jb"},
+		{"null and ack", "a\x00\x06b", "a\uFFFD\uFFFDb"},
+		{"invalid utf8", "a\xffb", "a\uFFFDb"},
+		{"c1 nel", "a\u0085b", "a\uFFFDb"},
+		{"unicode unchanged", "héllo — ✓", "héllo — ✓"},
+		{"newline unchanged", "line1\nline2", "line1\nline2"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeText(tc.in); got != tc.want {
+				t.Fatalf("sanitizeText(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBodyOfControlBytesKeepLineCount(t *testing.T) {
+	raw := "line 1\nmiddle \x0b \x0c \x1b[2J controls\nline 3"
+
+	cases := []struct {
+		name     string
+		tab      tab
+		headless bool
+	}{
+		{"transcript", tabTerminal, true},
+		{"log", tabLog, false},
+		{"diff", tabDiff, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered := bodyOf(tc.tab, tabContent{loaded: true, body: raw}, tc.headless)
+			wrapped := wrapBody(rendered, 80)
+			stripped := stripANSI(wrapped)
+
+			for _, r := range stripped {
+				if r < 0x20 && r != '\n' {
+					t.Fatalf("%s: result contains control rune below 0x20: %q (%#x)", tc.name, r, r)
+				}
+			}
+
+			lines := strings.Split(stripped, "\n")
+			if len(lines) != 3 {
+				t.Fatalf("%s: expected 3 lines, got %d: %q", tc.name, len(lines), stripped)
+			}
+		})
+	}
+}
