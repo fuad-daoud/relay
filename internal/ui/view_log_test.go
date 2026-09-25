@@ -551,6 +551,28 @@ func TestLogSwitchRateLimitedReason(t *testing.T) {
 	}
 }
 
+// A gate history row with an empty note shows the provider alone: no trailing
+// " · " from a reason that is not there (§2, round 7).
+func TestLogGateRowWithoutReason(t *testing.T) {
+	now := time.Date(2026, 9, 25, 18, 11, 0, 0, time.UTC)
+	hist := history.History{
+		Events: []history.Event{
+			{At: now, Kind: ledger.RateLimited, Provider: "cline-pass", Note: ""},
+		},
+	}
+
+	entries := buildLogEntries(nil, hist, nil, nil, time.Time{}, nil)
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+	if entries[0].Word != "gated" {
+		t.Errorf("Word = %q, want gated", entries[0].Word)
+	}
+	if entries[0].Detail != "cline-pass" {
+		t.Errorf("Detail = %q, want %q", entries[0].Detail, "cline-pass")
+	}
+}
+
 func TestLogViewBlankRowAboveHeader(t *testing.T) {
 	now := time.Date(2026, 9, 25, 19, 0, 0, 0, time.Local)
 	v := logView{

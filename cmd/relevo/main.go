@@ -2558,9 +2558,10 @@ func cmdUI(args []string) error {
 			Key:        "ui",
 			LegacyPath: filepath.Join(root, "ui.json"),
 		},
-		Notice:  notice,
-		Start:   start,
-		Version: buildVersion(),
+		Notice:    notice,
+		Start:     start,
+		Version:   buildVersion(),
+		ProbeExec: lineExec{},
 	})
 }
 

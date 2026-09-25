@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -52,6 +53,21 @@ type fakeActions struct {
 	pullText   string
 	pullOK     bool
 	pullErr    error
+
+	// The config views (round 2): the scripted stored doc and its error,
+	// plus the edits and probes the view made.
+	doc         relevo.ConfigDoc
+	docErr      error
+	configEdits []relevo.ConfigEdit
+	probes      []string
+
+	// The agents view (round 5): the scripted per-agent file states, the
+	// files the user's editor was opened on, and the (kind, agent) pairs a
+	// reset was asked for.
+	files    map[string][]harness.AgentFile
+	edited   []string
+	resets   [][2]string
+	filesErr error
 
 	result   Result
 	shellCmd *exec.Cmd
@@ -111,6 +127,42 @@ func (f *fakeActions) Pull(_ context.Context, key string) (string, bool, error) 
 func (f *fakeActions) Candidates(role string) []string {
 	f.candRole = append(f.candRole, role)
 	return f.candidates
+}
+
+func (f *fakeActions) ConfigDoc() (relevo.ConfigDoc, error) { return f.doc, f.docErr }
+
+func (f *fakeActions) ApplyConfig(_ context.Context, e relevo.ConfigEdit) Result {
+	f.configEdits = append(f.configEdits, e)
+	return f.result
+}
+
+func (f *fakeActions) Probe(_ context.Context, name string) Result {
+	f.probes = append(f.probes, name)
+	return f.result
+}
+
+// AgentFiles answers the scripted per-agent file states (§3): a name the
+// fixture does not carry has none, as a custom agent does.
+func (f *fakeActions) AgentFiles(agent string) ([]harness.AgentFile, error) {
+	if f.filesErr != nil {
+		return nil, f.filesErr
+	}
+	return f.files[agent], nil
+}
+
+// ResetAgentFile records the (kind, agent) pair it was asked for (§3). The
+// fake never touches $HOME: the files it scripts are strings.
+func (f *fakeActions) ResetAgentFile(_ context.Context, kind, agent string) Result {
+	f.resets = append(f.resets, [2]string{kind, agent})
+	return f.result
+}
+
+// AgentEditor records the path the view opened and returns a command that
+// would run if the process ever ran it. It is exec.Command("true") so no test
+// starts a real editor (§7).
+func (f *fakeActions) AgentEditor(path string) (*exec.Cmd, error) {
+	f.edited = append(f.edited, path)
+	return exec.Command("true"), nil
 }
 
 // key is one rune keypress, as the tests send them.

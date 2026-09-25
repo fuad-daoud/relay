@@ -697,6 +697,7 @@ func TestTableExactValues(t *testing.T) {
 				`(?i)tool (call|use) (was )?rejected`,
 				`(?i)not permitted in (plan|accept-edits) mode`,
 			},
+			Providers: []string{"google", "agy-extra"},
 			Roles: []Role{
 				{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
 				{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
@@ -718,6 +719,7 @@ func TestTableExactValues(t *testing.T) {
 				`(?i)permission (to use .* was )?denied`,
 				`(?i)tool use was rejected`,
 			},
+			Providers: []string{"anthropic"},
 			Roles: []Role{
 				{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
 				{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},

@@ -13,7 +13,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/history"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -656,6 +658,104 @@ func statsOverviewReport() stats.Report {
 	})
 }
 
+// candKeys sends keys through a candidates golden model one at a time,
+// draining each key's command as the bubbletea loop would.
+func candKeys(t *testing.T, m Model, keys ...tea.KeyMsg) Model {
+	t.Helper()
+	for _, k := range keys {
+		res, cmd := m.Update(k)
+		m = drain(t, res.(Model), cmd)
+	}
+	return m
+}
+
+// candDown presses down n times.
+func candDown(t *testing.T, m Model, n int) Model {
+	t.Helper()
+	for range n {
+		m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	return m
+}
+
+// candType types s one rune at a time.
+func candType(t *testing.T, m Model, s string) Model {
+	t.Helper()
+	for _, r := range s {
+		m = candKeys(t, m, key(r))
+	}
+	return m
+}
+
+// goldenActorsModel is the actors goldens' builder: a loaded shell, the
+// `:actors` command, and its doc load drained.
+func goldenActorsModel(t *testing.T, width, height int, fa *fakeActions, rep relevo.Report) Model {
+	t.Helper()
+	m := goldenActionModel(t, width, height, fa, rep)
+	return drain(t, m, execLine("actors", m.env(), m.prefs))
+}
+
+// goldenActorViewModel pushes the builder detail via enter.
+func goldenActorViewModel(t *testing.T, width, height int) Model {
+	t.Helper()
+	m := goldenActorsModel(t, width, height, &fakeActions{doc: candFixtureDoc(t)}, candGatedReport())
+	return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+}
+
+// agentFileFixtures is the fake Actions' per-agent file states for the agents
+// goldens (§8): every shipped agent installed and up to date on all four
+// kinds, with the pins the plan fixes. The paths are built under the real home
+// so the views' `~` form is what the golden shows; the test only reads $HOME,
+// it never writes there, and the substitution keeps the golden identical on
+// every machine.
+func agentFileFixtures(t *testing.T) map[string][]harness.AgentFile {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("home: %v", err)
+	}
+	pins := map[string]map[string]string{
+		"researcher": {
+			"agy": "inherit", "claude": "haiku",
+			"codex": "gpt-5.6-luna", "opencode": "openrouter/z-ai/glm-5.3-flash",
+		},
+		"reviewer":      {"claude": "opus"},
+		"plan-executor": {"agy": "inherit"},
+	}
+	files := make(map[string][]harness.AgentFile)
+	for _, s := range actors.ShippedAgents() {
+		for _, h := range harness.All() {
+			rel, ok := harness.DefinitionPath(h.Kind, s.Name)
+			if !ok {
+				t.Fatalf("%s has no %s definition path", h.Kind, s.Name)
+			}
+			files[s.Name] = append(files[s.Name], harness.AgentFile{
+				Kind:  h.Kind,
+				Path:  filepath.Join(home, rel),
+				State: harness.FileUpToDate,
+				Model: pins[s.Name][h.Kind],
+			})
+		}
+	}
+	return files
+}
+
+// goldenAgentsModel is the agents goldens' builder: a loaded shell, the
+// `:agents` command, and its load drained.
+func goldenAgentsModel(t *testing.T, width, height int, fa *fakeActions) Model {
+	t.Helper()
+	m := goldenActionModel(t, width, height, fa, relevo.Report{})
+	return drain(t, m, execLine("agents", m.env(), m.prefs))
+}
+
+// goldenAgentResearcherModel is `:agents` with the cursor on researcher and
+// its detail pushed.
+func goldenAgentResearcherModel(t *testing.T, width, height int, fa *fakeActions) Model {
+	t.Helper()
+	m := candDown(t, goldenAgentsModel(t, width, height, fa), 2) // researcher
+	return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+}
+
 func TestGoldenViews(t *testing.T) {
 	t.Cleanup(relevo.SetGateClock(func() time.Time { return railNow }))
 
@@ -891,6 +991,133 @@ func TestGoldenViews(t *testing.T) {
 				m := goldenActionModel(t, 140, 40, &fakeActions{},
 					relevo.Report{Bindings: reportReadyRows(), Gated: gatedGates()})
 				return pointer(t, m, "inbox")
+			},
+		},
+		{
+			name: "candidates-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return goldenCandidatesModel(t, 132, 34,
+					&fakeActions{doc: candFixtureDoc(t)}, candGatedReport())
+			},
+		},
+		{
+			name: "candidates-100", width: 100, height: 30,
+			build: func(t *testing.T) Model {
+				return goldenCandidatesModel(t, 100, 30,
+					&fakeActions{doc: candFixtureDoc(t)}, candGatedReport())
+			},
+		},
+		{
+			name: "candidates-delete-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenCandidatesModel(t, 132, 34,
+					&fakeActions{doc: candFixtureDoc(t)}, candGatedReport())
+				for range 3 {
+					res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+					m = drain(t, res.(Model), cmd)
+				}
+				res, cmd := m.Update(key('d'))
+				return drain(t, res.(Model), cmd)
+			},
+		},
+		{
+			name: "cand-add-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenCandidatesModel(t, 132, 34,
+					&fakeActions{doc: candFixtureDoc(t)}, candGatedReport())
+				m = candKeys(t, m, key('a'))
+				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyTab})
+				return candType(t, m, "cline-pass")
+			},
+		},
+		{
+			name: "cand-edit-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenCandidatesModel(t, 132, 34,
+					&fakeActions{doc: candFixtureDoc(t)}, candGatedReport())
+				m = candDown(t, m, 2) // deepseek-v4.1-flash
+				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
+				return candType(t, m, "cline-pass/deepseek-v4.2-flash#high")
+			},
+		},
+		{
+			name: "cand-edit-invalid-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenCandidatesModel(t, 132, 34,
+					&fakeActions{doc: candFixtureDoc(t)}, candGatedReport())
+				m = candDown(t, m, 5) // glm-5.3-flash
+				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyTab}, tea.KeyMsg{Type: tea.KeyTab})
+				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
+				return candType(t, m, "openrouter/z-ai")
+			},
+		},
+		{
+			name: "cand-edit-agy-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenCandidatesModel(t, 132, 34,
+					&fakeActions{doc: candFixtureDoc(t)}, candGatedReport())
+				m = candDown(t, m, 5) // glm-5.3-flash
+				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyTab}) // model -> harness
+				for range 3 {
+					m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyLeft}) // opencode -> agy
+				}
+				return m
+			},
+		},
+		{
+			name: "actors-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return goldenActorsModel(t, 132, 34,
+					&fakeActions{doc: candFixtureDoc(t)}, candGatedReport())
+			},
+		},
+		{
+			name: "actor-builder-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return candDown(t, goldenActorViewModel(t, 132, 34), 4) // sonnet
+			},
+		},
+		{
+			name: "actor-edit-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return candKeys(t, goldenActorViewModel(t, 132, 34), key('e'))
+			},
+		},
+		{
+			name: "actor-pick-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return candKeys(t, goldenActorViewModel(t, 132, 34), key('a'))
+			},
+		},
+		{
+			name: "agents-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				fa := &fakeActions{doc: candFixtureDoc(t), files: agentFileFixtures(t)}
+				return candDown(t, goldenAgentsModel(t, 132, 34, fa), 2) // researcher
+			},
+		},
+		{
+			name: "agent-researcher-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				fa := &fakeActions{doc: candFixtureDoc(t), files: agentFileFixtures(t)}
+				return candDown(t, goldenAgentResearcherModel(t, 132, 34, fa), 1) // claude
+			},
+		},
+		{
+			name: "agent-reset-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				files := agentFileFixtures(t)
+				for i := range files["researcher"] {
+					if files["researcher"][i].Kind == "claude" {
+						files["researcher"][i].State = harness.FileEdited
+					}
+				}
+				fa := &fakeActions{doc: candFixtureDoc(t), files: files}
+				m := candDown(t, goldenAgentResearcherModel(t, 132, 34, fa), 1) // claude, yours
+				return candKeys(t, m, key('r'))
 			},
 		},
 	}

@@ -7,23 +7,23 @@
  │                                                                                                                                        │ 
  │    enter  open round                                                                                                                   │ 
  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ 
-                                                                                                                                            
-     needs you   1    a buil╭─ command ────────────────────────────────────────────────────────────────────────╮                            
- ▍ ●  webshop             r4│ :a                                                                               │                            
-        ╰ which branch shoul│                                                                                  │                            
-                            │ VIEWS                                                                            │                            
-     working   3    a round │ ▸ stats  rounds, cost and health                                                 │                            
-   ●  api                 r2│   ungate  clear a recorded rate limit                                            │                            
-   ●  atlas               r4│ BINDINGS                                                                         │                            
-   ●  worker              r2│   round api  working · r2 · -                                                    │                            
-                            │   round atlas  working · r4 · -                                                  │                            
-     on hold   1    paused o│ GATES                                                                            │                            
-   ◐  ledger              r3│   ungate codex  clear the rate limit on codex                                    │                            
-                            │   ungate codex  clear the rate limit on codex                                    │                            
-   ✓  1 done  ·  1 today  · │                                              tab complete · enter go · esc close │                            
+                            ╭─ command ────────────────────────────────────────────────────────────────────────╮                            
+     needs you   1    a buil│ :a                                                                               │                            
+ ▍ ●  webshop             r4│                                                                                  │                            
+        ╰ which branch shoul│ VIEWS                                                                            │                            
+                            │ ▸ actors  who runs each job, and in what order                                   │                            
+     working   3    a round │   agents  agent definitions per harness                                          │                            
+   ●  api                 r2│   stats  rounds, cost and health                                                 │                            
+   ●  atlas               r4│   ungate  clear a recorded rate limit                                            │                            
+   ●  worker              r2│   candidates  candidates, gates and who picks them                               │                            
+                            │ BINDINGS                                                                         │                            
+     on hold   1    paused o│   round api  working · r2 · -                                                    │                            
+   ◐  ledger              r3│   round atlas  working · r4 · -                                                  │                            
+                            │ GATES                                                                            │                            
+   ✓  1 done  ·  1 today  · │   ungate codex  clear the rate limit on codex                                    │                            
+                            │ + 1 more match; keep typing                                                      │                            
+                            │                                              tab complete · enter go · esc close │                            
                             ╰──────────────────────────────────────────────────────────────────────────────────╯                            
-                                                                                                                                            
-                                                                                                                                            
                                                                                                                                             
                                                                                                                                             
                                                                                                                                             
