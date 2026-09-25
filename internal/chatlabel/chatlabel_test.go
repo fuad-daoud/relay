@@ -3,6 +3,7 @@ package chatlabel
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -149,7 +150,7 @@ func TestOpencode(t *testing.T) {
 	if got := Opencode(nil); got != (Label{}) {
 		t.Errorf("empty output gave %+v, want the zero Label", got)
 	}
-	if got, want := OpencodeQuery("ses_a'b"), "select title from session where id = 'ses_a''b'"; got != want {
+	if got, want := OpencodeQuery("ses_a'b"), "select title from session_v2 where id = 'ses_a''b' union all select title from session where id = 'ses_a''b' and not exists (select 1 from session_v2 where id = 'ses_a''b')"; got != want {
 		t.Errorf("OpencodeQuery = %q, want %q", got, want)
 	}
 }
@@ -201,6 +202,52 @@ func TestResolveOpencode(t *testing.T) {
 	noExec := Resolver{OpencodeDB: "/tmp/opencode.db"}
 	if got := noExec.Resolve(context.Background(), "opencode", "ses_abc123", ""); got != (Label{}) {
 		t.Errorf("nil Exec gave %+v, want the zero Label", got)
+	}
+}
+
+// cliExec is usage.Exec over the real sqlite3 binary, so a test can read a
+// fixture database the way the daemon does.
+type cliExec struct{}
+
+func (cliExec) Run(ctx context.Context, bin string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, bin, args...).Output()
+}
+
+// opencodeFixture builds a fixture opencode.db with the sqlite3 binary: no
+// test may touch the real ~/.local/share/opencode/opencode.db.
+func opencodeFixture(t *testing.T, stmts ...string) string {
+	t.Helper()
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skipf("sqlite3 not on PATH: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "opencode.db")
+	for _, stmt := range stmts {
+		out, err := exec.Command("sqlite3", path, stmt).CombinedOutput()
+		if err != nil {
+			t.Fatalf("sqlite3 %q: %v: %s", stmt, err, out)
+		}
+	}
+	return path
+}
+
+// TestResolveOpencodeV2Title proves the title is read from session_v2 first
+// (#393): OpenCode 2.0.14 keeps its sessions there, and the legacy session
+// table is only the fallback for pre-2.0 rows.
+func TestResolveOpencodeV2Title(t *testing.T) {
+	db := opencodeFixture(t,
+		"create table session (id text, title text)",
+		"create table session_v2 (id text, title text)",
+		"insert into session values ('ses_both', 'Legacy title')",
+		"insert into session values ('ses_legacyonly', 'Legacy-only title')",
+		"insert into session_v2 values ('ses_both', 'V2 title')",
+	)
+	res := Resolver{Exec: cliExec{}, OpencodeDB: db}
+
+	if got := res.Resolve(context.Background(), "opencode", "ses_both", ""); got.Text != "V2 title" {
+		t.Errorf("session_v2 title = %q, want %q", got.Text, "V2 title")
+	}
+	if got := res.Resolve(context.Background(), "opencode", "ses_legacyonly", ""); got.Text != "Legacy-only title" {
+		t.Errorf("legacy title = %q, want %q", got.Text, "Legacy-only title")
 	}
 }
 

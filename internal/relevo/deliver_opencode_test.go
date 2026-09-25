@@ -438,3 +438,61 @@ func basicAuth(user, pass string) string {
 	req.SetBasicAuth(user, pass)
 	return strings.TrimPrefix(req.Header.Get("Authorization"), "Basic ")
 }
+
+// TestOpencodeConfirmSeen covers the two shapes a delivered turn can take
+// (#393): OpenCode 2.0.14's session_message row, and the pre-2.0 part/message
+// pair. Only a user turn counts, and either table alone confirms.
+func TestOpencodeConfirmSeen(t *testing.T) {
+	const origin = "relevo: round 1 to builder"
+
+	tables := []string{
+		"create table message (id text, data text)",
+		"create table part (id text, message_id text, session_id text, data text)",
+		"create table session_message (id text, session_id text, type text, seq integer, time_created integer, time_updated integer, data text)",
+	}
+	userText := `{"type":"text","text":"` + origin + `"}`
+	v2UserText := `{"text":"` + origin + `"}`
+
+	cases := []struct {
+		name  string
+		stmts []string
+		want  bool
+	}{
+		{
+			name: "session_message user row containing the origin -> seen",
+			stmts: append(append([]string{}, tables...),
+				"insert into session_message values ('m1', 'ses_x', 'user', 0, 1, 1, '"+v2UserText+"')"),
+			want: true,
+		},
+		{
+			name: "legacy part/message user row containing the origin -> seen",
+			stmts: append(append([]string{}, tables...),
+				`insert into message values ('msg1', '{"role":"user"}')`,
+				"insert into part values ('p1', 'msg1', 'ses_x', '"+userText+"')"),
+			want: true,
+		},
+		{
+			name: "assistant row containing the origin -> not seen",
+			stmts: append(append([]string{}, tables...),
+				"insert into session_message values ('m1', 'ses_x', 'assistant', 0, 1, 1, '"+v2UserText+"')",
+				`insert into message values ('msg1', '{"role":"assistant"}')`,
+				"insert into part values ('p1', 'msg1', 'ses_x', '"+userText+"')"),
+			want: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := sqliteFixture(t, tc.stmts...)
+			d := &OpencodeDeliverer{DBPath: db, Exec: cliExec{}}
+
+			got, err := d.seen(context.Background(), "ses_x", origin)
+			if err != nil {
+				t.Fatalf("seen: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("seen = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

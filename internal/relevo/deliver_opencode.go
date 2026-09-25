@@ -236,10 +236,11 @@ func firstErrorLine(err error) string {
 }
 
 // seen reports whether origin already appears in sessionID's messages as a
-// user text part (§3.4): the inbox table holds admitted work and is
-// consumed, so a user text part is what proves the session actually took
-// the turn. A failing sqlite3 is not seen and not a Go error -- the call
-// site turns it into OutcomeUnavailable.
+// user turn (§3.4): the inbox table holds admitted work and is consumed, so a
+// user turn is what proves the session actually took it. OpenCode 2.0.14 keeps
+// those in session_message, while the part/message tables only hold pre-2.0
+// turns; either one counts. A failing sqlite3 is not seen and not a Go error --
+// the call site turns it into OutcomeUnavailable.
 func (d *OpencodeDeliverer) seen(ctx context.Context, sessionID, origin string) (bool, error) {
 	out, err := d.Exec.Run(ctx, "sqlite3", "-readonly", d.DBPath, opencodeConfirmQuery(sessionID, origin))
 	if err != nil {
@@ -253,17 +254,23 @@ func (d *OpencodeDeliverer) seen(ctx context.Context, sessionID, origin string) 
 	return n > 0, nil
 }
 
-// opencodeConfirmQuery is the read-back that proves a session actually
-// took the turn (§3.4). ' is doubled in both interpolated values, the
+// opencodeConfirmQuery is the read-back that proves a session actually took
+// the turn (§3.4): a user text part in the pre-2.0 part/message tables, or a
+// user row in OpenCode 2.0's session_message. The two counts are summed, so
+// either table alone confirms. ' is doubled in both interpolated values, the
 // SQL string-literal escape.
 func opencodeConfirmQuery(sessionID, origin string) string {
 	sid := strings.ReplaceAll(sessionID, "'", "''")
 	org := strings.ReplaceAll(origin, "'", "''")
 	return fmt.Sprintf(
-		"select count(*) from part p join message m on m.id = p.message_id"+
+		"select (select count(*) from part p join message m on m.id = p.message_id"+
 			" where p.session_id = '%s'"+
 			" and json_extract(m.data, '$.role') = 'user'"+
 			" and json_extract(p.data, '$.type') = 'text'"+
-			" and json_extract(p.data, '$.text') like '%%%s%%'",
-		sid, org)
+			" and json_extract(p.data, '$.text') like '%%%s%%')"+
+			" + (select count(*) from session_message"+
+			" where session_id = '%s'"+
+			" and type = 'user'"+
+			" and json_extract(data, '$.text') like '%%%s%%')",
+		sid, org, sid, org)
 }

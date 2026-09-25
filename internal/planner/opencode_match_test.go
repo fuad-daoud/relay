@@ -113,6 +113,35 @@ func TestMatchOpencodeSession(t *testing.T) {
 			now:    now,
 			wantID: "ses_1",
 		},
+		{
+			name: "the only candidate is 11 minutes idle -> ErrNoOpencodeSession",
+			cwd:  "/a/b",
+			sessions: []OpencodeSession{
+				{ID: "ses_idle", Directory: "/a/b", Title: "idle", Updated: now.Add(-11 * time.Minute)},
+			},
+			now:     now,
+			wantErr: ErrNoOpencodeSession,
+		},
+		{
+			name: "idle exact dir is discarded, so an active ancestor wins",
+			cwd:  "/a/b/c",
+			sessions: []OpencodeSession{
+				{ID: "ses_ancestor", Directory: "/a/b", Title: "ancestor", Updated: now.Add(-1 * time.Minute)},
+				{ID: "ses_exact", Directory: "/a/b/c", Title: "exact", Updated: now.Add(-2 * time.Hour)},
+			},
+			now:    now,
+			wantID: "ses_ancestor",
+		},
+		{
+			name: "idle exact dir and idle ancestor -> ErrNoOpencodeSession",
+			cwd:  "/a/b/c",
+			sessions: []OpencodeSession{
+				{ID: "ses_ancestor", Directory: "/a/b", Title: "ancestor", Updated: now.Add(-2 * time.Hour)},
+				{ID: "ses_exact", Directory: "/a/b/c", Title: "exact", Updated: now.Add(-2 * time.Hour)},
+			},
+			now:     now,
+			wantErr: ErrNoOpencodeSession,
+		},
 	}
 
 	for _, tc := range tests {
