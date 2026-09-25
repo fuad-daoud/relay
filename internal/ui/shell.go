@@ -380,7 +380,7 @@ func (m Model) View() string {
 		rows = append(rows, strings.Split(m.errorBlock(env), "\n")...)
 	}
 	rows = append(rows, strings.Split(m.body(env), "\n")...)
-	rows = append(rows, m.ruleView(env), m.keysView(env))
+	rows = append(rows, "", m.keysView(env))
 	return joinLines(rows)
 }
 

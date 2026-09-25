@@ -1,4 +1,4 @@
- relevo › rounds                                                                                                                                          14:02 
+  ◆ relevo    rounds                                                                                                                       v0.13.0-28    14:02  
 all rounds                                                                                                                                                      
 rounds 3   cost $1.52 (1 unknown)   tokens 3.7M   halted 1 · exited 0   median 19m   bindings 2 · builders 2                                                    
 started           binding       rnd  builder                               outcome        commits  tree    gate   tokens   cost     duration                    
@@ -36,5 +36,5 @@ started           binding       rnd  builder                               outco
                                                                                                                                                                 
                                                                                                                                                                 
                                                                                                                                                                 
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-/ filter   b regroup   s sort   S flip   enter open   r refresh   : command   ? help   q quit                                                                   
+
+ /  filter      b  regroup      s  sort      S  flip      enter  open      r  refresh      :  command      ?  all keys      q  quit                             

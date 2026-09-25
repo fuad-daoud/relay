@@ -134,7 +134,7 @@ func actionModel(t *testing.T, a Actions, rows ...relevo.BindingStatus) Model {
 func goldenActionModel(t *testing.T, width, height int, a Actions, rep relevo.Report) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Actions: a})
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Actions: a, Version: "v0.13.0-28-gb66c6fc"})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
@@ -780,7 +780,7 @@ func (s fixedSource) Base() relevo.Runtime { return s.rt }
 func (s fixedSource) MarkViewed(string) {}
 
 func TestFooterDropsWholeKeys(t *testing.T) {
-	allowed := map[string]bool{": command": true, "? help": true, "q quit": true, "esc back": true}
+	allowed := map[string]bool{": command": true, "? all keys": true, "q quit": true, "esc back": true}
 	for _, width := range []int{80, 100, 140} {
 		m := actionModel(t, &fakeActions{}, relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
 		res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 40})
@@ -790,15 +790,19 @@ func TestFooterDropsWholeKeys(t *testing.T) {
 		}
 
 		row := strings.TrimRight(stripANSI(m.keysView(m.env())), " ")
-		if !strings.Contains(row, "? help") {
-			t.Errorf("width %d: ? help must always be in the keys row: %q", width, row)
+		if !strings.Contains(row, "?  all keys") && !strings.Contains(row, "? all keys") {
+			t.Errorf("width %d: ? all keys must always be in the keys row: %q", width, row)
 		}
-		if !strings.Contains(row, "q quit") {
+		if !strings.Contains(row, "q  quit") && !strings.Contains(row, "q quit") {
 			t.Errorf("width %d: q quit must always be in the keys row: %q", width, row)
 		}
-		for _, part := range strings.Split(row, "   ") {
-			if !allowed[part] {
-				t.Errorf("width %d: %q is not a whole key", width, part)
+		for _, part := range strings.Split(row, "     ") {
+			cleaned := strings.Join(strings.Fields(part), " ")
+			if cleaned == "" {
+				continue
+			}
+			if !allowed[cleaned] {
+				t.Errorf("width %d: %q is not a whole key (cleaned %q)", width, part, cleaned)
 			}
 		}
 	}

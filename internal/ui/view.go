@@ -22,6 +22,10 @@ type View interface {
 // KeyHelp is one key's footer hint. Key is as displayed.
 type KeyHelp struct{ Key, Help string }
 
+// helpKeyer is optionally implemented by a view that provides an extended
+// key list for the help overlay (§2.2, §4).
+type helpKeyer interface{ HelpKeys() []KeyHelp }
+
 // Env is what the shell lends a view on every call. Views never keep it.
 type Env struct {
 	Ctx      context.Context

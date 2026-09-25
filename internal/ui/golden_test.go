@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,11 +24,13 @@ import (
 
 var updateGolden = flag.Bool("update", false, "update golden files")
 
+const goldenVersion = "v0.13.0-28-gb66c6fc"
+
 // goldenModel is a shell loaded with a full relevo.Report.
 func goldenModel(t *testing.T, width, height int, rep relevo.Report) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second})
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Version: goldenVersion})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
@@ -118,6 +121,150 @@ func gatedGates() []ledger.Gate {
 	}
 }
 
+// realFleetReport builds the realistic fleet report specified in §8 / §2.3.
+func realFleetReport() relevo.Report {
+	// 27 DONE rows: 3 today (newest done-01 at now-38m), others on previous days.
+	doneRows := make([]relevo.BindingStatus, 27)
+	for i := 1; i <= 27; i++ {
+		name := fmt.Sprintf("done-%02d", i)
+		var ts time.Time
+		switch i {
+		case 1:
+			ts = railNow.Add(-38 * time.Minute)
+		case 2:
+			ts = railNow.Add(-2 * time.Hour)
+		case 3:
+			ts = railNow.Add(-5 * time.Hour)
+		default:
+			ts = railNow.Add(-time.Duration(i-2) * 24 * time.Hour)
+		}
+		doneRows[i-1] = relevo.BindingStatus{
+			Name:    name,
+			Round:   1,
+			Display: "DONE",
+			Last:    &relevo.LastEvent{TS: ts},
+		}
+	}
+
+	bindings := []relevo.BindingStatus{
+		{
+			Name:        "fix-433",
+			Round:       2,
+			Display:     "NEEDS YOU",
+			BuilderKind: "agy",
+			BuilderName: "deepseek-v4.1-flash",
+			PlannerName: "architect-3",
+			Branch:      "relevo/fix-433",
+			LastClose:   &relevo.CloseInfo{Commits: 2},
+			Spend:       &usage.Spend{Measured: 0.03},
+			Waiting: &relevo.Waiting{
+				Cause: "blocked",
+				Line:  "“Should the dedupe also cover archived bindings, or only live ones?”",
+				Since: railNow.Add(-3 * time.Minute),
+			},
+			Last: &relevo.LastEvent{
+				TS:    railNow.Add(-3 * time.Minute),
+				Kind:  store.KindQuestion,
+				Round: 2,
+			},
+		},
+		{
+			Name:          "spool-db",
+			Round:         1,
+			Display:       "ACTIVE",
+			BuilderStatus: "working",
+			QuietFor:      "17s",
+			RoundStart:    railNow.Add(-5 * time.Minute),
+			BuilderName:   "gemini-3.8-flash-high",
+			PlannerName:   "architect-2",
+			Spend:         &usage.Spend{Plan: 1},
+		},
+		{
+			Name:          "tok-seg",
+			Round:         1,
+			Display:       "ACTIVE",
+			BuilderStatus: "working",
+			QuietFor:      "16s",
+			RoundStart:    railNow.Add(-6 * time.Minute),
+			BuilderName:   "gemini-3.8-flash-high",
+			PlannerName:   "architect-5",
+			Spend:         &usage.Spend{Plan: 1},
+		},
+		{
+			Name:          "oc-tui-a",
+			Round:         6,
+			Display:       "ACTIVE",
+			BuilderStatus: "idle",
+			LastPayload: &relevo.LastEvent{
+				Kind: store.KindReport,
+				TS:   railNow.Add(-14 * time.Minute),
+			},
+			BuilderName: "deepseek-v4.1-flash",
+			PlannerName: "architect-3",
+			Spend:       &usage.Spend{Measured: 0.20},
+			Unread:      true,
+		},
+		{
+			Name:          "rl-tail",
+			Round:         2,
+			Display:       "ACTIVE",
+			BuilderStatus: "idle",
+			LastPayload: &relevo.LastEvent{
+				Kind: store.KindReport,
+				TS:   railNow.Add(-31 * time.Minute),
+			},
+			BuilderName: "gemini-3.8-flash-high",
+			PlannerName: "architect-5",
+			Spend:       &usage.Spend{Plan: 1},
+		},
+		{
+			Name:          "oc-tui-probe",
+			Round:         4,
+			Display:       "ACTIVE",
+			BuilderStatus: "idle",
+			LastPayload: &relevo.LastEvent{
+				Kind: store.KindReport,
+				TS:   railNow.Add(-48 * time.Minute),
+			},
+			BuilderName: "gemini-3.8-flash-high",
+			PlannerName: "architect-3",
+			Spend:       &usage.Spend{Plan: 1},
+		},
+		{
+			Name:          "serve-status-json",
+			Round:         2,
+			Display:       "ACTIVE",
+			BuilderStatus: "idle",
+			LastPayload: &relevo.LastEvent{
+				Kind: store.KindReport,
+				TS:   railNow.Add(-1 * time.Hour),
+			},
+			BuilderName: "deepseek-v4.1-flash",
+			PlannerName: "architect-13",
+			Spend:       &usage.Spend{Measured: 0.03},
+		},
+	}
+	bindings = append(bindings, doneRows...)
+
+	return relevo.Report{
+		Bindings: bindings,
+		Gated: []ledger.Gate{
+			{
+				Token: "agy/antigravity/claude-sonnet-4-6",
+				Kind:  ledger.RateLimited,
+				Since: railNow,
+				Until: railNow.Add(42 * time.Hour),
+			},
+			{
+				Token: "codex/openai/gpt-5.6-terra:high",
+				Kind:  ledger.RateLimited,
+				Since: railNow,
+				Until: railNow.Add(25 * 24 * time.Hour),
+			},
+		},
+	}
+}
+
 // dashRows is the dashboard golden's fixed grid.
 func dashRows() []db.RoundRow {
 	s := func(v string) *string { return &v }
@@ -174,7 +321,7 @@ func goldenRoundModel(t *testing.T, width, height int) Model {
 func goldenArchivedRoundModel(t *testing.T, width, height int) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
-	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second})
+	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Version: goldenVersion})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
@@ -198,7 +345,7 @@ func goldenRoundsModel(t *testing.T, width, height int) Model {
 	t.Cleanup(func() { d.Close() })
 	st := store.New(t.TempDir())
 	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st, DB: d}},
-		Options{Interval: time.Second, Start: "rounds"})
+		Options{Interval: time.Second, Start: "rounds", Version: goldenVersion})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
@@ -223,7 +370,7 @@ func goldenStatsModel(t *testing.T, width, height int, rep stats.Report) Model {
 	t.Cleanup(func() { d.Close() })
 	st := store.New(t.TempDir())
 	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st, DB: d}},
-		Options{Interval: time.Second, Start: "stats"})
+		Options{Interval: time.Second, Start: "stats", Version: goldenVersion})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
@@ -270,6 +417,26 @@ func TestGoldenViews(t *testing.T) {
 			},
 		},
 		{
+			name: "fleet-real-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return goldenActionModel(t, 132, 34, &fakeActions{}, realFleetReport())
+			},
+		},
+		{
+			name: "fleet-real-100", width: 100, height: 30,
+			build: func(t *testing.T) Model {
+				return goldenActionModel(t, 100, 30, &fakeActions{}, realFleetReport())
+			},
+		},
+		{
+			name: "fleet-real-done", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenActionModel(t, 132, 34, &fakeActions{}, realFleetReport())
+				res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'.'}})
+				return res.(Model)
+			},
+		},
+		{
 			name: "fleet-filtered", width: 140, height: 40,
 			build: func(t *testing.T) Model {
 				m := goldenModel(t, 140, 40, relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
@@ -294,7 +461,7 @@ func TestGoldenViews(t *testing.T) {
 			name: "fleet-error-before-load", width: 140, height: 40,
 			build: func(t *testing.T) Model {
 				st := store.New(t.TempDir())
-				m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second})
+				m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Version: goldenVersion})
 				m.now = func() time.Time { return railNow }
 				res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 				m = res.(Model)
