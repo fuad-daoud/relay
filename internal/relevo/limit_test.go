@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/transcript"
 )
 
 func testNow() time.Time {
@@ -197,6 +198,31 @@ func codexPatterns(t *testing.T) []*regexp.Regexp {
 		patterns = append(patterns, regexp.MustCompile(p))
 	}
 	return patterns
+}
+
+// TestAgyLimitDetectedInRenderedStream pins round 1's item 2 (§7.2 N2): the
+// 7 real agy ERROR results render with their result.error line, and a scan of
+// those rendered lines finds the 5 real limits and neither of the 2
+// non-limit errors. The fixture lives in the transcript package and is read
+// by relative path, so both packages scan the same bytes.
+func TestAgyLimitDetectedInRenderedStream(t *testing.T) {
+	now := testNow()
+	raw, err := os.ReadFile(filepath.Join("..", "transcript", "testdata", "agy-errors", "results.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) != 7 {
+		t.Fatalf("fixture has %d lines, want 7", len(lines))
+	}
+	patterns := agyPatterns(t)
+	for i, line := range lines {
+		rendered := strings.Join(transcript.Render("agy", []byte(line)), "\n")
+		_, ok := matchLimit(rendered, patterns, now, 0)
+		if want := i < 5; ok != want {
+			t.Errorf("line %d: rendered stream matches = %v, want %v; rendered:\n%s", i+1, ok, want, rendered)
+		}
+	}
 }
 
 func TestMatchLimit(t *testing.T) {

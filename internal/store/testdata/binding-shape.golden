@@ -1,4 +1,4 @@
-format 4
+format 5
 base
 base_ref
 branch
@@ -53,6 +53,8 @@ builder.session_id
 builder.started_at
 builder.stream_offset
 builder.stream_round
+builder.stream_segments[].kind
+builder.stream_segments[].start
 builder.stream_session_id
 builder.stream_start
 builder.transcript_locator
@@ -113,6 +115,8 @@ consults[].endpoint.session_id
 consults[].endpoint.started_at
 consults[].endpoint.stream_offset
 consults[].endpoint.stream_round
+consults[].endpoint.stream_segments[].kind
+consults[].endpoint.stream_segments[].start
 consults[].endpoint.stream_session_id
 consults[].endpoint.stream_start
 consults[].endpoint.transcript_locator
@@ -215,6 +219,8 @@ planner.session_id
 planner.started_at
 planner.stream_offset
 planner.stream_round
+planner.stream_segments[].kind
+planner.stream_segments[].start
 planner.stream_session_id
 planner.stream_start
 planner.transcript_locator

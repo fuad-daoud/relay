@@ -360,7 +360,19 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 		b.StaleSince = time.Time{}
 		b.StaleNotifiedAt = time.Time{}
 		if rebinding {
-			b.Builder = builder
+			// A rebind can land mid-round: resume refuses only while the
+			// current process is alive (ErrBuilderAlive above), so an open
+			// round whose process exited rebinds here with
+			// StreamRound == Round. The round's stream cursor and its
+			// segment list then move onto the replacement, so the drain
+			// keeps rendering the same file from where it left off. Between
+			// rounds (StreamRound != Round) there is nothing to carry and
+			// the fresh endpoint stands.
+			if b.Builder.StreamRound == b.Round {
+				b.Builder = carryStream(b.Builder, builder)
+			} else {
+				b.Builder = builder
+			}
 			b.BuilderCandidate = res.Token() // "" when adopting a pane
 			b.HaltNotifiedRound = 0
 			b.Halt = ""

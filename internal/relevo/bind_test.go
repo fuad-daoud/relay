@@ -718,7 +718,7 @@ func TestBindResumeDoneBindingScope(t *testing.T) {
 		if got.Planner.SessionID != "sess-architect" {
 			t.Errorf("Planner.SessionID = %q, want the record's", got.Planner.SessionID)
 		}
-		if got.Builder != existing.Builder {
+		if !reflect.DeepEqual(got.Builder, existing.Builder) {
 			t.Errorf("Builder = %+v, want %+v (untouched)", got.Builder, existing.Builder)
 		}
 		if got := len(runnerOf(t, rt).specs); got != 0 {

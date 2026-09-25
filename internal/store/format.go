@@ -15,19 +15,23 @@ import (
 // remote binding (store.go Load refuses a newer format). Format 4 adds
 // `builder.stream_start`, never stamped: an older relevo that drops it makes
 // the current process's usage reads start at byte 0 -- an over-count on a
-// same-harness switch in that round, never lost data.
+// same-harness switch in that round, never lost data. Format 5 adds
+// `builder.stream_segments`, never stamped: an older relevo that drops it
+// renders a switched round with the endpoint's kind, which is the behaviour
+// before format 5.
 //
 // Bump it whenever Binding's JSON shape changes. An older relevo that meets a
 // newer format refuses to save, because its rewrite would erase every field it
 // does not know (#372).
-const BindingFormat = 4
+const BindingFormat = 5
 
 // recordFormat is the format to write b at: the lowest format that can hold
 // the record (#382 §5.2). A binding whose Role is empty is format 1, so it is
 // byte-identical to a binding written before the field existed; any other role
 // is format 2. An older relevo then refuses to save exactly the bindings it
-// would get wrong, and keeps working on every other one. RemoteLive (format 3)
-// and StreamStart (format 4) never raise the record's format; see BindingFormat.
+// would get wrong, and keeps working on every other one. RemoteLive (format 3),
+// StreamStart (format 4) and StreamSegments (format 5) never raise the
+// record's format; see BindingFormat.
 func recordFormat(b Binding) int {
 	if b.Role != "" {
 		return 2

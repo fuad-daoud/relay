@@ -463,3 +463,65 @@ func TestSwitchRecordsOutgoingUsage(t *testing.T) {
 		t.Errorf("switch entry tokens = %+v, want in:500 out:200", lastSw.Usage.Tokens)
 	}
 }
+
+// TestSwitchKeepsTheStreamCursor is §7.2 N8: a mid-round switch to a builder
+// of another kind keeps the round's stream cursor and its segment list, and
+// the drain that follows renders only the bytes past the old offset -- the
+// old harness's lines are not rendered a second time (or with the new kind).
+func TestSwitchKeepsTheStreamCursor(t *testing.T) {
+	rt, b := sentSwitchable(t) // round 1 open on agy/other/m
+
+	// Round 1 has produced and rendered one agy line.
+	streamWrite(t, rt, agyToolActive)
+	before, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if before.Builder.StreamRound != 1 || before.Builder.StreamOffset != int64(len(agyToolActive)) {
+		t.Fatalf("setup cursor = round %d offset %d, want 1/%d", before.Builder.StreamRound, before.Builder.StreamOffset, len(agyToolActive))
+	}
+	if len(before.Builder.StreamSegments) != 1 || before.Builder.StreamSegments[0].Kind != "agy" {
+		t.Fatalf("setup segments = %+v, want one agy segment", before.Builder.StreamSegments)
+	}
+	oldOffset := before.Builder.StreamOffset
+
+	// The switch replaces the endpoint mid-round with a different kind. Gate
+	// the provider first, exactly as the rate-limit path does, so
+	// resolveBuilder has to walk to a different candidate.
+	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "rate-limited"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+	var switched store.Binding
+	err = rt.Store.WithLock(func(tx *store.Tx) error {
+		var err error
+		switched, err = switchBuilder(context.Background(), rt, tx, before, "rate-limited", false, true)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+	if switched.Builder.Kind == "agy" {
+		t.Fatalf("switch kept kind %q; the test needs a different kind", switched.Builder.Kind)
+	}
+	if switched.Builder.StreamRound != 1 || switched.Builder.StreamOffset != oldOffset {
+		t.Errorf("cursor after the switch = round %d offset %d, want 1/%d", switched.Builder.StreamRound, switched.Builder.StreamOffset, oldOffset)
+	}
+	if len(switched.Builder.StreamSegments) != 2 {
+		t.Fatalf("segments after the switch = %+v, want two", switched.Builder.StreamSegments)
+	}
+	if last := switched.Builder.StreamSegments[1]; last.Start != int64(len(agyToolActive)) || last.Kind != switched.Builder.Kind {
+		t.Errorf("new segment = %+v, want {%d %s}", last, len(agyToolActive), switched.Builder.Kind)
+	}
+
+	// The replacement's own line arrives; a drain renders only bytes past
+	// the old offset, so the old agy line is not rendered twice.
+	streamWrite(t, rt, `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`+"\n")
+	drainStream(rt, switched)
+	log := readLog(t, rt)
+	if n := strings.Count(log, "● run_command go test ./..."); n != 1 {
+		t.Errorf("the old agy line appears %d time(s) in the log, want once:\n%s", n, log)
+	}
+	if !strings.Contains(log, "hi") {
+		t.Errorf("log = %q, want the replacement's rendered line", log)
+	}
+}

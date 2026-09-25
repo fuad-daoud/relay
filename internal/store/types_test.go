@@ -127,7 +127,7 @@ func TestConsultRoundTripsThroughJSON(t *testing.T) {
 	if len(got.Consults) != 1 {
 		t.Fatalf("got %d consults, want 1", len(got.Consults))
 	}
-	if got.Consults[0] != b.Consults[0] {
+	if !reflect.DeepEqual(got.Consults[0], b.Consults[0]) {
 		t.Errorf("consult did not round-trip:\n got %+v\nwant %+v", got.Consults[0], b.Consults[0])
 	}
 	if got.ConsultCap != 4 {
@@ -213,7 +213,7 @@ func TestEndpointHeadlessFieldsRoundTripAndAreOmittedWhenZero(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("round trip: got %+v, want %+v", got, want)
 	}
 	if !got.Headless() {

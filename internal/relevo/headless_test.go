@@ -640,7 +640,7 @@ func TestClearProcessKeepsIdentity(t *testing.T) {
 	e := store.Endpoint{AgentName: "x-builder", Kind: "agy", Mode: store.ModeHeadless, PID: 7, StartedAt: 9, LogPath: "/l", StreamRound: 3, StreamOffset: 99}
 	got := clearProcess(e)
 	want := store.Endpoint{AgentName: "x-builder", Kind: "agy", Mode: store.ModeHeadless, StreamRound: 3, StreamOffset: 99}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("clearProcess = %+v, want %+v", got, want)
 	}
 }
@@ -3486,5 +3486,235 @@ func TestStartProcessSetsStreamStart(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSegmentKind is §7.2 N3: the last segment whose Start is at or before the
+// line's offset names the harness that wrote it, and anything before the first
+// Start falls back to the endpoint's own Kind.
+func TestSegmentKind(t *testing.T) {
+	segs := []store.StreamSegment{{Start: 100, Kind: "agy"}, {Start: 300, Kind: "claude"}}
+	cases := []struct {
+		name string
+		segs []store.StreamSegment
+		off  int64
+		want string
+	}{
+		{"no segments uses the fallback", nil, 0, "fallback"},
+		{"empty list uses the fallback", []store.StreamSegment{}, 42, "fallback"},
+		{"before the first start uses the fallback", segs, 99, "fallback"},
+		{"at a start is that segment's kind", segs, 100, "agy"},
+		{"between two segments is the earlier one", segs, 250, "agy"},
+		{"at the second start is the second", segs, 300, "claude"},
+		{"after the last is the last", segs, 9999, "claude"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := segmentKind(c.segs, c.off, "fallback"); got != c.want {
+				t.Errorf("segmentKind(%+v, %d) = %q, want %q", c.segs, c.off, got, c.want)
+			}
+		})
+	}
+}
+
+// TestCarryStream is §7.2 N4: the four cursor fields move onto the replacement
+// endpoint, and the replacement's own identity fields are untouched.
+func TestCarryStream(t *testing.T) {
+	from := store.Endpoint{
+		AgentName:      "old-builder",
+		Kind:           "agy",
+		Mode:           store.ModeHeadless,
+		PID:            7,
+		StreamRound:    2,
+		StreamStart:    512,
+		StreamOffset:   600,
+		StreamSegments: []store.StreamSegment{{Start: 0, Kind: "agy"}},
+	}
+	to := store.Endpoint{
+		AgentName: "new-builder",
+		Kind:      "claude",
+		PaneID:    "w1:p2",
+		Mode:      store.ModeHeadless,
+		PID:       9,
+	}
+
+	out := carryStream(from, to)
+	if out.StreamRound != from.StreamRound || out.StreamOffset != from.StreamOffset ||
+		out.StreamStart != from.StreamStart || !reflect.DeepEqual(out.StreamSegments, from.StreamSegments) {
+		t.Errorf("carryStream cursor = round %d offset %d start %d segs %+v; want %d/%d/%d/%+v",
+			out.StreamRound, out.StreamOffset, out.StreamStart, out.StreamSegments,
+			from.StreamRound, from.StreamOffset, from.StreamStart, from.StreamSegments)
+	}
+	if out.Kind != to.Kind || out.AgentName != to.AgentName || out.Mode != to.Mode || out.PID != to.PID {
+		t.Errorf("carryStream changed the replacement's own fields: %+v, want Kind/AgentName/Mode/PID from %+v", out, to)
+	}
+
+	// The carried segment list must be a copy, not an alias of from's (§7.2 N4):
+	// mutating the carried copy must not rewrite the outgoing endpoint's slice.
+	out.StreamSegments[0].Kind = "changed"
+	if from.StreamSegments[0].Kind != "agy" {
+		t.Errorf("carryStream aliases the segment slice: mutating the copy changed from.StreamSegments to %+v", from.StreamSegments)
+	}
+}
+
+// TestStartProcessAppendsSegments is §7.2 N5: each spawn records the byte
+// offset it writes from and its harness kind; a retried spawn at the same
+// offset replaces its predecessor's segment rather than appending a second
+// one there, and a later round starts a fresh list.
+func TestStartProcessAppendsSegments(t *testing.T) {
+	fr := newFakeRunner()
+	rt := newRuntime(t)
+	rt.Runner = fr
+	argv := []string{"echo", "hi"}
+	spawn := func(t *testing.T, b store.Binding, kind string) store.Binding {
+		t.Helper()
+		var got store.Binding
+		err := rt.Store.WithLock(func(tx *store.Tx) error {
+			var err error
+			got, err = startProcess(context.Background(), rt, tx, b, argv, candidate.Candidate{Harness: kind})
+			return err
+		})
+		if err != nil {
+			t.Fatalf("startProcess(%s): %v", kind, err)
+		}
+		return got
+	}
+	b := store.Binding{
+		Name:  "webshop",
+		Round: 1,
+		CWD:   t.TempDir(),
+		Builder: store.Endpoint{
+			Mode: store.ModeHeadless,
+			Kind: "agy",
+		},
+	}
+
+	// 1. The round's first spawn in an empty round: one segment at 0.
+	got := spawn(t, b, "agy")
+	if want := []store.StreamSegment{{Start: 0, Kind: "agy"}}; !reflect.DeepEqual(got.Builder.StreamSegments, want) {
+		t.Errorf("first-spawn segments = %+v, want %+v", got.Builder.StreamSegments, want)
+	}
+
+	// 2. N bytes on the stream, then a second spawn in the same round with a
+	// different kind: two segments, the second at N.
+	first := []byte(`{"event":"init","init":{}}` + "\n")
+	streamPath := rt.Store.BuilderStreamPath("webshop", 1)
+	if err := os.MkdirAll(filepath.Dir(streamPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(streamPath, first, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got.Builder.Kind = "claude"
+	got = spawn(t, got, "claude")
+	want := []store.StreamSegment{{Start: 0, Kind: "agy"}, {Start: int64(len(first)), Kind: "claude"}}
+	if !reflect.DeepEqual(got.Builder.StreamSegments, want) {
+		t.Errorf("same-round switch segments = %+v, want %+v", got.Builder.StreamSegments, want)
+	}
+
+	// 3. A retried spawn at the same offset replaces its predecessor.
+	got.Builder.Kind = "opencode"
+	got = spawn(t, got, "opencode")
+	want = []store.StreamSegment{{Start: 0, Kind: "agy"}, {Start: int64(len(first)), Kind: "opencode"}}
+	if !reflect.DeepEqual(got.Builder.StreamSegments, want) {
+		t.Errorf("retried spawn segments = %+v, want the same-Start entry replaced: %+v", got.Builder.StreamSegments, want)
+	}
+
+	// 4. A later round starts a fresh list with one segment.
+	got.Round = 2
+	got.Builder.Kind = "claude"
+	later := spawn(t, got, "claude")
+	if want := []store.StreamSegment{{Start: 0, Kind: "claude"}}; !reflect.DeepEqual(later.Builder.StreamSegments, want) {
+		t.Errorf("later-round segments = %+v, want a fresh %+v", later.Builder.StreamSegments, want)
+	}
+}
+
+// TestDrainRendersEachSegmentWithItsKind is §7.2 N6: a round whose stream has
+// two processes' bytes -- agy first, then claude -- renders each with the kind
+// that wrote it, even though the endpoint's own Kind is the later one. Before
+// this, the whole file was re-rendered with the new kind.
+func TestDrainRendersEachSegmentWithItsKind(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	agyLines := agyToolActive + agyToolDone
+	claudeLine := `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n"
+	streamWrite(t, rt, agyLines+claudeLine)
+
+	b.Builder.Kind = "claude"
+	b.Builder.StreamRound = 1
+	b.Builder.StreamOffset = 0
+	b.Builder.StreamStart = 0
+	b.Builder.StreamSegments = []store.StreamSegment{
+		{Start: 0, Kind: "agy"},
+		{Start: int64(len(agyLines)), Kind: "claude"},
+	}
+
+	got := drainStream(rt, b)
+	want := "● run_command go test ./...\n  ⎿ ok\nhi\n"
+	if readLog(t, rt) != want {
+		t.Errorf("log = %q, want %q (each line rendered with its own segment's kind)", readLog(t, rt), want)
+	}
+	if wantOff := int64(len(agyLines) + len(claudeLine)); got.Builder.StreamOffset != wantOff {
+		t.Errorf("offset = %d, want the whole file %d", got.Builder.StreamOffset, wantOff)
+	}
+
+	// Draining again appends nothing: every line was rendered exactly once.
+	again := drainStream(rt, got)
+	if readLog(t, rt) != want {
+		t.Errorf("a second drain changed the log: %q", readLog(t, rt))
+	}
+	if again.Builder.StreamOffset != got.Builder.StreamOffset {
+		t.Errorf("offset moved on an empty drain: %d -> %d", got.Builder.StreamOffset, again.Builder.StreamOffset)
+	}
+}
+
+// TestDrainSessionIDComesOnlyFromTheCurrentProcess is the test M7 needs
+// (§7.4): an undrained line from the round's earlier process must not set
+// StreamSessionID once the cursor is carried over. Only bytes at or past
+// StreamStart -- the current process's own -- may name the session.
+func TestDrainSessionIDComesOnlyFromTheCurrentProcess(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	old := `{"event":"init","conversation_id":"old-sess","init":{}}` + "\n"
+	current := `{"type":"assistant","session_id":"new-sess","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n"
+	streamWrite(t, rt, old+current)
+
+	b.Builder.Kind = "claude"
+	b.Builder.StreamRound = 1
+	b.Builder.StreamOffset = 0 // the old process's bytes were never drained
+	b.Builder.StreamStart = int64(len(old))
+	b.Builder.StreamSegments = []store.StreamSegment{
+		{Start: 0, Kind: "agy"},
+		{Start: int64(len(old)), Kind: "claude"},
+	}
+
+	got := drainStream(rt, b)
+	if got.Builder.StreamSessionID != "new-sess" {
+		t.Errorf("StreamSessionID = %q, want new-sess; only the current process's bytes (off >= StreamStart) may set it", got.Builder.StreamSessionID)
+	}
+	if want := "hi\n"; readLog(t, rt) != want {
+		t.Errorf("log = %q, want %q", readLog(t, rt), want)
+	}
+}
+
+// TestStatusExitCodeReadsTheStream is §7.2 N7: `relevo status` asks the
+// Runner for the exit code of the round's stream file, not of the log. The
+// trailer is what records the code, and it lives in the stream; the log may
+// not have drained it (or a later marker may have replaced it).
+func TestStatusExitCodeReadsTheStream(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 3)
+
+	if _, err := Status(context.Background(), rt); err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	want := rt.Store.BuilderStreamPath("webshop", 1)
+	if len(fr.exitPaths) == 0 || fr.exitPaths[0] != want {
+		t.Errorf("ExitCode was asked about %v, want the round's stream %s", fr.exitPaths, want)
+	}
+	if logPath := rt.Store.BuilderLogPath("webshop", 1); len(fr.exitPaths) > 0 && fr.exitPaths[0] == logPath {
+		t.Errorf("ExitCode read the log path %s; status must read the stream", logPath)
 	}
 }

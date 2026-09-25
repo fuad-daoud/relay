@@ -235,11 +235,22 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		// A new round is a new stream file; a mid-round switch (same
 		// round) keeps rendering the file both processes append to.
 		b.Builder.StreamRound, b.Builder.StreamOffset = b.Round, 0
+		b.Builder.StreamSegments = nil
 	}
 	if fi, err := os.Stat(rt.Store.BuilderStreamPath(b.Name, b.Round)); err == nil {
 		b.Builder.StreamStart = fi.Size()
 	} else {
 		b.Builder.StreamStart = 0
+	}
+	// Record which harness wrote from here on, so the drain renders each line
+	// with its own process's kind. A retried spawn at the same offset replaces
+	// its failed predecessor's entry rather than stacking a second segment
+	// there.
+	seg := store.StreamSegment{Start: b.Builder.StreamStart, Kind: b.Builder.Kind}
+	if n := len(b.Builder.StreamSegments); n > 0 && b.Builder.StreamSegments[n-1].Start == seg.Start {
+		b.Builder.StreamSegments[n-1] = seg
+	} else {
+		b.Builder.StreamSegments = append(b.Builder.StreamSegments, seg)
 	}
 	// A new process announces its own session on its own stream (#147);
 	// drainStream fills this in again from the first line it writes.
@@ -311,6 +322,35 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	return startProcess(ctx, rt, tx, b, argv, c)
 }
 
+// segmentKind is the harness kind that wrote the stream byte at off: the Kind
+// of the last segment whose Start is at or before off, or fallback when no
+// segment covers off (segs empty, or off before the first Start). The drain
+// asks it per line, so a mid-round switch renders the old process's lines with
+// the kind that wrote them. Pure.
+func segmentKind(segs []store.StreamSegment, off int64, fallback string) string {
+	kind := fallback
+	for _, s := range segs {
+		if s.Start <= off {
+			kind = s.Kind
+		}
+	}
+	return kind
+}
+
+// carryStream moves the round's stream cursor and its segment list from the
+// outgoing endpoint onto its replacement (from -> to) and returns to, so a
+// mid-round switch keeps rendering the same round's file from where it left
+// off instead of re-rendering it from byte 0 with the new harness's kind. The
+// fields it does not name -- Kind, AgentName, Mode, PID -- come from to. Pure:
+// from is not changed.
+func carryStream(from, to store.Endpoint) store.Endpoint {
+	to.StreamRound = from.StreamRound
+	to.StreamOffset = from.StreamOffset
+	to.StreamStart = from.StreamStart
+	to.StreamSegments = append([]store.StreamSegment(nil), from.StreamSegments...)
+	return to
+}
+
 // drainStream brings the round's builder log up to date with its stream
 // (transcript spec §4.2): every complete line of the stream file past the
 // endpoint's cursor is rendered with transcript.Render and appended to the
@@ -336,26 +376,29 @@ func drainStream(rt Runtime, b store.Binding) store.Binding {
 		rt.Store.BuilderLogPath(b.Name, round),
 		rt.Store.BuilderStreamPath(b.Name, round),
 		b.Builder.StreamOffset,
-		func(line []byte) []string {
-			if b.Builder.StreamSessionID == "" {
-				if id := transcript.SessionID(b.Builder.Kind, line); id != "" {
+		func(off int64, line []byte) []string {
+			kind := segmentKind(b.Builder.StreamSegments, off, b.Builder.Kind)
+			if b.Builder.StreamSessionID == "" && off >= b.Builder.StreamStart {
+				if id := transcript.SessionID(kind, line); id != "" {
 					b.Builder.StreamSessionID = id
 				}
 			}
-			return transcript.Render(b.Builder.Kind, line)
+			return transcript.Render(kind, line)
 		},
 		"stream", "binding", b.Name, "round", round,
 	)
 	return b
 }
 
-// drainFile appends render(line) for every complete line of src past off
-// to logPath and returns the new offset. It is the shared body of
+// drainFile appends render(off, line) for every complete line of src past off
+// to logPath and returns the new offset. off is the line's own absolute byte
+// offset in src, so a caller rendering per byte range knows where each line
+// came from. It is the shared body of
 // drainStream and drainSession (#184): it never fails the tick -- every
 // problem is a slog.Warn (with what) and the offset unchanged, except an
 // offset past EOF, which resets to 0. what names the source in warnings
 // ("stream", "session").
-func drainFile(logPath, src string, off int64, render func(line []byte) []string, what string, fields ...any) int64 {
+func drainFile(logPath, src string, off int64, render func(off int64, line []byte) []string, what string, fields ...any) int64 {
 	info, err := os.Stat(src)
 	if err != nil {
 		return off // not started yet, or gone with the round: nothing to drain
@@ -378,8 +421,10 @@ func drainFile(logPath, src string, off int64, render func(line []byte) []string
 		return off
 	}
 	var out []string
+	lineOff := off
 	for _, line := range bytes.Split(data[:end], []byte{'\n'}) {
-		out = append(out, render(line)...)
+		out = append(out, render(lineOff, line)...)
+		lineOff += int64(len(line)) + 1
 	}
 	if len(out) > 0 {
 		if err := appendLines(logPath, out); err != nil {
@@ -1003,7 +1048,7 @@ func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *
 		}
 		return "working", info
 	}
-	if code, ok := rt.Runner.ExitCode(ctx, handleOf(e), e.LogPath); ok {
+	if code, ok := rt.Runner.ExitCode(ctx, handleOf(e), rt.Store.BuilderStreamPath(b.Name, b.Round)); ok {
 		info.ExitCode = strconv.Itoa(code)
 		return "exited " + info.ExitCode, info
 	}

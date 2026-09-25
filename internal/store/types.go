@@ -91,6 +91,19 @@ func ValidFeature(s string) error {
 	return nil
 }
 
+// StreamSegment is one process's byte range in a round's builder stream: the
+// offset the stream had when the process was spawned (the endpoint's
+// StreamStart) and the harness kind that wrote from there on. See
+// Endpoint.StreamSegments.
+type StreamSegment struct {
+	// Start is the byte offset in the round's builder stream where this
+	// process's output begins. It equals the stream's size when the process
+	// was spawned (StreamStart).
+	Start int64 `json:"start"`
+	// Kind is the harness kind of that process, i.e. Endpoint.Kind at spawn.
+	Kind string `json:"kind"`
+}
+
 // Endpoint is one side of a binding. PaneID moves when a pane is moved between
 // workspaces; SessionID does not, so it is the durable identity.
 //
@@ -118,15 +131,23 @@ type Endpoint struct {
 	// StreamRound is the round whose builder stream (Store.BuilderStreamPath)
 	// the daemon is rendering into that round's log, and StreamOffset how
 	// many bytes of it are rendered (#168). They belong to the round's file,
-	// not to the process or to Binding.Round: a mid-round switch keeps them,
-	// clearProcess keeps them, finishRound's Round++ keeps them, and only
-	// startRound on a later round moves them. 0 means no stream was started.
+	// not to the process or to Binding.Round: switchBuilder's carryStream
+	// moves them onto the replacement endpoint, clearProcess keeps them,
+	// finishRound's Round++ keeps them, and only startRound on a later round
+	// moves them. 0 means no stream was started.
 	StreamRound  int   `json:"stream_round,omitempty"`
 	StreamOffset int64 `json:"stream_offset,omitempty"`
 	// StreamStart is the byte length of the round's stream
 	// (Store.BuilderStreamPath(name, round)) when this process was spawned.
 	// 0 for a round's first process.
 	StreamStart int64 `json:"stream_start,omitempty"`
+	// StreamSegments is one entry per process spawned in StreamRound, in
+	// spawn order; the drain renders each stream line with the Kind of the
+	// last segment whose Start <= the line's offset. Empty for a round
+	// started before segments existed; the drain then uses Kind. It belongs
+	// to the round's file like StreamRound and StreamOffset: a mid-round
+	// switch keeps it, and a later round starts a new list.
+	StreamSegments []StreamSegment `json:"stream_segments,omitempty"`
 
 	// StreamSessionID is the session id the round's stream announced, set
 	// once per round by drainStream from the harness's own event (#147).
