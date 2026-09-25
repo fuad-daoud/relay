@@ -371,14 +371,30 @@ func TestDedupeMirrorPlansRenamedStreamLines(t *testing.T) {
 	})
 }
 
-// TestDedupeMirrorStreamLinesNeverVouchForEmptyRecordJSON pins the empty-row
-// rule: a row with no record JSON is never proven by the stream-lines rule,
-// even when the sealed stream itself holds a blank line, because a log-derived
-// row has no record behind it. The stream body is line1 + "\n\n" + line2 + "\n",
-// and readAppendOnly returns a real empty line between the two, so the blank
-// is in the set; the round is still kept. Mutation that breaks it: drop the
-// empty-RecordJSON check in streamLinesCover, and this round is planned.
-func TestDedupeMirrorStreamLinesNeverVouchForEmptyRecordJSON(t *testing.T) {
+// TestDedupeMirrorSealedLinesProveRowsWithNoRecordJSON pins the three-case
+// sealed-lines rule over four rounds, each sealed with the same stream body
+// line1 + "\n\n" + line2 + "\n" (so readAppendOnly returns a real empty line
+// between them):
+//
+//   - round 1 row 2 is {RecordJSON:"", Rendered:""}: a blank stream line, it
+//     holds nothing, so the round is planned (case 2).
+//   - round 2 row 2 is {RecordJSON:"", Rendered:"● shell ls"} and its sealed
+//     002-builder.log holds "● shell ls\n": a log-derived row, proven by the
+//     log, so the round is planned (case 3).
+//   - round 3 is round 2 with a log holding a different line: the rendered row
+//     matches no log line, so the round is kept.
+//   - round 4 is round 2 with no log at all: the rendered row cannot be
+//     proven, so the round is kept.
+//
+// The stream rows omit ts, so exact re-derivation never matches and only this
+// rule can plan a round; TranscriptRoundsByStreamLines counts the two.
+//
+// Ported from TestDedupeMirrorStreamLinesNeverVouchForEmptyRecordJSON: round 2
+// deliberately replaces the "never" rule, since a row with no record JSON and
+// a rendered log line is proven by the sealed log. Mutations that break it:
+// treat a case-3 row as covered without checking the log, and round 3 or 4 is
+// planned; drop case 2, and round 1 is kept.
+func TestDedupeMirrorSealedLinesProveRowsWithNoRecordJSON(t *testing.T) {
 	d := openTestDB(t)
 	const name = "webshop"
 	bindingID := seedMirrorBinding(t, d, name)
@@ -386,20 +402,109 @@ func TestDedupeMirrorStreamLinesNeverVouchForEmptyRecordJSON(t *testing.T) {
 
 	line1 := `{"ts":"2026-09-01T10:00:00Z","type":"assistant","message":{"content":"hi"}}`
 	line2 := `{"ts":"2026-09-01T10:00:01Z","type":"user","message":{"content":"go on"}}`
+	stream := line1 + "\n\n" + line2 + "\n"
+
+	// The two stream rows carry no ts, so none of these rounds can be proven
+	// by exact re-derivation -- only the sealed-lines rule can.
+	streamRows := func(rendered string) []db.TranscriptRecord {
+		return []db.TranscriptRecord{
+			{Seq: 0, RecordJSON: line1, Rendered: "hello"},
+			{Seq: 1, RecordJSON: "", Rendered: rendered},
+			{Seq: 2, RecordJSON: line2, Rendered: "go on"},
+		}
+	}
+
+	// Round 1: the empty-RecordJSON row has no rendered text either, so it
+	// holds nothing and the round is planned.
 	round1 := seedMirrorRound(t, d, bindingID, 1)
-	putRoundFile(t, d, recordID, "001-builder.jsonl", 1, line1+"\n\n"+line2+"\n")
+	putRoundFile(t, d, recordID, "001-builder.jsonl", 1, stream)
+	appendTranscript(t, d, db.OwnerRound, round1, streamRows(""))
+
+	// Round 2: the empty-RecordJSON row is a line of the sealed log, so the
+	// round is planned.
+	round2 := seedMirrorRound(t, d, bindingID, 2)
+	putRoundFile(t, d, recordID, "002-builder.jsonl", 2, stream)
+	putRoundFile(t, d, recordID, "002-builder.log", 2, "● shell ls\n")
+	appendTranscript(t, d, db.OwnerRound, round2, streamRows("● shell ls"))
+
+	// Round 3: the log holds a different line, so the rendered row is not
+	// proven and the round is kept.
+	round3 := seedMirrorRound(t, d, bindingID, 3)
+	putRoundFile(t, d, recordID, "003-builder.jsonl", 3, stream)
+	putRoundFile(t, d, recordID, "003-builder.log", 3, "● shell pwd\n")
+	appendTranscript(t, d, db.OwnerRound, round3, streamRows("● shell ls"))
+
+	// Round 4: no log file at all, so the rendered row is not proven and the
+	// round is kept.
+	round4 := seedMirrorRound(t, d, bindingID, 4)
+	putRoundFile(t, d, recordID, "004-builder.jsonl", 4, stream)
+	appendTranscript(t, d, db.OwnerRound, round4, streamRows("● shell ls"))
+
+	plan := mustPlan(t, d)
+
+	if plan.stats.TranscriptRoundsDeleted != 2 {
+		t.Errorf("TranscriptRoundsDeleted = %d, want 2", plan.stats.TranscriptRoundsDeleted)
+	}
+	if plan.stats.TranscriptRoundsKept != 2 {
+		t.Errorf("TranscriptRoundsKept = %d, want 2", plan.stats.TranscriptRoundsKept)
+	}
+	if plan.stats.TranscriptRoundsByStreamLines != 2 {
+		t.Errorf("TranscriptRoundsByStreamLines = %d, want 2", plan.stats.TranscriptRoundsByStreamLines)
+	}
+	wantOwners := []string{round1, round2}
+	if !reflect.DeepEqual(plan.transcriptOwners, wantOwners) {
+		t.Errorf("transcriptOwners = %v, want %v", plan.transcriptOwners, wantOwners)
+	}
+}
+
+// TestDedupeMirrorSealedLinesWithNoStreamUseTheLog pins case 3 when the record
+// has no sealed stream at all: every row has no record JSON and a rendered
+// text that is a line of the sealed 001-builder.log, and the row seqs hold
+// nothing -- they differ from the log's own order, so exact re-derivation
+// fails and only the log-lines proof covers the round. A second round adds a
+// row that does carry a record JSON: with no stream there is nothing to vouch
+// for it, so that round is kept.
+//
+// Mutation that breaks it: return early when the stream is missing, and the
+// first round is kept instead of planned.
+func TestDedupeMirrorSealedLinesWithNoStreamUseTheLog(t *testing.T) {
+	d := openTestDB(t)
+	const name = "webshop"
+	bindingID := seedMirrorBinding(t, d, name)
+	recordID := seedRecordAt(t, d, name, "claude", dedupeAt)
+
+	// Round 1: only the log, and rows whose seqs differ from the log's order,
+	// so exact re-derivation cannot reproduce them.
+	round1 := seedMirrorRound(t, d, bindingID, 1)
+	putRoundFile(t, d, recordID, "001-builder.log", 1, "a\nb\n")
 	appendTranscript(t, d, db.OwnerRound, round1, []db.TranscriptRecord{
-		{Seq: 0, RecordJSON: line1, Rendered: "hello"},
-		{Seq: 1, RecordJSON: "", Rendered: "x"},
+		{Seq: 5, RecordJSON: "", Rendered: "a"},
+		{Seq: 6, RecordJSON: "", Rendered: "b"},
+	})
+
+	// Round 2: the same log and rows, plus one row with a record JSON that no
+	// stream holds.
+	round2 := seedMirrorRound(t, d, bindingID, 2)
+	putRoundFile(t, d, recordID, "002-builder.log", 2, "a\nb\n")
+	appendTranscript(t, d, db.OwnerRound, round2, []db.TranscriptRecord{
+		{Seq: 5, RecordJSON: "", Rendered: "a"},
+		{Seq: 6, RecordJSON: "", Rendered: "b"},
+		{Seq: 7, RecordJSON: `{"k":1}`, Rendered: ""},
 	})
 
 	plan := mustPlan(t, d)
 
-	if plan.stats.TranscriptRoundsDeleted != 0 || plan.stats.TranscriptRoundsKept != 1 {
-		t.Errorf("stats = %+v, want the round kept and nothing deleted", plan.stats)
+	if plan.stats.TranscriptRoundsDeleted != 1 {
+		t.Errorf("TranscriptRoundsDeleted = %d, want 1", plan.stats.TranscriptRoundsDeleted)
 	}
-	if len(plan.transcriptOwners) != 0 {
-		t.Errorf("transcriptOwners = %v, want none", plan.transcriptOwners)
+	if plan.stats.TranscriptRoundsKept != 1 {
+		t.Errorf("TranscriptRoundsKept = %d, want 1", plan.stats.TranscriptRoundsKept)
+	}
+	if plan.stats.TranscriptRoundsByStreamLines != 1 {
+		t.Errorf("TranscriptRoundsByStreamLines = %d, want 1", plan.stats.TranscriptRoundsByStreamLines)
+	}
+	if len(plan.transcriptOwners) != 1 || plan.transcriptOwners[0] != round1 {
+		t.Errorf("transcriptOwners = %v, want [%s]", plan.transcriptOwners, round1)
 	}
 }
 

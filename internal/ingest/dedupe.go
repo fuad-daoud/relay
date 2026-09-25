@@ -38,7 +38,8 @@ type DedupeStats struct {
 	// duplicate.
 	TranscriptRoundsKept int `json:"transcript_rounds_kept"`
 	// TranscriptRoundsByStreamLines is how many of TranscriptRoundsDeleted
-	// were proven by the stream-lines rule rather than exact re-derivation.
+	// were proven by the sealed-lines rule (stream, or log for rows with no
+	// record JSON) rather than exact re-derivation.
 	TranscriptRoundsByStreamLines int `json:"transcript_rounds_by_stream_lines"`
 	// TranscriptRowsRenamed is how many rows of those rounds matched a stream
 	// line only after the rename rewrite.
@@ -261,46 +262,90 @@ func planTranscript(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Recor
 	return nil
 }
 
-// streamLinesCover reports whether every row's record JSON is a line of the
-// record's sealed builder stream, and how many rows matched only after the
-// rename rewrite. It is the looser second proof planTranscript falls back to
-// when no exact re-derivation fits: rendered and ts are derived from the
-// record JSON, and seq from the line's order, so such a row holds nothing the
-// stream does not. An empty RecordJSON is never vouched for -- a log-derived
-// row has no record behind it. rows must be non-empty.
+// streamLinesCover reports whether every row is proven by the record's sealed
+// round files, and how many rows matched only after the rename rewrite. It is
+// the looser second proof planTranscript falls back to when no exact
+// re-derivation fits. It applies three cases to each row, in order:
+//
+//  1. RecordJSON != "": the row is covered when its record JSON is a line of
+//     the sealed builder stream (NNN-builder.jsonl), directly, or -- when
+//     renames are given -- after the rewrite. rendered and ts are derived from
+//     the record JSON, and seq from the line's order, so such a row holds
+//     nothing the stream does not. A row with no stream to hold it is not
+//     covered.
+//  2. RecordJSON == "" and Rendered == "": the row is a blank stream line and
+//     holds nothing, so it is covered.
+//  3. RecordJSON == "" and Rendered != "": the row is covered when Rendered is
+//     a line of the sealed builder log (NNN-builder.log) verbatim -- a
+//     log-derived row is already-rendered text with no record behind it, so
+//     the log line it came from is all it holds. No rename rewrite is tried:
+//     relevo migrate never rewrote .log files. A missing log file leaves the
+//     row uncovered.
+//
+// A missing stream no longer returns early: a round whose rows are all case 2
+// or case 3 can be covered without one. The log is read only when a case-3 row
+// is first met. rows must be non-empty.
 func streamLinesCover(d *db.DB, record db.Record, rd db.Round, rows []db.TranscriptRecord, renames []legacy.Prefix) (covered bool, renamed int, err error) {
-	base := builderStreamPathBase(rd.Number)
-	body, _, found, err := d.RoundFileGet(record.ID, base)
+	streamBase := builderStreamPathBase(rd.Number)
+	body, _, found, err := d.RoundFileGet(record.ID, streamBase)
 	if err != nil {
-		return false, 0, fmt.Errorf("dedupe: round file %s/%s: %w", record.Name, base, err)
+		return false, 0, fmt.Errorf("dedupe: round file %s/%s: %w", record.Name, streamBase, err)
 	}
-	if !found {
-		return false, 0, nil
-	}
-	lines, lerr := roundFileLines(base, body)
-	if lerr != nil {
-		return false, 0, fmt.Errorf("dedupe: split %s/%s: %w", record.Name, base, lerr)
-	}
-	set := make(map[string]bool, len(lines))
-	for _, line := range lines {
-		set[string(line)] = true
+	var stream map[string]bool
+	if found {
+		lines, lerr := roundFileLines(streamBase, body)
+		if lerr != nil {
+			return false, 0, fmt.Errorf("dedupe: split %s/%s: %w", record.Name, streamBase, lerr)
+		}
+		stream = make(map[string]bool, len(lines))
+		for _, line := range lines {
+			stream[string(line)] = true
+		}
 	}
 
+	var log map[string]bool
+	logLoaded := false
+
 	for _, row := range rows {
-		if row.RecordJSON == "" {
-			return false, 0, nil
-		}
-		if set[row.RecordJSON] {
+		if row.RecordJSON != "" {
+			if stream[row.RecordJSON] {
+				continue
+			}
+			if len(renames) == 0 {
+				return false, 0, nil
+			}
+			rewritten := string(legacy.RewriteJSON([]byte(row.RecordJSON), renames))
+			if rewritten == row.RecordJSON || !stream[rewritten] {
+				return false, 0, nil
+			}
+			renamed++
 			continue
 		}
-		if len(renames) == 0 {
-			return false, 0, nil
+		if row.Rendered == "" {
+			continue
 		}
-		rewritten := string(legacy.RewriteJSON([]byte(row.RecordJSON), renames))
-		if rewritten == row.RecordJSON || !set[rewritten] {
-			return false, 0, nil
+		if !logLoaded {
+			logLoaded = true
+			logBase := builderLogPathBase(rd.Number)
+			logBody, _, logFound, lerr := d.RoundFileGet(record.ID, logBase)
+			if lerr != nil {
+				return false, 0, fmt.Errorf("dedupe: round file %s/%s: %w", record.Name, logBase, lerr)
+			}
+			if logFound {
+				logLines, serr := roundFileLines(logBase, logBody)
+				if serr != nil {
+					return false, 0, fmt.Errorf("dedupe: split %s/%s: %w", record.Name, logBase, serr)
+				}
+				log = make(map[string]bool, len(logLines))
+				for _, line := range logLines {
+					log[string(line)] = true
+				}
+			}
 		}
-		renamed++
+		if log[row.Rendered] {
+			continue
+		}
+		return false, 0, nil
 	}
 	return true, renamed, nil
 }
