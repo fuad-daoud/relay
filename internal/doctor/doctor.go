@@ -552,7 +552,7 @@ func releaseFix(kind release.Kind, latest, goos, goarch string) string {
 		return "go install github.com/fuad-daoud/relevo/cmd/relevo@latest"
 	case release.KindRelease:
 		archive, checksums := release.AssetURLs(latest, goos, goarch)
-		return fmt.Sprintf("download %s, check it against %s, and replace this relevo binary with the one inside", archive, checksums)
+		return fmt.Sprintf("relevo update (or download %s, check it against %s, and replace this relevo binary with the one inside)", archive, checksums)
 	}
 	return ""
 }

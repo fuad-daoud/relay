@@ -44,11 +44,16 @@ go install github.com/fuad-daoud/relevo/cmd/relevo@latest
 
 That drops `relevo` in `$(go env GOPATH)/bin` — make sure it is on your `PATH`.
 
-A release binary and a `go install` both know how they were installed. `relevo
-doctor` warns when a newer release exists and prints the update step for that
-install: the archive and `checksums.txt` to download, or the `go install`
-command. `relevo status` shows one line when a newer release exists. A local
-build is never called stale.
+A release binary and a `go install` both know how they were installed. A
+release binary updates itself with `relevo update`: it downloads the archive,
+verifies its SHA-256 against `checksums.txt`, preflights the new binary and
+renames it over the running one. `relevo update --check` prints what it would
+do and changes nothing, and `--to vX.Y.Z` installs an exact tag (downgrades
+included). A `go install` gets its `go install` command printed instead. A
+local build is left alone unless `relevo update --release` converts it to a
+release binary. `relevo doctor` warns when a newer release exists and prints
+the update step for that install. `relevo status` shows one line when a newer
+release exists.
 
 Or from a clone, which also stamps the binary with the current tag so
 `relevo version` is meaningful:
@@ -79,8 +84,10 @@ make service        # systemd user unit on Linux, LaunchAgent on macOS
 
 ### Upgrading
 
-A running daemon moves onto a newly installed binary by itself within a few
-seconds, and a round in flight is not interrupted: builders, gates and consults
+`relevo update` lands a new binary the same atomic way `make install` does -- a
+rename within the directory, so a running daemon never sees a half-written
+file. A running daemon moves onto a newly installed binary by itself within a
+few seconds, and a round in flight is not interrupted: builders, gates and consults
 run in their own systemd scopes and survive the restart. A daemon started
 before this release needs one manual restart to start following upgrades —
 `make service`, or `systemctl --user restart relevo.service`. `relevo doctor`

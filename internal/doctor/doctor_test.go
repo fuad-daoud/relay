@@ -1093,7 +1093,7 @@ func TestOpencodeAllowlistRow(t *testing.T) {
 // platform.
 func releaseArchiveFix(latest string) string {
 	archive, checksums := release.AssetURLs(latest, runtime.GOOS, runtime.GOARCH)
-	return fmt.Sprintf("download %s, check it against %s, and replace this relevo binary with the one inside", archive, checksums)
+	return fmt.Sprintf("relevo update (or download %s, check it against %s, and replace this relevo binary with the one inside)", archive, checksums)
 }
 
 // TestDoctorReleaseCheck walks §4.5's table through fakeEnv: every row, the
@@ -1234,7 +1234,7 @@ func TestReleaseFix(t *testing.T) {
 			latest: "v0.9.0",
 			goos:   "linux",
 			goarch: "amd64",
-			want:   "download https://github.com/fuad-daoud/relevo/releases/download/v0.9.0/relevo_v0.9.0_linux_amd64.tar.gz, check it against https://github.com/fuad-daoud/relevo/releases/download/v0.9.0/checksums.txt, and replace this relevo binary with the one inside",
+			want:   "relevo update (or download https://github.com/fuad-daoud/relevo/releases/download/v0.9.0/relevo_v0.9.0_linux_amd64.tar.gz, check it against https://github.com/fuad-daoud/relevo/releases/download/v0.9.0/checksums.txt, and replace this relevo binary with the one inside)",
 		},
 		{
 			name:   "go install keeps its command",
