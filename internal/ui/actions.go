@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
@@ -36,6 +37,19 @@ type Actions interface {
 	Retry(ctx context.Context, key, candidate string) Result
 	Pull(ctx context.Context, key string) (text string, ok bool, err error)
 	Candidates(role string) []string // names, in the role's order
+
+	// The config views (round 2): the stored config, one validated edit
+	// applied and reloaded, and one candidate probed.
+	ConfigDoc() (relevo.ConfigDoc, error)                        // the stored config, freshly read
+	ApplyConfig(ctx context.Context, e relevo.ConfigEdit) Result // write one edit, then reload this adapter's runtime
+	Probe(ctx context.Context, name string) Result               // probe one candidate (spawns its harness)
+
+	// The agents view (round 5): one agent's definition files across the
+	// harnesses that carry it, one file reset to the copy relevo ships,
+	// and the user's editor for one file.
+	AgentFiles(agent string) ([]harness.AgentFile, error)          // the dry-run install state of one agent
+	ResetAgentFile(ctx context.Context, kind, agent string) Result // overwrite one definition file
+	AgentEditor(path string) (*exec.Cmd, error)                    // the user's editor on one file
 }
 
 // BindInput is one b key's answers (§3): the new binding's name, the
@@ -56,9 +70,10 @@ type Result struct {
 // repo is os.Getwd() at start, or "" when not inside a git repo (round 2's
 // bind refuses then); you is the human planner's id, from ensureYou.
 type plannerActions struct {
-	rt   relevo.Runtime
-	repo string
-	you  string
+	rt    relevo.Runtime
+	repo  string
+	you   string
+	probe relevo.LineExec
 }
 
 // resolve maps a row key to the runtime that owns it and the bare binding
@@ -416,6 +431,98 @@ func (a *plannerActions) Candidates(role string) []string {
 		out = append(out, a.rt.Candidates.NameOf(ranked.Token))
 	}
 	return out
+}
+
+// ConfigDoc is the stored config, freshly read through the store (§4.2). A
+// runtime with no config store cannot answer.
+func (a *plannerActions) ConfigDoc() (relevo.ConfigDoc, error) {
+	if a.rt.Config == nil {
+		return relevo.ConfigDoc{}, errors.New("no config store")
+	}
+	return relevo.LoadConfigDoc(a.rt.Config)
+}
+
+// ApplyConfig writes one validated edit and reloads this adapter's runtime from
+// the store (§4.2): the sections ConfigWatcher.Refresh would replace. An error
+// from the write is a failure; a failed reload after a successful write is not,
+// because the write already happened, so the text says so.
+func (a *plannerActions) ApplyConfig(ctx context.Context, e relevo.ConfigEdit) Result {
+	if a.rt.Config == nil {
+		return Result{Err: errors.New("no config store")}
+	}
+	if err := relevo.WriteConfigEdit(a.rt.Config, e); err != nil {
+		return Result{Err: err, Refresh: true}
+	}
+	rt, err := relevo.ReloadConfig(a.rt)
+	if err != nil {
+		return Result{Text: "saved; reload failed: " + err.Error(), Refresh: true}
+	}
+	a.rt = rt
+	return Result{Text: e.Message, Refresh: true}
+}
+
+// Probe spawns one candidate's harness headless and measures it (§4.2), the
+// same relevo.Probe `relevo probe <token>` runs. The result is one formatted
+// line; a sample carrying an error is that error.
+func (a *plannerActions) Probe(ctx context.Context, name string) Result {
+	if a.probe == nil {
+		return Result{Err: errors.New("probing needs relevo ui")}
+	}
+	host, _ := os.Hostname()
+	rs, err := relevo.Probe(ctx, a.rt, a.probe, []string{name}, host, nil)
+	if err != nil {
+		return Result{Err: err}
+	}
+	if len(rs) == 0 {
+		return Result{}
+	}
+	r := rs[0]
+	if r.Err != "" {
+		return Result{Err: errors.New(r.Err)}
+	}
+	return Result{Text: relevo.FormatProbe(r, relevo.ProbeNameWidth([]string{name}))}
+}
+
+// AgentFiles is one agent's definition state on every harness kind whose
+// binary is installed, in harness.All() order (§3): the same dry run
+// `relevo config agents --role <agent> --dry-run` prints. A custom agent has
+// no file state, so harness.AgentFiles answers nil, nil.
+func (a *plannerActions) AgentFiles(agent string) ([]harness.AgentFile, error) {
+	env, err := relevo.AgentInstallEnv()
+	if err != nil {
+		return nil, err
+	}
+	return harness.AgentFiles(env, agent)
+}
+
+// ResetAgentFile overwrites agent's definition file on kind with the copy
+// relevo ships (§3). Its text is `reset <kind>'s <agent>`; Refresh asks the
+// shell to refetch status, which is what re-reads the view's rows.
+func (a *plannerActions) ResetAgentFile(ctx context.Context, kind, agent string) Result {
+	env, err := relevo.AgentInstallEnv()
+	if err != nil {
+		return Result{Err: err}
+	}
+	if _, err := harness.ResetAgentFile(env, kind, agent); err != nil {
+		return Result{Err: err}
+	}
+	return Result{Text: "reset " + kind + "'s " + agent, Refresh: true}
+}
+
+// AgentEditor is the user's editor on path (§3): $VISUAL, else $EDITOR, else
+// vi, split with strings.Fields, path last. It mirrors runEditor
+// (cmd/relevo/config.go:445) but returns the *exec.Cmd without running it, so
+// the cockpit can hand it to tea.ExecProcess and suspend while it runs.
+func (a *plannerActions) AgentEditor(path string) (*exec.Cmd, error) {
+	editor := os.Getenv("VISUAL")
+	if editor == "" {
+		editor = os.Getenv("EDITOR")
+	}
+	if editor == "" {
+		editor = "vi"
+	}
+	argv := append(strings.Fields(editor), path)
+	return exec.Command(argv[0], argv[1:]...), nil
 }
 
 // actionMsg is what an action's tea.Cmd returns (§3).

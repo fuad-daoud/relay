@@ -41,6 +41,11 @@ type Options struct {
 	// passes none, and `relevo ui` gets the planner adapter Run builds.
 	Actions Actions
 
+	// ProbeExec is what Actions.Probe runs a candidate's harness through
+	// (§4.2): cmd/relevo passes its os/exec seam so a probe spawns a real
+	// harness from the cockpit.
+	ProbeExec relevo.LineExec
+
 	// Version is the running binary's version string (§2.2). "" hides the
 	// version in the header.
 	Version string
@@ -68,7 +73,7 @@ func Run(ctx context.Context, rt relevo.Runtime, opts Options) error {
 		return errors.New("runtime requires Store")
 	}
 	if opts.Actions == nil {
-		opts.Actions = &plannerActions{rt: rt, repo: repoRoot(ctx, rt)}
+		opts.Actions = &plannerActions{rt: rt, repo: repoRoot(ctx, rt), probe: opts.ProbeExec}
 	}
 	return RunSource(ctx, plannerSource{rt}, opts)
 }

@@ -346,7 +346,10 @@ func buildLogEntries(events []db.EventLogRow, hist history.History, revs []db.Re
 		case ledger.RateLimited, ledger.SpawnFailed:
 			word = "gated"
 			style = warnStyle
-			detail = h.Provider + " · " + statsGateReason(h.Note)
+			detail = h.Provider
+			if reason := statsGateReasonText(h.Note); reason != "" {
+				detail += " · " + reason
+			}
 		case history.Cleared:
 			word = "cleared"
 			style = greenStyle

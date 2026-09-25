@@ -2282,6 +2282,18 @@ func statsGateReason(note string) string {
 	return note
 }
 
+// statsGateReasonText is statsGateReason(note) when there is a reason to show,
+// and "" when there is not: an empty note and the "·" placeholder both mean
+// "no reason" (§1, round 6). A gate line joins it with " · " only when it is
+// non-empty.
+func statsGateReasonText(note string) string {
+	r := statsGateReason(note)
+	if r == "·" {
+		return ""
+	}
+	return r
+}
+
 // statsGatesReasonW is the gates table's default REASON cell width (§2.1),
 // and statsGatesReasonMinW, statsGatesNameMinW its floors: reasonW shrinks
 // first when nameW would fall under 16, down to reasonW's own floor of 12.

@@ -264,6 +264,24 @@ func execLine(line string, env Env, p prefs) tea.Cmd {
 			return notice("no database: " + err.Error())
 		}
 		return rootThen(init, v)
+	case "candidates":
+		if env.Actions == nil {
+			return notice("the config views need relevo ui on this machine")
+		}
+		v, init := newCandidatesView(env)
+		return rootThen(init, v)
+	case "actors":
+		if env.Actions == nil {
+			return notice("the config views need relevo ui on this machine")
+		}
+		v, init := newActorsView(env)
+		return rootThen(init, v)
+	case "agents":
+		if env.Actions == nil {
+			return notice("the config views need relevo ui on this machine")
+		}
+		v, init := newAgentsView(env)
+		return rootThen(init, v)
 	case "ungate":
 		if len(args) == 0 {
 			return notice("usage: ungate <provider|candidate>")

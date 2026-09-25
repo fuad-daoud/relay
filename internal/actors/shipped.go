@@ -22,6 +22,12 @@ var shippedAgents = []ShippedAgent{
 	{Name: "architect", Shape: agentsrc.ShapeReader, Output: "plan"},
 }
 
+// ShippedAgents returns relevo's shipped agents in table order, a copy the
+// caller may keep.
+func ShippedAgents() []ShippedAgent {
+	return append([]ShippedAgent(nil), shippedAgents...)
+}
+
 // Shipped returns the shipped agent named name. ok is false for a name relevo
 // does not ship.
 func Shipped(name string) (ShippedAgent, bool) {

@@ -117,6 +117,11 @@ type Harness struct {
 	// a tool call was refused by its permission mode in print mode (#141).
 	// Every default must compile; TestDenialPatternsSetOnEveryKind enforces it.
 	DenialPatterns []string
+	// Providers is the closed list of providers a candidate on this kind may
+	// name, in display order; nil means any provider. Only the cockpit's
+	// candidate form enforces it: candidate.Parse does not, so an existing
+	// config keeps loading.
+	Providers []string
 	// DocExt is the extension of this kind's shipped definition files under
 	// agents/; "" means "md". codex roles are TOML profiles (spec §5).
 	DocExt string
@@ -146,6 +151,7 @@ var knownHarnesses = map[string]Harness{
 			`(?i)tool (call|use) (was )?rejected`,
 			`(?i)not permitted in (plan|accept-edits) mode`,
 		},
+		Providers: []string{"google", "agy-extra"},
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
 			{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
@@ -169,6 +175,7 @@ var knownHarnesses = map[string]Harness{
 			`(?i)permission (to use .* was )?denied`,
 			`(?i)tool use was rejected`,
 		},
+		Providers: []string{"anthropic"},
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
 			{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
