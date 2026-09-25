@@ -11,10 +11,16 @@ import (
 // back would be a cycle.
 var opencodeSessionID = regexp.MustCompile(`^ses_[A-Za-z0-9]+$`)
 
-// OpencodeQuery is the sqlite3 read of an opencode session's title. The id's
-// single quotes are doubled, the SQL string-literal escape.
+// OpencodeQuery is the sqlite3 read of an opencode session's title. OpenCode
+// 2.0.14 keeps titles in session_v2, and the legacy session table only holds
+// pre-2.0 rows, so a session_v2 row wins and the legacy row is the fallback.
+// The id's single quotes are doubled, the SQL string-literal escape.
 func OpencodeQuery(sessionID string) string {
-	return "select title from session where id = '" + strings.ReplaceAll(sessionID, "'", "''") + "'"
+	id := strings.ReplaceAll(sessionID, "'", "''")
+	return "select title from session_v2 where id = '" + id + "'" +
+		" union all" +
+		" select title from session where id = '" + id + "'" +
+		" and not exists (select 1 from session_v2 where id = '" + id + "')"
 }
 
 // Opencode builds the Label for the stdout of OpencodeQuery: its first line,

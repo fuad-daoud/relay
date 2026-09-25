@@ -22,6 +22,12 @@ type OpencodeSession struct {
 // ErrNoOpencodeSession is returned when no OpenCode session matches the working directory (§3).
 var ErrNoOpencodeSession = errors.New("no matching OpenCode session")
 
+// OpencodeActiveWindow is how recently an OpenCode session must have worked for
+// MatchOpencodeSession to treat it as the one a shell command is running in: a
+// shell command runs inside a session that is working right now, so a session
+// that has been idle for longer than this is not it (#393).
+const OpencodeActiveWindow = 10 * time.Minute
+
 // ErrAmbiguousOpencodeSession is returned when multiple active OpenCode sessions match the directory (§3).
 type ErrAmbiguousOpencodeSession struct {
 	Dir    string
@@ -53,8 +59,10 @@ func (e ErrAmbiguousOpencodeSession) Is(target error) bool {
 //  1. Keep sessions with ParentID == "", !Archived, and Directory equal to
 //     cwd or an ancestor of it (path-segment aware: /a/b is an ancestor of
 //     /a/b/c, not of /a/bc).
-//  2. Of those, keep only the ones with the longest Directory.
-//  3. None left -> ErrNoOpencodeSession.
+//  2. Discard those whose Updated is older than OpencodeActiveWindow before
+//     now: only a session that is working now is the one a shell command runs
+//     inside. None left -> ErrNoOpencodeSession.
+//  3. Of those, keep only the ones with the longest Directory.
 //  4. Sort by Updated descending. If there are >= 2 and the second's Updated is
 //     within 60 s of now (now.Sub(second.Updated) <= 60*time.Second) ->
 //     ErrAmbiguousOpencodeSession{Dir, Titles: [first.Title, second.Title]}.
@@ -73,13 +81,21 @@ func MatchOpencodeSession(cwd string, sessions []OpencodeSession, now time.Time)
 		}
 	}
 
-	if len(matched) == 0 {
+	// 2. Only a session that has worked within OpencodeActiveWindow qualifies.
+	var active []OpencodeSession
+	for _, s := range matched {
+		if now.Sub(s.Updated) <= OpencodeActiveWindow {
+			active = append(active, s)
+		}
+	}
+
+	if len(active) == 0 {
 		return "", ErrNoOpencodeSession
 	}
 
-	// 2. Of those, keep only the ones with the longest Directory.
+	// 3. Of those, keep only the ones with the longest Directory.
 	maxLen := -1
-	for _, s := range matched {
+	for _, s := range active {
 		l := len(s.Directory)
 		if l > maxLen {
 			maxLen = l
@@ -87,7 +103,7 @@ func MatchOpencodeSession(cwd string, sessions []OpencodeSession, now time.Time)
 	}
 
 	var longest []OpencodeSession
-	for _, s := range matched {
+	for _, s := range active {
 		if len(s.Directory) == maxLen {
 			longest = append(longest, s)
 		}
