@@ -172,19 +172,9 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		return nil
 	}
 
-	// Edges evaluateEdges armed (Result "firing", Fired false) fire here,
-	// after every binding this tick reconciled has been saved (#37): a
-	// fire-mode edge armed by Reconcile above is in fresh already, and one
-	// left armed by a daemon that crashed between arming it and running it
-	// is picked back up the same way, since armedFires reads every
-	// binding's saved state rather than just what changed this tick. Firing
-	// happens here, outside every WithLock the per-binding loop took, so
-	// Send's own lock on the target never nests inside the source's.
 	// Each of Tick's non-binding phases runs through safely, so a panic in
 	// one cannot take the whole daemon down (#370, spec §4.6): it is logged
 	// with a stack and the next tick tries again.
-	d.safely("fires", func() { runFires(ctx, d.rt, armedFires(fresh)) })
-
 	d.safely("ingest", func() { ingestLiveBindings(ctx, d.rt, fresh) })
 
 	d.safely("refresh", func() { d.refreshRelease(ctx) })
@@ -266,22 +256,6 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 		return
 	}
 	d.releaseRetryAt = time.Time{}
-}
-
-// armedFires collects every fire-mode edge left armed across every binding:
-// Result == "firing" and Fired == false. evaluateEdges sets exactly that
-// pair on a fire-mode edge whose artifact was ready but whose Send has not
-// yet run (#37).
-func armedFires(bindings []store.Binding) []firePending {
-	var pendings []firePending
-	for _, b := range bindings {
-		for _, e := range b.Edges {
-			if !e.Fired && e.Result == "firing" {
-				pendings = append(pendings, firePending{Source: b.Name, Edge: e})
-			}
-		}
-	}
-	return pendings
 }
 
 // tickOne is the per-binding body Tick's whole-store pass uses: one critical

@@ -890,14 +890,11 @@ func TestResumeRestoreHeadlessHasNoOrphan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, res, err := BindResolved(context.Background(), rt, BindOptions{
+	_, _, err := BindResolved(context.Background(), rt, BindOptions{
 		Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("BindResolved: %v", err)
-	}
-	if res.OrphanedPane != "" {
-		t.Errorf("OrphanedPane = %q, want empty", res.OrphanedPane)
 	}
 	if len(fg.checkoutWorktreeCalls) != 1 {
 		t.Errorf("checkoutWorktreeCalls = %d, want 1", len(fg.checkoutWorktreeCalls))

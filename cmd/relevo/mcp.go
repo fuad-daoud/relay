@@ -173,21 +173,15 @@ func mcpModeWord(m mcp.Mode) string {
 	return "tools"
 }
 
-// startMCPChannel reaps the pre-#303 pane-keyed claims, writes this process's
-// initial claim and, on success, starts the poll loop. A refused claim
-// (ErrClaimHeld) exits the process: Claude Code shows the server as failed and
-// the planner keeps pane delivery, exactly as if relevo mcp had never started
-// (spec §3.2, §6).
+// startMCPChannel writes this process's initial claim and, on success, starts
+// the poll loop. A refused claim (ErrClaimHeld) exits the process: Claude Code
+// shows the server as failed and the planner keeps pane delivery, exactly as if
+// relevo mcp had never started (spec §3.2, §6).
 func startMCPChannel(ctx context.Context, rt relevo.Runtime, rec planner.Record, version string, p relevo.Pusher, interval time.Duration) {
 	if rt.Channels == nil {
 		fmt.Fprintln(os.Stderr, "relevo mcp: no claim store configured; running tools-only")
 		return
 	}
-
-	// §3.3: a claim file left by a pre-#303 relevo mcp is reaped here, and
-	// only once its writer is dead. Another planner session may still be
-	// running an older relevo mcp during the upgrade.
-	rt.Channels.SweepPaneKeyed()
 
 	now := rt.Now()
 	cwd, _ := os.Getwd()

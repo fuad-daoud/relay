@@ -929,7 +929,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 // markerClose is the marker branch of reconcileHeadless: it calls
 // closeOnMarker and, when the marker is present and the gate is done, runs the
 // post-close sequence (served-round close, process clear, verify consult,
-// edges, delivery, repair round). The normal read and the re-check in the
+// delivery, repair round). The normal read and the re-check in the
 // exited branch share it, so a marker that appears inside one tick is handled
 // by one implementation instead of a copy of the post-close block.
 //
@@ -964,13 +964,6 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		if err != nil {
 			return next, true, false, err
 		}
-	}
-	// Edges evaluate right after the verify hook and before delivery
-	// (#37), exactly as the pane path orders it: see reconcile.go's
-	// matching comment for why the pendings return value is discarded.
-	next, _, err = evaluateEdges(ctx, rt, tx, next, closedRound)
-	if err != nil {
-		return next, true, false, err
 	}
 	next, err = deliverAndSettle(ctx, rt, tx, next)
 	if err != nil {

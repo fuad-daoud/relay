@@ -710,6 +710,33 @@ func TestLoadIgnoresLegacyPreamblePending(t *testing.T) {
 	}
 }
 
+// TestLoadKeepsALegacyEdgesRecord is D4.4's required row: a bind.json written
+// by a relevo that still had `relevo edge` carries an "edges" key. Binding.Edges
+// is a record shim now -- read but never written -- and the decoder does not set
+// DisallowUnknownFields, so the record still loads and the shim decodes.
+func TestLoadKeepsALegacyEdgesRecord(t *testing.T) {
+	s := New(t.TempDir())
+	dir := s.Dir("old")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := `{"name":"old","cwd":"/repo","planner":{"pane_id":"w2:p3","kind":"claude"},"builder":{"pane_id":"w2:p4","kind":"agy"},"edges":[{"id":"a1b2c3","round":1,"when":"report","then":"send","target":"client","prompt":"/plans/client.md","mode":"queue","added_at":"2026-09-01T10:00:00Z","fired":true,"result":"queued"}],"round":1,"state":"active","round_cap":20,"round_timeout_ms":1800000}`
+	if err := os.WriteFile(filepath.Join(dir, "bind.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write bind.json: %v", err)
+	}
+
+	got, err := s.Load("old")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(got.Edges) != 1 {
+		t.Fatalf("got %d edges, want the record's one", len(got.Edges))
+	}
+	if got.Edges[0].ID != "a1b2c3" || got.Edges[0].Target != "client" || !got.Edges[0].Fired {
+		t.Errorf("edge did not decode: %+v", got.Edges[0])
+	}
+}
+
 func TestLegacyPaneBindingReSavesByteIdentical(t *testing.T) {
 	s := New(t.TempDir())
 	b := newBinding("webshop", "/home/dev/projects/webshop")

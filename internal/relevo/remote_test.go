@@ -2295,7 +2295,7 @@ func TestForwardAvailablePostsToEveryServerOnce(t *testing.T) {
 	local := remoteBinding("")
 	local.Name = "local"
 	local.CWD = "/fake/local"
-	local.Builder = store.Endpoint{PaneID: "w2:p4", Mode: store.ModePane}
+	local.Builder = store.Endpoint{PaneID: "w2:p4", Mode: store.Mode("pane")}
 	if err := st.Save(local); err != nil {
 		t.Fatal(err)
 	}
@@ -2335,7 +2335,7 @@ func TestServerInUse(t *testing.T) {
 	bindings := []store.Binding{
 		remoteBinding("zen"),
 		func() store.Binding { b := remoteBinding("mars"); b.Name = "other"; return b }(),
-		{Name: "local", Builder: store.Endpoint{Mode: store.ModePane}},
+		{Name: "local", Builder: store.Endpoint{Mode: store.Mode("pane")}},
 	}
 
 	if got := ServerInUse(bindings, "zen"); len(got) != 1 || got[0] != "api" {

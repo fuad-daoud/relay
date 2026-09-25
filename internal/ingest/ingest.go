@@ -278,7 +278,8 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 
 		builderMode := string(b.Builder.Mode)
 		if builderMode == "" {
-			builderMode = string(store.ModePane)
+			// archives from before headless mode record a pane builder
+			builderMode = "pane"
 		}
 
 		var archivedAt *time.Time

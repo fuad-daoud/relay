@@ -101,32 +101,6 @@ func stampStale(rt Runtime, tx *store.Tx, b store.Binding) store.Binding {
 	return b
 }
 
-// legacyPaneBinding reports whether b is a binding from before #303: a local
-// builder whose Mode is "" (written before Mode existed) or "pane". A remote
-// binding is never a legacy pane binding.
-func legacyPaneBinding(b store.Binding) bool {
-	return !b.Builder.Remote() && (b.Builder.Mode == "" || b.Builder.Mode == store.ModePane)
-}
-
-// retireLegacyPane closes b as DONE with one KindRetired entry (#303 §5.6).
-// The worktree is left exactly as it is: no release, no gc. The caller saves
-// the returned binding.
-func retireLegacyPane(rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
-	if err := tx.AppendLog(b.Name, store.LogEntry{
-		TS:        rt.Now().UTC(),
-		Round:     b.Round,
-		Direction: store.DirToPlanner,
-		Kind:      store.KindRetired,
-		Confirmed: true,
-		Note:      "pane builders were removed (#303); rebind with relevo bind --worktree",
-	}); err != nil {
-		return b, err
-	}
-	b.State = store.StateDone
-	slog.Info("retired legacy pane binding", "binding", b.Name, "round", b.Round)
-	return b, nil
-}
-
 // stateWarned is the daemon's warn-once memory, keyed by binding name plus the
 // reason (#372). It is a log dedupe and nothing more: the skipped binding is
 // still skipped on every tick. Keying on the reason as well as the name lets
@@ -195,16 +169,6 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (
 		return b, err
 	}
 
-	// #303 §5.6: a legacy pane binding still active at upgrade is retired.
-	// Its history stays readable; relevo no longer watches a pane it cannot
-	// drive. The worktree is left exactly as it is -- no release, no gc.
-	// A paused pane binding is retired too: it is not DONE, so it is caught
-	// here. Retiring sets the state to DONE, so a second tick appends
-	// nothing, and no builder handling below ever runs for this binding.
-	if b.State != store.StateDone && legacyPaneBinding(b) {
-		return retireLegacyPane(rt, tx, b)
-	}
-
 	if b.State == store.StateDone || b.State == store.StatePaused {
 		return b, nil
 	}
@@ -213,9 +177,9 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (
 		return reconcileRemote(ctx, rt, tx, b)
 	}
 
-	// Every local binding reaching this line is headless: the legacy pane
-	// bindings were retired above, and a local builder is only ever a process
-	// relevo runs per round (#99, #303). Spec §5.1 is its own tick.
+	// Every local binding reaching this line is headless: a local builder is
+	// only ever a process relevo runs per round (#99, #303). Spec §5.1 is its
+	// own tick.
 	return reconcileHeadless(ctx, rt, tx, b)
 }
 
