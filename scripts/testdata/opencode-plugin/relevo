@@ -28,9 +28,9 @@ case "$cmd" in
     COUNT=$((COUNT + 1))
     echo "$COUNT" > "$COUNT_FILE"
     if [ "$COUNT" -le 2 ]; then
-      cat "$DIR/status-1.json"
+      sed -E "s/\"clock\": \"[^\"]*\"/\"clock\": \"${COUNT}s\"/g" "$DIR/status-1.json"
     else
-      cat "$DIR/status-2.json"
+      sed -E "s/\"clock\": \"[^\"]*\"/\"clock\": \"${COUNT}s\"/g" "$DIR/status-2.json"
     fi
     exit 0
     ;;
