@@ -18,10 +18,6 @@ import (
 type Mode string
 
 const (
-	// ModePane is history only since #303: the db's history rows carry
-	// builder_mode='pane' and readers must still parse it, but nothing runs a
-	// pane any more.
-	ModePane     Mode = "pane"
 	ModeHeadless Mode = "headless"
 )
 

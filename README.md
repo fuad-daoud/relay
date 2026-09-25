@@ -410,9 +410,6 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   default; pass `--delete` to remove each binding's directory instead
   (`relevo unbind --done --archive` is accepted as a no-op).
 - `relevo unbind --sweep [--dry-run]` — delete `relevo/<name>` branches and `refs/relevo/<name>/*` refs of bindings that no longer exist, once each is on a remote-tracking ref.
-- `relevo edge add <source> --when report|diff|done|gate --then send --target <binding> --prompt <file> [--mode queue|fire] [--round N]`;
-  `relevo edge list <source>`; `relevo edge rm <source> <id>` — declare, list or
-  drop a planner's handoff to another binding. See [Edges (triggers)](#edges-triggers).
 - `relevo daemon [--interval D] [--check]` — the long-running reconciler; this is what the
   service unit runs. It reconciles builders, queues reports for the planner
   and syncs remote bindings. `--check` exits 0 when a daemon is running and 1 when not, printing nothing.
@@ -873,37 +870,6 @@ Headless builders are the cheap way to run several: no terminal per builder,
 no idle harness holding memory. `relevo bind --worktree --name api` gives a peer its own
 worktree and a fresh process per round.
 
-### Edges (triggers)
-
-When a plan splits work across two bindings -- one writes the contract,
-another builds against it -- the planner otherwise sits in the middle of
-every handoff: wait for the report, read it, `relevo send --name other --file
-…`. An **edge** declares that handoff up front:
-
-```
-relevo edge add api --when report --then send --target client --prompt ./client-plan.md
-```
-
-This says: when `api`'s current round closes and its report exists, hand
-`client-plan.md` to `client` as its next round. Relevo never inspects the
-artifact; it checks existence -- the same fact `queueReport` checks for the
-report itself -- and delivers a prompt the planner wrote ahead of time.
-`--when` names the artifact: `report`, `diff`, `done` or `gate`. `--then`
-is `send` -- the only thing an edge does today; `then: ask` is a follow-up.
-
-**Queue by default, fire on request.** `--mode queue`, the default, holds the
-handoff in front of the planner as a payload naming the exact command to run
--- the same held-payload delivery a report gets. `--mode fire` runs the send
-itself, unattended, for a chain the planner has run before and trusts. A fire
-that cannot reach its target (busy, gone, gated) is never lost: it is
-downgraded to the same queued payload, with the failure named, so the planner
-still sees the handoff. Either way the edge fires exactly once, on its own
-round's close -- an edge missing its artifact at close is marked skipped and
-never reconsidered, since a round's artifacts are final once it closes.
-
-`relevo edge list <source>` prints one line per declared edge, Fired and
-Result included; `relevo edge rm <source> <id>` drops one -- removing a fired
-edge is fine. Builders never declare edges; the CLI is the planner's.
 
 ### Stopping a round
 

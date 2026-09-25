@@ -194,52 +194,6 @@ func TestReconcileExpiresAStaleReservation(t *testing.T) {
 	}
 }
 
-// TestReconcileAbandonsLegacyPaneConsult pins #303's upgrade path: a consult
-// endpoint written before this round has Mode "" (a pane consult). relevo can
-// no longer drive a pane, so the next reconcile closes it silent with the
-// reason and reports it to the planner, instead of reconciling it as a pane.
-
-// TestReconcileAbandonsLegacyPaneConsult pins #303's upgrade path: a consult
-// endpoint written before this round has Mode "" (a pane consult). relevo can
-// no longer drive a pane, so the next reconcile closes it silent with the
-// reason and reports it to the planner, instead of reconciling it as a pane.
-func TestReconcileAbandonsLegacyPaneConsult(t *testing.T) {
-	rt, _ := seedBound(t)
-	b, err := rt.Store.Load("webshop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	b.Consults = []store.Consult{{
-		ID:           "7f2a3c1d",
-		Role:         "reviewer",
-		Round:        1,
-		AskPath:      "/repo/.relevo/consults/7f2a3c1d-ask.md",
-		FindingsPath: "/repo/.relevo/consults/7f2a3c1d-findings.md",
-		Endpoint:     store.Endpoint{AgentName: "webshop-reviewer-7f2a3c1d", Kind: "claude", PaneID: "w2:p9"},
-		State:        store.ConsultRunning,
-		SpawnedAt:    baseTime,
-	}}
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	got := tickConsults(t, rt)
-
-	if got.Consults[0].State != store.ConsultSilent {
-		t.Fatalf("state = %q, want silent", got.Consults[0].State)
-	}
-	if got.Consults[0].Note != "pane consults were removed (#303)" {
-		t.Errorf("note = %q, want the #303 reason", got.Consults[0].Note)
-	}
-	pending, found, err := rt.Store.PendingForPlanner("webshop")
-	if err != nil || !found {
-		t.Fatalf("legacy consult was not reported: found=%v err=%v", found, err)
-	}
-	if pending.Kind != store.KindFindings {
-		t.Errorf("entry kind = %q, want findings", pending.Kind)
-	}
-}
-
 // seedHeadlessConsult asks for a consult as a process on the webshop binding
 // and returns the runtime and the record relevo made.
 

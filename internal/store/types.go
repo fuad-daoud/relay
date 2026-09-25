@@ -31,7 +31,6 @@ const (
 type Mode string
 
 const (
-	ModePane     Mode = "pane"
 	ModeHeadless Mode = "headless"
 	ModeRemote   Mode = "remote"
 )
@@ -529,10 +528,7 @@ type Binding struct {
 	// ConsultCap bounds RUNNING consults; zero means DefaultConsultCap.
 	ConsultCap int `json:"consult_cap,omitempty"`
 
-	// Edges are planner-declared handoffs to another binding, evaluated once
-	// at this binding's round close (#37): `relevo edge add` declares them,
-	// evaluateEdges resolves them. omitempty keeps bind.json byte-identical
-	// until the first edge.
+	// Edges is read from records written before relevo edge was removed; nothing writes it.
 	Edges []Edge `json:"edges,omitempty"`
 
 	// Owner is the enrolled client id that created this binding on a relevo
@@ -666,53 +662,19 @@ type Consult struct {
 	Note string `json:"note,omitempty"`
 }
 
-// Edge is a planner-declared handoff (#37): when the source binding's Round
-// round closes and When's artifact exists, Then delivers Prompt to Target --
-// queued in front of the planner by default, or fired unattended when Mode
-// is "fire". Declared by `relevo edge add`, evaluated once at the source's
-// round close, and never touched again once Fired.
+// Edge is read from records written before relevo edge was removed; nothing writes it.
 type Edge struct {
-	// ID is 6 hex characters, unique within one binding.
-	ID string `json:"id"`
-
-	// Round is the source round whose close this edge watches. Defaults to
-	// the source's current round at `relevo edge add` time; a closed round
-	// can never fire again, so it must be >= that round.
-	Round int `json:"round"`
-
-	// When names the artifact whose existence fires the edge: report, diff,
-	// done or gate.
-	When string `json:"when"`
-
-	// Then is what happens once When's artifact exists. Only "send" exists
-	// today; `then: ask` is a follow-up.
-	Then string `json:"then"`
-
-	// Target is the binding Then hands the prompt to.
-	Target string `json:"target"`
-
-	// Prompt is the absolute path to the plan file handed to Target.
-	Prompt string `json:"prompt"`
-
-	// Mode is "queue" (default): hold the handoff in front of the planner as
-	// a payload naming the exact command to run; or "fire": run the send
-	// itself, unattended.
-	Mode string `json:"mode"`
-
+	ID      string    `json:"id"`
+	Round   int       `json:"round"`
+	When    string    `json:"when"`
+	Then    string    `json:"then"`
+	Target  string    `json:"target"`
+	Prompt  string    `json:"prompt"`
+	Mode    string    `json:"mode"`
 	AddedAt time.Time `json:"added_at"`
-
-	// Fired is true once this edge has run its course: queued, sent, or
-	// skipped for a missing artifact. An edge fires once.
 	Fired   bool      `json:"fired,omitempty"`
 	FiredAt time.Time `json:"fired_at,omitempty"`
-
-	// Result is what queue, fire or skip produced: "queued", "sent round N
-	// to <target>", "skipped: no <artifact>", or "fire failed: <err>;
-	// queued". "firing" is transient: evaluateEdges sets it on a fire-mode
-	// edge that is armed but not yet run (Fired stays false while it reads
-	// "firing"), so a daemon that crashed before running it picks the edge
-	// back up on its next tick.
-	Result string `json:"result,omitempty"`
+	Result  string    `json:"result,omitempty"`
 }
 
 // SameBinding reports whether two bindings hold the same state, by comparing

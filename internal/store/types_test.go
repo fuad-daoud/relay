@@ -168,7 +168,7 @@ func TestEndpointHeadless(t *testing.T) {
 		want bool
 	}{
 		{"empty mode reads as pane", "", false},
-		{"explicit pane", ModePane, false},
+		{"explicit pane", Mode("pane"), false},
 		{"headless", ModeHeadless, true},
 	}
 	for _, c := range cases {
