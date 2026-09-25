@@ -83,10 +83,10 @@ func TestOpencodeDeliverHappyPath(t *testing.T) {
 	exec := &fakeSqliteExec{seenFrom: 2} // not seen pre-POST, seen on the first confirm poll
 
 	d := &OpencodeDeliverer{
-		StateFile: stateFile,
-		DBPath:    filepath.Join(dir, "opencode.db"),
-		Exec:      exec,
-		Alive:     aliveAlways,
+		StateFiles: []string{stateFile},
+		DBPath:     filepath.Join(dir, "opencode.db"),
+		Exec:       exec,
+		Alive:      aliveAlways,
 	}
 
 	payload := "relevo: round 1 · to planner · about builder \"w\" (not the human)\n\nBuilder finished round 1. Report: /x/001-report.md"
@@ -146,10 +146,10 @@ func TestOpencodeDeliverSilentTwoHundred(t *testing.T) {
 	exec := &fakeSqliteExec{} // seenFrom 0: never seen
 
 	d := &OpencodeDeliverer{
-		StateFile: stateFile,
-		DBPath:    filepath.Join(dir, "opencode.db"),
-		Exec:      exec,
-		Alive:     aliveAlways,
+		StateFiles: []string{stateFile},
+		DBPath:     filepath.Join(dir, "opencode.db"),
+		Exec:       exec,
+		Alive:      aliveAlways,
 	}
 
 	out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/001-report.md", time.Time{})
@@ -183,10 +183,10 @@ func TestOpencodeDeliverIdempotentSkipsPost(t *testing.T) {
 	exec := &fakeSqliteExec{seenFrom: 1} // already seen on the very first query
 
 	d := &OpencodeDeliverer{
-		StateFile: stateFile,
-		DBPath:    filepath.Join(dir, "opencode.db"),
-		Exec:      exec,
-		Alive:     aliveAlways,
+		StateFiles: []string{stateFile},
+		DBPath:     filepath.Join(dir, "opencode.db"),
+		Exec:       exec,
+		Alive:      aliveAlways,
 	}
 
 	out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/001-report.md", time.Time{})
@@ -219,7 +219,7 @@ func TestOpencodeDeliverNotMineCases(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d := &OpencodeDeliverer{StateFile: stateFile, Alive: aliveAlways}
+			d := &OpencodeDeliverer{StateFiles: []string{stateFile}, Alive: aliveAlways}
 			if !tc.noExec {
 				d.Exec = &fakeSqliteExec{}
 			}
@@ -253,21 +253,21 @@ func TestOpencodeDeliverUnavailableCases(t *testing.T) {
 
 	cases := []struct {
 		name             string
-		stateFile        string
+		stateFiles       []string
 		alive            func(int) bool
 		exec             *fakeSqliteExec
 		wantReasonPrefix string
 	}{
-		{name: "missing state file", stateFile: filepath.Join(t.TempDir(), "nope.json"), alive: aliveAlways, exec: &fakeSqliteExec{}, wantReasonPrefix: "opencode service not running"},
-		{name: "dead pid", stateFile: deadPidFile, alive: aliveNever, exec: &fakeSqliteExec{}, wantReasonPrefix: "opencode service not running"},
-		{name: "non-loopback url", stateFile: nonLoopbackFile, alive: aliveAlways, exec: &fakeSqliteExec{}, wantReasonPrefix: "opencode service url is not loopback"},
-		{name: "500 from server", stateFile: errFile, alive: aliveAlways, exec: &fakeSqliteExec{}, wantReasonPrefix: "post: 500"},
-		{name: "transport error", stateFile: transportErrFile, alive: aliveAlways, exec: &fakeSqliteExec{}, wantReasonPrefix: "post:"},
+		{name: "missing state file", stateFiles: []string{filepath.Join(t.TempDir(), "nope.json")}, alive: aliveAlways, exec: &fakeSqliteExec{}, wantReasonPrefix: "opencode service not running"},
+		{name: "dead pid", stateFiles: []string{deadPidFile}, alive: aliveNever, exec: &fakeSqliteExec{}, wantReasonPrefix: "opencode service not running"},
+		{name: "non-loopback url", stateFiles: []string{nonLoopbackFile}, alive: aliveAlways, exec: &fakeSqliteExec{}, wantReasonPrefix: "opencode service url is not loopback"},
+		{name: "500 from server", stateFiles: []string{errFile}, alive: aliveAlways, exec: &fakeSqliteExec{}, wantReasonPrefix: "post: 500"},
+		{name: "transport error", stateFiles: []string{transportErrFile}, alive: aliveAlways, exec: &fakeSqliteExec{}, wantReasonPrefix: "post:"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d := &OpencodeDeliverer{StateFile: tc.stateFile, DBPath: filepath.Join(t.TempDir(), "opencode.db"), Exec: tc.exec, Alive: tc.alive}
+			d := &OpencodeDeliverer{StateFiles: tc.stateFiles, DBPath: filepath.Join(t.TempDir(), "opencode.db"), Exec: tc.exec, Alive: tc.alive}
 			out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
 			if err != nil {
 				t.Fatalf("Deliver: %v", err)
@@ -291,11 +291,11 @@ func TestOpencodeDeliverFallsBackAfterFallbackAfter(t *testing.T) {
 	now := queuedAt.Add(31 * time.Second) // past the 30s default
 
 	d := &OpencodeDeliverer{
-		StateFile: stateFile, // deliberately unusable (dead pid) -- would be OutcomeUnavailable before the FallbackAfter check
-		DBPath:    filepath.Join(t.TempDir(), "opencode.db"),
-		Exec:      &fakeSqliteExec{},
-		Alive:     aliveNever,
-		Now:       func() time.Time { return now },
+		StateFiles: []string{stateFile}, // deliberately unusable (dead pid) -- would be OutcomeUnavailable before the FallbackAfter check
+		DBPath:     filepath.Join(t.TempDir(), "opencode.db"),
+		Exec:       &fakeSqliteExec{},
+		Alive:      aliveNever,
+		Now:        func() time.Time { return now },
 	}
 
 	out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", queuedAt)
@@ -325,10 +325,10 @@ func TestOpencodeDeliverPasswordNeverLeaks(t *testing.T) {
 	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, password, 1)
 
 	d := &OpencodeDeliverer{
-		StateFile: stateFile,
-		DBPath:    filepath.Join(dir, "opencode.db"),
-		Exec:      &fakeSqliteExec{},
-		Alive:     aliveAlways,
+		StateFiles: []string{stateFile},
+		DBPath:     filepath.Join(dir, "opencode.db"),
+		Exec:       &fakeSqliteExec{},
+		Alive:      aliveAlways,
 	}
 
 	out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
@@ -341,6 +341,96 @@ func TestOpencodeDeliverPasswordNeverLeaks(t *testing.T) {
 	if err != nil && strings.Contains(err.Error(), password) {
 		t.Errorf("error leaks the password: %v", err)
 	}
+}
+
+func TestOpencodeDeliverStateFilesPreference(t *testing.T) {
+	var stateRequests, configRequests int
+	stateSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stateRequests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer stateSrv.Close()
+
+	configSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		configRequests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer configSrv.Close()
+
+	dir := t.TempDir()
+	stateWithURL := writeOpencodeServiceFile(t, dir, stateSrv.URL, "pw", 1)
+	pwDir := filepath.Join(dir, "pw-only")
+	if err := os.MkdirAll(pwDir, 0o755); err != nil {
+		t.Fatalf("mkdir pw-only: %v", err)
+	}
+	configPasswordOnly := writeOpencodeServiceFile(t, pwDir, "", "pw", 1)
+	configDir := filepath.Join(dir, "config")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir config: %v", err)
+	}
+	configWithURL := writeOpencodeServiceFile(t, configDir, configSrv.URL, "pw", 1)
+	missing := filepath.Join(dir, "nonexistent.json")
+
+	t.Run("stateWithURL and configPasswordOnly uses state url", func(t *testing.T) {
+		stateRequests, configRequests = 0, 0
+		exec := &fakeSqliteExec{seenFrom: 2}
+		d := &OpencodeDeliverer{
+			StateFiles: []string{stateWithURL, configPasswordOnly},
+			DBPath:     filepath.Join(dir, "opencode.db"),
+			Exec:       exec,
+			Alive:      aliveAlways,
+		}
+		out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
+		if err != nil {
+			t.Fatalf("Deliver: %v", err)
+		}
+		if out != OutcomeDelivered {
+			t.Fatalf("out = %v, reason = %q, want OutcomeDelivered", out, reason)
+		}
+		if stateRequests != 1 || configRequests != 0 {
+			t.Errorf("stateRequests = %d, configRequests = %d; want stateRequests = 1, configRequests = 0", stateRequests, configRequests)
+		}
+	})
+
+	t.Run("missing and configWithURL uses config url", func(t *testing.T) {
+		stateRequests, configRequests = 0, 0
+		exec := &fakeSqliteExec{seenFrom: 2}
+		d := &OpencodeDeliverer{
+			StateFiles: []string{missing, configWithURL},
+			DBPath:     filepath.Join(dir, "opencode.db"),
+			Exec:       exec,
+			Alive:      aliveAlways,
+		}
+		out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
+		if err != nil {
+			t.Fatalf("Deliver: %v", err)
+		}
+		if out != OutcomeDelivered {
+			t.Fatalf("out = %v, reason = %q, want OutcomeDelivered", out, reason)
+		}
+		if stateRequests != 0 || configRequests != 1 {
+			t.Errorf("stateRequests = %d, configRequests = %d; want stateRequests = 0, configRequests = 1", stateRequests, configRequests)
+		}
+	})
+
+	t.Run("passwordOnly behaves as unusable file", func(t *testing.T) {
+		d := &OpencodeDeliverer{
+			StateFiles: []string{configPasswordOnly},
+			DBPath:     filepath.Join(dir, "opencode.db"),
+			Exec:       &fakeSqliteExec{},
+			Alive:      aliveAlways,
+		}
+		out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
+		if err != nil {
+			t.Fatalf("Deliver: %v", err)
+		}
+		if out != OutcomeUnavailable {
+			t.Fatalf("out = %v, want OutcomeUnavailable", out)
+		}
+		if reason != "opencode service not running" {
+			t.Errorf("reason = %q, want %q", reason, "opencode service not running")
+		}
+	})
 }
 
 func basicAuth(user, pass string) string {

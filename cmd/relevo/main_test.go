@@ -25,7 +25,19 @@ import (
 // XDG_CONFIG_HOME and XDG_STATE_HOME all move here, so no test in cmd/relevo
 // reads the user's real config or state (#235). Tests that t.Setenv the same
 // variables keep working: t.Setenv restores to these values.
+//
+// It also clears the planner identity a harness injects into the shell that
+// runs the tests (a Claude Code session, an agy conversation, an OpenCode shell
+// marked by the relevo plugin's server hook), so no test resolves the planner
+// of whoever happens to run `go test`. A test that needs one sets it itself.
 func TestMain(m *testing.M) {
+	for _, v := range []string{
+		"RELEVO_PLANNER", "RELEVO_HARNESS",
+		"CLAUDECODE", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID",
+		"ANTIGRAVITY_CONVERSATION_ID",
+	} {
+		os.Unsetenv(v)
+	}
 	root, err := os.MkdirTemp("", "relevo-cmd-test-")
 	if err != nil {
 		panic(err)

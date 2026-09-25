@@ -241,6 +241,28 @@ check_assertion_14() {
 }
 assert 14 "03-fleet first two rows share the NEEDS YOU column" check_assertion_14
 
+# 15. webshop's status-1 row is display ACTIVE but needs_you true with
+#     report_round 3 and round 4: the sidebar must follow needs_you (NEEDS YOU)
+#     and the report's round (r3), not the display word or the current round.
+check_assertion_15() {
+  grep -q "webshop" "$OUT/01-session.txt" && \
+  grep -q "NEEDS YOU" "$OUT/01-session.txt" && \
+  grep -q "r3 · opencode · question in" "$OUT/01-session.txt" && \
+  ! grep -q "r4 · opencode" "$OUT/01-session.txt"
+}
+assert 15 "01-session shows webshop NEEDS YOU and r3, not r4" check_assertion_15
+
+# 16. the ledger needs_you false -> true transition (status-1 -> status-2)
+#     raises the NEEDS YOU toast, or at least the badge count.
+check_assertion_16() {
+  grep -qi "ledger needs you" "$OUT/02-after-toast.txt" || \
+  grep -q "relevo 2 need you" "$OUT/02-after-toast.txt"
+}
+assert 16 "02-after-toast shows the ledger NEEDS YOU toast or relevo 2 need you" check_assertion_16
+
+# Mouse is not driven here: tmux send-keys cannot deliver SGR mouse events
+# reliably, so the clickable-row behaviour (onMouseDown on the sidebar and
+# fleet rows) is verified by inspection of tui.tsx, not by this smoke.
 echo "Captures written to: $OUT"
 
 if [ "$FAILED" -ne 0 ]; then
@@ -248,5 +270,5 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-echo "Smoke test PASSED (all 14 assertions passed)"
+echo "Smoke test PASSED (all 16 assertions passed)"
 exit 0

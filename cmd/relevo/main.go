@@ -479,15 +479,21 @@ func newHooksDispatcher(hooksCfg hooks.Config, pol policy.Policy) hooks.Dispatch
 	return hooks.MultiDispatcher(sinks)
 }
 
-// opencodeServiceFile resolves $XDG_CONFIG_HOME/opencode/service.json, falling
-// back to ~/.config/opencode/service.json, the same way userConfigRoot resolves
-// $XDG_CONFIG_HOME.
-func opencodeServiceFile() string {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "opencode", "service.json")
-	}
+// opencodeServiceFiles returns candidate service.json paths in preference
+// order: the state dir first ($XDG_STATE_HOME/opencode/service.json or
+// ~/.local/state/opencode/service.json), then the config dir
+// ($XDG_CONFIG_HOME/opencode/service.json or ~/.config/opencode/service.json).
+func opencodeServiceFiles() []string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "opencode", "service.json")
+	stateFile := filepath.Join(home, ".local", "state", "opencode", "service.json")
+	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
+		stateFile = filepath.Join(xdg, "opencode", "service.json")
+	}
+	configFile := filepath.Join(home, ".config", "opencode", "service.json")
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		configFile = filepath.Join(xdg, "opencode", "service.json")
+	}
+	return []string{stateFile, configFile}
 }
 
 // opencodeDBPath resolves $XDG_DATA_HOME/opencode/opencode.db, falling back
@@ -557,9 +563,9 @@ func newDeliverers() map[string]relevo.PlannerDeliverer {
 		return deliverers
 	}
 	deliverers["opencode"] = &relevo.OpencodeDeliverer{
-		Exec:      binExec{},
-		StateFile: opencodeServiceFile(),
-		DBPath:    opencodeDBPath(),
+		Exec:       binExec{},
+		StateFiles: opencodeServiceFiles(),
+		DBPath:     opencodeDBPath(),
 	}
 	return deliverers
 }
