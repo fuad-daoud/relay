@@ -115,7 +115,10 @@ func (c *Client) run(ctx context.Context, dir string, env []string, args ...stri
 // Postconditions: the repository's own index, HEAD, refs and working tree are
 //
 //	byte-for-byte unchanged. The returned tree (and any blobs it
-//	required) exist in the object database, unreferenced.
+//	required) exist in the object database, unreferenced. The temp index
+//	carries the repository index's mtime, so git's racy-clean check treats
+//	every entry exactly as it would on the real index: a same-size edit made
+//	in the index's own timestamp tick is still captured (#461).
 //
 // Errors: ErrNotRepo (dir is not in a working tree), ErrGitUnavailable (binary
 //
@@ -168,6 +171,20 @@ func (c *Client) SnapshotTree(ctx context.Context, dir string) (string, error) {
 		}
 		if closeErr != nil {
 			return "", fmt.Errorf("close temp index: %w", closeErr)
+		}
+
+		// Keep the repository index's mtime on the copy. Git calls an entry
+		// whose mtime is not older than the index file's own mtime
+		// racy-clean and re-reads its content; io.Copy's fresh mtime on the
+		// copy defeats that check, so a same-size edit written in the index's
+		// own timestamp tick would be taken from the cached stat and missed
+		// (#461).
+		info, err := os.Stat(repoIndex)
+		if err != nil {
+			return "", fmt.Errorf("preserve index mtime: %w", err)
+		}
+		if err := os.Chtimes(tempIndex, info.ModTime(), info.ModTime()); err != nil {
+			return "", fmt.Errorf("preserve index mtime: %w", err)
 		}
 	} else if !os.IsNotExist(err) {
 		return "", fmt.Errorf("open repo index: %w", err)
