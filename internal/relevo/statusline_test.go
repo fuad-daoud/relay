@@ -911,7 +911,7 @@ func TestStatusLineRows(t *testing.T) {
 		}
 	})
 
-	t.Run("ACTIVE + to-planner report -> needs_you true, report_round = its round", func(t *testing.T) {
+	t.Run("delivered report (Pending nil) -> needs_you false, report_in true, report_round = its round", func(t *testing.T) {
 		b := BindingStatus{
 			Name:    "worker",
 			Round:   4,
@@ -926,15 +926,98 @@ func TestStatusLineRows(t *testing.T) {
 		if len(rows) != 1 {
 			t.Fatalf("len(rows) = %d, want 1", len(rows))
 		}
-		if !rows[0].NeedsYou {
-			t.Errorf("NeedsYou = %v, want true", rows[0].NeedsYou)
+		if rows[0].NeedsYou {
+			t.Errorf("NeedsYou = %v, want false (the report reached the chat)", rows[0].NeedsYou)
+		}
+		if !rows[0].ReportIn {
+			t.Errorf("ReportIn = %v, want true", rows[0].ReportIn)
 		}
 		if rows[0].ReportRound != 3 {
 			t.Errorf("ReportRound = %d, want 3", rows[0].ReportRound)
 		}
 	})
 
-	t.Run("NEEDS YOU display with a plan payload -> needs_you true, report_round 0", func(t *testing.T) {
+	t.Run("pending report, deliverer live, 5s old -> needs_you false, report_in false", func(t *testing.T) {
+		b := BindingStatus{
+			Name:             "worker",
+			Round:            4,
+			Display:          "ACTIVE",
+			PlannerRoute:     "deliverer",
+			PlannerRouteLive: true,
+			Pending:          &PendingInfo{Round: 3, Kind: store.KindReport},
+			LastPayload: &LastEvent{
+				Round:     3,
+				Kind:      store.KindReport,
+				Direction: store.DirToPlanner,
+				TS:        now.Add(-5 * time.Second),
+			},
+		}
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if rows[0].NeedsYou {
+			t.Errorf("NeedsYou = %v, want false (the push has 60s to land)", rows[0].NeedsYou)
+		}
+		if rows[0].ReportIn {
+			t.Errorf("ReportIn = %v, want false (still pending)", rows[0].ReportIn)
+		}
+	})
+
+	t.Run("pending report, deliverer live, 61s old -> needs_you true", func(t *testing.T) {
+		b := BindingStatus{
+			Name:             "worker",
+			Round:            4,
+			Display:          "ACTIVE",
+			PlannerRoute:     "deliverer",
+			PlannerRouteLive: true,
+			Pending:          &PendingInfo{Round: 3, Kind: store.KindReport},
+			LastPayload: &LastEvent{
+				Round:     3,
+				Kind:      store.KindReport,
+				Direction: store.DirToPlanner,
+				TS:        now.Add(-61 * time.Second),
+			},
+		}
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if !rows[0].NeedsYou {
+			t.Errorf("NeedsYou = %v, want true (waited longer than PendingNeedsYouAfter)", rows[0].NeedsYou)
+		}
+		if rows[0].ReportIn {
+			t.Errorf("ReportIn = %v, want false (still pending)", rows[0].ReportIn)
+		}
+	})
+
+	t.Run("pending report, route pull -> needs_you true at once", func(t *testing.T) {
+		b := BindingStatus{
+			Name:         "worker",
+			Round:        4,
+			Display:      "ACTIVE",
+			PlannerRoute: "pull",
+			Pending:      &PendingInfo{Round: 3, Kind: store.KindReport},
+			LastPayload: &LastEvent{
+				Round:     3,
+				Kind:      store.KindReport,
+				Direction: store.DirToPlanner,
+				TS:        now,
+			},
+		}
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if !rows[0].NeedsYou {
+			t.Errorf("NeedsYou = %v, want true (a pull route cannot be pushed to)", rows[0].NeedsYou)
+		}
+		if rows[0].ReportIn {
+			t.Errorf("ReportIn = %v, want false (still pending)", rows[0].ReportIn)
+		}
+	})
+
+	t.Run("NEEDS YOU display with a plan payload -> needs_you true, report_in false, report_round 0", func(t *testing.T) {
 		b := BindingStatus{
 			Name:    "worker",
 			Round:   2,
@@ -951,6 +1034,9 @@ func TestStatusLineRows(t *testing.T) {
 		}
 		if !rows[0].NeedsYou {
 			t.Errorf("NeedsYou = %v, want true", rows[0].NeedsYou)
+		}
+		if rows[0].ReportIn {
+			t.Errorf("ReportIn = %v, want false (no to-planner payload)", rows[0].ReportIn)
 		}
 		if rows[0].ReportRound != 0 {
 			t.Errorf("ReportRound = %d, want 0", rows[0].ReportRound)

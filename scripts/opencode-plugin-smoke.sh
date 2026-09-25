@@ -181,12 +181,12 @@ assert 2 "01-session shows relevo · oc-smoke, webshop, NEEDS YOU" check_asserti
 assert 3 "01-session shows relevo 1 need you" \
   grep -q "relevo 1 need you" "$OUT/01-session.txt"
 
-# 4. 02-after-toast shows ledger r … report in, delivered to chat (the toast) and relevo 2 need you
+# 4. 02-after-toast shows ledger r … report in, delivered to chat (the toast) and relevo 1 need you
 check_assertion_4() {
   grep -qE "ledger r.*report in, delivered to chat" "$OUT/02-after-toast.txt" && \
-  grep -q "relevo 2 need you" "$OUT/02-after-toast.txt"
+  grep -q "relevo 1 need you" "$OUT/02-after-toast.txt"
 }
-assert 4 "02-after-toast shows ledger report toast and relevo 2 need you" check_assertion_4
+assert 4 "02-after-toast shows ledger report toast and relevo 1 need you" check_assertion_4
 
 # 5. 03-fleet shows relevo › fleet and the header NAME … TOKENS
 check_assertion_5() {
@@ -248,15 +248,15 @@ check_assertion_13() {
 }
 assert 13 "no fixture names in internal/harness/opencodeplugin/" check_assertion_13
 
-# 14. in 03-fleet the NEEDS YOU of the first two rows starts at one column.
+# 14. in 03-fleet webshop's NEEDS YOU and ledger's REPORT IN start at one column.
 #     LC_ALL makes awk count characters, so the › marker counts as one column.
 check_assertion_14() {
   local c1 c2
   c1="$(LC_ALL=C.UTF-8 awk '/NEEDS YOU/{print index($0, "NEEDS YOU"); exit}' "$OUT/03-fleet.txt")"
-  c2="$(LC_ALL=C.UTF-8 awk '/NEEDS YOU/{n++; if (n == 2) {print index($0, "NEEDS YOU"); exit}}' "$OUT/03-fleet.txt")"
+  c2="$(LC_ALL=C.UTF-8 awk '/REPORT IN/{print index($0, "REPORT IN"); exit}' "$OUT/03-fleet.txt")"
   [ -n "$c1" ] && [ "$c1" = "$c2" ]
 }
-assert 14 "03-fleet first two rows share the NEEDS YOU column" check_assertion_14
+assert 14 "03-fleet webshop NEEDS YOU and ledger REPORT IN share the STATE column" check_assertion_14
 
 # 15. webshop's status-1 row is display ACTIVE but needs_you true with
 #     report_round 3 and round 4: the sidebar must follow needs_you (NEEDS YOU)
@@ -269,13 +269,14 @@ check_assertion_15() {
 }
 assert 15 "01-session shows webshop NEEDS YOU and r3, not r4" check_assertion_15
 
-# 16. the ledger needs_you false -> true transition (status-1 -> status-2)
-#     raises the NEEDS YOU toast, or at least the badge count.
+# 16. the ledger status-1 -> status-2 transition is a delivered report, not a
+#     new NEEDS YOU: it raises no "ledger needs you" toast and the badge count
+#     stays at 1.
 check_assertion_16() {
-  grep -qi "ledger needs you" "$OUT/02-after-toast.txt" || \
-  grep -q "relevo 2 need you" "$OUT/02-after-toast.txt"
+  ! grep -qi "ledger needs you" "$OUT/02-after-toast.txt" && \
+  grep -q "relevo 1 need you" "$OUT/02-after-toast.txt"
 }
-assert 16 "02-after-toast shows the ledger NEEDS YOU toast or relevo 2 need you" check_assertion_16
+assert 16 "02-after-toast shows no ledger NEEDS YOU toast and relevo 1 need you" check_assertion_16
 
 # 17. rule 1: 04-binding (enter on webshop, needs_you with report_round 3)
 #     arrives on the report tab with no Tab pressed; 04b-landing (no report)
@@ -319,6 +320,21 @@ check_assertion_21() {
 }
 assert 21 "05-binding-report round row is r1 r2 r3 r4 with no repeat" check_assertion_21
 
+# 22. the delivered report reads REPORT IN, not NEEDS YOU, and the badge counts
+#     only webshop: relevo 1 need you.
+check_assertion_22() {
+  grep -qE "ledger +REPORT IN" "$OUT/02-after-toast.txt" && \
+  ! grep -qE "ledger +NEEDS YOU" "$OUT/02-after-toast.txt" && \
+  grep -q "relevo 1 need you" "$OUT/02-after-toast.txt"
+}
+assert 22 "02-after-toast shows ledger REPORT IN and relevo 1 need you" check_assertion_22
+
+# 23. ledger's delivered report raises the report-in toast with its round.
+check_assertion_23() {
+  grep -q "ledger r2 report in, delivered to chat" "$OUT/02-after-toast.txt"
+}
+assert 23 "02-after-toast shows the ledger r2 report-in toast" check_assertion_23
+
 # Mouse is not driven here: tmux send-keys cannot deliver SGR mouse events
 # reliably, so the clickable-row behaviour (onMouseDown on the sidebar and
 # fleet rows) is verified by inspection of tui.tsx, not by this smoke.
@@ -329,5 +345,5 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-echo "Smoke test PASSED (all 21 assertions passed)"
+echo "Smoke test PASSED (all 23 assertions passed)"
 exit 0

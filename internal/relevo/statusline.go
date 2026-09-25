@@ -20,6 +20,11 @@ import (
 // (#155).
 const claudeCodeMargin = 4
 
+// PendingNeedsYouAfter is how long an undelivered report/question may wait on a
+// route relevo can push before it counts as NEEDS YOU (#393): a push in flight
+// must not flash NEEDS YOU, but one that has waited this long is stalled.
+const PendingNeedsYouAfter = 60 * time.Second
+
 var (
 	ansiDim      = "\x1b[38;5;245m"
 	ansiNeedsYou = "\x1b[1;38;5;214m"
@@ -273,10 +278,15 @@ type StatusLinePlanner struct {
 
 // StatusLineRow is one binding row in StatusLineDoc (§3).
 type StatusLineRow struct {
-	Name        string `json:"name"`
-	Round       int    `json:"round"`
-	Display     string `json:"display"`
-	NeedsYou    bool   `json:"needs_you"`
+	Name     string `json:"name"`
+	Round    int    `json:"round"`
+	Display  string `json:"display"`
+	NeedsYou bool   `json:"needs_you"`
+	// ReportIn is true when the newest to-planner report/question has been
+	// delivered: it is a to-planner payload and nothing is pending on the
+	// planner. A delivered report is handled, so the consumer shows REPORT IN
+	// rather than NEEDS YOU (#393).
+	ReportIn    bool   `json:"report_in"`
 	ReportRound int    `json:"report_round,omitempty"`
 	Harness     string `json:"harness"`
 	Candidate   string `json:"candidate"`
@@ -315,16 +325,25 @@ func StatusLineRows(r Report, now time.Time) []StatusLineRow {
 			b.LastPayload.Direction == store.DirToPlanner &&
 			(b.LastPayload.Kind == store.KindReport || b.LastPayload.Kind == store.KindQuestion)
 
-		needsYou := b.Display == "NEEDS YOU" || toPlannerPayload
+		// A payload still waiting on the planner is only a fault when relevo
+		// cannot push it (pull, or no live route) or it has waited longer than
+		// PendingNeedsYouAfter; a push in flight must not flash NEEDS YOU (#393).
+		pending := b.Pending != nil
+		stalled := pending && (b.PlannerRoute == "pull" || !b.PlannerRouteLive ||
+			(b.LastPayload != nil && now.Sub(b.LastPayload.TS) > PendingNeedsYouAfter))
+
+		needsYou := b.Display == "NEEDS YOU" || stalled
 		reportRound := 0
 		if toPlannerPayload {
 			reportRound = b.LastPayload.Round
 		}
+		reportIn := toPlannerPayload && !pending
 		rows = append(rows, StatusLineRow{
 			Name:        b.Name,
 			Round:       b.Round,
 			Display:     b.Display,
 			NeedsYou:    needsYou,
+			ReportIn:    reportIn,
 			ReportRound: reportRound,
 			Harness:     harness,
 			Candidate:   b.BuilderCandidate,

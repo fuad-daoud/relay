@@ -167,11 +167,11 @@ async function pollStatus(api: any) {
                   duration: 8000,
                 });
               }
-              if (row.last_ts && row.last_ts !== prev.last_ts && row.last_kind === "report") {
+              if (row.report_in && (!prev.report_in || row.report_round !== prev.report_round)) {
                 api.ui.toast.show({
                   variant: "info",
                   title: "relevo",
-                  message: `${row.name} r${row.report_round || row.round} report in${row.route === "deliverer" ? ", delivered to chat" : ""}`,
+                  message: `${row.name} r${row.report_round || row.round} report in, delivered to chat`,
                   duration: 6000,
                 });
               }
@@ -242,11 +242,13 @@ function parseModel(candidate: string): string {
 }
 
 // One rule for the tab a binding page opens on: the report when the row's last
-// kind is a report, or when the row needs you and has a report round to show;
-// otherwise the transcript. Every way into a binding page uses it.
+// kind is a report, when a delivered report is waiting (report_in), or when the
+// row needs you and has a report round to show; otherwise the transcript. Every
+// way into a binding page uses it.
 function initialTab(row: any): "report" | "transcript" {
   if (!row) return "transcript";
   if (row.last_kind === "report") return "report";
+  if (row.report_in) return "report";
   if (row.needs_you && (row.report_round ?? 0) > 0) return "report";
   return "transcript";
 }
@@ -478,6 +480,7 @@ export default {
         const warningColor = paint(api, "text.feedback.warning.base");
         const successColor = paint(api, "text.feedback.success.base");
         const mutedColor = paint(api, "text.muted");
+        const infoColor = paint(api, "text.feedback.info.base") || mutedColor;
         const baseColor = paint(api, "text.base");
 
         const plannerEntry = plannerBySession.get(currentSessionID);
@@ -526,8 +529,14 @@ export default {
 
             {rows.map((row) => {
               const isNeedsYou = !!row.needs_you;
+              const isReportIn = !isNeedsYou && !!row.report_in;
               const dot = isNeedsYou ? "●" : "○";
-              const stateText = isNeedsYou ? "NEEDS YOU" : (row.display || "ACTIVE");
+              const stateText = isNeedsYou
+                ? "NEEDS YOU"
+                : isReportIn
+                  ? "REPORT IN"
+                  : (row.display || "ACTIVE");
+              const stateColor = isNeedsYou ? warningColor : isReportIn ? infoColor : successColor;
               const displayRound = row.report_round || row.round;
               const lineA = padLine(`${dot} ${row.name}`, stateText, 37);
               const lineB = ellipsize(
@@ -550,13 +559,13 @@ export default {
                   }}
                 >
                   <box flexDirection="row">
-                    <text fg={isNeedsYou ? warningColor : mutedColor}>
+                    <text fg={isNeedsYou ? warningColor : isReportIn ? infoColor : mutedColor}>
                       {isNeedsYou ? <b>{dot} </b> : `${dot} `}
                     </text>
                     <text fg={baseColor}>
                       {ellipsize(row.name, 37 - stateText.length - 4)}
                     </text>
-                    <text fg={isNeedsYou ? warningColor : successColor}>
+                    <text fg={stateColor}>
                       {isNeedsYou ? <b>{padLine("", stateText, 37 - row.name.length - 2)}</b> : padLine("", stateText, 37 - row.name.length - 2)}
                     </text>
                   </box>
@@ -687,6 +696,7 @@ export default {
         const warningColor = paint(api, "text.feedback.warning.base");
         const successColor = paint(api, "text.feedback.success.base");
         const mutedColor = paint(api, "text.muted");
+        const infoColor = paint(api, "text.feedback.info.base") || mutedColor;
         const baseColor = paint(api, "text.base");
         const interactiveColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || warningColor;
 
@@ -774,10 +784,11 @@ export default {
             {rows.map((row, i) => {
               const isSelected = (store.fleetSelected ?? 0) === i;
               const isNeedsYou = !!row.needs_you;
+              const isReportIn = !isNeedsYou && !!row.report_in;
               const actor = row.role || "builder";
               const model = parseModel(row.candidate);
               const displayRound = row.report_round || row.round;
-              const state = isNeedsYou ? "NEEDS YOU" : (row.display || "ACTIVE");
+              const state = isNeedsYou ? "NEEDS YOU" : isReportIn ? "REPORT IN" : (row.display || "ACTIVE");
               const nowCol = `${row.waiting || "--"} · ${row.clock || "--"}`;
               const tokensCol = row.tokens || "";
 
@@ -812,7 +823,7 @@ export default {
                   }}
                 >
                   <text
-                    fg={isSelected ? interactiveColor : isNeedsYou ? warningColor : baseColor}
+                    fg={isSelected ? interactiveColor : isNeedsYou ? warningColor : isReportIn ? infoColor : baseColor}
                   >
                     {isSelected ? <b>{`${ROW_MARKER}${line}`}</b> : `${ROW_PREFIX}${line}`}
                   </text>
@@ -856,6 +867,7 @@ export default {
         const warningColor = paint(api, "text.feedback.warning.base");
         const successColor = paint(api, "text.feedback.success.base");
         const mutedColor = paint(api, "text.muted");
+        const infoColor = paint(api, "text.feedback.info.base") || mutedColor;
         const baseColor = paint(api, "text.base");
         const interactiveColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || warningColor;
 
@@ -894,7 +906,8 @@ export default {
         const actor = row.role || "builder";
         const model = parseModel(row.candidate);
         const isNeedsYou = !!row.needs_you;
-        const display = isNeedsYou ? "NEEDS YOU" : (row.display || "ACTIVE");
+        const isReportIn = !isNeedsYou && !!row.report_in;
+        const display = isNeedsYou ? "NEEDS YOU" : isReportIn ? "REPORT IN" : (row.display || "ACTIVE");
 
         // The body scrollbox is the focused renderable (per the plan's
         // <scrollbox focusable focused>), so keys must be handled here too.
@@ -948,7 +961,7 @@ export default {
               <text>
                 <b>{`relevo › fleet › ${name} › r${round}`}</b>
               </text>
-              <text fg={isNeedsYou ? warningColor : successColor}>
+              <text fg={isNeedsYou ? warningColor : isReportIn ? infoColor : successColor}>
                 <b>{display}</b>
               </text>
             </box>
