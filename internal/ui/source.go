@@ -152,7 +152,9 @@ func RunSource(ctx context.Context, src Source, opts Options) error {
 	}
 	model.notice = opts.Notice
 
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
+	// The wheel scrolls the top view; Shift+drag selects text, since mouse
+	// reporting takes over the terminal's own click-drag selection.
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 
 	// Every internal write -- including slog's -- is captured into the
 	// footer and :log while the cockpit runs (§4.4), so nothing can corrupt
