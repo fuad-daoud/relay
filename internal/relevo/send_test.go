@@ -998,6 +998,55 @@ func TestSendBuilderMovesTheCandidateAndPersists(t *testing.T) {
 	}
 }
 
+// TestSendRecordsPickAndPlanInOrderInOneWrite pins #471: a --builder send
+// writes the pick entry and the plan entry in one write, so they land with
+// consecutive seqs in that order, and the binding carries the spawned pid.
+func TestSendRecordsPickAndPlanInOrderInOneWrite(t *testing.T) {
+	rt, fr := switchSetup(t)
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# go"), SendOptions{Builder: testClaudeRef}); err != nil {
+		t.Fatalf("Send --builder: %v", err)
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(fr.handles) != 1 {
+		t.Fatalf("handles = %d, want 1", len(fr.handles))
+	}
+	if b.Builder.PID != fr.handles[0].PID {
+		t.Errorf("Builder.PID = %d, want the spawned %d", b.Builder.PID, fr.handles[0].PID)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	planIdx := -1
+	for i, e := range entries {
+		if e.Round == b.Round && e.Kind == store.KindPlan {
+			planIdx = i
+			break
+		}
+	}
+	if planIdx < 1 {
+		t.Fatalf("no plan entry for round %d after a pick: %+v", b.Round, entries)
+	}
+	pick := entries[planIdx-1]
+	if pick.Kind != store.KindPick {
+		t.Fatalf("entry before the plan = %+v, want the round's pick", pick)
+	}
+	if pick.Round != b.Round {
+		t.Errorf("pick.Round = %d, want %d", pick.Round, b.Round)
+	}
+	if pick.Seq == 0 || entries[planIdx].Seq != pick.Seq+1 {
+		t.Errorf("seqs = pick %d, plan %d; want consecutive", pick.Seq, entries[planIdx].Seq)
+	}
+
+	endProcess(t, rt, b)
+}
+
 // TestSendBuilderRefusedWhileRoundOpen pins §5.2 (b): an open round is
 // refused before anything is staged or spawned.
 func TestSendBuilderRefusedWhileRoundOpen(t *testing.T) {

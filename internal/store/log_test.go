@@ -90,6 +90,124 @@ func TestReadLogRefusesOversizedLogInsteadOfTruncating(t *testing.T) {
 	}
 }
 
+// TestSaveWithLogWritesBindingAndEntriesTogether pins the happy path (#471):
+// the binding and both entries land, the entries keep argument order with
+// consecutive seqs after the seed's, and each gets a TS.
+func TestSaveWithLogWritesBindingAndEntriesTogether(t *testing.T) {
+	s, name := seedBinding(t)
+
+	b, err := s.Load(name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	b.State = StateNeedsYou
+
+	e1 := LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true}
+	e2 := LogEntry{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "done"}
+
+	if err := s.WithLock(func(tx *Tx) error {
+		return tx.SaveWithLog(b, e1, e2)
+	}); err != nil {
+		t.Fatalf("SaveWithLog: %v", err)
+	}
+
+	got, err := s.Load(name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.State != StateNeedsYou {
+		t.Errorf("State = %q, want %q", got.State, StateNeedsYou)
+	}
+
+	entries, err := s.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(entries))
+	}
+	if entries[0].Kind != KindPlan || entries[1].Kind != KindReport {
+		t.Errorf("entries out of order: %+v", entries)
+	}
+	if entries[0].Seq != 1 || entries[1].Seq != 2 {
+		t.Errorf("seqs = %d,%d, want 1,2 (after the seed's 0 entries)", entries[0].Seq, entries[1].Seq)
+	}
+	for i, e := range entries {
+		if e.TS.IsZero() {
+			t.Errorf("entry %d has zero TS", i)
+		}
+	}
+}
+
+// TestSaveWithLogWritesNothingWhenAnEntryFails pins all-or-nothing (#471):
+// the second entry passes the cap, so neither it nor the binding's new state
+// may survive.
+func TestSaveWithLogWritesNothingWhenAnEntryFails(t *testing.T) {
+	s, name := seedBinding(t)
+
+	// Seed the log with one entry below the cap, written through log.jsonl so
+	// importPresent adopts it, exactly as the oversized-log test seeds.
+	entry := LogEntry{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "x", Confirmed: true}
+	raw, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var buf bytes.Buffer
+	for i := 0; i < maxLogEntries-1; i++ {
+		buf.Write(raw)
+		buf.WriteByte('\n')
+	}
+	if err := os.WriteFile(s.logPath(name), buf.Bytes(), bindingFileMode); err != nil {
+		t.Fatalf("seed log: %v", err)
+	}
+	if _, err := s.ReadLog(name); err != nil {
+		t.Fatalf("ReadLog (adopt the seed): %v", err)
+	}
+	seeded, err := s.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(seeded) != maxLogEntries-1 {
+		t.Fatalf("seeded %d entries, want %d", len(seeded), maxLogEntries-1)
+	}
+
+	b, err := s.Load(name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	oldState := b.State
+	b.State = StateNeedsYou
+
+	e1 := LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true}
+	e2 := LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true}
+
+	err = s.WithLock(func(tx *Tx) error {
+		return tx.SaveWithLog(b, e1, e2)
+	})
+	if err == nil {
+		t.Fatal("SaveWithLog: got nil error, want a cap failure")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error = %q, want it to mention the log exceeding the bound", err.Error())
+	}
+
+	got, err := s.Load(name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.State != oldState {
+		t.Errorf("State = %q, want the old %q: the binding must not have been saved", got.State, oldState)
+	}
+
+	entries, err := s.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(entries) != maxLogEntries-1 {
+		t.Errorf("got %d entries, want %d: nothing may have been appended", len(entries), maxLogEntries-1)
+	}
+}
+
 func TestAppendLogTakesLockOnlyOnce(t *testing.T) {
 	s, name := seedBinding(t)
 
