@@ -38,6 +38,8 @@ const verifyPrompt = `Verify round %d of binding %q independently. You are in a 
 Plan:   %s      Report: %s
 Diff:   %s      Gate:   %s
 
+The Diff line is a git command: run it in this worktree to see the round's change, including edits the builder did not commit.
+
 Acceptance: does the tree do what the plan asked, with evidence you checked yourself?
 Code: is the change correct, safe, and maintainable? Do not reject for style.
 Answer as your final message: your findings in markdown, ending with exactly this block:
@@ -47,14 +49,25 @@ verdict: accepted | rejected
 reasons: ["..."]
 ` + "```"
 
+// verifyDiffCommand renders the git diff command handed to a verify reviewer.
+// Both baselineTree and closedTree are tree ids from the round's snapshots;
+// the objects live in the repository's shared object store, so the command runs
+// in the verify worktree, and it shows uncommitted edits the builder left.
+func verifyDiffCommand(baselineTree, closedTree string) string {
+	if baselineTree == "" || closedTree == "" {
+		return "none"
+	}
+	return "git diff " + baselineTree + " " + closedTree
+}
+
 // verifyQuestion renders the reviewer's question. gateLog "" reads "none":
 // a round with no gate has no log to name, and an empty field would read as a
 // path the reviewer should have been given.
-func verifyQuestion(name string, round int, planPath, reportPath, diffPath, gateLog string) string {
+func verifyQuestion(name string, round int, planPath, reportPath, diff, gateLog string) string {
 	if gateLog == "" {
 		gateLog = "none"
 	}
-	return fmt.Sprintf(verifyPrompt, round, name, planPath, reportPath, diffPath, gateLog)
+	return fmt.Sprintf(verifyPrompt, round, name, planPath, reportPath, diff, gateLog)
 }
 
 // parseVerdict decodes the verdict and reasons from a verify consult's
@@ -193,7 +206,7 @@ func removeVerifyWorktree(ctx context.Context, rt Runtime, b store.Binding, roun
 //
 // It runs entirely inside the caller's critical section: the round close
 // already advanced, and the consult record must be written with it.
-func startVerifyConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, round int, gateLog string) (store.Binding, error) {
+func startVerifyConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, round int, diff string, gateLog string) (store.Binding, error) {
 	// skip records why the reviewer did not run and keeps the round closed.
 	skip := func(reason string) (store.Binding, error) {
 		entry := store.LogEntry{
@@ -267,7 +280,7 @@ func startVerifyConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	askPath := rt.Store.AskPath(b.Name, round, id)
 	prompt := verifyQuestion(b.Name, round,
 		rt.Store.PlanPath(b.Name, round), rt.Store.ReportPath(b.Name, round),
-		rt.Store.DiffPath(b.Name, round), gateLog)
+		diff, gateLog)
 	if err := os.WriteFile(askPath, []byte(prompt), 0o644); err != nil {
 		return fail(fmt.Sprintf("stage question at %s: %v", askPath, err))
 	}

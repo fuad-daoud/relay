@@ -136,8 +136,9 @@ func CaptureBaseline(ctx context.Context, rt Runtime, b store.Binding) (tree, he
 }
 
 // CaptureRoundDiff closes out the diff for b's current round: it snapshots the
-// tree again and compares it against b.RoundBaselineTree, writing the patch to
-// rt.Store.DiffPath(b.Name, b.Round) when there is a body worth keeping.
+// tree again and compares it against b.RoundBaselineTree, storing the patch as
+// a round_file row at rt.Store.DiffPath(b.Name, b.Round) when there is a body
+// worth keeping.
 //
 // When no baseline is available, CaptureRoundDiff performs no git calls at
 // all. The check is ordered ahead of the snapshot because the snapshot is the
@@ -150,12 +151,12 @@ func CaptureBaseline(ctx context.Context, rt Runtime, b store.Binding) (tree, he
 // Postconditions: Available is false with a Reason when rt.Git is nil, the
 //
 //	baseline is empty, or git failed. When Available is true,
-//	Stat is exact and Path names an existing file unless the diff
-//	was empty or truncated.
+//	Stat is exact and Path resolves through Store.ReadFile (a round_file
+//	row, no file on disk) unless the diff was empty or truncated.
 //
 //	EndTree is the snapshotted tree whenever the snapshot succeeded, and empty
 //	otherwise. It is set independently of Available.
-func CaptureRoundDiff(ctx context.Context, rt Runtime, b store.Binding) DiffResult {
+func CaptureRoundDiff(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) DiffResult {
 	if rt.Git == nil {
 		return DiffResult{Available: false}
 	}
@@ -188,7 +189,7 @@ func CaptureRoundDiff(ctx context.Context, rt Runtime, b store.Binding) DiffResu
 	}
 
 	patchPath := rt.Store.DiffPath(b.Name, b.Round)
-	if err := os.WriteFile(patchPath, diff.Patch, 0o644); err != nil {
+	if err := tx.PutRoundFile(b.Name, b.Round, patchPath, diff.Patch); err != nil {
 		return DiffResult{Available: false, Reason: brief(err), EndTree: end}
 	}
 

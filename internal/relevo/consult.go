@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -153,12 +152,12 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 				continue
 			}
 
-			// The final message is the findings; relevo writes the file the
-			// planner is sent to, exactly as a pane consult writes its own.
-			if err := os.WriteFile(c.FindingsPath, []byte(text+"\n"), 0o644); err != nil {
+			// The final message is the findings; relevo records it as the
+			// round file the planner is sent to.
+			if err := tx.PutRoundFile(b.Name, c.Round, c.FindingsPath, []byte(text+"\n")); err != nil {
 				var ferr error
 				if b, ferr = finishConsult(ctx, rt, tx, b, i, store.ConsultSilent,
-					"could not write findings: "+brief(err)); ferr != nil {
+					"could not record findings: "+brief(err)); ferr != nil {
 					return b, ferr
 				}
 				continue
@@ -194,7 +193,7 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	if state == store.ConsultDone {
 		entry.Path = c.FindingsPath
-		entry.Payload = fmt.Sprintf("Findings from %s consult %s: %s", c.Role, c.ID, findingsCommand(b.Name, c.Round, c.ID))
+		entry.Payload = fmt.Sprintf("Findings from %s consult %s: %s", c.Role, c.ID, FindingsCommand(b.Name, c.Round, c.ID))
 	} else {
 		// No Path: a silent consult wrote no file, and pointing at one that
 		// does not exist would send the planner to read nothing. The note is
@@ -217,7 +216,7 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 			entry.Verdict = verdict
 			entry.Reasons = reasons
 			entry.Payload = fmt.Sprintf("relevo: round %d · verdict %s · %d reasons · %s",
-				c.Round, verdict, len(reasons), findingsCommand(b.Name, c.Round, c.ID))
+				c.Round, verdict, len(reasons), FindingsCommand(b.Name, c.Round, c.ID))
 			b.LastVerdict = &store.Verdict{
 				Round:    c.Round,
 				Verdict:  verdict,

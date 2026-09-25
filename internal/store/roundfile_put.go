@@ -11,7 +11,8 @@ import (
 // PutRoundFile writes one round file of a live binding directly as a
 // round_file row, with no file on disk. It is PutRoundFile for the handful of
 // artifacts relevo produces without ever writing bytes to the binding
-// directory -- today the drift patch (R1-lite §3.1).
+// directory -- the drift patch, the round's diff patch and a consult's
+// findings.
 //
 // It is a Tx method, so the state lock is already held; it never re-locks.
 //
