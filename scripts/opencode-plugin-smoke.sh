@@ -148,6 +148,13 @@ capture "05e-transcript"
 send Tab; sleep 2.5
 capture "05d-plan"
 
+# Round keys: the page is webshop, which opened on r3. ] moves to r4; then [ [
+# moves back to r2 ([ takes the largest round below the current one).
+type_lit "]"; sleep 1.5
+capture "05g-round-next"
+type_lit "["; sleep 0.5; type_lit "["; sleep 1.5
+capture "05h-round-prev"
+
 # Back to fleet, open ledger (now report_in with real report body)
 send Escape; sleep 0.5
 send C-x; sleep 0.4; send o; sleep 1.0
@@ -158,6 +165,7 @@ capture "05f-ledger-after"
 send Escape; sleep 0.5
 send C-x; sleep 0.4; send o; sleep 1.0
 send Up; sleep 0.3; send Enter; sleep 1.5
+capture "05i-reenter"
 
 # 06-dialog (a)
 send a; sleep 1.5
@@ -451,6 +459,101 @@ check_assertion_31() {
 }
 assert 31 "05d-plan shows the link text then (url) and no ](" check_assertion_31
 
+# 32. The ledger report's markdown table renders as a table: a header row, a
+#     ─┼─ separator and a body row, with no raw pipe left.
+check_assertion_32() {
+  grep -qE "Step +│ +Text +│ +Status" "$OUT/05f-ledger-after.txt" && \
+  grep -q "─┼─" "$OUT/05f-ledger-after.txt" && \
+  grep -qE "1 +│ +sleep 120 +│ +done" "$OUT/05f-ledger-after.txt" && \
+  ! grep -qE "^[[:space:]]*\|" "$OUT/05f-ledger-after.txt"
+}
+assert 32 "05f-ledger-after renders the markdown table" check_assertion_32
+
+# 33. The closing ```relevo block renders styled: a muted header rule, the key
+#     lines, and a blank value as an em dash; no triple backtick is left.
+check_assertion_33() {
+  grep -q "── relevo" "$OUT/05f-ledger-after.txt" && \
+  grep -q "status: done" "$OUT/05f-ledger-after.txt" && \
+  grep -q "halted_at: —" "$OUT/05f-ledger-after.txt" && \
+  ! grep -qF '```' "$OUT/05f-ledger-after.txt"
+}
+assert 33 "05f-ledger-after styles the relevo block" check_assertion_33
+
+# 34. The builder's own transcript text is styled: the new line's markers are
+#     gone and its words show.
+check_assertion_34() {
+  grep -q "Step 1: sleep 120 done" "$OUT/05e-transcript.txt" && \
+  ! grep -qF '**' "$OUT/05e-transcript.txt" && \
+  ! grep -qF '`' "$OUT/05e-transcript.txt"
+}
+assert 34 "05e-transcript styles the builder's markdown text" check_assertion_34
+
+# 35. ] and [ move the page's round and refetch that round's body.
+check_assertion_35() {
+  grep -q "webshop › r4" "$OUT/05g-round-next.txt" && \
+  grep -q "webshop › r2" "$OUT/05h-round-prev.txt" && \
+  grep -q "show webshop --json --plan --round 4" "$LOG" && \
+  grep -q -- "--plan --round 2" "$LOG"
+}
+assert 35 "] and [ switch the round and refetch its body" check_assertion_35
+
+# 36. Re-entering webshop drops the round picked on the earlier visit.
+check_assertion_36() {
+  grep -q "webshop › r3" "$OUT/05i-reenter.txt"
+}
+assert 36 "05i-reenter returns to webshop's route round r3" check_assertion_36
+
+# 37. A PAUSED row with a delivered report shows PAUSED, not REPORT IN, and the
+#     two words carry different colours in the sidebar. Take the last escape
+#     sequence that precedes the word on its line (cut the line at the word
+#     first, so the reset after it does not count); assert only that the two
+#     sequences differ, not what they are.
+check_assertion_37() {
+  local parked_prefix parked_sgr ledger_prefix ledger_sgr
+  grep -qE "parked.*PAUSED" "$OUT/03-fleet.txt" && \
+  ! grep -qE "parked.*REPORT IN" "$OUT/03-fleet.txt" && \
+  parked_prefix="$(grep -a -m1 "PAUSED" "$OUT/02-after-toast.ansi" | sed 's/PAUSED.*//' || true)" && \
+  ledger_prefix="$(grep -a -m1 "REPORT IN" "$OUT/02-after-toast.ansi" | sed 's/REPORT IN.*//' || true)" && \
+  parked_sgr="$(printf '%s' "$parked_prefix" | grep -a -oE $'\x1b\\[[0-9;]*m' | tail -1 || true)" && \
+  ledger_sgr="$(printf '%s' "$ledger_prefix" | grep -a -oE $'\x1b\\[[0-9;]*m' | tail -1 || true)" && \
+  [ -n "$parked_sgr" ] && [ -n "$ledger_sgr" ] && [ "$parked_sgr" != "$ledger_sgr" ]
+}
+assert 37 "03-fleet parked shows PAUSED in a different colour from REPORT IN" check_assertion_37
+
+# 38. Every table line (header, separator, body rows -- the lines carrying │
+#     or ┼) has its first │/┼ at the same character column as every other
+#     such line, and its second │/┼ likewise. A cell that exactly fills its
+#     column must not shift the rest of its row. Character positions, not
+#     byte offsets: │ and ┼ are multi-byte in UTF-8.
+check_assertion_38() {
+  python3 - "$OUT/05f-ledger-after.txt" <<'PYEOF'
+import sys
+
+path = sys.argv[1]
+positions = []
+with open(path, encoding="utf-8") as f:
+    for line in f:
+        line = line.rstrip("\n")
+        if "│" not in line and "┼" not in line:
+            continue
+        cols = [i for i, ch in enumerate(line) if ch in "│┼"]
+        if len(cols) < 2:
+            continue
+        positions.append((cols[0], cols[1]))
+
+if not positions:
+    sys.exit(1)
+
+first_col, second_col = positions[0]
+for first, second in positions:
+    if first != first_col or second != second_col:
+        sys.exit(1)
+
+sys.exit(0)
+PYEOF
+}
+assert 38 "05f-ledger-after keeps every table column aligned" check_assertion_38
+
 # Mouse is not driven here: tmux send-keys cannot deliver SGR mouse events
 # reliably, so the clickable-row behaviour (onMouseDown on the sidebar and
 # fleet rows) is verified by inspection of tui.tsx, not by this smoke.
@@ -461,5 +564,5 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-echo "Smoke test PASSED (all 31 assertions passed)"
+echo "Smoke test PASSED (all 38 assertions passed)"
 exit 0

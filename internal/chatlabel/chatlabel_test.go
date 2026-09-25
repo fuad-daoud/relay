@@ -2,6 +2,7 @@ package chatlabel
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -155,6 +156,14 @@ func TestOpencode(t *testing.T) {
 	}
 }
 
+// TestOpencodeLegacyQuery pins the pre-2.0 query (#496): it reads the legacy
+// session table, and it doubles the id's single quotes.
+func TestOpencodeLegacyQuery(t *testing.T) {
+	if got, want := OpencodeLegacyQuery("ses_a'b"), "select title from session where id = 'ses_a''b'"; got != want {
+		t.Errorf("OpencodeLegacyQuery = %q, want %q", got, want)
+	}
+}
+
 // fakeExec records every invocation and answers with fixed output, so a test
 // can prove what a Resolver asked sqlite3 for.
 type fakeExec struct {
@@ -205,6 +214,40 @@ func TestResolveOpencode(t *testing.T) {
 	}
 }
 
+// fallbackExec fails its first Run and answers the second, so a test can
+// prove Resolve falls back to OpencodeLegacyQuery when session_v2 is missing.
+type fallbackExec struct {
+	calls [][]string
+	out   []byte
+}
+
+func (f *fallbackExec) Run(_ context.Context, bin string, args ...string) ([]byte, error) {
+	f.calls = append(f.calls, append([]string{bin}, args...))
+	if len(f.calls) == 1 {
+		return nil, errors.New("no such table: session_v2")
+	}
+	return f.out, nil
+}
+
+// TestResolveOpencodeLegacyFallback pins the pre-2.0 path (#496): a first
+// query that errors runs the legacy query, whose output is the label.
+func TestResolveOpencodeLegacyFallback(t *testing.T) {
+	fake := &fallbackExec{out: []byte("Pre-2 title\n")}
+	res := Resolver{Exec: fake, OpencodeDB: "/tmp/opencode.db"}
+
+	label := res.Resolve(context.Background(), "opencode", "ses_old", "")
+	if label.Text != "Pre-2 title" {
+		t.Errorf("Text = %q, want %q", label.Text, "Pre-2 title")
+	}
+	if len(fake.calls) != 2 {
+		t.Fatalf("Exec ran %d times, want 2", len(fake.calls))
+	}
+	wantSecond := []string{"sqlite3", "-readonly", "/tmp/opencode.db", OpencodeLegacyQuery("ses_old")}
+	if !slices.Equal(fake.calls[1], wantSecond) {
+		t.Errorf("second Exec ran %q, want %q", fake.calls[1], wantSecond)
+	}
+}
+
 // cliExec is usage.Exec over the real sqlite3 binary, so a test can read a
 // fixture database the way the daemon does.
 type cliExec struct{}
@@ -248,6 +291,21 @@ func TestResolveOpencodeV2Title(t *testing.T) {
 	}
 	if got := res.Resolve(context.Background(), "opencode", "ses_legacyonly", ""); got.Text != "Legacy-only title" {
 		t.Errorf("legacy title = %q, want %q", got.Text, "Legacy-only title")
+	}
+}
+
+// TestResolveOpencodePre2 proves the fallback works against a real
+// pre-2.0-shaped database: a database with no session_v2 table at all still
+// gives the session's title from the legacy session table (#496).
+func TestResolveOpencodePre2(t *testing.T) {
+	db := opencodeFixture(t,
+		"create table session (id text, title text)",
+		"insert into session values ('ses_old', 'Pre-2 title')",
+	)
+	res := Resolver{Exec: cliExec{}, OpencodeDB: db}
+
+	if got := res.Resolve(context.Background(), "opencode", "ses_old", ""); got.Text != "Pre-2 title" {
+		t.Errorf("pre-2.0 title = %q, want %q", got.Text, "Pre-2 title")
 	}
 }
 

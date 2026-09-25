@@ -80,20 +80,29 @@ func opencodeServiceCheck(ctx context.Context, env Env) Check {
 	return Check{Group: "opencode", Name: "service", Severity: SevOK, Detail: detail}
 }
 
-// opencodeSessionCount reads the session table's row count from dbPath
-// through sqlite3 -readonly, the same tool the usage checks require on
-// PATH. false means the count could not be read (no sqlite3, no such
-// table, unparseable output) -- never an error the caller must handle.
+// opencodeSessionCount reads the session count from dbPath through sqlite3
+// -readonly, the same tool the usage checks require on PATH. OpenCode 2.0.14
+// keeps its sessions in session_v2, and only pre-2.0 databases have the legacy
+// session table, so session_v2 is counted first and session is the fallback.
+// The first query that succeeds and parses as an integer gives the count.
+// false means the count could not be read (no sqlite3, no such table,
+// unparseable output) -- never an error the caller must handle.
 func opencodeSessionCount(ctx context.Context, env Env, dbPath string) (int, bool) {
-	out, err := env.Command(ctx, "sqlite3", "-readonly", dbPath, "select count(*) from session")
-	if err != nil {
-		return 0, false
+	for _, query := range []string{
+		"select count(*) from session_v2",
+		"select count(*) from session",
+	} {
+		out, err := env.Command(ctx, "sqlite3", "-readonly", dbPath, query)
+		if err != nil {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+		if err != nil {
+			continue
+		}
+		return n, true
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil {
-		return 0, false
-	}
-	return n, true
+	return 0, false
 }
 
 // opencodeAllowlistCheck reports whether opencode's own config lets a headless

@@ -287,6 +287,41 @@ function initialTab(row: any): "report" | "transcript" {
   return "transcript";
 }
 
+// §3.2: `word` is the state word a row shows ("" for a row with no word) and
+// `tone` picks the colour. The word order is the Claude status line's: NEEDS
+// YOU, else a relevo state word (HELD, PAUSED, DONE), else REPORT IN, else no
+// word at all for ACTIVE or empty.
+type StateWord = { word: string; tone: "needs" | "held" | "quiet" | "report" | "none" };
+
+// §4.1: one rule for a row's state word and its colour, used by the sidebar,
+// the fleet page and the binding header.
+function stateWord(row: any): StateWord {
+  if (row?.needs_you) return { word: "NEEDS YOU", tone: "needs" };
+  if (row?.display && row.display !== "ACTIVE") {
+    return { word: row.display, tone: row.display === "HELD" ? "held" : "quiet" };
+  }
+  if (row?.report_in) return { word: "REPORT IN", tone: "report" };
+  return { word: "", tone: "none" };
+}
+
+// §4.1: toneColor maps a StateWord tone to a theme colour. The quiet choice
+// matches the cockpit, where PAUSED and DONE share the done style
+// (internal/ui/styles.go stateStyle).
+function toneColor(api: any, tone: StateWord["tone"]): any {
+  switch (tone) {
+    case "needs":
+      return paint(api, "text.feedback.warning.base");
+    case "held":
+      return paint(api, "text.feedback.warning.base");
+    case "report":
+      return paint(api, "text.feedback.info.base") || paint(api, "text.muted");
+    case "quiet":
+      return paint(api, "text.muted");
+    default:
+      return paint(api, "text.feedback.success.base");
+  }
+}
+
 // One marker column for the fleet rows: the selected row's marker and the
 // blank prefix of an unselected row are the same width, so every column lines
 // up -- with the NAME...TOKENS header, which carries the same blank prefix.
@@ -398,6 +433,7 @@ export default {
         fleetSelected: 0,
         bindingTab: "plan",
         bindingRound: 0,
+        bindingRoundFor: "",
       },
     });
 
@@ -417,6 +453,22 @@ export default {
         title: "relevo",
         message: line,
         duration: 5000,
+      });
+    };
+
+    // §4.2: every way into a binding page opens it the same way. It takes a
+    // status row and a round number: the tab from initialTab, no round picked
+    // on a previous visit, then the route's round.
+    const openBinding = (row: any, round: number) => {
+      setStore((s: any) => {
+        s.bindingTab = initialTab(row);
+        s.bindingRound = 0;
+        s.bindingRoundFor = "";
+      });
+      api.ui.router.navigate({
+        type: "plugin",
+        name: "relevo.binding",
+        params: { name: row.name, round },
       });
     };
 
@@ -572,18 +624,14 @@ export default {
 
             {rows.map((row) => {
               const isNeedsYou = !!row.needs_you;
-              const isReportIn = !isNeedsYou && !!row.report_in;
+              const sw = stateWord(row);
               const dot = isNeedsYou ? "●" : "○";
-              // §2: NEEDS YOU, else a relevo state word (PAUSED, DONE), else
-              // REPORT IN, else no word at all for ACTIVE or empty.
-              const stateText = isNeedsYou
-                ? "NEEDS YOU"
-                : row.display && row.display !== "ACTIVE"
-                  ? row.display
-                  : isReportIn
-                    ? "REPORT IN"
-                    : "";
-              const stateColor = isNeedsYou ? warningColor : isReportIn ? infoColor : successColor;
+              // §4.1: one rule for the state word and its colour; the dot
+              // keeps the warning/info/muted colour of the word's tone.
+              const stateText = sw.word;
+              const stateColor = toneColor(api, sw.tone);
+              const dotColor =
+                sw.tone === "needs" ? warningColor : sw.tone === "report" ? infoColor : mutedColor;
               const displayRound = row.report_round || row.round;
               const lineA = padLine(`${dot} ${row.name}`, stateText, 37);
               const lineB = ellipsize(
@@ -594,19 +642,10 @@ export default {
               return (
                 <box
                   flexDirection="column"
-                  onMouseDown={() => {
-                    setStore((s: any) => {
-                      s.bindingTab = initialTab(row);
-                    });
-                    api.ui.router.navigate({
-                      type: "plugin",
-                      name: "relevo.binding",
-                      params: { name: row.name, round: displayRound },
-                    });
-                  }}
+                  onMouseDown={() => openBinding(row, displayRound)}
                 >
                   <box flexDirection="row">
-                    <text fg={isNeedsYou ? warningColor : isReportIn ? infoColor : mutedColor}>
+                    <text fg={dotColor}>
                       {isNeedsYou ? <b>{dot} </b> : `${dot} `}
                     </text>
                     <text fg={baseColor}>
@@ -694,14 +733,7 @@ export default {
                     return ta - tb;
                   });
                   const target = needs[0];
-                  setStore((s: any) => {
-                    s.bindingTab = initialTab(target);
-                  });
-                  api.ui.router.navigate({
-                    type: "plugin",
-                    name: "relevo.binding",
-                    params: { name: target.name, round: target.report_round || target.round },
-                  });
+                  openBinding(target, target.report_round || target.round);
                 },
               },
               {
@@ -781,15 +813,7 @@ export default {
                 e.preventDefault();
                 const sel = rows[store.fleetSelected ?? 0];
                 if (sel) {
-                  const displayRound = sel.report_round || sel.round;
-                  setStore((s: any) => {
-                    s.bindingTab = initialTab(sel);
-                  });
-                  api.ui.router.navigate({
-                    type: "plugin",
-                    name: "relevo.binding",
-                    params: { name: sel.name, round: displayRound },
-                  });
+                  openBinding(sel, sel.report_round || sel.round);
                 }
               } else if (key === "a") {
                 e.preventDefault();
@@ -830,12 +854,11 @@ export default {
 
             {rows.map((row, i) => {
               const isSelected = (store.fleetSelected ?? 0) === i;
-              const isNeedsYou = !!row.needs_you;
-              const isReportIn = !isNeedsYou && !!row.report_in;
+              const sw = stateWord(row);
               const actor = row.role || "builder";
               const model = parseModel(row.candidate);
               const displayRound = row.report_round || row.round;
-              const state = isNeedsYou ? "NEEDS YOU" : isReportIn ? "REPORT IN" : (row.display || "ACTIVE");
+              const state = sw.word || "ACTIVE";
               const nowCol = `${row.waiting || "--"} · ${row.clock || "--"}`;
               const tokensCol = row.tokens || "";
 
@@ -854,14 +877,7 @@ export default {
                   backgroundColor={isSelected ? paint(api, "background.action") : undefined}
                   onMouseDown={() => {
                     if (isSelected) {
-                      setStore((s: any) => {
-                        s.bindingTab = initialTab(row);
-                      });
-                      api.ui.router.navigate({
-                        type: "plugin",
-                        name: "relevo.binding",
-                        params: { name: row.name, round: displayRound },
-                      });
+                      openBinding(row, displayRound);
                     } else {
                       setStore((s: any) => {
                         s.fleetSelected = i;
@@ -870,7 +886,7 @@ export default {
                   }}
                 >
                   <text
-                    fg={isSelected ? interactiveColor : isNeedsYou ? warningColor : isReportIn ? infoColor : mutedColor}
+                    fg={isSelected ? interactiveColor : sw.tone === "needs" ? warningColor : sw.tone === "report" ? infoColor : mutedColor}
                   >
                     {isSelected ? <b>{`${ROW_MARKER}${line}`}</b> : `${ROW_PREFIX}${line}`}
                   </text>
@@ -964,38 +980,252 @@ export default {
           });
         };
 
-        const renderMarkdownLines = (text: string) => {
-          const lines = text.split("\n");
-          let inFencedBlock = false;
-          return lines.map((line) => {
-            if (line.trim().startsWith("```")) {
-              inFencedBlock = !inFencedBlock;
+        // §4.4: turn markdown text into styled line boxes. The plan and report
+        // tabs call it with no `special`; the transcript tab passes
+        // transcriptSpecial. A table consumes several lines, so this is an
+        // index loop: a line the renderer hides contributes nothing.
+        const isTableRow = (line: string) => line.trim().startsWith("|");
+
+        const isTableSeparator = (line: string) =>
+          /\|/.test(line) &&
+          /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(line);
+
+        // splitRow splits a table row into cells: one leading `|` and one
+        // trailing unescaped `|` go, a `|` that is escaped or inside a backtick
+        // span does not split, and `\|` unescapes to `|`.
+        const splitRow = (line: string): string[] => {
+          let s = line.trim();
+          if (s.startsWith("|")) s = s.slice(1);
+          if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
+          const cells: string[] = [];
+          let cur = "";
+          let inCode = false;
+          for (let k = 0; k < s.length; k++) {
+            const ch = s[k];
+            if (ch === "\\" && s[k + 1] === "|") {
+              cur += "|";
+              k++;
+              continue;
+            }
+            if (ch === "`") {
+              inCode = !inCode;
+              cur += ch;
+              continue;
+            }
+            if (ch === "|" && !inCode) {
+              cells.push(cur.trim());
+              cur = "";
+              continue;
+            }
+            cur += ch;
+          }
+          cells.push(cur.trim());
+          return cells;
+        };
+
+        // visible(cell) is the text a cell shows once its inline markup is
+        // removed: for the widths and for a cell that does not fit.
+        const visible = (cell: string): string =>
+          cell
+            .replace(/`([^`]*)`/g, "$1")
+            .replace(/\*\*([^*]*)\*\*/g, "$1")
+            .replace(/\[([^\]]*)\]\(([^)]*)\)/g, "$1 ($2)");
+
+        // §4.5: renderTable parses the collected table lines and draws a header
+        // row, a separator and the body rows; the table has no outer border.
+        const renderTable = (tableLines: string[]) => {
+          const rows = tableLines.filter((l) => !isTableSeparator(l)).map(splitRow);
+          const cols = rows.reduce((m, r) => Math.max(m, r.length), 0);
+          if (cols === 0) return [];
+          for (const r of rows) {
+            while (r.length < cols) r.push("");
+          }
+          const header = rows[0] || [];
+          const body = rows.slice(1);
+
+          const widths: number[] = [];
+          for (let c = 0; c < cols; c++) {
+            let w = 0;
+            for (const r of rows) {
+              w = Math.max(w, visible(r[c] || "").length);
+            }
+            widths.push(w);
+          }
+          const tableWidth = () => widths.reduce((a, b) => a + b, 0) + 3 * (cols - 1);
+          // Fit: shave the widest column, leftmost first among equals, until
+          // the table fits the rule width or no column can shrink further.
+          while (tableWidth() > ruleWidth && Math.max(...widths) > 3) {
+            let widest = 0;
+            for (let c = 1; c < cols; c++) {
+              if (widths[c] > widths[widest]) widest = c;
+            }
+            widths[widest] -= 1;
+          }
+
+          const cellText = (cell: string, width: number) =>
+            ellipsize(visible(cell), width).padEnd(width, " ");
+
+          const renderCell = (cell: string, width: number) => {
+            const vis = visible(cell);
+            if (vis.length <= width) {
+              const pad = width - vis.length;
               return (
-                <box flexDirection="row">
-                  <text fg={mutedColor}>{line || " "}</text>
-                </box>
+                <>
+                  {renderInline(cell)}
+                  {pad > 0 ? <text fg={baseColor}>{" ".repeat(pad)}</text> : null}
+                </>
               );
             }
-            if (inFencedBlock) {
-              return (
-                <box flexDirection="row">
-                  <text fg={codeColor}>{line || " "}</text>
-                </box>
-              );
+            return <text fg={baseColor}>{cellText(cell, width)}</text>;
+          };
+
+          const out: any[] = [];
+          out.push(
+            <box flexDirection="row">
+              {widths.map((w, c) => (
+                <>
+                  {c > 0 ? <text fg={mutedColor}> │ </text> : null}
+                  {w > 0 ? (
+                    <text fg={baseColor}>
+                      <b>{cellText(header[c] || "", w)}</b>
+                    </text>
+                  ) : null}
+                </>
+              ))}
+            </box>,
+          );
+          // An empty <text> node is one OpenTUI draws a column wide; a single
+          // zero-width column makes this line the empty string, so emit the
+          // node only when the line is not.
+          const separator = widths.map((w) => "─".repeat(w)).join("─┼─");
+          out.push(
+            <box flexDirection="row">
+              {separator !== "" ? <text fg={mutedColor}>{separator}</text> : null}
+            </box>,
+          );
+          for (const r of body) {
+            out.push(
+              <box flexDirection="row">
+                {widths.map((w, c) => (
+                  <>
+                    {c > 0 ? <text fg={mutedColor}> │ </text> : null}
+                    {renderCell(r[c] || "", w)}
+                  </>
+                ))}
+              </box>,
+            );
+          }
+          return out;
+        };
+
+        // relevoLine styles one line of the closing ```relevo block: a muted
+        // key, then its value; a blank value reads as the muted em dash.
+        const relevoLine = (line: string) => {
+          const m = line.match(/^\s*([A-Za-z_][\w-]*):\s?(.*)$/);
+          if (!m) {
+            return (
+              <box flexDirection="row">
+                <text fg={codeColor}>{line === "" ? " " : "  " + line}</text>
+              </box>
+            );
+          }
+          const key = m[1];
+          const value = m[2].trim();
+          const blank = value === "" || value === '""' || value === "[]";
+          let valueColor = baseColor;
+          if (key === "status") {
+            if (value === "done") valueColor = successColor;
+            else if (value === "halted" || value === "blocked") valueColor = warningColor;
+          }
+          return (
+            <box flexDirection="row">
+              <text fg={mutedColor}>{`  ${key}:`}</text>
+              {blank ? (
+                <text fg={mutedColor}> —</text>
+              ) : (
+                <text fg={valueColor}>{` ${value}`}</text>
+              )}
+            </box>
+          );
+        };
+
+        const renderMarkdownLines = (text: string, special?: (line: string) => any) => {
+          const lines = text.split("\n");
+          const out: any[] = [];
+          let inFence = false;
+          let fenceLang = "";
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (special) {
+              const styled = special(line);
+              if (styled !== null) {
+                out.push(styled);
+                continue;
+              }
+            }
+            const fenceMatch = line.match(/^\s*```(\S*)\s*$/);
+            if (fenceMatch) {
+              if (!inFence) {
+                inFence = true;
+                fenceLang = fenceMatch[1] || "";
+                if (fenceLang === "relevo") {
+                  out.push(
+                    <box flexDirection="row">
+                      <text fg={mutedColor}>
+                        {"── relevo " + "─".repeat(Math.max(0, ruleWidth - 10))}
+                      </text>
+                    </box>,
+                  );
+                } else if (fenceLang !== "") {
+                  out.push(
+                    <box flexDirection="row">
+                      <text fg={mutedColor}>{fenceLang}</text>
+                    </box>,
+                  );
+                }
+              } else {
+                inFence = false;
+                fenceLang = "";
+              }
+              continue;
+            }
+            if (inFence) {
+              if (fenceLang === "relevo") {
+                out.push(relevoLine(line));
+              } else {
+                out.push(
+                  <box flexDirection="row">
+                    <text fg={codeColor}>{line === "" ? " " : "  " + line}</text>
+                  </box>,
+                );
+              }
+              continue;
+            }
+            if (isTableRow(line) && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+              const collected: string[] = [];
+              let j = i;
+              while (j < lines.length && isTableRow(lines[j])) {
+                collected.push(lines[j]);
+                j++;
+              }
+              out.push(renderTable(collected));
+              i = j - 1;
+              continue;
             }
             if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
-              return (
+              out.push(
                 <box flexDirection="row">
                   <text fg={mutedColor}>{"─".repeat(ruleWidth)}</text>
-                </box>
+                </box>,
               );
+              continue;
             }
             const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
             if (headingMatch) {
               const level = headingMatch[1].length;
               const headingText = headingMatch[2] || " ";
               const headingColor = level <= 2 ? accentColor : baseColor;
-              return (
+              out.push(
                 <box flexDirection="row">
                   <text fg={headingColor}>
                     {level === 1 ? (
@@ -1006,43 +1236,50 @@ export default {
                       <b>{headingText}</b>
                     )}
                   </text>
-                </box>
+                </box>,
               );
+              continue;
             }
             if (/^\s*>/.test(line)) {
-              return (
+              out.push(
                 <box flexDirection="row">
                   <text fg={mutedColor}>{line || " "}</text>
-                </box>
+                </box>,
               );
+              continue;
             }
             const listMatch = line.match(/^(\s*(?:[-*]|\d+\.))(\s+.*|$)/);
             if (listMatch) {
               const marker = listMatch[1];
               const rest = listMatch[2] || "";
-              return (
+              out.push(
                 <box flexDirection="row">
                   <text fg={accentColor}>{marker}</text>
                   {renderInline(rest)}
-                </box>
+                </box>,
               );
+              continue;
             }
             if (line === "") {
-              return (
+              out.push(
                 <box flexDirection="row">
                   <text fg={baseColor}> </text>
-                </box>
+                </box>,
               );
+              continue;
             }
-            return (
+            out.push(
               <box flexDirection="row">
                 {renderInline(line)}
-              </box>
+              </box>,
             );
-          });
+          }
+          return out;
         };
 
-        const renderTranscriptLine = (line: string) => {
+        // §4.6: the transcript's four styled branches; any other line returns
+        // null and goes on to the markdown classifier.
+        const transcriptSpecial = (line: string) => {
           const toolMatch = line.match(/^(\s*●\s+\S+)(.*)$/);
           if (toolMatch) {
             return (
@@ -1076,11 +1313,7 @@ export default {
               </box>
             );
           }
-          return (
-            <box flexDirection="row">
-              <text fg={baseColor}>{line || " "}</text>
-            </box>
-          );
+          return null;
         };
 
         const renderLogLine = (line: string) => {
@@ -1141,8 +1374,28 @@ export default {
         }
 
         const row = (currentDoc?.rows || []).find((r: any) => r.name === name) || {};
-        const round = params.round !== undefined ? params.round : (row.report_round || row.round || 1);
+        // §4.3: a round picked on this binding wins; otherwise the route's
+        // round, then the row's report round, round or 1.
+        const round =
+          store.bindingRoundFor === name && (store.bindingRound ?? 0) > 0
+            ? store.bindingRound
+            : params.round !== undefined
+              ? params.round
+              : (row.report_round || row.round || 1);
         currentRouteParams = { name, round };
+
+        // §4.3: selecting a round stores it against this binding; `[`, `]` and
+        // a round label click all use it.
+        const selectRound = (r: number) => {
+          setStore((s: any) => {
+            s.bindingRound = r;
+            s.bindingRoundFor = name;
+          });
+        };
+
+        // OpenTUI may report `[` only in the key's sequence and not in its
+        // name, so match either.
+        const isKey = (e: any, ch: string) => e?.name === ch || e?.sequence === ch || e?.raw === ch;
 
         const tabs = ["plan", "report", "diff", "log", "transcript"];
         const currentTab = store.bindingTab || "plan";
@@ -1164,17 +1417,9 @@ export default {
 
         const actor = row.role || "builder";
         const model = parseModel(row.candidate);
-        const isNeedsYou = !!row.needs_you;
-        const isReportIn = !isNeedsYou && !!row.report_in;
-        // §2: NEEDS YOU; else a relevo state word (PAUSED, DONE); else REPORT
-        // IN; else no word for ACTIVE.
-        const display = isNeedsYou
-          ? "NEEDS YOU"
-          : row.display && row.display !== "ACTIVE"
-            ? row.display
-            : isReportIn
-              ? "REPORT IN"
-              : "";
+        // §4.1: one rule for the header's word and its colour.
+        const sw = stateWord(row);
+        const display = sw.word;
 
         // The body scrollbox is the focused renderable (per the plan's
         // <scrollbox focusable focused>), so keys must be handled here too.
@@ -1187,25 +1432,23 @@ export default {
             setStore((s: any) => {
               s.bindingTab = tabs[nextIdx];
             });
-          } else if (key === "[") {
-            e.preventDefault();
-            const curRnd = currentRouteParams.round || round;
-            const idx = rounds.indexOf(curRnd);
-            if (idx > 0) {
-              currentRouteParams.round = rounds[idx - 1];
-              setStore((s: any) => {
-                s.bindingRound = rounds[idx - 1];
-              });
+          } else if (isKey(e, "[")) {
+            let prev: number | undefined;
+            for (const r of rounds) {
+              if (r < round && (prev === undefined || r > prev)) prev = r;
             }
-          } else if (key === "]") {
-            e.preventDefault();
-            const curRnd = currentRouteParams.round || round;
-            const idx = rounds.indexOf(curRnd);
-            if (idx >= 0 && idx < rounds.length - 1) {
-              currentRouteParams.round = rounds[idx + 1];
-              setStore((s: any) => {
-                s.bindingRound = rounds[idx + 1];
-              });
+            if (prev !== undefined) {
+              e.preventDefault();
+              selectRound(prev);
+            }
+          } else if (isKey(e, "]")) {
+            let next: number | undefined;
+            for (const r of rounds) {
+              if (r > round && (next === undefined || r < next)) next = r;
+            }
+            if (next !== undefined) {
+              e.preventDefault();
+              selectRound(next);
             }
           } else if (key === "a") {
             e.preventDefault();
@@ -1228,7 +1471,7 @@ export default {
               <text>
                 <b>{`relevo › fleet › ${name} › r${round}`}</b>
               </text>
-              <text fg={isNeedsYou ? warningColor : isReportIn ? infoColor : successColor}>
+              <text fg={toneColor(api, sw.tone)}>
                 <b>{display}</b>
               </text>
             </box>
@@ -1257,7 +1500,10 @@ export default {
               {rounds.map((rNum: number) => {
                 const isSelected = rNum === round;
                 return (
-                  <text fg={isSelected ? interactiveColor : mutedColor}>
+                  <text
+                    fg={isSelected ? interactiveColor : mutedColor}
+                    onMouseDown={() => selectRound(rNum)}
+                  >
                     {isSelected ? <b>{`r${rNum}`}</b> : `r${rNum}`}
                   </text>
                 );
@@ -1284,7 +1530,7 @@ export default {
                   ) : currentTab === "transcript" ? (
                     tabContent ? (
                       <box flexDirection="column">
-                        {tabContent.split("\n").map(renderTranscriptLine)}
+                        {renderMarkdownLines(tabContent, transcriptSpecial)}
                       </box>
                     ) : (
                       <text>{`(no ${currentTab})`}</text>

@@ -23,6 +23,15 @@ func OpencodeQuery(sessionID string) string {
 		" and not exists (select 1 from session_v2 where id = '" + id + "')"
 }
 
+// OpencodeLegacyQuery is the pre-2.0 fallback for OpencodeQuery: a database
+// that predates session_v2 keeps its sessions (and titles) in the legacy
+// session table, so the query names that table. The id's single quotes are
+// doubled, the SQL string-literal escape.
+func OpencodeLegacyQuery(sessionID string) string {
+	id := strings.ReplaceAll(sessionID, "'", "''")
+	return "select title from session where id = '" + id + "'"
+}
+
 // Opencode builds the Label for the stdout of OpencodeQuery: its first line,
 // trimmed and cleaned, is the title. Empty output, or a blank first line, gives
 // the empty Label; an opencode title carries no link.

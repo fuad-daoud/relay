@@ -54,6 +54,63 @@ func TestOpencodeServiceCheck(t *testing.T) {
 		}
 	})
 
+	t.Run("session_v2 count wins and is queried first", func(t *testing.T) {
+		var queries []string
+		env := &fakeEnv{
+			homeDir:       "/fake/home",
+			existingFiles: map[string]bool{configSvcPath: true, dbPath: true},
+			fileContents:  map[string]string{configSvcPath: `{"url":"http://127.0.0.1:4000"}`},
+			commandFn: func(bin string, args ...string) ([]byte, error) {
+				query := args[len(args)-1]
+				queries = append(queries, query)
+				if strings.Contains(query, "session_v2") {
+					return []byte("5\n"), nil
+				}
+				return nil, errors.New("no such table: session")
+			},
+		}
+		c := opencodeServiceCheck(context.Background(), env)
+		if !strings.Contains(c.Detail, "5 session(s)") {
+			t.Errorf("Detail = %q, want the session_v2 count", c.Detail)
+		}
+		if len(queries) == 0 || !strings.Contains(queries[0], "session_v2") {
+			t.Errorf("queries = %q, want the session_v2 query first", queries)
+		}
+	})
+
+	t.Run("legacy session table is the fallback", func(t *testing.T) {
+		env := &fakeEnv{
+			homeDir:       "/fake/home",
+			existingFiles: map[string]bool{configSvcPath: true, dbPath: true},
+			fileContents:  map[string]string{configSvcPath: `{"url":"http://127.0.0.1:4000"}`},
+			commandFn: func(bin string, args ...string) ([]byte, error) {
+				if strings.Contains(args[len(args)-1], "session_v2") {
+					return nil, errors.New("no such table: session_v2")
+				}
+				return []byte("2\n"), nil
+			},
+		}
+		c := opencodeServiceCheck(context.Background(), env)
+		if !strings.Contains(c.Detail, "2 session(s)") {
+			t.Errorf("Detail = %q, want the legacy session count", c.Detail)
+		}
+	})
+
+	t.Run("both queries failing leaves no count", func(t *testing.T) {
+		env := &fakeEnv{
+			homeDir:       "/fake/home",
+			existingFiles: map[string]bool{configSvcPath: true, dbPath: true},
+			fileContents:  map[string]string{configSvcPath: `{"url":"http://127.0.0.1:4000"}`},
+			commandFn: func(bin string, args ...string) ([]byte, error) {
+				return nil, errors.New("sqlite3: not found")
+			},
+		}
+		c := opencodeServiceCheck(context.Background(), env)
+		if strings.Contains(c.Detail, "session(s)") {
+			t.Errorf("Detail = %q, want no count when both queries fail", c.Detail)
+		}
+	})
+
 	t.Run("no opencode.db leaves only the base note", func(t *testing.T) {
 		env := &fakeEnv{
 			homeDir:       "/fake/home",
