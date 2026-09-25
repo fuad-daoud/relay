@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
@@ -61,9 +63,11 @@ func bodyOf(t tab, c tabContent, headless bool) string {
 	if !c.loaded {
 		return "loading…"
 	}
+	c.body = sanitizeText(c.body)
+	c.empty = sanitizeText(c.empty)
 	st := styleFor(c)
 	if c.err != nil {
-		return st.Render("error: " + c.err.Error())
+		return st.Render("error: " + sanitizeText(c.err.Error()))
 	}
 	if c.empty != "" {
 		return st.Render(c.empty) // prose, NOT styled as an error
@@ -90,4 +94,27 @@ func wrapBody(body string, width int) string {
 		return body
 	}
 	return lipgloss.NewStyle().Width(width).Render(body)
+}
+
+// sanitizeText makes untrusted text safe to draw. It is called on raw text
+// before any styling, so the ANSI sequences relevo itself adds afterwards are
+// untouched.
+func sanitizeText(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n':
+			b.WriteRune('\n')
+		case r == '\r':
+			// \r\n becomes \n. A lone \r is dropped.
+		case r == '\t':
+			b.WriteString("    ")
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || r == utf8.RuneError:
+			b.WriteRune('\uFFFD')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
