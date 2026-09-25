@@ -26,6 +26,9 @@ var ErrBuilderAlive = errors.New("builder is still alive; rebinding would abando
 // prefix and exit 1, whose text is the fix.
 var ErrNoPlannerSession = errors.New(`no relevo planner for this session. Run "relevo planner init" once here, or enable the relevo plugin (relevo doctor).`)
 
+// ErrGitRequired reports a bind that needs a worktree with no git available.
+var ErrGitRequired = errors.New("relevo bind needs git; pass --cwd to bind a tree yourself")
+
 // resolveVerbPlanner is how bind, add, fork and ask get their planner (§4.3):
 // flag > env > host > session, through the registry Runtime.Planners names.
 // ref is the caller's --planner value; "" resolves from the environment, the
