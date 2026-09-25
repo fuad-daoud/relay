@@ -533,13 +533,6 @@ func TestSendKillsTheBuilderWhenTheSendFailsAfterSpawn(t *testing.T) {
 			t.Errorf("log has a plan entry for round 1, want none: %+v", e)
 		}
 	}
-	logBytes, err := os.ReadFile(rt.Store.BuilderLogPath("webshop", 1))
-	if err != nil {
-		t.Fatalf("read builder log: %v", err)
-	}
-	if !strings.Contains(string(logBytes), "send failed after spawn; builder stopped") {
-		t.Errorf("builder log = %q, want it to contain the stop marker", string(logBytes))
-	}
 }
 
 // TestSendRefusesWhileTheRoundsScopeIsActive pins #445: when the round's

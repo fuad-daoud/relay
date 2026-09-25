@@ -180,9 +180,12 @@ func (s *Store) DonePath(name string, round int) string {
 	return s.roundFile(name, round, "done", "")
 }
 
-// BuilderLogPath is where a headless builder's stderr and the rendered stream (#168) for a round
-// are appended (#99). A round file like the plan and the report, so fork
-// copies it with the history and gc archives it with the directory.
+// BuilderLogPath is the builder log of a round from before builder-log round 2
+// (stderr plus the rendered stream). New rounds have none: their stderr goes
+// into the stream, and readers render it (relevo.RoundTranscript). Kept for
+// history and for a round in flight across the upgrade.
+// A round file like the plan and the report, so fork copies it with the
+// history and gc archives it with the directory.
 // Layout: <binding dir>/NNN-builder.log
 func (s *Store) BuilderLogPath(name string, round int) string {
 	return s.roundFile(name, round, "builder", ".log")
@@ -196,6 +199,14 @@ func (s *Store) BuilderLogPath(name string, round int) string {
 // Layout: <binding dir>/NNN-builder.jsonl
 func (s *Store) BuilderStreamPath(name string, round int) string {
 	return s.roundFile(name, round, "builder", ".jsonl")
+}
+
+// BuilderSegmentsPath is the round's []StreamSegment as JSON, written by
+// startProcess straight into round_file (never a file on disk). Read it with
+// ReadFile.
+// Layout: <binding dir>/NNN-builder-segments.json
+func (s *Store) BuilderSegmentsPath(name string, round int) string {
+	return s.roundFile(name, round, "builder-segments", ".json")
 }
 
 // GateLogPath is where the gate command's output for a round is appended

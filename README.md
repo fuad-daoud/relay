@@ -620,25 +620,24 @@ refuses `:rounds`; `relevo ui` never exits over it.
 A builder is a process relevo runs, one fresh process per round; each
 `relevo send` starts the harness's non-interactive form -- `agy -p …`,
 `claude -p …`, `opencode run …` -- in the binding's tree with the round's
-prompt, writes the harness's streamed JSON events to
-`~/.local/state/relevo/<name>/NNN-builder.jsonl` and its stderr to
-`NNN-builder.log`, both beside the round's plan and report, and returns.
+prompt, writes the harness's output -- stdout and stderr both -- to
+`~/.local/state/relevo/<name>/NNN-builder.jsonl` beside the round's plan and
+report, and returns.
 Those are the round's **open-round files**, in the binding's directory under
 the state root. When the round closes, relevo seals them into the database in
 the same transaction that closes the round -- the report text rides in the
 planner's payload -- and removes them, so the directory afterwards holds only
 the files of a round still open.
-The daemon renders the stream into the `.log` as it grows -- one line per
+The daemon renders the stream as it grows -- one line per
 tool call (`● Bash go test ./...`), its result with the first line of what it printed (`  ⎿ ok: ok  github.com/… 0.4s`, `  ⎿ error: …`),
 the builder's text, any denied permission, and the final answer -- so
-`relevo ui`'s terminal tab, `relevo status` and `tail -f` on the `.log` show
+`relevo ui`'s terminal tab and `relevo status` show
 the round live, about two seconds behind. Between rounds the tab keeps
-the last round's log. The `.jsonl` is the raw record;
-relevo never reads it for meaning. When relevo itself stops or replaces that process -- a
-mid-round switch, `relevo done`, `relevo unbind` -- it appends one line to the
-same log saying so (`--- relevo 23:13:51: switched to claude/anthropic/sonnet (rate-limited …) ---`),
-so two builders' output in one round is never ambiguous. The process exits when
-it has written the report, or when
+the last round's rendered output. The `.jsonl` is the raw record;
+relevo never reads it for meaning, and `relevo show <name> --round N
+--transcript` renders it for a human. A round from an older relevo version
+keeps its `NNN-builder.log`, and the readers show that instead. The process
+exits when it has written the report, or when
 it fails; between rounds a headless binding has no process and is idle, not
 broken. The completion marker is the contract: a process that wrote its report and
 created `NNN-done`, then exited non-zero, has done its job. A process that
@@ -655,7 +654,7 @@ What this means in practice:
   than improvise"); headless makes that a hard requirement.
 - **`relevo status`** shows `builder  headless  <kind>  <idle|working|exited N>
   pid P since HH:MM` and the log's last three lines as `log` rows.
-  `relevo ui`'s terminal tab shows the log file.
+  `relevo ui`'s terminal tab shows the round's rendered output.
 - **Exit without a report** is logged as an `exit` entry (exit code and the
   log's last 20 lines) and the daemon switches builders, up to `max_switches`
   (a switch caused by a rate-limit gate is not counted); then
@@ -1025,7 +1024,7 @@ to forget).
 A binding's live state is a record in the database, not a directory of files.
 While a round is open that round's files sit in `$XDG_STATE_HOME/relevo/<name>/`
 (defaulting to `~/.local/state/relevo/<name>/`) -- its plan, report,
-patch (`NNN-diff.patch`), captured dialog, builder log and stream -- and when the
+patch (`NNN-diff.patch`), captured dialog and builder stream -- and when the
 round closes relevo seals them into the database and removes them.
 
 `unread`/`●new` comes from the binding record's `viewed_at` stamp (#143):

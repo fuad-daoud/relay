@@ -88,8 +88,8 @@ const ReapFragment = `relevo_reap_scope() {
 // redirections left to right, and the open fails before 2>/dev/null.
 // The builder stays a child of this sh (no exec) so an OOM kill of the
 // builder still leaves a trailer. A group kill from Kill takes the sh with
-// it and leaves none; relevo writes its own marker line for every process it
-// stops (relevo.appendLogMarker).
+// it and leaves none; relevo records every process it stops in the round's
+// ledger instead (a KindStop or KindSwitch entry).
 // The trailer is printed with a leading newline so a builder that died
 // mid-line leaves it on a line of its own; the blank line before it is
 // rendered as nothing (transcript rule 1). It goes to stdout -- the stream

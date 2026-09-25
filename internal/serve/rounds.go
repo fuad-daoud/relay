@@ -399,10 +399,30 @@ func (s *Server) handleRoundFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// A sealed round's file is a row, not a file (P3c §4.4): ReadFile answers
-	// from disk or from the sealed row, and a miss is still a 404.
-	data, err := rt.Store.ReadFile(path)
-	if err != nil {
+	// The round's transcript: its NNN-builder.log when one exists, and
+	// otherwise its stream rendered per segment (§4.5). The bytes are what
+	// the size and from headers below slice. Any other kind is a sealed
+	// round's file -- a row, not a file (P3c §4.4): ReadFile answers from
+	// disk or from the sealed row, and a miss is still a 404.
+	var data []byte
+	if kind == "log" {
+		read := func(p string) ([]byte, bool, error) {
+			d, rerr := rt.Store.ReadFile(p)
+			if rerr != nil {
+				if os.IsNotExist(rerr) {
+					return nil, false, nil
+				}
+				return nil, false, rerr
+			}
+			return d, true, nil
+		}
+		text, _, found, ferr := relevo.RoundTranscript(rt.Store, name, n, b.Builder, read)
+		if ferr != nil || !found {
+			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "file not found")
+			return
+		}
+		data = text
+	} else if data, err = rt.Store.ReadFile(path); err != nil {
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "file not found")
 		return
 	}

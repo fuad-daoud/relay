@@ -261,23 +261,13 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 	}
 }
 
-// logTab reads a round log for the terminal tab: the last headlessLogLines
-// lines, transcript true, logName the file's base name. read is
-// rt.Store.ReadFile, so a sealed round's log is found in the database too.
-// ok is false when the file cannot be read (missing or otherwise), so the
-// caller decides what the tab says instead: the pane branch falls back to the
-// capture, the headless branch keeps its own "log not written yet" prose.
-// (Extracted from the headless branch of fetchTerminal; that branch now calls
-// it.) key names the reply's row and name the store path the log was read
-// from.
-func logTab(key, name string, read func(string) ([]byte, error), logPath string) (tabMsg, bool) {
-	data, err := read(logPath)
-	if err != nil {
-		return tabMsg{}, false
-	}
-	body := strings.TrimRight(string(data), "\n")
-	if all := strings.Split(body, "\n"); len(all) > headlessLogLines {
-		body = strings.Join(all[len(all)-headlessLogLines:], "\n")
+// transcriptTab is the terminal tab for already-read transcript bytes: the
+// last headlessLogLines lines, transcript true, logName the source the bytes
+// came from. Every terminal read shares it.
+func transcriptTab(key string, body []byte, logName string) tabMsg {
+	text := strings.TrimRight(string(body), "\n")
+	if all := strings.Split(text, "\n"); len(all) > headlessLogLines {
+		text = strings.Join(all[len(all)-headlessLogLines:], "\n")
 	}
 	return tabMsg{
 		name: key,
@@ -285,11 +275,24 @@ func logTab(key, name string, read func(string) ([]byte, error), logPath string)
 		content: tabContent{
 			loaded:     true,
 			at:         time.Now(),
-			body:       body,
+			body:       text,
 			transcript: true,
-			logName:    filepath.Base(logPath),
+			logName:    logName,
 		},
-	}, true
+	}
+}
+
+// logTab reads a round log file for the terminal tab -- the remote-builder
+// branch's read. transcriptTab does the trimming and capping. ok is false
+// when the file cannot be read (missing or otherwise), so the caller decides
+// what the tab says instead: the remote branch falls back to its own prose.
+// key names the reply's row; name is the store path the log was read from.
+func logTab(key, name string, read func(string) ([]byte, error), logPath string) (tabMsg, bool) {
+	data, err := read(logPath)
+	if err != nil {
+		return tabMsg{}, false
+	}
+	return transcriptTab(key, data, filepath.Base(logPath)), true
 }
 
 // fetchTerminal resolves the binding's builder log for the terminal tab: for
@@ -331,13 +334,26 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 			}
 		}
 
-		// A headless builder (#99) has no pane; its output is a round's log
-		// file. Shown, never parsed.
+		// A headless builder (#99) has no pane; its output is a round's
+		// transcript -- its NNN-builder.log when one exists, otherwise its
+		// stream rendered per segment. Shown, never parsed.
 		if b.Builder.Headless() {
+			readBytes := func(p string) ([]byte, bool, error) {
+				data, rerr := rt.Store.ReadFile(p)
+				if rerr != nil {
+					if os.IsNotExist(rerr) {
+						return nil, false, nil
+					}
+					return nil, false, rerr
+				}
+				return data, true, nil
+			}
 			if round != b.Round {
-				// A past round: its own file, canonically named, is the
-				// only place it could be.
-				if msg, ok := logTab(key, name, rt.Store.ReadFile, rt.Store.BuilderLogPath(name, round)); ok {
+				// A past round: its own round files are the only place it
+				// could be.
+				text, source, found, rerr := relevo.RoundTranscript(rt.Store, name, round, b.Builder, readBytes)
+				if rerr == nil && found {
+					msg := transcriptTab(key, text, source)
 					msg.round = round
 					return msg
 				}
@@ -352,16 +368,12 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 					},
 				}
 			}
-			// The current round: the cursor names the exact file the
-			// process is writing (or, between rounds, last wrote) --
-			// between rounds clearProcess blanks LogPath, but the cursor
-			// still names the last round that ran (transcript spec §4.7),
-			// so fall back to that rather than a blank tab.
-			logPath := b.Builder.LogPath
-			if logPath == "" && b.Builder.StreamRound != 0 {
-				logPath = rt.Store.BuilderLogPath(name, b.Builder.StreamRound)
-			}
-			if logPath == "" {
+			// The current round: the cursor names the round the process is
+			// writing (or, between rounds, last wrote) -- between rounds
+			// clearProcess blanks LogPath, but the cursor still names the
+			// last round that ran (transcript spec §4.7), so fall back to
+			// the viewed round rather than a blank tab.
+			if b.Builder.LogPath == "" && b.Builder.StreamRound == 0 {
 				return tabMsg{
 					name:  key,
 					round: round,
@@ -373,7 +385,34 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 					},
 				}
 			}
-			if msg, ok := logTab(key, name, rt.Store.ReadFile, logPath); ok {
+			// Rule 1: the endpoint's own log. A live process that names a
+			// log which is not its round's stream reads that file, exactly
+			// as before. In 2b LogPath becomes the stream path itself, so
+			// this branch stops applying and rule 2 renders the stream.
+			if b.Builder.LogPath != "" && b.Builder.LogPath != rt.Store.BuilderStreamPath(name, b.Builder.StreamRound) {
+				if msg, ok := logTab(key, name, rt.Store.ReadFile, b.Builder.LogPath); ok {
+					msg.round = round
+					return msg
+				}
+				return tabMsg{
+					name:  key,
+					round: round,
+					t:     tabTerminal,
+					content: tabContent{
+						loaded: true,
+						at:     time.Now(),
+						empty:  "log not written yet: " + b.Builder.LogPath,
+					},
+				}
+			}
+			// Rule 2: otherwise the round's transcript (§4.5).
+			r := b.Builder.StreamRound
+			if r == 0 {
+				r = round
+			}
+			text, source, found, rerr := relevo.RoundTranscript(rt.Store, name, r, b.Builder, readBytes)
+			if rerr == nil && found {
+				msg := transcriptTab(key, text, source)
 				msg.round = round
 				return msg
 			}
@@ -384,7 +423,7 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 				content: tabContent{
 					loaded: true,
 					at:     time.Now(),
-					empty:  "log not written yet: " + logPath,
+					empty:  "log not written yet: " + rt.Store.BuilderStreamPath(name, r),
 				},
 			}
 		}

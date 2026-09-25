@@ -389,16 +389,6 @@ func TestGateOnLimit(t *testing.T) {
 		if got.BuilderCandidate != testClaudeRef {
 			t.Errorf("BuilderCandidate = %q, want %q", got.BuilderCandidate, testClaudeRef)
 		}
-
-		data, err := os.ReadFile(b.Builder.LogPath)
-		if err != nil {
-			t.Fatalf("ReadFile log: %v", err)
-		}
-		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-		last := lines[len(lines)-1]
-		if !strings.Contains(last, "rate-limited: Individual quota reached") {
-			t.Errorf("last log line = %q, want it to contain the rate-limited marker", last)
-		}
 	})
 
 	t.Run("no match", func(t *testing.T) {

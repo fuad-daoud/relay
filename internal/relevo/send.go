@@ -320,7 +320,6 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	// failure path after the lock stops a builder this send started but
 	// could not finish recording (#436).
 	var spawned *ProcHandle
-	spawnRound := 0
 
 	var round int
 	var driftLineOut string
@@ -398,13 +397,6 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// or relevo.Admit) starts the builder later (#285).
 		deferred := opts.Defer
 
-		// The builder changed: say so in the new round's log before the
-		// process starts appending to it. A deferred round never spawns here,
-		// so it writes no marker.
-		if pf.pick != nil && !deferred {
-			appendLogMarker(rt.Store.BuilderLogPath(name, b.Round), rt.Now(), "builder changed to "+pf.pick.Token()+" (send --builder)")
-		}
-
 		late := false
 		if !deferred {
 			// A live scope for this round means a builder for it is already
@@ -453,7 +445,6 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			b = started
 			h := handleOf(started.Builder)
 			spawned = &h
-			spawnRound = b.Round
 			if sendAfterSpawn != nil {
 				if err := sendAfterSpawn(name); err != nil {
 					return err
@@ -558,8 +549,6 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			// round was recorded: the previous state stands and the planner
 			// may resend.
 			kerr := rt.Runner.Kill(context.WithoutCancel(ctx), *spawned)
-			appendLogMarker(rt.Store.BuilderLogPath(name, spawnRound), rt.Now(),
-				"send failed after spawn; builder stopped: "+err.Error())
 			if kerr != nil {
 				return SendResult{}, fmt.Errorf("%w; and stopping the builder it started (pid %d) failed: %v", err, spawned.PID, kerr)
 			}

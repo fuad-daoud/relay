@@ -125,8 +125,10 @@ type Endpoint struct {
 	// never omits a struct, and the OS reports start time at one-second
 	// resolution anyway.
 	StartedAt int64 `json:"started_at,omitempty"`
-	// LogPath is the current round's builder log (Store.BuilderLogPath);
-	// "" between rounds.
+	// LogPath is the file the current process's stderr is appended to: the
+	// round's stream (Store.BuilderStreamPath), or, for a round that already
+	// had a NNN-builder.log when the process started, that log; "" between
+	// rounds.
 	LogPath string `json:"log_path,omitempty"`
 	// StreamRound is the round whose builder stream (Store.BuilderStreamPath)
 	// the daemon is rendering into that round's log, and StreamOffset how

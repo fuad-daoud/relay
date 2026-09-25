@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -485,4 +486,61 @@ func TestGCDryRunDeletesNoRef(t *testing.T) {
 	if len(res[0].Refs) != 1 || !res[0].Refs[0].WouldDelete {
 		t.Fatalf("res[0].Refs = %+v, want WouldDelete", res[0].Refs)
 	}
+}
+
+// N9: bindingRefCandidates proposes the relevo head ref only when the repo
+// has it (#452), still proposes it when RefSHA errors, and keeps the refs it
+// listed. Mutation: ignore ok and the missing-branch case proposes a
+// nonexistent ref.
+func TestBindingRefCandidatesSkipsAMissingBranch(t *testing.T) {
+	ctx := context.Background()
+	cut := store.Binding{Name: "api", Branch: "relevo/api"}
+	adopted := store.Binding{Name: "api", Branch: "feature/x", ExistingBranch: true, Builder: store.Endpoint{Mode: store.ModeRemote}}
+
+	t.Run("relevo-cut shape, missing head ref", func(t *testing.T) {
+		fg := &fakeGit{refSHA: map[string]string{}, listRefsResult: []string{"refs/relevo/api/out"}}
+		got, err := bindingRefCandidates(ctx, Runtime{Git: fg}, "/repo", cut)
+		if err != nil {
+			t.Fatalf("bindingRefCandidates: %v", err)
+		}
+		if want := []string{"refs/relevo/api/out"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("relevo-cut shape, present head ref", func(t *testing.T) {
+		fg := &fakeGit{
+			refSHA:         map[string]string{"refs/heads/relevo/api": "tip"},
+			listRefsResult: []string{"refs/relevo/api/out"},
+		}
+		got, err := bindingRefCandidates(ctx, Runtime{Git: fg}, "/repo", cut)
+		if err != nil {
+			t.Fatalf("bindingRefCandidates: %v", err)
+		}
+		if want := []string{"refs/heads/relevo/api", "refs/relevo/api/out"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("RefSHA error still proposes the head ref", func(t *testing.T) {
+		fg := &fakeGit{refSHAErr: errors.New("resolve boom"), listRefsResult: []string{"refs/relevo/api/out"}}
+		got, err := bindingRefCandidates(ctx, Runtime{Git: fg}, "/repo", cut)
+		if err != nil {
+			t.Fatalf("bindingRefCandidates: %v", err)
+		}
+		if want := []string{"refs/heads/relevo/api", "refs/relevo/api/out"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("adopted remote shape, missing head ref", func(t *testing.T) {
+		fg := &fakeGit{refSHA: map[string]string{}, listRefsResult: []string{"refs/relevo/api/out"}}
+		got, err := bindingRefCandidates(ctx, Runtime{Git: fg}, "/repo", adopted)
+		if err != nil {
+			t.Fatalf("bindingRefCandidates: %v", err)
+		}
+		if want := []string{"refs/relevo/api/out"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
 }
