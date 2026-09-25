@@ -198,6 +198,14 @@ func (s *Store) BuilderStreamPath(name string, round int) string {
 	return s.roundFile(name, round, "builder", ".jsonl")
 }
 
+// BuilderSegmentsPath is the round's []StreamSegment as JSON, written by
+// startProcess straight into round_file (never a file on disk). Read it with
+// ReadFile.
+// Layout: <binding dir>/NNN-builder-segments.json
+func (s *Store) BuilderSegmentsPath(name string, round int) string {
+	return s.roundFile(name, round, "builder-segments", ".json")
+}
+
 // GateLogPath is where the gate command's output for a round is appended
 // (#132). A round file like the plan and the report, so fork copies it and
 // gc archives it.

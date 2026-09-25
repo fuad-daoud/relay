@@ -45,7 +45,15 @@ func bindingRefCandidates(ctx context.Context, rt Runtime, dir string, b store.B
 	}
 
 	if (!b.ExistingBranch && b.Branch == "relevo/"+b.Name) || (b.Builder.Remote() && b.Branch != "relevo/"+b.Name) {
-		add("refs/heads/relevo/" + b.Name)
+		head := "refs/heads/relevo/" + b.Name
+		// Propose the head ref only when the repo actually has it (#452): a
+		// candidate that does not exist makes cleanRefs report "check
+		// failed: … malformed object name …" for every remote binding. A
+		// RefSHA error still proposes it, so the failure is reported rather
+		// than swallowed.
+		if _, ok, err := rt.Git.RefSHA(ctx, dir, head); err != nil || ok {
+			add(head)
+		}
 	}
 
 	refs, err := rt.Git.ListRefs(ctx, dir, "refs/relevo/"+b.Name+"/")

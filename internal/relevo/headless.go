@@ -3,6 +3,7 @@ package relevo
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -258,6 +259,19 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	} else {
 		b.Builder.StreamSegments = append(b.Builder.StreamSegments, seg)
 	}
+	// Record the round's segment list as a round file, so a later round can
+	// still render this round's stream with the right harness per process
+	// (builder-log spec §4.6). A failure here is never a spawn failure: tests
+	// with no saved record hit ErrNotFound, which is fine.
+	if tx != nil {
+		body, err := json.Marshal(b.Builder.StreamSegments)
+		if err == nil {
+			err = tx.PutRoundFile(b.Name, b.Round, rt.Store.BuilderSegmentsPath(b.Name, b.Round), body)
+		}
+		if err != nil {
+			slog.Warn("record stream segments", "binding", b.Name, "round", b.Round, "err", err)
+		}
+	}
 	// A new process announces its own session on its own stream (#147);
 	// drainStream fills this in again from the first line it writes.
 	b.Builder.StreamSessionID = ""
@@ -501,9 +515,10 @@ func clearProcess(e store.Endpoint) store.Endpoint {
 // exitEntry is the log record of a headless builder that exited without a
 // report (spec §3.8): relevo → log only, Confirmed, never a pending payload.
 // codeText is the exit code, or "unknown" when the supervisor's trailer is
-// missing (killed, or the log unreadable). The payload is the log's last
-// logTailLines lines, for the human; relevo reads nothing out of it.
-func exitEntry(now time.Time, round int, logPath, codeText, suffix string) store.LogEntry {
+// missing (killed, or the log unreadable). payload is the builder's last
+// logTailLines of evidence, computed by the caller with builderTail, for the
+// human; relevo reads nothing out of it.
+func exitEntry(now time.Time, round int, logPath, codeText, suffix, payload string) store.LogEntry {
 	return store.LogEntry{
 		TS:        now,
 		Round:     round,
@@ -511,7 +526,7 @@ func exitEntry(now time.Time, round int, logPath, codeText, suffix string) store
 		Kind:      store.KindExit,
 		Path:      logPath,
 		Note:      fmt.Sprintf("builder exited (code %s) without a report%s", codeText, suffix),
-		Payload:   logTail(logPath, logTailLines),
+		Payload:   payload,
 		Confirmed: true,
 	}
 }
@@ -695,7 +710,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// omission noted (spec §4.4).
 	reportPath := rt.Store.ReportPath(b.Name, b.Round)
 	if _, err := os.Stat(reportPath); err == nil {
-		_, m, _, err := gateOnLimit(ctx, rt, tx, b, logTail(b.Builder.LogPath, limitScanLines), false)
+		_, m, _, err := gateOnLimit(ctx, rt, tx, b, builderTail(rt, b, limitScanLines), false)
 		if err != nil {
 			return b, err
 		}
@@ -734,13 +749,13 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			c = cand
 		}
 	}
-	denialLine, isDenial := matchDenial(logTail(b.Builder.LogPath, limitScanLines), denialPatterns(c, h))
+	denialLine, isDenial := matchDenial(builderTail(rt, b, limitScanLines), denialPatterns(c, h))
 	suffix := ""
 	if isDenial {
 		suffix = "; permission-blocked: " + denialLine
 	}
 
-	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText, suffix)); err != nil {
+	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText, suffix, builderTail(rt, b, logTailLines))); err != nil {
 		return b, err
 	}
 	slog.Info("headless builder exited without a report", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID, "code", codeText)
@@ -866,7 +881,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return haltBinding(ctx, rt, b, escapeDiagnosis(b, codeText))
 	}
 
-	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, logTail(b.Builder.LogPath, limitScanLines), false)
+	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, builderTail(rt, b, limitScanLines), false)
 	if handled {
 		return next, err
 	}
@@ -1032,7 +1047,7 @@ func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *
 		info.StartedAt = time.Unix(e.StartedAt, 0)
 	}
 	if e.LogPath != "" {
-		if tail := logTail(e.LogPath, statusTailLines); tail != "" {
+		if tail := builderTail(rt, b, statusTailLines); tail != "" {
 			info.Tail = strings.Split(tail, "\n")
 		}
 	}

@@ -3680,6 +3680,62 @@ func TestRoundFileLogFrom(t *testing.T) {
 	}
 }
 
+// N11: a served round whose stream exists and whose log does not returns the
+// rendered stream, with its size, its from-suffix, and exactly the new
+// rendered lines when the stream grows -- the #442 mirror contract.
+func TestRoundFileLogRendersTheStream(t *testing.T) {
+	env := setupTestEnv(t)
+	sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan 1")
+
+	rt := env.runtime(t)
+	streamPath := rt.Store.BuilderStreamPath("api", 1)
+	stream := "stream line 1\nstream line 2\n"
+	if err := os.WriteFile(streamPath, []byte(stream), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	totalLenStr := strconv.Itoa(len(stream))
+	// The round start writes a "builder started" log; this case is the
+	// logless one, so drop it and let the stream answer.
+	if err := os.Remove(rt.Store.BuilderLogPath("api", 1)); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove log: %v", err)
+	}
+
+	// No log: the rendered stream, X-Relevo-Size its length.
+	resp, body := doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get(remote.HeaderFileSize); got != totalLenStr {
+		t.Fatalf("X-Relevo-Size = %q, want %q", got, totalLenStr)
+	}
+	if string(body) != stream {
+		t.Fatalf("body = %q, want the rendered stream %q", string(body), stream)
+	}
+
+	// ?from=k inside the rendered bytes gives the suffix.
+	k := 7
+	kStr := strconv.Itoa(k)
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log?from="+kStr, nil, "")
+	if got := resp.Header.Get(remote.HeaderFileFrom); got != kStr {
+		t.Fatalf("X-Relevo-From = %q, want %q", got, kStr)
+	}
+	if string(body) != stream[k:] {
+		t.Fatalf("body = %q, want %q", string(body), stream[k:])
+	}
+
+	// A fetch from the old size returns exactly the new rendered lines.
+	if err := os.WriteFile(streamPath, []byte(stream+"stream line 3\n"), 0o644); err != nil {
+		t.Fatalf("append stream: %v", err)
+	}
+	resp, body = doSigned(t, env.ts, env.kp, "GET", "/v1/bindings/api/rounds/1/files/log?from="+totalLenStr, nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if string(body) != "stream line 3\n" {
+		t.Fatalf("body = %q, want exactly the new rendered lines", string(body))
+	}
+}
+
 func TestRoundFileDriftRunning(t *testing.T) {
 	env := setupTestEnv(t)
 	sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan 1")

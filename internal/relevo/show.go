@@ -172,7 +172,10 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 	read := func(path string) (string, bool, error) {
 		return readFileOrMissing(rt.Store.ReadFile, path)
 	}
-	if err := showSections(rt, b.Name, round, entries, read, opts, &res); err != nil {
+	readBytes := func(path string) ([]byte, bool, error) {
+		return readBytesMissing(rt.Store.ReadFile, path)
+	}
+	if err := showSections(rt, b.Name, round, entries, b.Builder, read, readBytes, opts, &res); err != nil {
 		return ShowResult{}, err
 	}
 	return res, nil
@@ -182,7 +185,10 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 // section switch showLive and showArchived share. entries is the binding's
 // whole log, which ShowLog filters by round; read yields one round file's
 // bytes, reporting missing rather than an error when the file is absent.
-func showSections(rt Runtime, name string, round int, entries []store.LogEntry, read func(path string) (text string, missing bool, err error), opts ShowOptions, res *ShowResult) error {
+// live is the round's endpoint, which ShowTranscript needs to render the
+// stream with the endpoint's own segments and kind; readBytes is read's
+// contract for RoundTranscript.
+func showSections(rt Runtime, name string, round int, entries []store.LogEntry, live store.Endpoint, read func(path string) (text string, missing bool, err error), readBytes func(path string) ([]byte, bool, error), opts ShowOptions, res *ShowResult) error {
 	var err error
 	switch opts.Section {
 	case ShowPlan:
@@ -194,7 +200,18 @@ func showSections(rt Runtime, name string, round int, entries []store.LogEntry, 
 	case ShowDrift:
 		res.Text, res.Missing, err = read(rt.Store.DriftPath(name, round))
 	case ShowTranscript:
-		res.Text, res.Missing, err = read(rt.Store.BuilderLogPath(name, round))
+		// The round's transcript: its NNN-builder.log when one exists, and
+		// otherwise its stream rendered per segment (§4.5).
+		var text []byte
+		var found bool
+		text, _, found, err = RoundTranscript(rt.Store, name, round, live, readBytes)
+		if err == nil {
+			if found {
+				res.Text = string(text)
+			} else {
+				res.Missing = true
+			}
+		}
 	case ShowGate:
 		// The round's gate log. Live, it is read through rt.Store.ReadFile,
 		// so a sealed round's log is found in the database exactly as a
@@ -276,7 +293,10 @@ func showArchived(rt Runtime, ab store.ArchivedBinding, opts ShowOptions) (ShowR
 		}
 		return string(data), false, nil
 	}
-	if err := showSections(rt, ab.Binding.Name, round, entries, read, opts, &res); err != nil {
+	readBytes := func(path string) ([]byte, bool, error) {
+		return rt.Store.ArchivedFile(ab.RecordID, filepath.Base(path))
+	}
+	if err := showSections(rt, ab.Binding.Name, round, entries, ab.Binding.Builder, read, readBytes, opts, &res); err != nil {
 		return ShowResult{}, err
 	}
 	return res, nil

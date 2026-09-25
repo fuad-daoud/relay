@@ -519,3 +519,77 @@ func TestFetchTerminalRemoteBuilder(t *testing.T) {
 		t.Errorf("empty = %q, want %q", msg.content.empty, want)
 	}
 }
+
+// N10: a live headless binding whose round has a stream and no log renders the
+// stream; an endpoint whose LogPath is its round's stream path (the 2b shape)
+// renders the stream too; and an endpoint naming its own log reads that file
+// even when a stream exists.
+func TestFetchTerminalHeadlessRendersTheStream(t *testing.T) {
+	st := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: st}
+
+	stream := "stream line one\nstream line two\n"
+	b := newTestBinding("webshop") // Round 2
+	b.Builder = store.Endpoint{
+		AgentName:   "webshop-builder",
+		Kind:        "agy",
+		Mode:        store.ModeHeadless,
+		PID:         4242,
+		StreamRound: 2,
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	streamPath := st.BuilderStreamPath("webshop", 2)
+	if err := os.WriteFile(streamPath, []byte(stream), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+
+	msg := fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 2, 24)().(tabMsg)
+	if msg.content.err != nil || msg.content.empty != "" {
+		t.Fatalf("content = %+v, want the rendered stream", msg.content)
+	}
+	if msg.content.body != "stream line one\nstream line two" {
+		t.Errorf("body = %q, want the rendered stream", msg.content.body)
+	}
+	if !msg.content.transcript {
+		t.Error("transcript = false, want true for a rendered stream")
+	}
+	if msg.content.logName != "002-builder.jsonl (rendered)" {
+		t.Errorf("logName = %q, want 002-builder.jsonl (rendered)", msg.content.logName)
+	}
+
+	// LogPath equal to the round's stream path (2b): still the stream.
+	b.Builder.LogPath = streamPath
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	msg = fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 2, 24)().(tabMsg)
+	if msg.content.err != nil || msg.content.empty != "" {
+		t.Fatalf("2b shape: content = %+v, want the rendered stream", msg.content)
+	}
+	if msg.content.body != "stream line one\nstream line two" || msg.content.logName != "002-builder.jsonl (rendered)" {
+		t.Errorf("2b shape: body = %q, logName = %q, want the rendered stream", msg.content.body, msg.content.logName)
+	}
+
+	// Rule 1: a log that is not the round's stream is read even when a stream
+	// exists.
+	logPath := filepath.Join(t.TempDir(), "002-builder.log")
+	if err := os.WriteFile(logPath, []byte("endpoint log line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b.Builder.LogPath = logPath
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	msg = fetchTerminal(context.Background(), plannerSource{rt}, "webshop", 2, 24)().(tabMsg)
+	if msg.content.err != nil || msg.content.empty != "" {
+		t.Fatalf("rule 1: content = %+v, want the endpoint's log", msg.content)
+	}
+	if msg.content.body != "endpoint log line" {
+		t.Errorf("rule 1: body = %q, want the endpoint's log", msg.content.body)
+	}
+	if msg.content.logName != "002-builder.log" {
+		t.Errorf("rule 1: logName = %q, want 002-builder.log", msg.content.logName)
+	}
+}

@@ -783,3 +783,46 @@ func seedRoundMirror(t *testing.T, d *db.DB, dir string) {
 		t.Fatalf("seed round mirror: %v", err)
 	}
 }
+
+// N8: a live round with a stream and no NNN-builder.log renders the stream,
+// and the archived variant renders the sealed stream the same way.
+func TestShowTranscriptRendersTheStreamWithoutALog(t *testing.T) {
+	stream := "live stream line one\nlive stream line two\n"
+
+	t.Run("live", func(t *testing.T) {
+		s := store.New(t.TempDir())
+		b := store.Binding{Name: "fixture", CWD: "/work/fixture", Round: 1, State: store.StateActive}
+		if err := s.Save(b); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		entry := store.LogEntry{TS: time.Now(), Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan, Confirmed: true}
+		if err := s.AppendLog("fixture", entry); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+		if err := os.WriteFile(s.BuilderStreamPath("fixture", 1), []byte(stream), 0o644); err != nil {
+			t.Fatalf("write stream: %v", err)
+		}
+
+		res, err := Show(context.Background(), Runtime{Store: s}, ShowOptions{Name: "fixture", Round: 1, Section: ShowTranscript})
+		if err != nil {
+			t.Fatalf("Show: %v", err)
+		}
+		if res.Missing || res.Text != stream {
+			t.Errorf("Missing = %v, Text = %q, want the rendered stream %q", res.Missing, res.Text, stream)
+		}
+	})
+
+	t.Run("archived", func(t *testing.T) {
+		s := archiveShowFixture(t, map[string]string{"003-builder.jsonl": stream})
+		res, err := Show(context.Background(), Runtime{Store: s}, ShowOptions{Name: "fixture", Round: 3, Section: ShowTranscript})
+		if err != nil {
+			t.Fatalf("Show: %v", err)
+		}
+		if res.Missing || res.Text != stream {
+			t.Errorf("Missing = %v, Text = %q, want the rendered sealed stream %q", res.Missing, res.Text, stream)
+		}
+		if !res.Archived {
+			t.Error("Archived = false, want true")
+		}
+	})
+}
