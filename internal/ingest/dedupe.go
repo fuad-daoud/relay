@@ -110,9 +110,11 @@ func dedupeRoundFileBase(kind string, number int) string {
 // duplicate when the record's round file for it exists, holds the same byte
 // count, and hashes to the artifact's own sha256; its transcript is a
 // duplicate when either re-deriving the transcript from the record's round
-// file reproduces every row exactly, or every row's record JSON is a line of
-// the record's sealed builder stream -- after applying renames to the row
-// when the exact line is not found. Planner transcripts are never examined.
+// file reproduces every row exactly, or every row is covered by the record's
+// sealed lines (streamLinesCover): a row with record JSON is a line of the
+// sealed builder stream, after applying renames when the exact line is not
+// found; a row with no record JSON is blank, or its rendered text is a line
+// of the sealed builder log. Planner transcripts are never examined.
 //
 // renames are the substitutions a cutover applied to the sealed stream files,
 // so a row whose stored path predates the rewrite still matches its rewritten
