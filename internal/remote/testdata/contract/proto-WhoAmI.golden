@@ -1,0 +1,23 @@
+{
+  "id": "SHA256:fixed-test-client-id-00000000000000000000000",
+  "label": "test-client",
+  "server_version": 1,
+  "transports": [
+    "git-bundle"
+  ],
+  "features": [
+    "tier",
+    "queue",
+    "stop"
+  ],
+  "builder_tier": "edit",
+  "max_tier": "yolo",
+  "builders": {
+    "running": 2,
+    "queued": 1,
+    "cap": 4,
+    "scopes": true,
+    "slice": "relevo.slice",
+    "quota": "200%"
+  }
+}
