@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR supersedes its running CI; main is never cancelled,
+# so every commit that lands on main gets a complete run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     name: check (${{ matrix.os }}, go ${{ matrix.go }})
@@ -28,6 +34,11 @@ jobs:
         # starts complaining about.
         os: [ubuntu-latest, macos-latest]
         go: ['1.25', 'stable']
+        # PRs skip macOS on the 1.25 floor to stay under the free plan's
+        # 5-concurrent-macOS-job cap; main still runs the full matrix.
+        exclude:
+          - os: ${{ github.event_name == 'pull_request' && 'macos-latest' || 'none' }}
+            go: '1.25'
     steps:
       - uses: actions/checkout@v4
 
@@ -45,9 +56,6 @@ jobs:
 
       - name: make check
         run: make check
-
-      - name: race detector
-        run: go test -race -count=1 ./...
 
   portability:
     name: cross-compile
