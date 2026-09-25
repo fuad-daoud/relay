@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 const maxErrorLines = 8
@@ -193,10 +194,12 @@ func (m Model) errorBlock(env Env) string {
 // Each key is a kbd chip ` k ` followed by ` label` in muted. Keys are separated by
 // five spaces. The view's `Keys()` come first, then the global tail `: command`,
 // `? all keys`, `q quit` (root) / `esc back` (deeper). Drop and notice rules are unchanged.
+// While the command line, the help overlay or any overlay implementing
+// overlayKeyer is up, that overlay's own keys stand in for the view's keys and
+// the global tail (§2.1).
 func (m Model) keysView(env Env) string {
 	key := func(k, v string) string { return chip(kbdStyle, k) + " " + mutedStyle.Render(v) }
-	var tail []string
-	tail = append(tail, key(":", "command"), key("?", "all keys"))
+	tail := []string{key(":", "command"), key("?", "all keys")}
 	if len(m.stack) > 1 {
 		tail = append(tail, key("esc", "back"))
 	} else {
@@ -222,24 +225,17 @@ func (m Model) keysView(env Env) string {
 	if room < 0 {
 		room = 0
 	}
-	avail := room - lipgloss.Width(tailText) - 5 // 5 for the gap before the tail
-	var parts []string
-	used := 0
-	for _, kh := range m.top().Keys() {
-		p := key(kh.Key, kh.Help)
-		w := lipgloss.Width(p)
-		if len(parts) > 0 {
-			w += 5
-		}
-		if used+w > avail {
-			break
-		}
-		parts = append(parts, p)
-		used += w
-	}
+
 	left := tailText
-	if len(parts) > 0 {
-		left = strings.Join(parts, "     ") + "     " + tailText
+	if modalKeys, ok := m.modalKeys(); ok {
+		// A modal shows its own keys instead of the view's and the tail
+		// (§2.1).
+		left = layKeys(modalKeys, room, key)
+	} else {
+		avail := room - lipgloss.Width(tailText) - 5 // 5 for the gap before the tail
+		if viewKeys := layKeys(m.top().Keys(), avail, key); viewKeys != "" {
+			left = viewKeys + "     " + tailText
+		}
 	}
 
 	if lipgloss.Width(left)+1+lipgloss.Width(right) > env.Width {
@@ -252,22 +248,58 @@ func (m Model) keysView(env Env) string {
 	return fit(spread(left, right, env.Width), env.Width)
 }
 
+// modalKeys is the keys of whichever overlay is up, and whether one is: the
+// command line, help, or an overlay that implements overlayKeyer (§2.1).
+func (m Model) modalKeys() ([]KeyHelp, bool) {
+	switch {
+	case m.cmd.open:
+		return []KeyHelp{{"↑↓", "move"}, {"tab", "complete"}, {"enter", "go"}, {"esc", "close"}}, true
+	case m.help:
+		return []KeyHelp{{"esc", "close"}}, true
+	case m.overlay != nil:
+		if ok, isKeyer := m.overlay.(overlayKeyer); isKeyer {
+			return ok.keys(), true
+		}
+	}
+	return nil, false
+}
+
+// layKeys lays out keys as far as they fit in avail cells, separated by five
+// spaces. Each key is ` k ` in a kbd chip followed by its label in muted.
+func layKeys(keys []KeyHelp, avail int, key func(k, v string) string) string {
+	var parts []string
+	used := 0
+	for _, kh := range keys {
+		p := key(kh.Key, kh.Help)
+		w := lipgloss.Width(p)
+		if len(parts) > 0 {
+			w += 5
+		}
+		if used+w > avail {
+			break
+		}
+		parts = append(parts, p)
+		used += w
+	}
+	return strings.Join(parts, "     ")
+}
+
 // body is row 4: the top view's body, or the command box, help overlay or a
 // modal overlay when one is up (§5.3).
 func (m Model) body(env Env) string {
 	bh := bodyHeight(env)
 	if m.cmd.open {
-		box := m.cmdBox(env)
-		lines := strings.Split(m.top().Body(env, env.Width, bh), "\n")
-		for i := 0; i < len(box) && i < len(lines); i++ {
-			lines[i] = box[i]
-		}
-		return strings.Join(fitLines(lines, env.Width, bh), "\n")
+		title, rows, want, danger := m.cmdModal(env)
+		return m.overlayBody(env, bh, title, rows, want, danger)
 	}
 	if m.help {
 		return m.helpBody(env, bh)
 	}
 	if m.overlay != nil {
+		if mo, ok := m.overlay.(modalOverlay); ok {
+			title, rows, want, danger := mo.modal(env.Width)
+			return m.overlayBody(env, bh, title, rows, want, danger)
+		}
 		box := m.overlay.view(env.Width)
 		lines := strings.Split(m.top().Body(env, env.Width, bh), "\n")
 		start := len(lines) - len(box)
@@ -280,6 +312,25 @@ func (m Model) body(env Env) string {
 		return strings.Join(fitLines(lines, env.Width, bh), "\n")
 	}
 	return m.top().Body(env, env.Width, bh)
+}
+
+// overlayBody dims the top view's body and composes the modal box over it:
+// centred, in the upper third (§2.3).
+func (m Model) overlayBody(env Env, bh int, title string, rows []string, want int, danger bool) string {
+	lines := strings.Split(m.top().Body(env, env.Width, bh), "\n")
+	dimmed := dimLines(lines)
+	box := renderModal(title, rows, want, env.Width, danger)
+	boxW := 0
+	if len(box) > 0 {
+		boxW = lipgloss.Width(box[0])
+	}
+	x := (env.Width - boxW) / 2
+	y := (bh - len(box)) / 3
+	if y < 0 {
+		y = 0
+	}
+	composed := composeBox(dimmed, box, x, y, env.Width)
+	return strings.Join(fitLines(composed, env.Width, bh), "\n")
 }
 
 // noticeStyle is the sticky notice's colour: red for an action's error, faint
@@ -312,30 +363,82 @@ func (m Model) workingText() string {
 	return "working: " + strings.Join(parts, ", ")
 }
 
-// cmdBox is the command line's box: the input, then one line per match
-// (§5.3). Its length is min(len(matches)+2, 10).
-func (m Model) cmdBox(env Env) []string {
+// cmdModal is the command line's box (§3.1): the input, then the matches
+// grouped into the VIEWS, BINDINGS and GATES sections, then the overflow and
+// key rows. Title "command", want 80.
+func (m Model) cmdModal(env Env) (string, []string, int, bool) {
+	const want = 80
+	innerW := modalInnerW(want, env.Width)
 	ms := m.cmd.matches(env)
-	n := len(ms) + 2
-	if n > 10 {
-		n = 10
+
+	type entry struct {
+		idx int
+		c   command
 	}
-	box := make([]string, 0, n)
-	box = append(box, m.cmd.input.View())
-	for i, cand := range ms {
-		if len(box) >= n {
-			break
+	grouped := map[string][]entry{}
+	for i, c := range ms {
+		section := cmdSection(c)
+		grouped[section] = append(grouped[section], entry{i, c})
+	}
+	// Done bindings sort after every other binding match (§3.1).
+	if es := grouped["BINDINGS"]; len(es) > 0 {
+		var live, done []entry
+		for _, e := range es {
+			if b, ok := m.bindingFor(env, e.c); ok && groupOf(b) == groupDone {
+				done = append(done, e)
+			} else {
+				live = append(live, e)
+			}
 		}
-		marker := "  "
-		if i == m.cmd.sel {
-			marker = accentStyle.Render("▸ ")
+		grouped["BINDINGS"] = append(live, done...)
+	}
+
+	rows := []string{m.cmd.input.View(), ""}
+	for _, section := range []string{"VIEWS", "BINDINGS", "GATES"} {
+		entries := grouped[section]
+		if len(entries) == 0 {
+			continue
 		}
-		box = append(box, marker+accentStyle.Render(cand.name)+"  "+dimStyle.Render(cand.help))
+		rows = append(rows, modalSection(section))
+		for _, e := range entries {
+			name, desc := e.c.name, e.c.help
+			if section == "BINDINGS" {
+				if b, ok := m.bindingFor(env, e.c); ok {
+					desc = strings.Join([]string{
+						groupMetas[groupOf(b)].label,
+						fmt.Sprintf("r%d", b.Round),
+						candidateText(b),
+					}, " · ")
+				}
+			}
+			rows = append(rows, modalRow(e.idx == m.cmd.sel, name, desc, "", innerW, accentStyle, dimStyle))
+		}
 	}
-	for len(box) < n {
-		box = append(box, "")
+	if n := m.cmd.matchCount(env); n > len(ms) {
+		rows = append(rows, faintStyle.Render(fmt.Sprintf("+ %d more match; keep typing", n-len(ms))))
 	}
-	return box
+	rows = append(rows, rightAligned(faintStyle.Render("tab complete · enter go · esc close"), innerW))
+	return "command", rows, want, false
+}
+
+// bindingFor finds the report row a `round <key>` completion opens.
+func (m Model) bindingFor(env Env, c command) (relevo.BindingStatus, bool) {
+	key := strings.TrimPrefix(c.name, "round ")
+	for _, b := range env.Report.Bindings {
+		if b.Key() == key {
+			return b, true
+		}
+	}
+	return relevo.BindingStatus{}, false
+}
+
+// rightAligned pads text so it ends at innerW.
+func rightAligned(text string, innerW int) string {
+	pad := innerW - lipgloss.Width(text)
+	if pad < 0 {
+		pad = 0
+	}
+	return strings.Repeat(" ", pad) + text
 }
 
 // globalKeys are the shell's own keys, shown first in the help overlay.
@@ -347,24 +450,88 @@ var globalKeys = []KeyHelp{
 	{"q", "quit / back"},
 }
 
-// helpBody is the help overlay: the global section, then the top view's
-// keys, as two columns (§5.3).
-func (m Model) helpBody(env Env, height int) string {
-	line := func(kh KeyHelp) string {
-		return fgStyle.Render(pad(kh.Key, 12)) + " " + dimStyle.Render(kh.Help)
-	}
-	lines := []string{accentStyle.Render("global")}
-	for _, kh := range globalKeys {
-		lines = append(lines, line(kh))
-	}
-	lines = append(lines, "")
-	lines = append(lines, accentStyle.Render("view"))
+// actKeys are the keys the help modal's ACT ON THE ROW column collects (§3.2).
+var actKeys = map[string]bool{
+	"s": true, "E": true, "b": true, "x": true, "D": true,
+	"u": true, "g": true, "r": true, "o": true,
+}
+
+// helpColumns splits the top view's help keys into the help modal's two key
+// columns (§3.2): ACT ON THE ROW holds the action keys, MOVE & VIEW the rest.
+// ANYWHERE is globalKeys minus any key the view already shows, so a key shared
+// with the view (e.g. "/ filter") appears once (§2.6).
+func (m Model) helpColumns(env Env) (move, act, anywhere []KeyHelp) {
 	keys := m.top().Keys()
 	if hk, ok := m.top().(helpKeyer); ok {
 		keys = hk.HelpKeys()
 	}
+	viewKeys := map[string]bool{}
 	for _, kh := range keys {
-		lines = append(lines, line(kh))
+		viewKeys[kh.Key] = true
+		if actKeys[kh.Key] {
+			act = append(act, kh)
+		} else {
+			move = append(move, kh)
+		}
 	}
-	return strings.Join(fitLines(lines, env.Width, height), "\n")
+	for _, kh := range globalKeys {
+		if !viewKeys[kh.Key] {
+			anywhere = append(anywhere, kh)
+		}
+	}
+	return move, act, anywhere
+}
+
+// helpBody is the help overlay: the MOVE & VIEW, ACT ON THE ROW and ANYWHERE
+// columns in a boxed modal (§3.2). Title "keys · <last crumb>", want 108.
+func (m Model) helpBody(env Env, height int) string {
+	title, rows, want, danger := m.helpModal(env)
+	return m.overlayBody(env, height, title, rows, want, danger)
+}
+
+// helpModal builds the help modal's title and rows (§3.2).
+func (m Model) helpModal(env Env) (string, []string, int, bool) {
+	const want = 108
+	innerW := modalInnerW(want, env.Width)
+	move, act, anywhere := m.helpColumns(env)
+	cols := [][]KeyHelp{move, act, anywhere}
+	headers := []string{"MOVE & VIEW", "ACT ON THE ROW", "ANYWHERE"}
+	colW := innerW / 3
+
+	var rows []string
+	head := ""
+	for _, h := range headers {
+		head += fit(modalSection(h), colW)
+	}
+	rows = append(rows, head)
+
+	n := 0
+	for _, col := range cols {
+		if len(col) > n {
+			n = len(col)
+		}
+	}
+	for i := 0; i < n; i++ {
+		line := ""
+		for _, col := range cols {
+			cell := ""
+			if i < len(col) {
+				cell = helpEntry(col[i])
+			}
+			line += fit(cell, colW)
+		}
+		rows = append(rows, line)
+	}
+
+	title := "keys"
+	if crumbs := m.top().Crumbs(); len(crumbs) > 0 {
+		title = "keys · " + crumbs[len(crumbs)-1]
+	}
+	return title, rows, want, false
+}
+
+// helpEntry is one help line: the key as a kbd chip padded to 12 cells, then
+// its help in muted (§3.2).
+func helpEntry(kh KeyHelp) string {
+	return fit(chip(kbdStyle, kh.Key), 12) + " " + mutedStyle.Render(kh.Help)
 }

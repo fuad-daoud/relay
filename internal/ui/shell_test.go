@@ -194,8 +194,10 @@ func TestSnapshotRoutingForwardsToEveryView(t *testing.T) {
 	}
 }
 
-// TestHelpListsGlobalAndViewKeys: the help overlay names the globals and
-// the top view's own keys.
+// TestHelpListsGlobalAndViewKeys: the help modal names the three columns and
+// the top view's own keys. Ported for O2 (the full-screen help list): the
+// labels and the chip-padded entries replaced the old "global"/"view"
+// sections.
 func TestHelpListsGlobalAndViewKeys(t *testing.T) {
 	m := splitModel(t, 140, 40, relevo.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
 	rv, _ := newRoundView(m.env(), "webshop", 0)
@@ -208,7 +210,7 @@ func TestHelpListsGlobalAndViewKeys(t *testing.T) {
 	}
 
 	body := plain(m.helpBody(m.env(), bodyHeight(m.env())))
-	for _, want := range []string{"global", "view", ": command", "? help", "esc back", "[ ] round", "1-5 tab"} {
+	for _, want := range []string{"MOVE & VIEW", "ACT ON THE ROW", "ANYWHERE", "command", "filter", "help", "back", "quit / back", "round", "next tab"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("help must list %q:\n%s", want, body)
 		}

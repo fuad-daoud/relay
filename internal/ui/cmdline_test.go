@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -57,6 +58,38 @@ func TestCmdLineMatchesRanks(t *testing.T) {
 	c.input.SetValue("")
 	if got := c.matches(env); len(got) > 8 {
 		t.Errorf("%d matches, want at most 8", len(got))
+	}
+}
+
+// TestCommandMatchesLiveBeforeDone: 7 done bindings with short names and 1
+// live binding with a long name, typed `r`. The live entry survives the cap
+// of 8 because live bindings sort before done ones (§2.3, §5).
+func TestCommandMatchesLiveBeforeDone(t *testing.T) {
+	var bindings []relevo.BindingStatus
+	for i := 1; i <= 7; i++ {
+		bindings = append(bindings, relevo.BindingStatus{
+			Name: fmt.Sprintf("d%d", i), Round: 1, Display: "DONE",
+		})
+	}
+	bindings = append(bindings, relevo.BindingStatus{
+		Name: "live-binding-long", Round: 2, Display: "ACTIVE",
+	})
+	env := Env{Report: relevo.Report{Bindings: bindings}}
+
+	c := newCmdLine()
+	c.input.SetValue("r")
+	ms := c.matches(env)
+	if len(ms) != 8 {
+		t.Fatalf("matches = %d, want the cap of 8: %+v", len(ms), ms)
+	}
+	found := false
+	for _, m := range ms {
+		if m.name == "round live-binding-long" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the live binding must be within the first 8: %+v", ms)
 	}
 }
 

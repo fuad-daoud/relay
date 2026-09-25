@@ -516,6 +516,17 @@ func actorCell(b relevo.BindingStatus) string {
 	return b.Role
 }
 
+// secondSegment is the provider part of a candidate ref or a gate token: the
+// second '/'-separated segment, or the whole string when there is none
+// (§3.3, §3.5).
+func secondSegment(s string) string {
+	parts := strings.Split(s, "/")
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return s
+}
+
 func nowCell(b relevo.BindingStatus, now time.Time) string {
 	what, age := whatAge(b, now)
 	if age == "" {
@@ -706,7 +717,9 @@ func (f fleetView) cardLines(env Env, b relevo.BindingStatus, width int) []strin
 	if branch == "" {
 		branch = repoCell(b)
 	}
-	metaParts = append(metaParts, mutedStyle.Render(branch))
+	if branch != "" {
+		metaParts = append(metaParts, mutedStyle.Render(branch))
+	}
 	if b.LastClose != nil && b.LastClose.Commits > 0 {
 		commitWord := "commits"
 		if b.LastClose.Commits == 1 {
