@@ -73,11 +73,20 @@ func DecideUpdate(req UpdateRequest) UpdateDecision {
 		if target[0] != 'v' {
 			target = "v" + target
 		}
-		if v, ok := ParseVersion(target); !ok || v.Suffix != "" {
+		if !IsReleaseTag(target) {
 			return UpdateDecision{
 				Action:  UpdateInvalid,
 				Message: fmt.Sprintf(`--to must be a release tag like v0.13.0, got %q`, req.To),
 			}
+		}
+	} else if req.Latest != "" && !IsReleaseTag(req.Latest) {
+		// The latest tag becomes a path segment in the download URL, so a
+		// malformed one must be refused before the switch, for every kind:
+		// it is never downloaded, and never printed into a go install
+		// command either (#293).
+		return UpdateDecision{
+			Action:  UpdateRefuse,
+			Message: fmt.Sprintf("the latest release tag %q is not a release tag like v0.13.0; nothing was downloaded", req.Latest),
 		}
 	}
 

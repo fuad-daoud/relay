@@ -44,6 +44,34 @@ func ParseVersion(s string) (v Version, ok bool) {
 	return Version{Major: nums[0], Minor: nums[1], Patch: nums[2], Suffix: suffix}, true
 }
 
+// IsReleaseTag reports whether s is exactly a release tag: "v", then one or
+// more ASCII digits, ".", one or more ASCII digits, ".", one or more ASCII
+// digits, with nothing before or after. Leading zeros are allowed; a suffix,
+// a path separator or surrounding whitespace is not. It is checked byte by
+// byte, because this string is about to become a path segment in a download
+// URL, and it is the precondition AssetURLs and FetchBinary name (#293).
+func IsReleaseTag(s string) bool {
+	if len(s) < 5 || s[0] != 'v' {
+		return false
+	}
+	dots, digits := 0, 0
+	for i := 1; i < len(s); i++ {
+		switch c := s[i]; {
+		case c >= '0' && c <= '9':
+			digits++
+		case c == '.':
+			if digits == 0 {
+				return false
+			}
+			dots++
+			digits = 0
+		default:
+			return false
+		}
+	}
+	return dots == 2 && digits > 0
+}
+
 // Newer reports whether latest is strictly newer than running. It is
 // false whenever either side is unparseable -- relevo never claims
 // staleness it cannot prove.

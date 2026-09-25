@@ -13,6 +13,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -257,6 +259,81 @@ func TestFetchBinarySymlinkIsNotTheBinary(t *testing.T) {
 	_, err := (&Downloader{Base: base}).FetchBinary(context.Background(), testTag, "linux", "amd64", dest)
 	if !errors.Is(err, ErrNoBinary) {
 		t.Fatalf("FetchBinary = %v, want ErrNoBinary", err)
+	}
+	assertEmptyDir(t, dest)
+}
+
+// TestFetchBinaryDuplicateChecksumLine pins the "exactly one line" rule: when
+// checksums.txt names the archive twice the file is ambiguous and must be
+// ErrNoChecksum, with nothing written. Round 1's code already enforces this;
+// the test exists so the rule cannot be loosened silently.
+func TestFetchBinaryDuplicateChecksumLine(t *testing.T) {
+	archive := tarGz(t, tarEntry{name: "relevo", data: []byte(fakeBinary), typeflag: tar.TypeReg})
+	line := checksumLine(archive, testArchive)
+	base := newAssetServer(t, assetServer{
+		archive:   archive,
+		checksums: []byte(line + line),
+	})
+	dest := t.TempDir()
+
+	_, err := (&Downloader{Base: base}).FetchBinary(context.Background(), testTag, "linux", "amd64", dest)
+	if !errors.Is(err, ErrNoChecksum) {
+		t.Fatalf("FetchBinary = %v, want ErrNoChecksum", err)
+	}
+	assertEmptyDir(t, dest)
+}
+
+// TestFetchBinaryMalformedChecksum pins the other half of the rule: the
+// archive's line must hold 64 lowercase hex characters. An uppercase hash
+// and a 63-character hash are both ErrNoChecksum.
+func TestFetchBinaryMalformedChecksum(t *testing.T) {
+	archive := tarGz(t, tarEntry{name: "relevo", data: []byte(fakeBinary), typeflag: tar.TypeReg})
+	sum := sha256.Sum256(archive)
+	good := hex.EncodeToString(sum[:])
+
+	tests := []struct {
+		name string
+		hash string
+	}{
+		{"uppercase hash", strings.ToUpper(good)},
+		{"63-character hash", good[:63]},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			base := newAssetServer(t, assetServer{
+				archive:   archive,
+				checksums: []byte(tc.hash + "  " + testArchive + "\n"),
+			})
+			dest := t.TempDir()
+
+			_, err := (&Downloader{Base: base}).FetchBinary(context.Background(), testTag, "linux", "amd64", dest)
+			if !errors.Is(err, ErrNoChecksum) {
+				t.Fatalf("FetchBinary = %v, want ErrNoChecksum", err)
+			}
+			assertEmptyDir(t, dest)
+		})
+	}
+}
+
+// TestFetchBinaryRefusesNonReleaseTag pins the guard at the point of use: a
+// tag IsReleaseTag rejects must be refused before any request, and nothing
+// is written. The counter proves the server was never asked.
+func TestFetchBinaryRefusesNonReleaseTag(t *testing.T) {
+	var requests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	dest := t.TempDir()
+
+	_, err := (&Downloader{Base: srv.URL}).FetchBinary(context.Background(), "v1.2.3/../x", "linux", "amd64", dest)
+	if !errors.Is(err, ErrBadTag) {
+		t.Fatalf("FetchBinary = %v, want ErrBadTag", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Errorf("server saw %d request(s), want 0: a bad tag must never reach the network", got)
 	}
 	assertEmptyDir(t, dest)
 }

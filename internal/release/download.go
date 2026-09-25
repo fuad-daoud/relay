@@ -37,6 +37,10 @@ var (
 	// ErrNoChecksum is checksums.txt holding no line for the archive, or more
 	// than one.
 	ErrNoChecksum = errors.New("no checksum for the archive")
+	// ErrBadTag is a tag that is not exactly a release tag, refused before
+	// any URL is built. DecideUpdate guards this for the CLI, and FetchBinary
+	// checks it again so the downloader is safe on its own (#293).
+	ErrBadTag = errors.New("not a release tag")
 	// ErrChecksumMismatch is the archive's SHA-256 not matching its line.
 	ErrChecksumMismatch = errors.New("archive checksum mismatch")
 	// ErrNoBinary is no regular file named relevo at the archive root.
@@ -60,6 +64,10 @@ type Downloader struct {
 // file in destDir and returns its path. Nothing is written to disk before the
 // checksum passes, and no temp file is left behind on any error.
 func (d *Downloader) FetchBinary(ctx context.Context, tag, goos, goarch, destDir string) (string, error) {
+	if !IsReleaseTag(tag) {
+		return "", fmt.Errorf("%q: %w", tag, ErrBadTag)
+	}
+
 	archiveURL, checksumsURL := assetURLsFrom(d.Base, tag, goos, goarch)
 	archiveName := path.Base(archiveURL)
 

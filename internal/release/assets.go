@@ -8,7 +8,8 @@ const DownloadBase = "https://github.com/fuad-daoud/relevo/releases/download"
 
 // AssetURLs returns the release archive and checksums URL for tag on
 // goos/goarch. Pure: it formats whatever it is given and has no error return,
-// because callers pass only a tag ParseVersion accepted.
+// because callers pass only a tag IsReleaseTag accepts; FetchBinary checks it
+// again before any request.
 func AssetURLs(tag, goos, goarch string) (archive, checksums string) {
 	return assetURLsFrom(DownloadBase, tag, goos, goarch)
 }

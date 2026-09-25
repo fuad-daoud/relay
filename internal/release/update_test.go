@@ -155,6 +155,41 @@ func TestDecideUpdate(t *testing.T) {
 			target:  "",
 			message: "no release tag to update to",
 		},
+		{
+			name:    "a malicious latest tag is refused before any URL is built",
+			req:     UpdateRequest{Kind: KindRelease, Running: "v0.12.0", Latest: "v9.9.9-x/../../../other/repo/releases/download/v1"},
+			action:  UpdateRefuse,
+			target:  "",
+			message: `the latest release tag "v9.9.9-x/../../../other/repo/releases/download/v1" is not a release tag like v0.13.0; nothing was downloaded`,
+		},
+		{
+			name:    "a go install binary refuses a malformed latest tag too",
+			req:     UpdateRequest{Kind: KindGoInstall, Running: "v0.8.0", Latest: "v1.2.3+meta"},
+			action:  UpdateRefuse,
+			target:  "",
+			message: `the latest release tag "v1.2.3+meta" is not a release tag like v0.13.0; nothing was downloaded`,
+		},
+		{
+			name:    "a force release refuses a malformed latest tag",
+			req:     UpdateRequest{Kind: KindLocalBuild, Running: "(devel)", Latest: "v1.2.3-rc1", ForceRelease: true},
+			action:  UpdateRefuse,
+			target:  "",
+			message: `the latest release tag "v1.2.3-rc1" is not a release tag like v0.13.0; nothing was downloaded`,
+		},
+		{
+			name:    "--to with a path separator is invalid",
+			req:     UpdateRequest{Kind: KindRelease, Running: "v0.12.0", To: "v1.2.3/../x"},
+			action:  UpdateInvalid,
+			target:  "",
+			message: `--to must be a release tag like v0.13.0, got "v1.2.3/../x"`,
+		},
+		{
+			name:    "--to without the v still normalises to a release tag",
+			req:     UpdateRequest{Kind: KindRelease, Running: "v1.0.0", To: "1.2.3"},
+			action:  UpdateReplace,
+			target:  "v1.2.3",
+			message: "relevo v1.0.0 -> v1.2.3",
+		},
 	}
 
 	for _, tc := range tests {

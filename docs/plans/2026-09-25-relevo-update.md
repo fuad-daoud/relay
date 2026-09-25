@@ -410,3 +410,44 @@ CI and don't merge.
 The report states the step 1 and step 2 initial failures, the focused and full
 check results, the step 6 outputs, the PR number, and `git diff --stat
 origin/main`.
+
+## Round 2: strict tags and the one-checksum-line rule
+
+### 1. System Overview
+
+Round 1 (commit 38419ac on `relevo/update293`, PR #495) is verified except
+for two gaps.
+
+**Gap A: the latest tag is not validated before it is used in a URL.**
+`DecideUpdate` (`internal/release/update.go`) checks a `--to` value with
+`ParseVersion` + `Suffix == ""`, but it uses `req.Latest` as the target with
+no check at all. `FetchBinary` then builds URLs from it with
+`assetURLsFrom(base, tag, …)`, as `base + "/" + tag + "/relevo_" + tag + …`.
+`ParseVersion` accepts any suffix after `-`, so a latest tag such as
+`v9.9.9-x/../../../other/repo/releases/download/v1` would be treated as newer.
+It would then walk the download path to another repository's release on
+github.com, with that release's own checksums.txt. The tag comes from the
+GitHub API, or from `RELEVO_RELEASE_API`, which is local. So this is defence
+in depth, but round 1's own plan (§6) promised that the tag lookup can at
+worst pick a *genuine relevo release tag*. `AssetURLs`'s doc comment says the
+same thing ("callers pass only a tag ParseVersion accepted"). The code does not
+keep that promise.
+
+Fix: one strict predicate, `IsReleaseTag(s string) bool`, true exactly when
+`s` matches `^v[0-9]+\.[0-9]+\.[0-9]+$`, checked byte by byte with no regexp
+package needed. `DecideUpdate` requires the target, from either source, to
+pass it before any `UpdateReplace`. `FetchBinary` also refuses a tag that fails
+it, as a second guard at the point of use.
+
+**Gap B: the "exactly one line" checksum rule is untested.** The planner
+mutated `fetchChecksum`'s `if matches != 1 || !isLowerHex64(sum)` to
+`if matches == 0`, and every test still passed. There is no test for a
+checksums.txt that names the archive twice, or whose hash is not 64 lowercase
+hex characters.
+
+No other behaviour changes.
+
+> Round 1 step 6.4 could not pass as written: after 6.3 the file is the
+> published v0.13.0 binary, which predates `relevo update`. The
+> "is current" path is covered by the `DecideUpdate` table instead.
+
