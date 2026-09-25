@@ -1,9 +1,11 @@
 package relevo
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -232,6 +234,40 @@ func TestAgyDeliverGaveUpAfterFallback(t *testing.T) {
 	}
 	if fake.calls != 0 {
 		t.Errorf("sent %d times after giving up; want 0", fake.calls)
+	}
+}
+
+func TestAgyDeliverLogsGiveUpOncePerPayload(t *testing.T) {
+	var logged bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(prev)
+
+	d, _, _ := newAgyRig(t)
+	d.FallbackAfter = time.Second
+	base := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	queuedAt := base.Add(-2 * time.Second)
+	now := base
+	d.Now = func() time.Time { return now }
+
+	endpoint := store.Endpoint{Kind: "agy", SessionID: agyTestConv}
+
+	for _, sec := range []time.Duration{0, time.Second, 2 * time.Second} {
+		now = base.Add(sec)
+		out, reason, err := d.Deliver(context.Background(), endpoint, agyTestPayload, "/x/001-report.md", queuedAt)
+		if err != nil {
+			t.Fatalf("Deliver: %v", err)
+		}
+		if out != OutcomeNotMine {
+			t.Fatalf("outcome = %v, want OutcomeNotMine", out)
+		}
+		if want := "agy push gave up after 1s"; reason != want {
+			t.Errorf("reason = %q, want %q", reason, want)
+		}
+	}
+
+	if got := strings.Count(logged.String(), "push not confirmed"); got != 1 {
+		t.Fatalf("got %d 'push not confirmed' log lines, want 1; logs:\n%s", got, logged.String())
 	}
 }
 

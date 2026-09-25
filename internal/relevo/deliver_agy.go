@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +57,8 @@ type AgyDeliverer struct {
 	FallbackAfter time.Duration // zero -> DefaultFallbackAfter
 	ConfirmWindow time.Duration // zero -> AgyConfirmWindow
 	ConfirmPoll   time.Duration // zero -> AgyConfirmPoll
+	// gaveUp rate-limits the give-up log line (#459).
+	gaveUp giveUpLog
 }
 
 // agyMessage is the part of a message file the inbox scan reads. The real file
@@ -139,7 +142,10 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, planner store.Endpoint, payl
 	}
 	if !queuedAt.IsZero() && d.now().Sub(queuedAt) > d.fallbackAfter() {
 		reason := fmt.Sprintf("agy push gave up after %s", d.fallbackAfter())
-		slog.Info("agy push not confirmed; payload stays pending for the background wait", "conversation", conv, "reason", reason)
+		key := conv + "\x00" + strconv.FormatInt(queuedAt.UnixNano(), 10) + "\x00" + firstPayloadLine(payload)
+		if d.gaveUp.shouldLog(key, d.now()) {
+			slog.Info("agy push not confirmed; payload stays pending for the background wait", "conversation", conv, "reason", reason)
+		}
 		return OutcomeNotMine, reason, nil
 	}
 
