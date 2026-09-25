@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { execFile } from "node:child_process";
+import { Show } from "solid-js";
 
 // Module state: persists across setup calls within the same process
 let started = false;
@@ -21,8 +22,19 @@ const showCache = new Map<string, string>();
 const historyCache = new Map<string, any[]>();
 
 let updateStoreFn: (() => void) | null = null;
+const storeSigs = new Map<string, string>();
 
-function updateStore() {
+// The store drives every render. A poll or a fetch that brings back the same
+// bytes a render has already drawn must not bump it: the bump re-runs the
+// routes, and that re-render is what used to drop the binding page's scroll to
+// the top. Callers name a channel and hand in the signature of their fresh
+// data (the status doc, a fetched body, a history list); updateStore compares
+// it with what that channel last reported and bumps only on a change.
+function updateStore(channel?: string, sig?: string) {
+  if (channel !== undefined && sig !== undefined) {
+    if (storeSigs.get(channel) === sig) return;
+    storeSigs.set(channel, sig);
+  }
   if (updateStoreFn) {
     try {
       updateStoreFn();
@@ -114,7 +126,11 @@ function ensurePlanner(api: any, sessionID: string) {
 
 async function pollStatus(api: any) {
   if (inFlight) return;
-  const isSlotRecent = Date.now() - lastSlotRenderAt < 10000;
+  // A poll that no longer bumps the store (the data did not change) does not
+  // run the sidebar render that stamps lastSlotRenderAt, so the fresh doc time
+  // counts too; otherwise the guard would stop the poller after two unchanged
+  // polls.
+  const isSlotRecent = Date.now() - Math.max(lastSlotRenderAt, currentDocAt) < 10000;
   const isRelevoRoute = currentRoute === "relevo" || currentRoute === "relevo.binding";
   if (!isSlotRecent && !isRelevoRoute) return;
   // Before registration resolves there is no planner id to poll with; the
@@ -151,11 +167,11 @@ async function pollStatus(api: any) {
                   duration: 8000,
                 });
               }
-              if (row.last_ts && row.last_ts !== prev.last_ts && row.last_kind === "report") {
+              if (row.report_in && (!prev.report_in || row.report_round !== prev.report_round)) {
                 api.ui.toast.show({
                   variant: "info",
                   title: "relevo",
-                  message: `${row.name} r${row.report_round || row.round} report in${row.route === "deliverer" ? ", delivered to chat" : ""}`,
+                  message: `${row.name} r${row.report_round || row.round} report in, delivered to chat`,
                   duration: 6000,
                 });
               }
@@ -175,7 +191,7 @@ async function pollStatus(api: any) {
           fetchShow(currentRouteParams.name, currentRouteParams.round, "log", true);
         }
 
-        updateStore();
+        updateStore("status", res.stdout);
       } catch {
         failures++;
       }
@@ -225,6 +241,18 @@ function parseModel(candidate: string): string {
   return last.split("#")[0];
 }
 
+// One rule for the tab a binding page opens on: the report when the row's last
+// kind is a report, when a delivered report is waiting (report_in), or when the
+// row needs you and has a report round to show; otherwise the transcript. Every
+// way into a binding page uses it.
+function initialTab(row: any): "report" | "transcript" {
+  if (!row) return "transcript";
+  if (row.last_kind === "report") return "report";
+  if (row.report_in) return "report";
+  if (row.needs_you && (row.report_round ?? 0) > 0) return "report";
+  return "transcript";
+}
+
 // One marker column for the fleet rows: the selected row's marker and the
 // blank prefix of an unselected row are the same width, so every column lines
 // up -- with the NAME...TOKENS header, which carries the same blank prefix.
@@ -264,7 +292,7 @@ async function fetchShow(name: string, round?: number, tab = "report", force = f
         const data = JSON.parse(res.stdout);
         const text = data.Text || "";
         showCache.set(key, text);
-        updateStore();
+        updateStore(`show:${key}`, text);
         return text;
       } catch {}
     }
@@ -295,7 +323,7 @@ async function fetchHistory(name?: string, plannerSes?: string): Promise<any[]> 
         const data = JSON.parse(res.stdout);
         if (Array.isArray(data)) {
           historyCache.set(key, data);
-          updateStore();
+          updateStore(`history:${key}`, JSON.stringify(data));
           return data;
         }
       } catch {}
@@ -452,6 +480,7 @@ export default {
         const warningColor = paint(api, "text.feedback.warning.base");
         const successColor = paint(api, "text.feedback.success.base");
         const mutedColor = paint(api, "text.muted");
+        const infoColor = paint(api, "text.feedback.info.base") || mutedColor;
         const baseColor = paint(api, "text.base");
 
         const plannerEntry = plannerBySession.get(currentSessionID);
@@ -500,8 +529,14 @@ export default {
 
             {rows.map((row) => {
               const isNeedsYou = !!row.needs_you;
+              const isReportIn = !isNeedsYou && !!row.report_in;
               const dot = isNeedsYou ? "●" : "○";
-              const stateText = isNeedsYou ? "NEEDS YOU" : (row.display || "ACTIVE");
+              const stateText = isNeedsYou
+                ? "NEEDS YOU"
+                : isReportIn
+                  ? "REPORT IN"
+                  : (row.display || "ACTIVE");
+              const stateColor = isNeedsYou ? warningColor : isReportIn ? infoColor : successColor;
               const displayRound = row.report_round || row.round;
               const lineA = padLine(`${dot} ${row.name}`, stateText, 37);
               const lineB = ellipsize(
@@ -513,6 +548,9 @@ export default {
                 <box
                   flexDirection="column"
                   onMouseDown={() => {
+                    setStore((s: any) => {
+                      s.bindingTab = initialTab(row);
+                    });
                     api.ui.router.navigate({
                       type: "plugin",
                       name: "relevo.binding",
@@ -521,13 +559,13 @@ export default {
                   }}
                 >
                   <box flexDirection="row">
-                    <text fg={isNeedsYou ? warningColor : mutedColor}>
+                    <text fg={isNeedsYou ? warningColor : isReportIn ? infoColor : mutedColor}>
                       {isNeedsYou ? <b>{dot} </b> : `${dot} `}
                     </text>
                     <text fg={baseColor}>
                       {ellipsize(row.name, 37 - stateText.length - 4)}
                     </text>
-                    <text fg={isNeedsYou ? warningColor : successColor}>
+                    <text fg={stateColor}>
                       {isNeedsYou ? <b>{padLine("", stateText, 37 - row.name.length - 2)}</b> : padLine("", stateText, 37 - row.name.length - 2)}
                     </text>
                   </box>
@@ -609,6 +647,9 @@ export default {
                     return ta - tb;
                   });
                   const target = needs[0];
+                  setStore((s: any) => {
+                    s.bindingTab = initialTab(target);
+                  });
                   api.ui.router.navigate({
                     type: "plugin",
                     name: "relevo.binding",
@@ -655,6 +696,7 @@ export default {
         const warningColor = paint(api, "text.feedback.warning.base");
         const successColor = paint(api, "text.feedback.success.base");
         const mutedColor = paint(api, "text.muted");
+        const infoColor = paint(api, "text.feedback.info.base") || mutedColor;
         const baseColor = paint(api, "text.base");
         const interactiveColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || warningColor;
 
@@ -693,6 +735,9 @@ export default {
                 const sel = rows[store.fleetSelected ?? 0];
                 if (sel) {
                   const displayRound = sel.report_round || sel.round;
+                  setStore((s: any) => {
+                    s.bindingTab = initialTab(sel);
+                  });
                   api.ui.router.navigate({
                     type: "plugin",
                     name: "relevo.binding",
@@ -739,10 +784,11 @@ export default {
             {rows.map((row, i) => {
               const isSelected = (store.fleetSelected ?? 0) === i;
               const isNeedsYou = !!row.needs_you;
+              const isReportIn = !isNeedsYou && !!row.report_in;
               const actor = row.role || "builder";
               const model = parseModel(row.candidate);
               const displayRound = row.report_round || row.round;
-              const state = isNeedsYou ? "NEEDS YOU" : (row.display || "ACTIVE");
+              const state = isNeedsYou ? "NEEDS YOU" : isReportIn ? "REPORT IN" : (row.display || "ACTIVE");
               const nowCol = `${row.waiting || "--"} · ${row.clock || "--"}`;
               const tokensCol = row.tokens || "";
 
@@ -761,6 +807,9 @@ export default {
                   backgroundColor={isSelected ? paint(api, "background.action") : undefined}
                   onMouseDown={() => {
                     if (isSelected) {
+                      setStore((s: any) => {
+                        s.bindingTab = initialTab(row);
+                      });
                       api.ui.router.navigate({
                         type: "plugin",
                         name: "relevo.binding",
@@ -774,7 +823,7 @@ export default {
                   }}
                 >
                   <text
-                    fg={isSelected ? interactiveColor : isNeedsYou ? warningColor : baseColor}
+                    fg={isSelected ? interactiveColor : isNeedsYou ? warningColor : isReportIn ? infoColor : baseColor}
                   >
                     {isSelected ? <b>{`${ROW_MARKER}${line}`}</b> : `${ROW_PREFIX}${line}`}
                   </text>
@@ -818,6 +867,7 @@ export default {
         const warningColor = paint(api, "text.feedback.warning.base");
         const successColor = paint(api, "text.feedback.success.base");
         const mutedColor = paint(api, "text.muted");
+        const infoColor = paint(api, "text.feedback.info.base") || mutedColor;
         const baseColor = paint(api, "text.base");
         const interactiveColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || warningColor;
 
@@ -841,7 +891,11 @@ export default {
         // Fetch binding history for round row
         fetchHistory(name, undefined);
         const bHistory = historyCache.get(`b:${name}`) || [];
-        const rounds = bHistory.map((h: any) => h.Number).sort((a: number, b: number) => a - b);
+        // A round can have several history rows (a builder switch adds one),
+        // so list each round number once, ascending.
+        const rounds = Array.from(new Set(bHistory.map((h: any) => h.Number))).sort(
+          (a: number, b: number) => a - b,
+        );
         if (rounds.length === 0 && round > 0) rounds.push(round);
 
         // Fetch content for current tab
@@ -852,7 +906,8 @@ export default {
         const actor = row.role || "builder";
         const model = parseModel(row.candidate);
         const isNeedsYou = !!row.needs_you;
-        const display = isNeedsYou ? "NEEDS YOU" : (row.display || "ACTIVE");
+        const isReportIn = !isNeedsYou && !!row.report_in;
+        const display = isNeedsYou ? "NEEDS YOU" : isReportIn ? "REPORT IN" : (row.display || "ACTIVE");
 
         // The body scrollbox is the focused renderable (per the plan's
         // <scrollbox focusable focused>), so keys must be handled here too.
@@ -902,21 +957,21 @@ export default {
             onKeyDown={onKey}
           >
             {/* Header */}
-            <box flexDirection="row" justifyContent="space-between">
+            <box flexDirection="row" justifyContent="space-between" flexShrink={0}>
               <text>
                 <b>{`relevo › fleet › ${name} › r${round}`}</b>
               </text>
-              <text fg={isNeedsYou ? warningColor : successColor}>
+              <text fg={isNeedsYou ? warningColor : isReportIn ? infoColor : successColor}>
                 <b>{display}</b>
               </text>
             </box>
 
-            <text fg={mutedColor}>
+            <text fg={mutedColor} flexShrink={0}>
               {`${name} · ${actor} on ${model} · ${display}`}
             </text>
 
             {/* Tab row */}
-            <box flexDirection="row" gap={2} marginTop={1}>
+            <box flexDirection="row" gap={2} marginTop={1} flexShrink={0}>
               {tabs.map((t) => {
                 const isSelected = currentTab === t;
                 return (
@@ -928,7 +983,7 @@ export default {
             </box>
 
             {/* Round row */}
-            <box flexDirection="row" gap={1} marginTop={1}>
+            <box flexDirection="row" gap={1} marginTop={1} flexShrink={0}>
               <text fg={mutedColor}>[ ] round </text>
               {rounds.map((rNum: number) => {
                 const isSelected = rNum === round;
@@ -940,17 +995,22 @@ export default {
               })}
             </box>
 
-            {/* Body */}
-            <box marginTop={1} flexGrow={1}>
-              <scrollbox height={20} focusable focused onKeyDown={onKey}>
-                {currentTab === "plan" || currentTab === "report" ? (
-                  <markdown content={tabContent || `(no ${currentTab})`} width="100%" />
-                ) : currentTab === "diff" ? (
-                  <code content={tabContent || `(no diff)`} filetype="diff" width="100%" />
-                ) : (
-                  <text>{tabContent || `(no ${currentTab})`}</text>
-                )}
-              </scrollbox>
+            {/* Body: fills the height left under the header rows. Keyed by
+                (name, round, tab), so a poll or a fetch that brings the same
+                key keeps the same scrollbox and its scroll offset; a new key
+                (a tab or round change) starts at the top. */}
+            <box marginTop={1} flexGrow={1} minHeight={0}>
+              <Show keyed when={`${name}:${round}:${currentTab}`}>
+                <scrollbox flexGrow={1} minHeight={0} focusable focused onKeyDown={onKey}>
+                  {currentTab === "plan" || currentTab === "report" ? (
+                    <markdown content={tabContent || `(no ${currentTab})`} width="100%" />
+                  ) : currentTab === "diff" ? (
+                    <code content={tabContent || `(no diff)`} filetype="diff" width="100%" />
+                  ) : (
+                    <text>{tabContent || `(no ${currentTab})`}</text>
+                  )}
+                </scrollbox>
+              </Show>
             </box>
           </box>
         );

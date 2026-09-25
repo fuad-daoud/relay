@@ -103,13 +103,30 @@ capture "02-after-toast"
 send C-x; sleep 0.4; send o; sleep 1.5
 capture "03-fleet"
 
-# 04-binding (enter on webshop)
+# 04-binding: enter on webshop. Rule 1 opens the report -- webshop needs you
+# and has report_round 3 -- on that round, with no key pressed.
 send Enter; sleep 1.5
 capture "04-binding"
 
-# 05-binding-report (tab to report)
-send Tab; sleep 1.5
+# 04b-landing: escape back to the session, reopen the fleet, down to landing
+# (no report -> the transcript tab), enter.
+send Escape; sleep 0.5
+send C-x; sleep 0.4; send o; sleep 1.0
+send Down; sleep 0.3; send Down; sleep 0.3; send Enter; sleep 1.5
+capture "04b-landing"
+
+# 05-binding-report: back to the fleet, up to webshop, enter -> the report tab.
+send Escape; sleep 0.5
+send C-x; sleep 0.4; send o; sleep 1.0
+send Up; sleep 0.3; send Up; sleep 0.3; send Enter; sleep 1.5
 capture "05-binding-report"
+
+# 05b/05c: two PageDowns, then two polls (>= 12 s) with the body scrolled; the
+# first body line must be unchanged and must not be line 01.
+send PageDown; sleep 0.4; send PageDown; sleep 0.8
+capture "05b-scrolled"
+sleep 12
+capture "05c-after-polls"
 
 # 06-dialog (a)
 send a; sleep 1.5
@@ -164,12 +181,12 @@ assert 2 "01-session shows relevo · oc-smoke, webshop, NEEDS YOU" check_asserti
 assert 3 "01-session shows relevo 1 need you" \
   grep -q "relevo 1 need you" "$OUT/01-session.txt"
 
-# 4. 02-after-toast shows ledger r … report in, delivered to chat (the toast) and relevo 2 need you
+# 4. 02-after-toast shows ledger r … report in, delivered to chat (the toast) and relevo 1 need you
 check_assertion_4() {
   grep -qE "ledger r.*report in, delivered to chat" "$OUT/02-after-toast.txt" && \
-  grep -q "relevo 2 need you" "$OUT/02-after-toast.txt"
+  grep -q "relevo 1 need you" "$OUT/02-after-toast.txt"
 }
-assert 4 "02-after-toast shows ledger report toast and relevo 2 need you" check_assertion_4
+assert 4 "02-after-toast shows ledger report toast and relevo 1 need you" check_assertion_4
 
 # 5. 03-fleet shows relevo › fleet and the header NAME … TOKENS
 check_assertion_5() {
@@ -216,8 +233,8 @@ check_assertion_11() {
 assert 11 "no line in fake log starts with anything but a relevo verb" check_assertion_11
 
 # 12. 03-fleet shows a recent row below ── recent. history.json lists webshop
-#     r4, webshop r3, ledger r2, landing r1, so the third-newest row is
-#     ledger r2 (the plan's literal, webshop r3, is the fourth).
+#     r4 twice (a builder switch), webshop r3, ledger r2, landing r1, so
+#     ledger r2 is one of the rows shown.
 check_assertion_12() {
   awk '/── recent/{after = 1; next} after' "$OUT/03-fleet.txt" | grep -qE "ledger +r2"
 }
@@ -231,15 +248,15 @@ check_assertion_13() {
 }
 assert 13 "no fixture names in internal/harness/opencodeplugin/" check_assertion_13
 
-# 14. in 03-fleet the NEEDS YOU of the first two rows starts at one column.
+# 14. in 03-fleet webshop's NEEDS YOU and ledger's REPORT IN start at one column.
 #     LC_ALL makes awk count characters, so the › marker counts as one column.
 check_assertion_14() {
   local c1 c2
   c1="$(LC_ALL=C.UTF-8 awk '/NEEDS YOU/{print index($0, "NEEDS YOU"); exit}' "$OUT/03-fleet.txt")"
-  c2="$(LC_ALL=C.UTF-8 awk '/NEEDS YOU/{n++; if (n == 2) {print index($0, "NEEDS YOU"); exit}}' "$OUT/03-fleet.txt")"
+  c2="$(LC_ALL=C.UTF-8 awk '/REPORT IN/{print index($0, "REPORT IN"); exit}' "$OUT/03-fleet.txt")"
   [ -n "$c1" ] && [ "$c1" = "$c2" ]
 }
-assert 14 "03-fleet first two rows share the NEEDS YOU column" check_assertion_14
+assert 14 "03-fleet webshop NEEDS YOU and ledger REPORT IN share the STATE column" check_assertion_14
 
 # 15. webshop's status-1 row is display ACTIVE but needs_you true with
 #     report_round 3 and round 4: the sidebar must follow needs_you (NEEDS YOU)
@@ -252,13 +269,71 @@ check_assertion_15() {
 }
 assert 15 "01-session shows webshop NEEDS YOU and r3, not r4" check_assertion_15
 
-# 16. the ledger needs_you false -> true transition (status-1 -> status-2)
-#     raises the NEEDS YOU toast, or at least the badge count.
+# 16. the ledger status-1 -> status-2 transition is a delivered report, not a
+#     new NEEDS YOU: it raises no "ledger needs you" toast and the badge count
+#     stays at 1.
 check_assertion_16() {
-  grep -qi "ledger needs you" "$OUT/02-after-toast.txt" || \
-  grep -q "relevo 2 need you" "$OUT/02-after-toast.txt"
+  ! grep -qi "ledger needs you" "$OUT/02-after-toast.txt" && \
+  grep -q "relevo 1 need you" "$OUT/02-after-toast.txt"
 }
-assert 16 "02-after-toast shows the ledger NEEDS YOU toast or relevo 2 need you" check_assertion_16
+assert 16 "02-after-toast shows no ledger NEEDS YOU toast and relevo 1 need you" check_assertion_16
+
+# 17. rule 1: 04-binding (enter on webshop, needs_you with report_round 3)
+#     arrives on the report tab with no Tab pressed; 04b-landing (no report)
+#     arrives on the transcript tab.
+check_assertion_17() {
+  grep -q "\[ report \]" "$OUT/04-binding.txt" && \
+  grep -q "\[ transcript \]" "$OUT/04b-landing.txt"
+}
+assert 17 "04-binding selects report and 04b-landing selects transcript" check_assertion_17
+
+# 18. the body fills the height under the header rows: on a 45-row terminal the
+#     tall report fixture shows line 30 (>= 30 body lines).
+assert 18 "05-binding-report shows line 30 (the body fills the height)" \
+  grep -q "line 30" "$OUT/05-binding-report.txt"
+
+# 19. scrolling survives two polls: 05b and 05c share their first body line and
+#     it is not line 01.
+check_assertion_19() {
+  local b c
+  b="$(grep -oE "line [0-9]+" "$OUT/05b-scrolled.txt" | head -1)"
+  c="$(grep -oE "line [0-9]+" "$OUT/05c-after-polls.txt" | head -1)"
+  [ -n "$b" ] && [ "$b" = "$c" ] && [ "$b" != "line 01" ]
+}
+assert 19 "05b-scrolled and 05c-after-polls keep the same scrolled position" check_assertion_19
+
+# 20. the binding page header follows needs_you: webshop's fixture display is
+#     ACTIVE but its row needs you, so the header reads NEEDS YOU.
+check_assertion_20() {
+  grep -qE "webshop › r3.*NEEDS YOU" "$OUT/05-binding-report.txt"
+}
+assert 20 "05-binding-report header shows NEEDS YOU for webshop" check_assertion_20
+
+# 21. the round row lists each round once, ascending: r1 r2 r3 r4, with no
+#     repeated number (history.json carries two webshop r4 rows).
+check_assertion_21() {
+  local row
+  row="$(grep -oE "\[ \] round.*" "$OUT/05-binding-report.txt" | head -1)"
+  [ -n "$row" ] || return 1
+  printf '%s\n' "$row" | grep -qE "r1 r2 r3 r4" && \
+  [ -z "$(printf '%s\n' "$row" | grep -oE "r[0-9]+" | sort | uniq -d)" ]
+}
+assert 21 "05-binding-report round row is r1 r2 r3 r4 with no repeat" check_assertion_21
+
+# 22. the delivered report reads REPORT IN, not NEEDS YOU, and the badge counts
+#     only webshop: relevo 1 need you.
+check_assertion_22() {
+  grep -qE "ledger +REPORT IN" "$OUT/02-after-toast.txt" && \
+  ! grep -qE "ledger +NEEDS YOU" "$OUT/02-after-toast.txt" && \
+  grep -q "relevo 1 need you" "$OUT/02-after-toast.txt"
+}
+assert 22 "02-after-toast shows ledger REPORT IN and relevo 1 need you" check_assertion_22
+
+# 23. ledger's delivered report raises the report-in toast with its round.
+check_assertion_23() {
+  grep -q "ledger r2 report in, delivered to chat" "$OUT/02-after-toast.txt"
+}
+assert 23 "02-after-toast shows the ledger r2 report-in toast" check_assertion_23
 
 # Mouse is not driven here: tmux send-keys cannot deliver SGR mouse events
 # reliably, so the clickable-row behaviour (onMouseDown on the sidebar and
@@ -270,5 +345,5 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-echo "Smoke test PASSED (all 16 assertions passed)"
+echo "Smoke test PASSED (all 23 assertions passed)"
 exit 0
