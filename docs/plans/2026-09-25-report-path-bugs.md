@@ -317,3 +317,30 @@ merge.
 
 The report states the step 1 and step 5 failure lines, the focused and full
 check results, the PR number, and `git diff --stat origin/main`.
+
+## Round 2: quoted-bracket subtest
+
+Round 1 (commits 927a9f7 and d5a8a54 on `relevo/rpbugs`, PR #491) is
+verified, except for one test. The planner mutation-tested `flowListDepth` in
+`internal/relevo/reporttail.go` by deleting its quote handling, so that every
+`[` and `]` counts, even inside quotes. `TestParseReportTail` still passed.
+The subtest `"flow list whose items contain brackets inside quotes"` uses
+`"docs/[draft].md"`, whose brackets balance, so the depth is the same with or
+without quote handling. The subtest pins nothing.
+
+This round changes only that subtest's input and expectation, so that an
+unbalanced bracket inside quotes decides the outcome. No production code
+changes.
+
+Step 2 result: with the quote handling deleted from `flowListDepth`, the
+focused test fails at the mutated code:
+
+```
+--- FAIL: TestParseReportTail (0.00s)
+    --- FAIL: TestParseReportTail/flow_list_whose_items_contain_brackets_inside_quotes (0.00s)
+        reporttail_test.go:472: expected ok=true, got false
+FAIL
+```
+
+The subtest therefore pins quote handling. `reporttail.go` was restored with
+`git checkout -- internal/relevo/reporttail.go`.

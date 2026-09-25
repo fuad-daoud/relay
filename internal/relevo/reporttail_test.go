@@ -466,12 +466,12 @@ status: done
 	})
 
 	t.Run("flow list whose items contain brackets inside quotes", func(t *testing.T) {
-		input := "```relevo\nstatus: done\nchanged_paths: [\n\"docs/[draft].md\",\n\"x.go\"\n]\n```\n"
+		input := "```relevo\nstatus: done\nchanged_paths: [\n  \"odd]name.go\",\n  \"x[.go\",\n  \"y.go\"\n]\n```\n"
 		tail, ok := ParseReportTail([]byte(input))
 		if !ok {
 			t.Fatalf("expected ok=true, got false")
 		}
-		wantPaths := []string{"docs/[draft].md", "x.go"}
+		wantPaths := []string{"odd]name.go", "x[.go", "y.go"}
 		if !reflect.DeepEqual(tail.ChangedPaths, wantPaths) {
 			t.Errorf("changed_paths = %+v, want %+v", tail.ChangedPaths, wantPaths)
 		}
