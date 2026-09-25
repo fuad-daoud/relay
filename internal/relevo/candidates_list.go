@@ -55,6 +55,38 @@ func FormatCandidatesLatencyFor(reg *roles.Registry, set *candidate.Set, gates [
 	}, false)
 }
 
+// CandidateRoles returns the role names that serve the candidate token, in
+// reg.Names() order, where reg is rt.RoleRegistry(): the registry the actors
+// config builds, which is where a machine's roles live now. When no registry
+// role serves it, it falls back to the candidate's own Roles as written in
+// candidates.json. It returns nil when the token does not parse, the set is
+// nil, or neither source has any role, so a caller can drop the segment whole
+// rather than print an empty one.
+func CandidateRoles(rt Runtime, token string) []string {
+	ref, err := candidate.ParseRef(token)
+	if err != nil {
+		return nil
+	}
+	reg := rt.RoleRegistry()
+	var served []string
+	for _, name := range reg.Names() {
+		if reg.Serves(name, ref) {
+			served = append(served, name)
+		}
+	}
+	if len(served) > 0 {
+		return served
+	}
+	if rt.Candidates == nil {
+		return nil
+	}
+	c, err := rt.Candidates.Lookup(ref)
+	if err != nil || len(c.Roles) == 0 {
+		return nil
+	}
+	return append([]string(nil), c.Roles...)
+}
+
 // formatCandidatesLatency is the one line renderer behind both forms: rolesFor
 // renders the roles column, and withTier prints the candidate's own tier
 // segment, which only legacy mode does (#374 §3.2).

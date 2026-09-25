@@ -132,6 +132,33 @@ func TestScorecardPlanAndCost(t *testing.T) {
 	}
 }
 
+// TestScorecardBindingsHaltsSwitches pins §3.1: a scorecard row counts the
+// distinct binding IDs among the candidate's rows, the rows whose report
+// outcome is "halted", and the sum of their switches.
+func TestScorecardBindingsHaltsSwitches(t *testing.T) {
+	rows := []db.RoundRow{
+		{BindingID: "b1", BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 0},
+		{BindingID: "b2", BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 2, ReportOutcome: stStr("halted")},
+		{BindingID: "b2", BuilderCandidate: stStr("a"), Outcome: db.OutcomeHalted, Switches: 1, ReportOutcome: stStr("done")},
+		{BindingID: "b3", BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 0},
+	}
+	rep := Build(Inputs{Rows: rows, Until: stNow, Loc: time.UTC})
+
+	if len(rep.Scorecard) != 1 {
+		t.Fatalf("scorecard = %+v, want one row", rep.Scorecard)
+	}
+	s := rep.Scorecard[0]
+	if s.Bindings != 3 {
+		t.Errorf("Bindings = %d, want 3 (b1, b2, b3)", s.Bindings)
+	}
+	if s.ReportHalted != 1 {
+		t.Errorf("ReportHalted = %d, want 1 (the one harnessed halted report)", s.ReportHalted)
+	}
+	if s.Switches != 3 {
+		t.Errorf("Switches = %d, want 3 (0+2+1+0)", s.Switches)
+	}
+}
+
 // TestSpendDaysAndWeeks pins that zero days are present, that each day's
 // provider split sums to its USD, and that the week windows are exact at their
 // boundaries.
@@ -189,6 +216,51 @@ func TestSpendDaysAndWeeks(t *testing.T) {
 	}
 	if got := rep.Spend.Days[2].ByProvider["(none)"]; got != 32 {
 		t.Errorf("24th (none) = %v, want 32", got)
+	}
+}
+
+// TestSpendDayBreakdowns pins §3.1's day fields: each day carries its tokens by
+// kind, its tokens per candidate and its tokens per provider, with Tokens still
+// equal to the day's kinds' total.
+func TestSpendDayBreakdowns(t *testing.T) {
+	at := func(d, h int) time.Time {
+		return time.Date(2026, time.September, d, h, 0, 0, 0, time.UTC)
+	}
+	rows := []db.RoundRow{
+		{StartedAt: at(23, 9), BuilderCandidate: stStr("A"), BuilderProvider: stStr("p1"),
+			InTokens: stI64(10), CacheTokens: stI64(100), OutTokens: stI64(5)},
+		{StartedAt: at(23, 10), BuilderCandidate: stStr("B"), BuilderProvider: stStr("p2"),
+			OutTokens: stI64(7)},
+		{StartedAt: at(24, 9), BuilderCandidate: stStr("A"), InTokens: stI64(1)},
+	}
+	rep := Build(Inputs{
+		Rows:  rows,
+		Since: at(23, 0),
+		Until: at(24, 12),
+		Loc:   time.UTC,
+	})
+
+	if len(rep.Spend.Days) != 2 {
+		t.Fatalf("days = %d, want 2", len(rep.Spend.Days))
+	}
+	d1, d2 := rep.Spend.Days[0], rep.Spend.Days[1]
+
+	if d1.Kinds.In != 10 || d1.Kinds.Cache != 100 || d1.Kinds.Out != 12 {
+		t.Errorf("day 1 Kinds = %+v, want In 10, Cache 100, Out 12", d1.Kinds)
+	}
+	if got := d1.ByCandidate; got["A"] != 115 || got["B"] != 7 || len(got) != 2 {
+		t.Errorf("day 1 ByCandidate = %v, want A 115, B 7", got)
+	}
+	if got := d1.TokensByProvider; got["p1"] != 115 || got["p2"] != 7 || len(got) != 2 {
+		t.Errorf("day 1 TokensByProvider = %v, want p1 115, p2 7", got)
+	}
+	if got := d2.ByCandidate; got["A"] != 1 || len(got) != 1 {
+		t.Errorf("day 2 ByCandidate = %v, want A 1", got)
+	}
+	for i, d := range rep.Spend.Days {
+		if d.Tokens != d.Kinds.Total() {
+			t.Errorf("day %d Tokens = %d, want Kinds.Total() = %d", i, d.Tokens, d.Kinds.Total())
+		}
 	}
 }
 
@@ -292,6 +364,58 @@ func TestReposFeaturesLanded(t *testing.T) {
 	}
 }
 
+// TestNoFeatureGroup pins §2.3: NoFeature buckets the feature-less rows into
+// one "(none)" group, and it does not touch Features.
+func TestNoFeatureGroup(t *testing.T) {
+	rows := []db.RoundRow{
+		{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Outcome: db.OutcomeReported},
+		{BindingID: "b2", Repo: stStr("A"), Outcome: db.OutcomeReported},
+		{BindingID: "b3", Repo: stStr("A"), Outcome: db.OutcomeHalted},
+	}
+	rep := Build(Inputs{Rows: rows, Until: stNow, Loc: time.UTC})
+
+	if rep.NoFeature.Rounds != 2 || rep.NoFeature.Key != "(none)" {
+		t.Fatalf("NoFeature = %+v, want 2 rounds keyed (none)", rep.NoFeature)
+	}
+	if len(rep.Features) != 1 || rep.Features[0].Key != "f1" {
+		t.Fatalf("Features = %+v, want only f1", rep.Features)
+	}
+}
+
+// TestGroupRowsBreakdowns pins §3.1's new group breakdowns: the distinct
+// bindings among a group's rows, the rows whose report outcome is done or
+// halted, the sum of the recorded commits, and the round count per candidate,
+// which skips a nil one.
+func TestGroupRowsBreakdowns(t *testing.T) {
+	rows := []db.RoundRow{
+		{BindingID: "b1", Repo: stStr("A"), ReportOutcome: stStr("done"), Commits: stInt(2), BuilderCandidate: stStr("A")},
+		{BindingID: "b2", Repo: stStr("A"), ReportOutcome: stStr("done"), BuilderCandidate: stStr("A")},
+		{BindingID: "b3", Repo: stStr("A"), ReportOutcome: stStr("halted"), Commits: stInt(1), BuilderCandidate: stStr("B")},
+		{BindingID: "b1", Repo: stStr("A"), Commits: stInt(0)},
+	}
+	rep := Build(Inputs{Rows: rows, Until: stNow, Loc: time.UTC})
+
+	if len(rep.Repos) != 1 {
+		t.Fatalf("repos = %+v, want one row", rep.Repos)
+	}
+	g := rep.Repos[0]
+	if g.Bindings != 3 {
+		t.Errorf("Bindings = %d, want 3 (b1, b2, b3)", g.Bindings)
+	}
+	if g.Done != 2 {
+		t.Errorf("Done = %d, want 2 (the two done reports)", g.Done)
+	}
+	if g.ReportHalted != 1 {
+		t.Errorf("ReportHalted = %d, want 1", g.ReportHalted)
+	}
+	if g.Commits != 3 {
+		t.Errorf("Commits = %d, want 3 (2 + nil + 1 + 0)", g.Commits)
+	}
+	if got := g.ByCandidate; got["A"] != 2 || got["B"] != 1 || len(got) != 2 {
+		t.Errorf("ByCandidate = %v, want A:2 B:1 (the nil candidate skipped)", got)
+	}
+}
+
 // TestOutcomes pins that the unstructured report outcome is counted as
 // "no outcome".
 func TestOutcomes(t *testing.T) {
@@ -329,5 +453,142 @@ func TestBuildEmpty(t *testing.T) {
 	}
 	if len(rep.Outcomes.ByRound) != 0 || len(rep.Outcomes.ByReport) != 0 {
 		t.Errorf("outcomes = %+v, want empty maps", rep.Outcomes)
+	}
+}
+
+// TestTokenKindsSumAndCache pins §2's TokenCounts: the four kinds are summed
+// over every row, Measured counts only the rows with a token field, Tokens
+// stays equal to Total, and CachePct is cache over input.
+func TestTokenKindsSumAndCache(t *testing.T) {
+	rows := []db.RoundRow{
+		{InTokens: stI64(100), CacheTokens: stI64(900), WriteTokens: stI64(50), OutTokens: stI64(10)},
+		{InTokens: stI64(100), CacheTokens: stI64(900)},
+		// No token field at all: not measured.
+		{BuilderCandidate: stStr("a")},
+	}
+	rep := Build(Inputs{Rows: rows, Until: stNow, Loc: time.UTC})
+
+	k := rep.Totals.TokenKinds
+	if k.In != 200 || k.Cache != 1800 || k.Write != 50 || k.Out != 10 {
+		t.Errorf("TokenKinds = %+v, want In 200, Cache 1800, Write 50, Out 10", k)
+	}
+	if k.Measured != 2 {
+		t.Errorf("Measured = %d, want 2 (the two rows with a token field)", k.Measured)
+	}
+	if k.Total() != 2060 {
+		t.Errorf("Total = %d, want 2060", k.Total())
+	}
+	if rep.Totals.Tokens != k.Total() {
+		t.Errorf("Totals.Tokens = %d, want TokenKinds.Total() = %d", rep.Totals.Tokens, k.Total())
+	}
+	if pct, ok := k.CachePct(); !ok || pct != 90 {
+		t.Errorf("CachePct = %v, %v; want 90, true (1800 of 2000 input)", pct, ok)
+	}
+	if per, ok := k.PerRound(k.Out); !ok || per != 5 {
+		t.Errorf("PerRound(Out) = %d, %v; want 5, true (10 over 2 measured)", per, ok)
+	}
+
+	// No input at all: the cache share is unknown, and neither is a per-round
+	// mean without a measured round.
+	if _, ok := (TokenCounts{Write: 5, Out: 5}).CachePct(); ok {
+		t.Error("CachePct with zero input = ok true, want false")
+	}
+	if _, ok := (TokenCounts{}).PerRound(10); ok {
+		t.Error("PerRound with zero measured = ok true, want false")
+	}
+}
+
+// TestScoreRowTokens pins that a ScoreRow's TokenKinds sums that candidate's
+// rows only, and leaves the unrecorded bucket out.
+func TestScoreRowTokens(t *testing.T) {
+	rows := []db.RoundRow{
+		{BuilderCandidate: stStr("a"), InTokens: stI64(100), CacheTokens: stI64(900), OutTokens: stI64(10)},
+		{BuilderCandidate: stStr("a"), OutTokens: stI64(90)},
+		{BuilderCandidate: stStr("b"), InTokens: stI64(7)},
+		{BuilderCandidate: nil, InTokens: stI64(1000)},
+	}
+	rep := Build(Inputs{Rows: rows, Until: stNow, Loc: time.UTC})
+	byTok := map[string]ScoreRow{}
+	for _, s := range rep.Scorecard {
+		byTok[s.Token] = s
+	}
+
+	a := byTok["a"].TokenKinds
+	if a.In != 100 || a.Cache != 900 || a.Out != 100 || a.Measured != 2 || a.Total() != 1100 {
+		t.Errorf("a TokenKinds = %+v, want In 100, Cache 900, Out 100, Measured 2, Total 1100", a)
+	}
+	b := byTok["b"].TokenKinds
+	if b.In != 7 || b.Measured != 1 || b.Total() != 7 {
+		t.Errorf("b TokenKinds = %+v, want In 7, Measured 1, Total 7", b)
+	}
+	if rep.Totals.TokenKinds.In != 1107 {
+		t.Errorf("Totals In = %d, want 1107 (the unrecorded row's 1000 included)", rep.Totals.TokenKinds.In)
+	}
+}
+
+// TestDayTokensBucketByLocalDay pins that a day's Tokens are bucketed by the
+// same local day as its USD, and that a plan or unrecorded row still counts.
+func TestDayTokensBucketByLocalDay(t *testing.T) {
+	loc := time.FixedZone("X", 2*3600)
+	rows := []db.RoundRow{
+		// 23:30 UTC on the 23rd is 01:30 local on the 24th.
+		{StartedAt: time.Date(2026, 9, 23, 23, 30, 0, 0, time.UTC), InTokens: stI64(100)},
+		// 22:30 UTC on the 24th is 00:30 local on the 25th.
+		{StartedAt: time.Date(2026, 9, 24, 22, 30, 0, 0, time.UTC), InTokens: stI64(7)},
+		// 21:30 UTC on the 23rd is still the 23rd locally.
+		{StartedAt: time.Date(2026, 9, 23, 21, 30, 0, 0, time.UTC), InTokens: stI64(3)},
+	}
+	rep := Build(Inputs{
+		Rows:  rows,
+		Since: time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC),
+		Until: time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC),
+		Loc:   loc,
+	})
+
+	want := map[string]int64{"2026-09-23": 3, "2026-09-24": 100, "2026-09-25": 7}
+	for _, d := range rep.Spend.Days {
+		if got, ok := want[d.Day]; ok && d.Tokens != got {
+			t.Errorf("%s Tokens = %d, want %d", d.Day, d.Tokens, got)
+		}
+	}
+	if got := rep.Spend.Days[0].Tokens; got != 0 {
+		t.Errorf("the zero day's Tokens = %d, want 0", got)
+	}
+}
+
+// TestRepoTokens pins that a GroupRow's Tokens sums the group's rows, for
+// repos and for features.
+func TestRepoTokens(t *testing.T) {
+	rows := []db.RoundRow{
+		{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), InTokens: stI64(10), OutTokens: stI64(5)},
+		{BindingID: "b2", Repo: stStr("A"), Feature: stStr("f1"), CacheTokens: stI64(100)},
+		{BindingID: "b3", Repo: stStr("B"), Feature: stStr("f2"), WriteTokens: stI64(2)},
+		{BindingID: "b4"},
+	}
+	rep := Build(Inputs{Rows: rows, Until: stNow, Loc: time.UTC})
+
+	byKey := map[string]GroupRow{}
+	for _, g := range rep.Repos {
+		byKey[g.Key] = g
+	}
+	if got := byKey["A"].Tokens; got != 115 {
+		t.Errorf("repo A Tokens = %d, want 115", got)
+	}
+	if got := byKey["B"].Tokens; got != 2 {
+		t.Errorf("repo B Tokens = %d, want 2", got)
+	}
+	if got := byKey["(none)"].Tokens; got != 0 {
+		t.Errorf("(none) Tokens = %d, want 0", got)
+	}
+
+	byFeature := map[string]GroupRow{}
+	for _, g := range rep.Features {
+		byFeature[g.Key] = g
+	}
+	if got := byFeature["f1"].Tokens; got != 115 {
+		t.Errorf("feature f1 Tokens = %d, want 115", got)
+	}
+	if got := byFeature["f2"].Tokens; got != 2 {
+		t.Errorf("feature f2 Tokens = %d, want 2", got)
 	}
 }

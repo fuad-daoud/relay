@@ -15,6 +15,9 @@ var (
 	redStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff6b81"))
 	dangerStyle = redStyle
 	shadeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#2a2f39"))
+	// gridStyle is the chart's faint blueprint gridline, between shade and
+	// border. It is only for the drawing surface (§3.2).
+	gridStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#2f3542"))
 
 	selBandStyle    = lipgloss.NewStyle().Background(lipgloss.Color("#1a1f28"))
 	chipWarnStyle   = lipgloss.NewStyle().Background(lipgloss.Color("#3a2e14")).Foreground(lipgloss.Color("#f2b84b"))

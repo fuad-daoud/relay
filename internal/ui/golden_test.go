@@ -455,6 +455,96 @@ func goldenStatsModel(t *testing.T, width, height int, rep stats.Report) Model {
 	return res.(Model)
 }
 
+// overviewRows is the stats-overview golden's synthetic rounds, shaped like the
+// user's data (§5): three candidates, a deepseek-like lane with a 99% cache
+// share and a gemini-like one with 88%, tokens on four of the last seven days,
+// three repos, and one row with no token field at all.
+func overviewRows() []db.RoundRow {
+	s := func(v string) *string { return &v }
+	i64 := func(v int64) *int64 { return &v }
+	at := func(d, h int) time.Time { return time.Date(2026, 9, d, h, 0, 0, 0, time.Local) }
+
+	relevo := s("https://github.com/fuad-daoud/relevo")
+	money := s("https://github.com/fuad-daoud/money")
+	site := s("https://github.com/fuad-daoud/site")
+	deepseek := s("deepseek-v4.1-flash")
+	gemini := s("gemini-3.8-flash-high")
+	glm := s("glm-5.3-flash")
+	kimi := s("kimi-k3")
+	qwen := s("qwen-4-coder")
+
+	// One round's four token columns per lane.
+	type tokens struct{ in, cache, write, out int64 }
+	ds := tokens{in: 20_000, cache: 1_980_000, write: 5_000, out: 60_000}
+	gm := tokens{in: 120_000, cache: 880_000, out: 40_000}
+	gl := tokens{in: 50_000, cache: 200_000, out: 20_000}
+	row := func(binding string, repo *string, started time.Time, cand *string, outcome string, t tokens, nilTokens bool) db.RoundRow {
+		r := db.RoundRow{
+			BindingID: binding, BindingName: binding, Repo: repo,
+			StartedAt: started, Outcome: outcome, BuilderCandidate: cand,
+		}
+		if !nilTokens {
+			r.InTokens, r.CacheTokens, r.WriteTokens, r.OutTokens =
+				i64(t.in), i64(t.cache), i64(t.write), i64(t.out)
+		}
+		if outcome != db.OutcomeOpen {
+			r.DurationMS = i64(27 * 60_000)
+		}
+		return r
+	}
+
+	rows := []db.RoundRow{
+		// deepseek-v4.1-flash: six rounds, one of them unmeasured, 99% cache.
+		row("b1", relevo, at(11, 10), deepseek, db.OutcomeReported, ds, false),
+		row("b1", money, at(13, 10), deepseek, db.OutcomeReported, ds, false),
+		row("b1", relevo, at(15, 10), deepseek, db.OutcomeReported, ds, false),
+		row("b1", relevo, at(17, 10), deepseek, db.OutcomeHalted, ds, false),
+		row("b1", relevo, at(17, 11), deepseek, db.OutcomeReported, ds, false),
+		row("b1", site, at(17, 12), deepseek, db.OutcomeOpen, ds, true),
+
+		// gemini-3.8-flash-high: five measured rounds, 88% cache.
+		row("b2", money, at(11, 11), gemini, db.OutcomeReported, gm, false),
+		row("b2", money, at(13, 11), gemini, db.OutcomeReported, gm, false),
+		row("b2", site, at(15, 11), gemini, db.OutcomeReported, gm, false),
+		row("b2", site, at(17, 10), gemini, db.OutcomeReported, gm, false),
+		row("b2", money, at(17, 11), gemini, db.OutcomeReported, gm, false),
+
+		// glm-5.3-flash: five measured rounds, 80% cache.
+		row("b3", relevo, at(11, 12), glm, db.OutcomeReported, gl, false),
+		row("b3", relevo, at(13, 12), glm, db.OutcomeReported, gl, false),
+		row("b3", money, at(15, 12), glm, db.OutcomeReported, gl, false),
+		row("b3", site, at(17, 12), glm, db.OutcomeReported, gl, false),
+		row("b3", relevo, at(17, 13), glm, db.OutcomeReported, gl, false),
+
+		// kimi-k3 and qwen-4-coder: under five rounds, so the overview dims
+		// their rows.
+		row("b4", relevo, at(12, 10), kimi, db.OutcomeReported, gl, false),
+		row("b4", relevo, at(16, 10), kimi, db.OutcomeReported, gl, false),
+		row("b5", relevo, at(14, 10), qwen, db.OutcomeReported, gl, false),
+	}
+	// The halted round carries a report outcome, so the ROUNDS tile and the
+	// context row have a halt to count.
+	rows[3].ReportOutcome = s("halted")
+	return rows
+}
+
+// statsOverviewReport is the stats-overview-132 golden's report: stats.Build
+// over the synthetic rows, 30 days wide so the window matches the chart's
+// `30 days` heading (§7), with one active gate on the gemini-like lane so the
+// candidates golden's STATUS column has a gated row.
+func statsOverviewReport() stats.Report {
+	return stats.Build(stats.Inputs{
+		Rows: overviewRows(),
+		Gates: []ledger.Gate{{
+			Token: "gemini-3.8-flash-high", Kind: ledger.RateLimited,
+			Since: railNow, Until: railNow.Add(26 * time.Hour),
+		}},
+		Since: railNow.AddDate(0, 0, -29),
+		Until: railNow,
+		Loc:   time.Local,
+	})
+}
+
 func TestGoldenViews(t *testing.T) {
 	t.Cleanup(relevo.SetGateClock(func() time.Time { return railNow }))
 
@@ -463,6 +553,44 @@ func TestGoldenViews(t *testing.T) {
 		width, height int
 		build         func(t *testing.T) Model
 	}{
+		{
+			name: "stats-overview-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return goldenStatsModel(t, 132, 34, statsOverviewReport())
+			},
+		},
+		{
+			name: "stats-candidates-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenStatsModel(t, 132, 34, statsOverviewReport())
+				res, _ := m.Update(statsKey('2'))
+				return res.(Model)
+			},
+		},
+		{
+			name: "stats-tokens-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenStatsModel(t, 132, 34, statsOverviewReport())
+				res, _ := m.Update(statsKey('3'))
+				return res.(Model)
+			},
+		},
+		{
+			name: "stats-reliability-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenStatsModel(t, 132, 34, statsOverviewReport())
+				res, _ := m.Update(statsKey('4'))
+				return res.(Model)
+			},
+		},
+		{
+			name: "stats-repos-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenStatsModel(t, 132, 34, statsOverviewReport())
+				res, _ := m.Update(statsKey('5'))
+				return res.(Model)
+			},
+		},
 		{
 			name: "stats-wide", width: 160, height: 40,
 			build: func(t *testing.T) Model { return goldenStatsModel(t, 160, 40, statsFixture()) },
