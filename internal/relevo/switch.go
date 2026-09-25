@@ -147,7 +147,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		return b, nil
 	}
 
-	b.Builder = ep
+	b.Builder = carryStream(b.Builder, ep)
 	b.BuilderCandidate = res.Token()
 	if counted {
 		b.RoundSwitches++

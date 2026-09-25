@@ -2,8 +2,9 @@ package transcript
 
 // renderAgy is the table for `agy -p --output-format stream-json` (spec
 // §4.1). agy streams tool steps but not assistant text; the only text is
-// result.response at the end. A tool step in a state the table does not
-// know falls to rule 5 rather than being guessed at.
+// result.response at the end (and, on a failed run, result.error). A tool
+// step in a state the table does not know falls to rule 5 rather than being
+// guessed at.
 func renderAgy(obj map[string]any) []string {
 	switch str(obj["event"]) {
 	case "step_update":
@@ -42,6 +43,9 @@ func renderAgy(obj map[string]any) []string {
 		}
 		if st := str(r["status"]); st != "" && st != "SUCCESS" {
 			out = append(out, "result: "+st)
+		}
+		if msg := str(r["error"]); msg != "" {
+			out = append(out, "error: "+oneLine(msg))
 		}
 		if resp := str(r["response"]); resp != "" {
 			out = append(out, resp)
