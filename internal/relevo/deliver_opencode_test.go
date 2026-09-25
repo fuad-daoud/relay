@@ -1,9 +1,11 @@
 package relevo
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -312,6 +314,80 @@ func TestOpencodeDeliverFallsBackAfterFallbackAfter(t *testing.T) {
 	}
 	if !strings.Contains(reason, "opencode push gave up after") {
 		t.Errorf("reason = %q, want it to name the fallback", reason)
+	}
+}
+
+func TestOpencodeDeliverLogsGiveUpOncePerPayload(t *testing.T) {
+	var logged bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(prev)
+
+	stateFile := writeOpencodeServiceFile(t, t.TempDir(), "http://127.0.0.1:1", "pw", 1)
+	queuedAt := time.Unix(1000, 0)
+	now := queuedAt.Add(31 * time.Second)
+
+	d := &OpencodeDeliverer{
+		StateFiles: []string{stateFile},
+		DBPath:     filepath.Join(t.TempDir(), "opencode.db"),
+		Exec:       &fakeSqliteExec{},
+		Alive:      aliveNever,
+		Now:        func() time.Time { return now },
+	}
+
+	payload := "relevo: round 1\n\nbody"
+	endpoint := opencodePlanner("ses_abc123")
+
+	// 1. call Deliver three times with the same payload and queuedAt, with now = queuedAt+31s, +32s and +33s
+	for _, sec := range []time.Duration{31 * time.Second, 32 * time.Second, 33 * time.Second} {
+		now = queuedAt.Add(sec)
+		out, reason, err := d.Deliver(context.Background(), endpoint, payload, "/x/r.md", queuedAt)
+		if err != nil {
+			t.Fatalf("Deliver: %v", err)
+		}
+		// 2. assert that every call returned OutcomeNotMine with the reason containing opencode push gave up after
+		if out != OutcomeNotMine {
+			t.Fatalf("out = %v, want OutcomeNotMine", out)
+		}
+		if !strings.Contains(reason, "opencode push gave up after") {
+			t.Errorf("reason = %q, want it to contain 'opencode push gave up after'", reason)
+		}
+	}
+
+	countLogs := func() int {
+		return strings.Count(logged.String(), "push not confirmed")
+	}
+
+	// 3. assert that the buffer contains push not confirmed exactly once
+	if got := countLogs(); got != 1 {
+		t.Fatalf("got %d 'push not confirmed' log lines, want 1; logs:\n%s", got, logged.String())
+	}
+
+	// 4. call once more with a different queuedAt (queuedAt+1s) and a now past its fallback, and assert the count is 2
+	queuedAt2 := queuedAt.Add(time.Second)
+	now = queuedAt2.Add(31 * time.Second)
+	out, reason, err := d.Deliver(context.Background(), endpoint, payload, "/x/r.md", queuedAt2)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if out != OutcomeNotMine || !strings.Contains(reason, "opencode push gave up after") {
+		t.Fatalf("out = %v, reason = %q, want OutcomeNotMine with give up", out, reason)
+	}
+	if got := countLogs(); got != 2 {
+		t.Fatalf("got %d 'push not confirmed' log lines after second queuedAt, want 2; logs:\n%s", got, logged.String())
+	}
+
+	// 5. set now one hour past the first call and call with the first payload again, and assert the count is 3
+	now = queuedAt.Add(31*time.Second + time.Hour)
+	out, reason, err = d.Deliver(context.Background(), endpoint, payload, "/x/r.md", queuedAt)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if out != OutcomeNotMine || !strings.Contains(reason, "opencode push gave up after") {
+		t.Fatalf("out = %v, reason = %q, want OutcomeNotMine with give up", out, reason)
+	}
+	if got := countLogs(); got != 3 {
+		t.Fatalf("got %d 'push not confirmed' log lines after 1 hour, want 3; logs:\n%s", got, logged.String())
 	}
 }
 

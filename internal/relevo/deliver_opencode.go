@@ -43,6 +43,8 @@ type OpencodeDeliverer struct {
 
 	postedMu sync.Mutex
 	posted   map[opencodeKey]time.Time
+	// gaveUp rate-limits the give-up log line (#459).
+	gaveUp giveUpLog
 }
 
 type opencodeKey struct {
@@ -126,7 +128,10 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, planner store.Endpoint,
 	}
 	if !queuedAt.IsZero() && d.now().Sub(queuedAt) > d.fallbackAfter() {
 		reason := fmt.Sprintf("opencode push gave up after %s", d.fallbackAfter())
-		slog.Info("opencode push not confirmed; payload stays pending for the background wait", "session", planner.SessionID, "reason", reason)
+		key := planner.SessionID + "\x00" + strconv.FormatInt(queuedAt.UnixNano(), 10) + "\x00" + firstPayloadLine(payload)
+		if d.gaveUp.shouldLog(key, d.now()) {
+			slog.Info("opencode push not confirmed; payload stays pending for the background wait", "session", planner.SessionID, "reason", reason)
+		}
 		return OutcomeNotMine, reason, nil
 	}
 
