@@ -51,6 +51,41 @@ func TestParseVersion(t *testing.T) {
 	}
 }
 
+// TestIsReleaseTag pins §4's strict predicate: a tag is a release tag only
+// when it is exactly vMAJOR.MINOR.PATCH with ASCII digits and nothing before
+// or after. Anything with a suffix, a path separator, surrounding whitespace
+// or a missing "v" is not, because IsReleaseTag is what stands between a tag
+// and a download URL's path (#293).
+func TestIsReleaseTag(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"v1.2.3", true},
+		{"v01.2.3", true},
+		{"v10.20.30", true},
+		{"", false},
+		{"1.2.3", false},
+		{"v1.2", false},
+		{"v1.2.3.4", false},
+		{"v1.2.3-rc1", false},
+		{"v1.2.3+meta", false},
+		{"v1.2.3-2-gabc", false},
+		{"v1.2.3/", false},
+		{"v1.2.3/../x", false},
+		{" v1.2.3", false},
+		{"v1.2.3\n", false},
+		{"V1.2.3", false},
+		{"v1..3", false},
+	}
+
+	for _, tc := range tests {
+		if got := IsReleaseTag(tc.in); got != tc.want {
+			t.Errorf("IsReleaseTag(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
 // TestNewerOrdersDescribeSuffix pins §4.2's ordering: a describe-suffixed
 // running version is newer than the tag it describes and older than the next
 // patch. Make a suffix always older and the first case fails.

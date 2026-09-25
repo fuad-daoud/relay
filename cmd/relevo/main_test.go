@@ -151,6 +151,28 @@ func TestHelpListsServeVerbs(t *testing.T) {
 	}
 }
 
+// TestUpdateHelp pins `relevo update`'s discovery: the top-level usage names
+// it, and `update -h` prints its own usage line and returns errHelpShown,
+// which main turns into exit 0. It reaches no network and needs no harness.
+func TestUpdateHelp(t *testing.T) {
+	for _, want := range []string{"update", "--release"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("the usage constant must mention %q", want)
+		}
+	}
+
+	_, stderr, runErr := captureOutput(t, func() error {
+		return run([]string{"update", "-h"})
+	})
+	if !errors.Is(runErr, errHelpShown) {
+		t.Fatalf("run(update -h) = %v, want errHelpShown", runErr)
+	}
+	const line = "usage: relevo update [--check] [--to vX.Y.Z] [--release]"
+	if !strings.Contains(string(stderr), line) {
+		t.Errorf("update -h stderr = %q, want it to contain %q", string(stderr), line)
+	}
+}
+
 // TestBindResumeWithoutNameIsRejected covers a flag shape that reads fine and
 // silently does the wrong thing: --resume is a bool and the name comes from
 // --name, so `relevo bind --resume webshop` drops the positional and the binding
