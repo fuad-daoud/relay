@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
 // RewriteJSON rewrites every old-root path prefix inside the JSON records
@@ -86,11 +88,7 @@ func rewriteJSONFile(path string, pairs []Prefix) (bool, error) {
 		return false, err
 	}
 
-	out := data
-	for _, p := range pairs {
-		out = bytes.ReplaceAll(out, []byte(`"`+p.Old+`/`), []byte(`"`+p.New+`/`))
-		out = bytes.ReplaceAll(out, []byte(`"`+p.Old+`"`), []byte(`"`+p.New+`"`))
-	}
+	out := legacy.RewriteJSON(data, pairs)
 	if bytes.Equal(out, data) {
 		return false, nil
 	}

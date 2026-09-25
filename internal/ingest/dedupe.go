@@ -9,11 +9,12 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // DedupeStats summarises one DedupeMirrorOnce run. It is also the JSON
-// document the run leaves under the kv key `mirror-dedupe.v1`, which is what
+// document the run leaves under the kv key `mirror-dedupe.v2`, which is what
 // keeps the removal a one-time event.
 type DedupeStats struct {
 	// DoneAt is when the run finished.
@@ -36,6 +37,13 @@ type DedupeStats struct {
 	// TranscriptRoundsKept is how many rounds had rows that were not proven
 	// duplicate.
 	TranscriptRoundsKept int `json:"transcript_rounds_kept"`
+	// TranscriptRoundsByStreamLines is how many of TranscriptRoundsDeleted
+	// were proven by the sealed-lines rule (stream, or log for rows with no
+	// record JSON) rather than exact re-derivation.
+	TranscriptRoundsByStreamLines int `json:"transcript_rounds_by_stream_lines"`
+	// TranscriptRowsRenamed is how many rows of those rounds matched a stream
+	// line only after the rename rewrite.
+	TranscriptRowsRenamed int `json:"transcript_rows_renamed"`
 	// BackupPath is where the pre-run backup was written; empty when nothing
 	// was deleted, so no backup was taken.
 	BackupPath string `json:"backup_path"`
@@ -101,9 +109,15 @@ func dedupeRoundFileBase(kind string, number int) string {
 // an unmapped binding keeps every row. A mapped binding's artifact row is a
 // duplicate when the record's round file for it exists, holds the same byte
 // count, and hashes to the artifact's own sha256; its transcript is a
-// duplicate when re-deriving the transcript from the record's round file
-// reproduces every row exactly. Planner transcripts are never examined.
-func DedupeMirror(d *db.DB) (dedupePlan, error) {
+// duplicate when either re-deriving the transcript from the record's round
+// file reproduces every row exactly, or every row's record JSON is a line of
+// the record's sealed builder stream -- after applying renames to the row
+// when the exact line is not found. Planner transcripts are never examined.
+//
+// renames are the substitutions a cutover applied to the sealed stream files,
+// so a row whose stored path predates the rewrite still matches its rewritten
+// line. nil is allowed.
+func DedupeMirror(d *db.DB, renames []legacy.Prefix) (dedupePlan, error) {
 	var plan dedupePlan
 
 	// Filter{}'s Archived is nil, which queryBindings reads as "no
@@ -130,7 +144,7 @@ func DedupeMirror(d *db.DB) (dedupePlan, error) {
 			plan.stats.Unmapped++
 			continue
 		}
-		if err := planBinding(&plan, d, b, record); err != nil {
+		if err := planBinding(&plan, d, b, record, renames); err != nil {
 			return dedupePlan{}, err
 		}
 	}
@@ -157,7 +171,7 @@ func dedupeRecord(b db.BindingRow, records []db.Record) (db.Record, bool) {
 }
 
 // planBinding adds every row of b that is a proven duplicate of record.
-func planBinding(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Record) error {
+func planBinding(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Record, renames []legacy.Prefix) error {
 	rounds, err := d.Rounds(b.ID)
 	if err != nil {
 		return fmt.Errorf("dedupe: rounds of %s: %w", b.Name, err)
@@ -166,7 +180,7 @@ func planBinding(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Record) 
 		if err := planArtifacts(plan, d, record, rd); err != nil {
 			return err
 		}
-		if err := planTranscript(plan, d, b, record, rd); err != nil {
+		if err := planTranscript(plan, d, b, record, rd, renames); err != nil {
 			return err
 		}
 	}
@@ -205,9 +219,11 @@ func planArtifacts(plan *dedupePlan, d *db.DB, record db.Record, rd db.Round) er
 }
 
 // planTranscript applies the transcript identity rule to one mirror round: if
-// the round has transcript rows at all, re-derive them from the record and
-// plan their removal only when a derivation reproduces every row.
-func planTranscript(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Record, rd db.Round) error {
+// the round has transcript rows at all, it plans their removal when a
+// re-derivation from the record reproduces every row exactly, and otherwise
+// when every row's record JSON is a line of the record's sealed builder
+// stream, with renames applied to a row whose stored path predates a cutover.
+func planTranscript(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Record, rd db.Round, renames []legacy.Prefix) error {
 	rows, err := d.Transcript(db.OwnerRound, rd.ID, 0, 0)
 	if err != nil {
 		return fmt.Errorf("dedupe: transcript of %s round %d: %w", b.Name, rd.Number, err)
@@ -229,8 +245,109 @@ func planTranscript(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Recor
 		}
 	}
 
+	covered, renamed, err := streamLinesCover(d, record, rd, rows, renames)
+	if err != nil {
+		return err
+	}
+	if covered {
+		plan.transcriptOwners = append(plan.transcriptOwners, rd.ID)
+		plan.stats.TranscriptRoundsDeleted++
+		plan.stats.TranscriptRowsDeleted += len(rows)
+		plan.stats.TranscriptRoundsByStreamLines++
+		plan.stats.TranscriptRowsRenamed += renamed
+		return nil
+	}
+
 	plan.stats.TranscriptRoundsKept++
 	return nil
+}
+
+// streamLinesCover reports whether every row is proven by the record's sealed
+// round files, and how many rows matched only after the rename rewrite. It is
+// the looser second proof planTranscript falls back to when no exact
+// re-derivation fits. It applies three cases to each row, in order:
+//
+//  1. RecordJSON != "": the row is covered when its record JSON is a line of
+//     the sealed builder stream (NNN-builder.jsonl), directly, or -- when
+//     renames are given -- after the rewrite. rendered and ts are derived from
+//     the record JSON, and seq from the line's order, so such a row holds
+//     nothing the stream does not. A row with no stream to hold it is not
+//     covered.
+//  2. RecordJSON == "" and Rendered == "": the row is a blank stream line and
+//     holds nothing, so it is covered.
+//  3. RecordJSON == "" and Rendered != "": the row is covered when Rendered is
+//     a line of the sealed builder log (NNN-builder.log) verbatim -- a
+//     log-derived row is already-rendered text with no record behind it, so
+//     the log line it came from is all it holds. No rename rewrite is tried:
+//     relevo migrate never rewrote .log files. A missing log file leaves the
+//     row uncovered.
+//
+// A missing stream no longer returns early: a round whose rows are all case 2
+// or case 3 can be covered without one. The log is read only when a case-3 row
+// is first met. rows must be non-empty.
+func streamLinesCover(d *db.DB, record db.Record, rd db.Round, rows []db.TranscriptRecord, renames []legacy.Prefix) (covered bool, renamed int, err error) {
+	streamBase := builderStreamPathBase(rd.Number)
+	body, _, found, err := d.RoundFileGet(record.ID, streamBase)
+	if err != nil {
+		return false, 0, fmt.Errorf("dedupe: round file %s/%s: %w", record.Name, streamBase, err)
+	}
+	var stream map[string]bool
+	if found {
+		lines, lerr := roundFileLines(streamBase, body)
+		if lerr != nil {
+			return false, 0, fmt.Errorf("dedupe: split %s/%s: %w", record.Name, streamBase, lerr)
+		}
+		stream = make(map[string]bool, len(lines))
+		for _, line := range lines {
+			stream[string(line)] = true
+		}
+	}
+
+	var log map[string]bool
+	logLoaded := false
+
+	for _, row := range rows {
+		if row.RecordJSON != "" {
+			if stream[row.RecordJSON] {
+				continue
+			}
+			if len(renames) == 0 {
+				return false, 0, nil
+			}
+			rewritten := string(legacy.RewriteJSON([]byte(row.RecordJSON), renames))
+			if rewritten == row.RecordJSON || !stream[rewritten] {
+				return false, 0, nil
+			}
+			renamed++
+			continue
+		}
+		if row.Rendered == "" {
+			continue
+		}
+		if !logLoaded {
+			logLoaded = true
+			logBase := builderLogPathBase(rd.Number)
+			logBody, _, logFound, lerr := d.RoundFileGet(record.ID, logBase)
+			if lerr != nil {
+				return false, 0, fmt.Errorf("dedupe: round file %s/%s: %w", record.Name, logBase, lerr)
+			}
+			if logFound {
+				logLines, serr := roundFileLines(logBase, logBody)
+				if serr != nil {
+					return false, 0, fmt.Errorf("dedupe: split %s/%s: %w", record.Name, logBase, serr)
+				}
+				log = make(map[string]bool, len(logLines))
+				for _, line := range logLines {
+					log[string(line)] = true
+				}
+			}
+		}
+		if log[row.Rendered] {
+			continue
+		}
+		return false, 0, nil
+	}
+	return true, renamed, nil
 }
 
 // Kept here since D3b removed ingest.go's round-file mirror, their former caller.
@@ -365,14 +482,17 @@ func timePtrEqual(a, b *time.Time) bool {
 // is what makes the removal one-time: the key appears only once a run has
 // either deleted everything it planned or found nothing to delete, so a run
 // that fails on the backup leaves no key and the next daemon start retries.
-const dedupeKVKey = "mirror-dedupe.v1"
+//
+// v1 was the exact-derivation pass (#422); v2 adds the stream-lines proof
+// (#476). A v1 row is left in kv as history and does not stop v2.
+const dedupeKVKey = "mirror-dedupe.v2"
 
 // DedupeMirrorOnce removes the mirror rows DedupeMirror proves duplicate of a
 // round_file, once per database and only after a full backup.
 //
 // It is the daemon's start-up call, so it never half-does the work:
 //
-//  1. an existing mirror-dedupe.v1 kv row means an earlier run finished:
+//  1. an existing mirror-dedupe.v2 kv row means an earlier run finished:
 //     nothing happens and ran is false.
 //  2. the plan comes from DedupeMirror, which changes nothing.
 //  3. a plan that deletes nothing writes the stats and returns ran true, with
@@ -384,14 +504,16 @@ const dedupeKVKey = "mirror-dedupe.v1"
 //     transaction back, so the deletes and the kv row go together.
 //  6. VACUUM compacts the file; its failure is recorded in stats.VacuumErr and
 //     is not returned, because the rows are gone either way.
-func DedupeMirrorOnce(d *db.DB, backupDir string, now time.Time) (stats DedupeStats, ran bool, err error) {
+//
+// renames is passed through to DedupeMirror.
+func DedupeMirrorOnce(d *db.DB, backupDir string, renames []legacy.Prefix, now time.Time) (stats DedupeStats, ran bool, err error) {
 	if _, ok, kerr := d.KVGet(dedupeKVKey); kerr != nil {
 		return DedupeStats{}, false, fmt.Errorf("dedupe: kv get %s: %w", dedupeKVKey, kerr)
 	} else if ok {
 		return DedupeStats{}, false, nil
 	}
 
-	plan, err := DedupeMirror(d)
+	plan, err := DedupeMirror(d, renames)
 	if err != nil {
 		return DedupeStats{}, false, err
 	}

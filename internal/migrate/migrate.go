@@ -57,9 +57,8 @@ type Options struct {
 	Out io.Writer
 }
 
-// Prefix is one absolute-directory substitution: every stored path that is Old
-// exactly, or starts with Old followed by "/", becomes New plus the same tail.
-type Prefix struct{ Old, New string }
+// Prefix is legacy.Prefix, kept under this name for migrate's callers.
+type Prefix = legacy.Prefix
 
 // Step is one line of the migration report.
 type Step struct {
