@@ -2,9 +2,10 @@
 # Smoke driver for relevo OpenCode plugin (#393)
 # See docs/plans/2026-09-24-opencode-tui-b1-plugin.md §5.2
 #
-# SC2329: `cleanup` runs from `trap ... EXIT`, and each `check_assertion_*`
-# helper is invoked indirectly, as an argument to `assert`.
-# shellcheck disable=SC2329
+# SC2329 (shellcheck >= 0.10) and SC2317 (older, e.g. CI's Ubuntu runner):
+# `cleanup` runs from `trap ... EXIT`, and each `check_assertion_*` helper is
+# invoked indirectly, as an argument to `assert`.
+# shellcheck disable=SC2317,SC2329
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
