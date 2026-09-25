@@ -382,8 +382,8 @@ func TestActionResultBecomesNoticeAndLog(t *testing.T) {
 	if m.noticeErr {
 		t.Error("a successful action's notice must not be an error")
 	}
-	if len(m.actionLog) != 1 || m.actionLog[0] != "atlas round 4 stopped\nmore detail" {
-		t.Errorf("log = %q, want the full text", m.actionLog)
+	if len(m.actionLog) != 1 || m.actionLog[0].Text != "atlas round 4 stopped\nmore detail" || m.actionLog[0].Err || m.actionLog[0].Verb != "stop" {
+		t.Errorf("log = %+v, want the full text", m.actionLog)
 	}
 	if _, ok := m.running["atlas"]; ok {
 		t.Error("the action must no longer be in flight")
@@ -398,8 +398,8 @@ func TestActionResultBecomesNoticeAndLog(t *testing.T) {
 	if !m.noticeErr {
 		t.Error("an action error must render in errorStyle")
 	}
-	if len(m.actionLog) != 2 || !strings.Contains(m.actionLog[1], "sentinel") {
-		t.Errorf("log = %q, want the error appended", m.actionLog)
+	if len(m.actionLog) != 2 || !strings.Contains(m.actionLog[1].Text, "sentinel") || !m.actionLog[1].Err || m.actionLog[1].Verb != "stop" {
+		t.Errorf("log = %+v, want the error appended", m.actionLog)
 	}
 }
 

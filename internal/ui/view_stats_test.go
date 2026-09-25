@@ -2376,6 +2376,84 @@ func TestStatsReposTabTables(t *testing.T) {
 	}
 }
 
+// statsCheckShareAligned asserts that on the line at lines[hdr], the "% TOKENS"
+// header's final "S" sits in the same column as the "%" of the percentage on
+// each of the n rows that follow it.
+func statsCheckShareAligned(t *testing.T, lines []string, hdr, n int) {
+	t.Helper()
+	headerCol := statsColEnd(lines[hdr], "% TOKENS")
+	if headerCol < 0 {
+		t.Fatalf("no %% TOKENS in header:\n%q", lines[hdr])
+	}
+	for i := 0; i < n; i++ {
+		row := lines[hdr+1+i]
+		runes := []rune(row)
+		pct := -1
+		for j, r := range runes {
+			if r == '%' {
+				pct = j
+			}
+		}
+		if pct < 0 {
+			t.Fatalf("row %d has no %%:\n%q", i, row)
+		}
+		if pct != headerCol {
+			t.Errorf("row %d: %% at col %d, header S at col %d\nheader: %q\nrow:    %q",
+				i, pct, headerCol, lines[hdr], row)
+		}
+	}
+}
+
+// TestStatsShareHeaderAligned pins round 5's fix: the "% TOKENS" header is
+// right-aligned over its cell, so its final "S" sits over the "%" of every
+// row's percentage. Checked on the repos tab golden model (§4.2, repos then
+// features tables) and on the overview's BUSIEST REPOS table (§4.8), both at
+// 132 columns.
+func TestStatsShareHeaderAligned(t *testing.T) {
+	rep := statsFixture()
+	repos := append([]stats.GroupRow(nil), rep.Repos...)
+	sort.SliceStable(repos, func(i, j int) bool { return repos[i].Tokens > repos[j].Tokens })
+
+	t.Run("repos tab", func(t *testing.T) {
+		env := statsTestEnv(t, 132, 40)
+		v := statsTestView("30d")
+		v.tab = statsTabRepos
+		body := stripANSI(v.Body(env, 132, 40))
+		lines := strings.Split(body, "\n")
+
+		repoHdr := statsLineIndex(lines, "BINDINGS")
+		if repoHdr < 0 {
+			t.Fatalf("no repos header:\n%s", body)
+		}
+		statsCheckShareAligned(t, lines, repoHdr, len(repos))
+
+		featHdr := -1
+		for i, l := range lines {
+			if strings.HasPrefix(l, "   FEATURE") {
+				featHdr = i
+				break
+			}
+		}
+		if featHdr < 0 {
+			t.Fatalf("no features header:\n%s", body)
+		}
+		statsCheckShareAligned(t, lines, featHdr, len(rep.Features))
+	})
+
+	t.Run("overview", func(t *testing.T) {
+		env := statsTestEnv(t, 132, 34)
+		v := statsTestView("30d")
+		body := stripANSI(v.Body(env, 132, 34))
+		lines := strings.Split(body, "\n")
+
+		repoHdr := statsLineIndex(lines, "% TOKENS")
+		if repoHdr < 0 {
+			t.Fatalf("no %% TOKENS header:\n%s", body)
+		}
+		statsCheckShareAligned(t, lines, repoHdr, len(repos))
+	})
+}
+
 // TestStatsReposTabDetail pins §4.3: the selected row's detail block names the
 // row and its kind, its round and binding totals with the window share, its
 // outcomes and its top candidates -- and a feature's line 1 ends `feature`.
@@ -2677,6 +2755,26 @@ func TestStatsGateReason(t *testing.T) {
 			want: "Individual quota reached",
 		},
 		{note: "", want: "·"},
+	}
+	for _, c := range cases {
+		if got := statsGateReason(c.note); got != c.want {
+			t.Errorf("statsGateReason(%q) = %q, want %q", c.note, got, c.want)
+		}
+	}
+}
+
+func TestStatsGateReasonHTTPStatus(t *testing.T) {
+	cases := []struct {
+		note, want string
+	}{
+		{
+			note: "Error 429: weekly Clinepass limit reached, resets in 1d 4h",
+			want: "weekly Clinepass limit reached, resets in 1d 4h",
+		},
+		{
+			note: "error: Individual quota reached. Please upgrade",
+			want: "Individual quota reached",
+		},
 	}
 	for _, c := range cases {
 		if got := statsGateReason(c.note); got != c.want {

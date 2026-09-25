@@ -45,6 +45,8 @@ type Env struct {
 	// Running is the shell's in-flight actions, keyed by binding key (§4.3):
 	// a second action on the same binding is refused.
 	Running map[string]string
+	// ActionLog is the session's cockpit actions, oldest first (:log).
+	ActionLog []actionEntry
 }
 
 // Stack messages. A view returns these as commands; only the shell acts on

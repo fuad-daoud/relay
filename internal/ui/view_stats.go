@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/stats"
+	"github.com/fuad-daoud/relevo/internal/ui/dash"
 )
 
 // statsWindows is the `:stats` window cycle: 7d → 30d → 90d → all → 7d.
@@ -1435,7 +1436,7 @@ func (v statsView) statsOverviewRepos(cellW, rows int) ([]string, int) {
 		label = fmt.Sprintf("REPO   %d–%d of %d", first+1, last, n)
 	}
 	out := []string{
-		faintStyle.Bold(true).Render(fmt.Sprintf("%-*s%6s%9s", nameW, stats.FitKey(label, nameW, false), "RNDS", "TOKENS") + "  " + fmt.Sprintf("%-15s", "% TOKENS")),
+		faintStyle.Bold(true).Render(fmt.Sprintf("%-*s%6s%9s", nameW, stats.FitKey(label, nameW, false), "RNDS", "TOKENS") + fmt.Sprintf("%17s", "% TOKENS")),
 	}
 	total := v.rep.Totals.TokenKinds.Total()
 	for i := first; i < last; i++ {
@@ -1510,17 +1511,13 @@ func statsMinWidth(w int) int {
 	return w
 }
 
-// shortRepo is a repo key's last two "/"-segments, its owner and name; the
-// unrecorded "(none)" bucket reads "(no repo)" (§3.3).
+// shortRepo delegates to dash.ShortRepo; the unrecorded "(none)" bucket reads
+// "(no repo)" (§3.3).
 func shortRepo(key string) string {
 	if key == "(none)" {
 		return "(no repo)"
 	}
-	parts := strings.Split(key, "/")
-	if len(parts) < 2 {
-		return key
-	}
-	return strings.Join(parts[len(parts)-2:], "/")
+	return dash.ShortRepo(key)
 }
 
 // shortFeature is a feature key's display name; the unlabelled "(none)"
@@ -2234,6 +2231,10 @@ var statsShortErrorRe = regexp.MustCompile(`"short_error":"([^"]*)"`)
 // it, for statsGateReason to strip (§2.4).
 var statsGateReasonParens = regexp.MustCompile(`\s?\([^()]*\)`)
 
+// statsGateReasonStatus matches a leading HTTP status code prefix for
+// statsGateReason to strip.
+var statsGateReasonStatus = regexp.MustCompile(`(?i)^(error\s+)?\d{3}:\s*`)
+
 // statsGateReasonPrefixes are the leading protocol prefixes statsGateReason
 // strips, case-insensitively, in order (§2.4).
 var statsGateReasonPrefixes = []string{"AGY_ERROR:", "error:", "RESOURCE_EXHAUSTED (code 429):"}
@@ -2247,6 +2248,7 @@ func statsGateReason(note string) string {
 		note = m[1]
 	}
 	note = strings.TrimSpace(note)
+	note = statsGateReasonStatus.ReplaceAllString(note, "")
 	for {
 		stripped := false
 		for _, prefix := range statsGateReasonPrefixes {
@@ -2483,16 +2485,17 @@ func (v statsView) repoTabRows() (repos, features []stats.GroupRow) {
 }
 
 // statsRepoHead is a repos-table header row (§4.2): the name label clipped to
-// the name column, the visible column heads right-aligned, and % TOKENS left
-// in its cell, as the overview's repos table does.
+// the name column, the visible column heads right-aligned, and % TOKENS
+// right-aligned over its cell, as the overview's repos table does.
 func statsRepoHead(label string, nameW int, visible []statsRepoCol) string {
 	head := stats.FitKey(label, nameW, false)
 	for _, col := range visible {
 		head += fmt.Sprintf("%*s", col.W, col.Head)
 	}
 	// The share cell is two cells of gutter, a ten-cell bar and a four-cell
-	// percent, so its header is left in that cell as the overview draws it.
-	head += "  " + fmt.Sprintf("%-15s", "% TOKENS")
+	// percent, 17 cells total; the header is right-aligned over the same 17
+	// cells so its final "S" sits over the percent's "%".
+	head += fmt.Sprintf("%17s", "% TOKENS")
 	return "   " + faintStyle.Bold(true).Render(head)
 }
 

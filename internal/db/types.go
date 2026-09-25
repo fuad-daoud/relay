@@ -101,6 +101,21 @@ type Event struct {
 	EntryJSON   string
 }
 
+// EventLogRow is one event projected with its binding name and round summary
+// for the cockpit's persistent event log (:log).
+type EventLogRow struct {
+	TS          time.Time
+	Seq         int
+	Kind        string
+	Note        *string
+	EntryJSON   string
+	BindingName string
+	RoundID     *string
+	Round       *int
+	Tokens      *int64
+	DurationMS  *int64
+}
+
 // Artifact is one captured file for a round: a plan, report, diff, drift
 // patch, gate log, or a consult's question/answer/ask/findings.
 type Artifact struct {
