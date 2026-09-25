@@ -834,7 +834,7 @@ func TestReconcileHeadlessExitEntryCarriesTheRenderedResult(t *testing.T) {
 	if len(ex) != 1 {
 		t.Fatalf("exit entries = %d, want 1", len(ex))
 	}
-	want := "jetski: starting\n● run_command go test ./...\n  ⎿ ok\nall done\nrelevo-exit:0"
+	want := "jetski: starting\n● run_command go test ./...\n  ⎿ ok\nall done"
 	if ex[0].Payload != want {
 		t.Errorf("payload = %q, want the drained log %q", ex[0].Payload, want)
 	}
@@ -868,7 +868,7 @@ func TestDrainStreamKeepsGoingAfterAMarkerClose(t *testing.T) {
 	if _, err := reconcile(t, rt, got); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if want := "● run_command go test ./...\nall done\nrelevo-exit:0\n"; readLog(t, rt) != want {
+	if want := "● run_command go test ./...\nall done\n"; readLog(t, rt) != want {
 		t.Errorf("round 1 log after the close = %q, want %q", readLog(t, rt), want)
 	}
 }

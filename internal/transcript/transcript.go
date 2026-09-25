@@ -22,15 +22,18 @@ var argKeys = []string{"command", "file_path", "path", "AbsolutePath", "pattern"
 
 // Render turns one raw line of the stream (without its trailing newline)
 // into the lines to append to the log, each without a trailing newline.
-// Rules, in order: an empty line is nothing; a line that is not a JSON
-// object is itself, verbatim (that is how the relevo-exit trailer and a
-// plain-text error reach the log); a known event renders per its kind's
-// table; noise renders as nothing; anything else renders as "[<type>]" so a
-// harness upgrade degrades to noise, not silence. Never errors, never
-// panics.
+// Rules, in order: an empty line is nothing; a supervisor trailer (see
+// isTrailerLine) is nothing; a line that is not a JSON object is itself,
+// verbatim (that is how a plain-text error reaches the log); a known event
+// renders per its kind's table; noise renders as nothing; anything else
+// renders as "[<type>]" so a harness upgrade degrades to noise, not
+// silence. Never errors, never panics.
 func Render(kind string, line []byte) []string {
 	trimmed := bytes.TrimSpace(line)
 	if len(trimmed) == 0 {
+		return nil
+	}
+	if isTrailerLine(trimmed) {
 		return nil
 	}
 	var obj map[string]any
