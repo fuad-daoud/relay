@@ -278,11 +278,20 @@ func startVerifyConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	}
 	id := newID()
 	askPath := rt.Store.AskPath(b.Name, round, id)
-	prompt := verifyQuestion(b.Name, round,
+	question := verifyQuestion(b.Name, round,
 		rt.Store.PlanPath(b.Name, round), rt.Store.ReportPath(b.Name, round),
 		diff, gateLog)
-	if err := os.WriteFile(askPath, []byte(prompt), 0o644); err != nil {
-		return fail(fmt.Sprintf("stage question at %s: %v", askPath, err))
+	render := func(ref string) string { return fmt.Sprintf(consultHeadlessPrompt, ref) }
+	prompt, inline := inlinePrompt(render, []byte(question))
+	if inline {
+		if err := tx.PutRoundFile(b.Name, round, askPath, []byte(question)); err != nil {
+			return fail(fmt.Sprintf("record question at %s: %v", askPath, err))
+		}
+	} else {
+		if err := os.WriteFile(askPath, []byte(question), 0o644); err != nil {
+			return fail(fmt.Sprintf("stage question at %s: %v", askPath, err))
+		}
+		prompt = render("Read: " + askPath)
 	}
 
 	consult := store.Consult{
@@ -307,7 +316,7 @@ func startVerifyConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 
 	streamPath := rt.Store.ConsultStreamPath(b.Name, round, id)
 	argv, err := headlessLaunch(c, role, tier, consultTimeout,
-		fmt.Sprintf(consultHeadlessPrompt, askPath), wt, rt.Store.Dir(b.Name))
+		prompt, wt, rt.Store.Dir(b.Name))
 	if err != nil {
 		b.Consults = b.Consults[:len(b.Consults)-1]
 		if saveErr := tx.Save(b); saveErr != nil {

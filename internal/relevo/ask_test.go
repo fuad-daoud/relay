@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -141,20 +142,24 @@ func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
 		t.Errorf("state = %q, want running", res.Consult.State)
 	}
 
-	// The question is staged into state, the way Send stages a plan.
-	body, err := os.ReadFile(res.Consult.AskPath)
+	// The question is recorded into state, the way Send stages a plan -- and,
+	// since it fits inline, it is not a file on disk.
+	if _, err := os.Stat(res.Consult.AskPath); !os.IsNotExist(err) {
+		t.Errorf("ask file exists on disk at %s (err %v), want no file", res.Consult.AskPath, err)
+	}
+	body, err := rt.Store.ReadFile(res.Consult.AskPath)
 	if err != nil {
-		t.Fatalf("read staged question: %v", err)
+		t.Fatalf("read recorded question: %v", err)
 	}
 	if string(body) != "Review 003-diff.patch against the plan." {
-		t.Errorf("staged question = %q", body)
+		t.Errorf("recorded question = %q", body)
 	}
 
 	// The consult is a process, not a pane.
 	if len(fr.specs) != 1 {
 		t.Fatalf("got %d processes, want 1", len(fr.specs))
 	}
-	// The prompt names the staged question and asks for the findings as the
+	// The prompt carries the question and asks for the findings as the
 	// process's final message.
 	argv := fr.specs[0].Argv
 	var prompt string
@@ -166,8 +171,8 @@ func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
 	if prompt == "" {
 		t.Fatalf("argv carries no consult prompt: %v", argv)
 	}
-	if !strings.Contains(prompt, res.Consult.AskPath) {
-		t.Errorf("prompt does not name the staged question %s:\n%s", res.Consult.AskPath, prompt)
+	if !strings.Contains(prompt, "Review 003-diff.patch against the plan.") {
+		t.Errorf("prompt does not carry the question:\n%s", prompt)
 	}
 
 	// The record is durable, so the daemon finds it after a restart.
@@ -707,7 +712,7 @@ func TestAskHeadlessStartsAProcessNotAPane(t *testing.T) {
 	rt.Runner = fr
 	q := writeQuestion(t, "review it")
 
-	res, err := Ask(context.Background(), rt, AskOptions{
+	_, err := Ask(context.Background(), rt, AskOptions{
 		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 	if err != nil {
@@ -732,8 +737,8 @@ func TestAskHeadlessStartsAProcessNotAPane(t *testing.T) {
 	}
 	if prompt == "" {
 		t.Errorf("argv carries no consult-headless prompt: %v", spec.Argv)
-	} else if !strings.Contains(prompt, res.Consult.AskPath) {
-		t.Errorf("prompt does not name the staged question %s:\n%s", res.Consult.AskPath, prompt)
+	} else if !strings.Contains(prompt, "review it") {
+		t.Errorf("prompt does not carry the question:\n%s", prompt)
 	}
 
 	got, err := rt.Store.Load("webshop")
@@ -940,16 +945,19 @@ func TestAskRoundResumesTheSession(t *testing.T) {
 	if prompt == "" {
 		t.Fatalf("argv carries no round prompt: %v", argv)
 	}
-	if !strings.Contains(prompt, res.Consult.AskPath) {
-		t.Errorf("prompt does not name the staged question %s:\n%s", res.Consult.AskPath, prompt)
+	if !strings.Contains(prompt, "why X?") {
+		t.Errorf("prompt does not carry the question:\n%s", prompt)
 	}
 
-	body, err := os.ReadFile(res.Consult.AskPath)
+	if _, err := os.Stat(res.Consult.AskPath); !os.IsNotExist(err) {
+		t.Errorf("ask file exists on disk at %s (err %v), want no file", res.Consult.AskPath, err)
+	}
+	body, err := rt.Store.ReadFile(res.Consult.AskPath)
 	if err != nil {
-		t.Fatalf("read ask file: %v", err)
+		t.Fatalf("read recorded question: %v", err)
 	}
 	if !strings.Contains(string(body), "why X?") {
-		t.Errorf("ask file = %q, want the inline question", body)
+		t.Errorf("recorded question = %q, want the inline question", body)
 	}
 
 	got, err := rt.Store.Load("webshop")
@@ -1013,6 +1021,9 @@ func TestAskRoundRefusesOpenRound(t *testing.T) {
 	}
 	if matches, _ := filepath.Glob(filepath.Join(rt.Store.Dir("webshop"), "*-ask.md")); len(matches) != 0 {
 		t.Errorf("a refused round ask must stage no question file, found %v", matches)
+	}
+	if _, err := rt.Store.ReadFile(rt.Store.AskPath("webshop", 2, "7f2a3c1d")); err == nil {
+		t.Error("ReadFile found a question for a refused round ask, want a miss")
 	}
 	b, err := rt.Store.Load("webshop")
 	if err != nil {
@@ -1282,5 +1293,203 @@ func TestConsultStderrSharesTheStream(t *testing.T) {
 	}
 	if !strings.HasSuffix(spec.LogPath, "-consult.jsonl") {
 		t.Errorf("LogPath = %q, want it to end in -consult.jsonl", spec.LogPath)
+	}
+}
+
+// ── the question goes in the prompt (N1-N4) ────────────────────────────
+
+// TestInlinePrompt pins the pure decision (§4.3): a question that fits is
+// delimited and inline, one byte too large is not, and askInlineBlock trims
+// exactly one trailing newline.
+//
+// Mutation check (run and report): `<` for `<=` fails on the exact-size case;
+// an unconditional true fails the over-the-limit case.
+func TestInlinePrompt(t *testing.T) {
+	render := func(ref string) string { return fmt.Sprintf(consultHeadlessPrompt, ref) }
+	const question = "Why did round 1 change the schema?"
+
+	prompt, ok := inlinePrompt(render, []byte(question))
+	if !ok {
+		t.Fatalf("inlinePrompt(%q) = not ok, want ok", question)
+	}
+	if !strings.Contains(prompt, question) {
+		t.Errorf("prompt does not contain the question:\n%s", prompt)
+	}
+	for _, want := range []string{"-----BEGIN QUESTION-----", "-----END QUESTION-----"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt does not contain %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "Read:") {
+		t.Errorf("prompt contains a Read: reference:\n%s", prompt)
+	}
+
+	// A question sized so the whole prompt is exactly inlineAskMax bytes
+	// inlines; one byte more does not.
+	fits := []byte(strings.Repeat("x", inlineAskMax-len(prompt)+len(question)))
+	p, ok := inlinePrompt(render, fits)
+	if !ok || len(p) != inlineAskMax {
+		t.Errorf("prompt of %d bytes = (%d, %v), want (%d, true)", inlineAskMax, len(p), ok, inlineAskMax)
+	}
+	over := append(append([]byte(nil), fits...), 'x')
+	if p, ok := inlinePrompt(render, over); ok {
+		t.Errorf("prompt of %d bytes = (%d, true), want not ok", len(p), len(p))
+	}
+
+	// Exactly one trailing newline is trimmed.
+	if a, b := askInlineBlock([]byte("hi\n")), askInlineBlock([]byte("hi")); a != b {
+		t.Errorf("askInlineBlock kept or dropped more than one newline:\n%q\n%q", a, b)
+	}
+	if got := askInlineBlock([]byte("hi\n\n")); !strings.HasSuffix(got, "\n\n-----END QUESTION-----") {
+		t.Errorf("askInlineBlock(hi\\n\\n) = %q, want the extra newline kept", got)
+	}
+}
+
+// TestAskInlinesASmallQuestion (N2): a small question is carried by the started
+// argv, is not a file on disk, comes back from round_file, and the ask entry
+// still names the canonical AskPath.
+//
+// Mutation check (run and report): always os.WriteFile fails on the on-disk
+// check; keeping the Read: prompt fails on the argv.
+func TestAskInlinesASmallQuestion(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedForAsk(t)
+	rt.Runner = fr
+	const question = "Review 003-diff.patch against the plan."
+
+	res, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: writeQuestion(t, question), Name: "webshop", PlannerID: testPlannerName,
+	})
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %d, want 1", len(fr.specs))
+	}
+	argv := strings.Join(fr.specs[0].Argv, "\x00")
+	if !strings.Contains(argv, question) {
+		t.Errorf("argv does not carry the question %q:\n%s", question, argv)
+	}
+
+	if _, err := os.Stat(res.Consult.AskPath); !os.IsNotExist(err) {
+		t.Errorf("ask file exists on disk at %s (err %v), want no file", res.Consult.AskPath, err)
+	}
+	body, err := rt.Store.ReadFile(res.Consult.AskPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", res.Consult.AskPath, err)
+	}
+	if string(body) != question {
+		t.Errorf("ReadFile = %q, want the question %q", body, question)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var askEntry *store.LogEntry
+	for i := range entries {
+		if entries[i].Kind == store.KindAsk {
+			askEntry = &entries[i]
+		}
+	}
+	if askEntry == nil {
+		t.Fatal("KindAsk log entry not found")
+	}
+	if askEntry.Path != res.Consult.AskPath {
+		t.Errorf("ask entry Path = %q, want %q", askEntry.Path, res.Consult.AskPath)
+	}
+}
+
+// TestAskFallsBackToAFileOverTheLimit (N3): a question over inlineAskMax falls
+// back to today's staged file and Read: prompt.
+//
+// Mutation check (run and report): an inlinePrompt that always returns true
+// fails on the Read: assertion and the on-disk read.
+func TestAskFallsBackToAFileOverTheLimit(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedForAsk(t)
+	rt.Runner = fr
+	question := strings.Repeat("x", inlineAskMax+1)
+
+	res, err := Ask(context.Background(), rt, AskOptions{
+		Role: "reviewer", File: writeQuestion(t, question), Name: "webshop", PlannerID: testPlannerName,
+	})
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %d, want 1", len(fr.specs))
+	}
+	argv := strings.Join(fr.specs[0].Argv, " ")
+	if !strings.Contains(argv, "Read: "+res.Consult.AskPath) {
+		t.Errorf("argv does not read the staged question %s:\n%s", res.Consult.AskPath, argv)
+	}
+	if strings.Contains(argv, question) {
+		t.Error("argv carries the oversized question inline, want the staged file")
+	}
+	body, err := os.ReadFile(res.Consult.AskPath)
+	if err != nil {
+		t.Fatalf("read staged question: %v", err)
+	}
+	if string(body) != question {
+		t.Errorf("staged question length = %d, want %d", len(body), len(question))
+	}
+}
+
+// TestAskRoundInlinesTheQuestion (N4): the round template inlines too, and a
+// question over the limit falls back to the staged file.
+//
+// Mutation check (run and report): asking for the file form regardless of
+// inline fails the argv.
+func TestAskRoundInlinesTheQuestion(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedForAsk(t)
+	rt.Runner = fr
+	seedRoundReport(t, rt, 1, &store.BuilderSession{Kind: "claude", ID: "sess-1"})
+
+	const question = "why X?"
+	res, err := Ask(context.Background(), rt, AskOptions{Round: 1, Question: question, Name: "webshop"})
+	if err != nil {
+		t.Fatalf("Ask --round: %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %d, want 1", len(fr.specs))
+	}
+	argv := strings.Join(fr.specs[0].Argv, "\x00")
+	if !strings.Contains(argv, question) {
+		t.Errorf("resumed argv does not carry the question %q:\n%s", question, argv)
+	}
+	if _, err := os.Stat(res.Consult.AskPath); !os.IsNotExist(err) {
+		t.Errorf("ask file exists on disk at %s (err %v), want no file", res.Consult.AskPath, err)
+	}
+	body, err := rt.Store.ReadFile(res.Consult.AskPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(body) != question {
+		t.Errorf("ReadFile = %q, want %q", body, question)
+	}
+
+	// The fallback case: a question over the limit is staged as a file.
+	fr2 := newFakeRunner()
+	rt2, _ := seedForAsk(t)
+	rt2.Runner = fr2
+	seedRoundReport(t, rt2, 1, &store.BuilderSession{Kind: "claude", ID: "sess-1"})
+	big := strings.Repeat("x", inlineAskMax+1)
+	res2, err := Ask(context.Background(), rt2, AskOptions{Round: 1, Question: big, Name: "webshop"})
+	if err != nil {
+		t.Fatalf("Ask --round over the limit: %v", err)
+	}
+	if len(fr2.specs) != 1 {
+		t.Fatalf("specs = %d, want 1", len(fr2.specs))
+	}
+	argv2 := strings.Join(fr2.specs[0].Argv, " ")
+	if !strings.Contains(argv2, "Read: "+res2.Consult.AskPath) {
+		t.Errorf("fallback argv does not read the staged question %s", res2.Consult.AskPath)
+	}
+	if _, err := os.Stat(res2.Consult.AskPath); err != nil {
+		t.Errorf("staged question file: %v", err)
 	}
 }

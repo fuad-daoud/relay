@@ -1001,6 +1001,65 @@ func TestVerifyRoundStartsOnHeadlessClose(t *testing.T) {
 	}
 }
 
+// TestVerifyInlinesItsQuestion (N5): the verify reviewer's question is carried
+// in its argv when it fits, recorded at AskPath with no file on disk.
+//
+// Mutation check (run and report): always os.WriteFile with the Read: prompt
+// fails the argv assertion.
+func TestVerifyInlinesItsQuestion(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	rt.Git = &fakeGit{headCommitID: "head1"}
+	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
+	rt.Policy.Order = map[string][]string{"reviewer": {testClaudeRef}}
+	rt.NewID = func() string { return verifyConsultID }
+
+	b.RoundVerify = true
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 0)
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	// specs[0] is the builder's own process; the verify consult is second.
+	if len(fr.specs) != 2 {
+		t.Fatalf("Start calls = %d, want the builder's plus one verify consult", len(fr.specs))
+	}
+	argv := strings.Join(fr.specs[1].Argv, "\x00")
+	if !strings.Contains(argv, "Verify round 1 of binding") {
+		t.Errorf("verify argv does not carry the question:\n%s", argv)
+	}
+
+	var consult *store.Consult
+	for i := range got.Consults {
+		if got.Consults[i].Role == verifyRole {
+			consult = &got.Consults[i]
+		}
+	}
+	if consult == nil {
+		t.Fatalf("no %q consult on the binding: %+v", verifyRole, got.Consults)
+	}
+	if _, err := os.Stat(consult.AskPath); !os.IsNotExist(err) {
+		t.Errorf("ask file exists on disk at %s (err %v), want no file", consult.AskPath, err)
+	}
+	question, err := rt.Store.ReadFile(consult.AskPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", consult.AskPath, err)
+	}
+	if !strings.Contains(string(question), "Verify round 1 of binding") {
+		t.Errorf("recorded question does not contain the verify prompt:\n%s", question)
+	}
+}
+
 func TestVerifyRoundHandsTheReviewerAGitDiff(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)

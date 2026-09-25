@@ -1904,7 +1904,9 @@ The planner runs, from its own session:
 relevo ask --actor reviewer --file q.md webshop
 ```
 
-relevo stages the question and starts the agent. A consult is a one-shot process:
+relevo passes the question in the consult's prompt and keeps a copy with the
+round. A question over 64 KiB is staged as `NNN-<id>-ask.md` for the consult
+to read instead. A consult is a one-shot process:
 relevo starts the harness in its print form, and the consult's **final message**
 becomes the findings. relevo records them as `NNN-<id>-findings.md` in its
 database, and queues them to the planner like any other report. When you ask,
