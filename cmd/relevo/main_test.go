@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -1441,6 +1442,101 @@ func TestUnbindDoneTakesNoBinding(t *testing.T) {
 			t.Errorf("%v: run = %v, want exit code 2", args, err)
 		}
 	}
+}
+
+// TestUnbindPlannerFlags pins #482: --planner and --all-planners only make
+// sense with --done, and combining them exits 2 before a runtime is built
+// (except the --planner+--all-planners combo, which gcScope checks after
+// newRuntime and is pinned by TestGCScope instead).
+func TestUnbindPlannerFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"unbind", "--planner", "x"},
+		{"unbind", "--all-planners"},
+		{"unbind", "--sweep", "--planner", "x"},
+		{"unbind", "--sweep", "--all-planners"},
+	} {
+		_, _, err := captureOutput(t, func() error { return run(args) })
+		var ec exitCodeErr
+		if !errors.As(err, &ec) || ec.code != 2 {
+			t.Errorf("%v: run = %v, want exit code 2", args, err)
+		}
+	}
+}
+
+// TestGCScope pins #482: gcScope turns --planner/--all-planners into a GC
+// scope with no fallback to "everything" when the planner fails to resolve.
+func TestGCScope(t *testing.T) {
+	t.Run("empty flag resolves via resolve", func(t *testing.T) {
+		resolve := func(ref string) (planner.Record, error) {
+			if ref != "" {
+				t.Errorf("resolve called with %q, want \"\"", ref)
+			}
+			return planner.Record{ID: "pl_aaa"}, nil
+		}
+		got, err := gcScope("", false, resolve)
+		if err != nil {
+			t.Fatalf("gcScope: %v", err)
+		}
+		if got != (relevo.GCOptions{PlannerID: "pl_aaa"}) {
+			t.Fatalf("gcScope = %+v, want {PlannerID: pl_aaa}", got)
+		}
+	})
+
+	t.Run("planner flag is passed to resolve", func(t *testing.T) {
+		resolve := func(ref string) (planner.Record, error) {
+			if ref != "architect-2" {
+				t.Errorf("resolve called with %q, want architect-2", ref)
+			}
+			return planner.Record{ID: "pl_bbb"}, nil
+		}
+		got, err := gcScope("architect-2", false, resolve)
+		if err != nil {
+			t.Fatalf("gcScope: %v", err)
+		}
+		if got != (relevo.GCOptions{PlannerID: "pl_bbb"}) {
+			t.Fatalf("gcScope = %+v, want {PlannerID: pl_bbb}", got)
+		}
+	})
+
+	t.Run("all-planners never calls resolve", func(t *testing.T) {
+		resolve := func(ref string) (planner.Record, error) {
+			t.Fatal("resolve must not be called when --all-planners is set")
+			return planner.Record{}, nil
+		}
+		got, err := gcScope("", true, resolve)
+		if err != nil {
+			t.Fatalf("gcScope: %v", err)
+		}
+		if got != (relevo.GCOptions{AllPlanners: true}) {
+			t.Fatalf("gcScope = %+v, want {AllPlanners: true}", got)
+		}
+	})
+
+	t.Run("planner and all-planners are exclusive", func(t *testing.T) {
+		resolve := func(ref string) (planner.Record, error) {
+			t.Fatal("resolve must not be called when both flags are set")
+			return planner.Record{}, nil
+		}
+		if _, err := gcScope("x", true, resolve); err == nil {
+			t.Fatal("gcScope with both flags: want a usage error, got nil")
+		}
+	})
+
+	t.Run("no fallback when the planner does not resolve", func(t *testing.T) {
+		resolve := func(ref string) (planner.Record, error) {
+			return planner.Record{}, errors.New("boom")
+		}
+		got, err := gcScope("", false, resolve)
+		if err == nil {
+			t.Fatal("gcScope with a resolve error: want a usage error, got nil")
+		}
+		if !strings.Contains(err.Error(), "--all-planners") {
+			t.Errorf("gcScope error = %q, want it to mention --all-planners", err.Error())
+		}
+		if got.PlannerID != "" || got.AllPlanners {
+			t.Errorf("gcScope result = %+v, want the zero value on error (no fallback)", got)
+		}
+	})
 }
 
 // TestUnbindSweepTakesNoBinding pins §4.5: --sweep takes no binding and no other

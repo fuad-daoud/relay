@@ -510,6 +510,32 @@ func plannerLookup(reg planner.Registry, ref string) (planner.Record, error) {
 	}
 }
 
+// errGCUsage is gcScope's usage-error shape: a message cmdUnbind/runGC print
+// to stderr verbatim before exiting 2 (#482).
+type errGCUsage string
+
+func (e errGCUsage) Error() string { return string(e) }
+
+// gcScope turns unbind --done's --planner/--all-planners flags into a GC
+// scope, with no fallback to "everything" (#482). resolve is injected so the
+// function stays pure and needs no registry to test; in production it closes
+// over a Runtime and calls planner.Resolve.
+func gcScope(plannerFlag string, all bool, resolve func(ref string) (planner.Record, error)) (relevo.GCOptions, error) {
+	switch {
+	case all && plannerFlag != "":
+		return relevo.GCOptions{}, errGCUsage("relevo: --all-planners and --planner are exclusive")
+	case all:
+		return relevo.GCOptions{AllPlanners: true}, nil
+	}
+
+	rec, err := resolve(plannerFlag)
+	if err != nil {
+		return relevo.GCOptions{}, errGCUsage(fmt.Sprintf(
+			"relevo: unbind --done clears this planner's DONE bindings, and no planner resolved (%v); pass --planner <name|id>, or --all-planners to clear every planner's", err))
+	}
+	return relevo.GCOptions{PlannerID: rec.ID}, nil
+}
+
 // plannerFilter resolves this session's planner for the commands that filter
 // by it without requiring one: `relevo status` with no name (§3.3) and
 // `relevo status --line`. A miss is not an error there -- the caller keeps its

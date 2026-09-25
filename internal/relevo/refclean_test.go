@@ -346,7 +346,7 @@ func TestGCDeletesPushedRelevoBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{})
+	res, err := GC(context.Background(), rt, GCOptions{AllPlanners: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestGCKeepsUnpushedBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{})
+	res, err := GC(context.Background(), rt, GCOptions{AllPlanners: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -430,7 +430,7 @@ func TestGCKeptWorktreeTouchesNoRef(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{})
+	res, err := GC(context.Background(), rt, GCOptions{AllPlanners: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -473,7 +473,7 @@ func TestGCDryRunDeletesNoRef(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{DryRun: true})
+	res, err := GC(context.Background(), rt, GCOptions{DryRun: true, AllPlanners: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
