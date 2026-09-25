@@ -335,6 +335,15 @@ check_assertion_23() {
 }
 assert 23 "02-after-toast shows the ledger r2 report-in toast" check_assertion_23
 
+# 24. the sidebar row for landing (display ACTIVE, no word) shows no ACTIVE
+#     word: §2 drops the word for ACTIVE, so landing's row carries only its dot
+#     and name.
+check_assertion_24() {
+  grep -q "landing" "$OUT/01-session.txt" && \
+  ! grep -qE "landing.*ACTIVE" "$OUT/01-session.txt"
+}
+assert 24 "01-session landing row shows no ACTIVE word" check_assertion_24
+
 # Mouse is not driven here: tmux send-keys cannot deliver SGR mouse events
 # reliably, so the clickable-row behaviour (onMouseDown on the sidebar and
 # fleet rows) is verified by inspection of tui.tsx, not by this smoke.
@@ -345,5 +354,5 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-echo "Smoke test PASSED (all 23 assertions passed)"
+echo "Smoke test PASSED (all 24 assertions passed)"
 exit 0

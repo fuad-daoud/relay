@@ -28,6 +28,7 @@ const PendingNeedsYouAfter = 60 * time.Second
 var (
 	ansiDim      = "\x1b[38;5;245m"
 	ansiNeedsYou = "\x1b[1;38;5;214m"
+	ansiReportIn = "\x1b[38;5;80m"
 	ansiReset    = "\x1b[0m"
 )
 
@@ -51,7 +52,10 @@ func AgeText(d time.Duration) string {
 
 // RenderStatusLine formats a Report into one row per live binding
 // for Claude Code's statusLine setting per spec §4.3 and §5, amended
-// by docs/specs/2026-09-24-statusline-redesign-design.md.
+// by docs/specs/2026-09-24-statusline-redesign-design.md. It renders the same
+// row rule the OpenCode sidebar shows (#393): the shown round (report_round
+// when > 0, else round) and the row's word (NEEDS YOU, the display word,
+// REPORT IN, or nothing for ACTIVE) come from StatusLineRows.
 func RenderStatusLine(r Report, now time.Time, columns int) string {
 	if len(r.Bindings) == 0 {
 		return ""
@@ -60,45 +64,59 @@ func RenderStatusLine(r Report, now time.Time, columns int) string {
 		columns = 80
 	}
 
+	rows := StatusLineRows(r, now)
+
 	nameW := 0
-	for _, b := range r.Bindings {
-		if w := utf8.RuneCountInString(b.Name); w > nameW {
+	for _, row := range rows {
+		if w := utf8.RuneCountInString(row.Name); w > nameW {
 			nameW = w
 		}
 	}
 
 	var sb strings.Builder
-	for _, b := range r.Bindings {
+	for _, row := range rows {
 		dotColoured := ansiDim + "○" + ansiReset
-		if b.Display == "NEEDS YOU" {
+		if row.NeedsYou {
 			dotColoured = ansiNeedsYou + "●" + ansiReset
 		}
 
-		mid := "r" + strconv.Itoa(b.Round)
-		if b.BuilderCandidate != "" {
-			harness := harnessSegment(b.BuilderCandidate)
-			if b.Server != "" {
-				harness += "@" + b.Server
-			}
-			mid += " · " + harness
-		}
-		mid += " · " + waiting(b)
-		if t := roundTokens(b); t != "" {
-			mid += " · " + t
+		round := row.Round
+		if row.ReportRound > 0 {
+			round = row.ReportRound
 		}
 
-		clock := roundClock(b, now)
+		mid := "r" + strconv.Itoa(round)
+		if row.Candidate != "" {
+			mid += " · " + row.Harness
+		}
+		mid += " · " + row.Waiting
+		if row.Tokens != "" {
+			mid += " · " + row.Tokens
+		}
+
+		// §2: NEEDS YOU wins; then a relevo state word (PAUSED, DONE) outranks
+		// a delivered report's REPORT IN; ACTIVE and empty show no word at all.
+		word := ""
+		colouredWord := ""
+		switch {
+		case row.NeedsYou:
+			word = "NEEDS YOU"
+			colouredWord = ansiNeedsYou + word + ansiReset
+		case row.Display != "" && row.Display != "ACTIVE":
+			word = row.Display
+			colouredWord = word
+		case row.ReportIn:
+			word = "REPORT IN"
+			colouredWord = ansiReportIn + word + ansiReset
+		}
+
 		var rawRight, colouredRight string
-		if b.Display == "ACTIVE" || b.Display == "" {
-			rawRight = clock
-			colouredRight = clock
+		if word == "" {
+			rawRight = row.Clock
+			colouredRight = row.Clock
 		} else {
-			word := b.Display
-			if b.Display == "NEEDS YOU" {
-				word = ansiNeedsYou + "NEEDS YOU" + ansiReset
-			}
-			rawRight = clock + " · " + b.Display
-			colouredRight = clock + " · " + word
+			rawRight = row.Clock + " · " + word
+			colouredRight = row.Clock + " · " + colouredWord
 		}
 
 		leftW := 2 + nameW + 2
@@ -106,9 +124,9 @@ func RenderStatusLine(r Report, now time.Time, columns int) string {
 
 		var line string
 		if midW < 8 {
-			line = dotColoured + " " + b.Name + "  " + mid + " · " + colouredRight
+			line = dotColoured + " " + row.Name + "  " + mid + " · " + colouredRight
 		} else {
-			line = dotColoured + " " + pad(b.Name, nameW) + "  " + pad(truncate(mid, midW), midW) + " " + colouredRight
+			line = dotColoured + " " + pad(row.Name, nameW) + "  " + pad(truncate(mid, midW), midW) + " " + colouredRight
 		}
 		sb.WriteString(line)
 		sb.WriteByte('\n')

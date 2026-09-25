@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1065,4 +1066,104 @@ func TestStatusLineRows(t *testing.T) {
 			t.Errorf("ReportRound = %d, want 0", rows[0].ReportRound)
 		}
 	})
+}
+
+// TestRenderStatusLineSharesTheRowRule is #393: the Claude Code line is
+// rendered from StatusLineRows, so its text carries exactly the row's shown
+// round (report_round when > 0, else round) and the row's word -- no word for
+// ACTIVE, REPORT IN for a delivered report, NEEDS YOU for a stalled pending or
+// a NEEDS YOU display.
+func TestRenderStatusLineSharesTheRowRule(t *testing.T) {
+	now := baseTime
+	rep := Report{Bindings: []BindingStatus{
+		{
+			Name:             "active",
+			Round:            2,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			RoundStart:       now.Add(-3 * time.Minute),
+			LastPayload:      &LastEvent{TS: now.Add(-3 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+		},
+		{
+			Name:             "delivered",
+			Round:            5,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			RoundStart:       now.Add(-4 * time.Minute),
+			LastPayload:      &LastEvent{TS: now.Add(-4 * time.Minute), Round: 4, Kind: store.KindReport, Direction: store.DirToPlanner},
+		},
+		{
+			Name:             "stalled",
+			Round:            7,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			PlannerRoute:     "deliverer",
+			PlannerRouteLive: true,
+			Pending:          &PendingInfo{Round: 6, Kind: store.KindReport},
+			RoundStart:       now.Add(-7 * time.Minute),
+			LastPayload:      &LastEvent{TS: now.Add(-2 * time.Minute), Round: 6, Kind: store.KindReport, Direction: store.DirToPlanner},
+		},
+		{
+			Name:             "stuck",
+			Round:            3,
+			Display:          "NEEDS YOU",
+			BuilderCandidate: "agy",
+			RoundStart:       now.Add(-2 * time.Minute),
+			LastPayload:      &LastEvent{TS: now.Add(-2 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+		},
+		{
+			Name:             "paused",
+			Round:            6,
+			Display:          "PAUSED",
+			BuilderCandidate: "agy",
+			RoundStart:       now.Add(-6 * time.Minute),
+			LastPayload:      &LastEvent{TS: now.Add(-1 * time.Minute), Round: 5, Kind: store.KindReport, Direction: store.DirToPlanner},
+		},
+	}}
+
+	rows := StatusLineRows(rep, now)
+	lines := splitLines(RenderStatusLine(rep, now, 120))
+	if len(rows) != len(lines) {
+		t.Fatalf("got %d rows and %d lines, want one line per row", len(rows), len(lines))
+	}
+
+	cases := []struct {
+		i     int
+		round int
+		word  string
+		dot   string
+	}{
+		{0, 2, "", "○"},
+		{1, 4, "REPORT IN", "○"},
+		{2, 6, "NEEDS YOU", "●"},
+		{3, 3, "NEEDS YOU", "●"},
+		{4, 5, "PAUSED", "○"},
+	}
+
+	for _, tc := range cases {
+		row := rows[tc.i]
+		shown := row.Round
+		if row.ReportRound > 0 {
+			shown = row.ReportRound
+		}
+		if shown != tc.round {
+			t.Errorf("row %d shown round = %d, want %d", tc.i, shown, tc.round)
+		}
+		plain := stripSGR(lines[tc.i])
+		if !strings.Contains(plain, "r"+strconv.Itoa(tc.round)) {
+			t.Errorf("line %d %q does not carry the row's shown round r%d", tc.i, plain, tc.round)
+		}
+		if tc.word == "" {
+			for _, absent := range []string{"ACTIVE", "REPORT IN", "NEEDS YOU"} {
+				if strings.Contains(plain, absent) {
+					t.Errorf("line %d %q must carry no word, found %q", tc.i, plain, absent)
+				}
+			}
+		} else if !strings.Contains(plain, tc.word) {
+			t.Errorf("line %d %q does not carry the row's word %q", tc.i, plain, tc.word)
+		}
+		if !strings.HasPrefix(plain, tc.dot+" ") {
+			t.Errorf("line %d %q does not start with the %s dot", tc.i, plain, tc.dot)
+		}
+	}
 }

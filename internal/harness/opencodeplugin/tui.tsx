@@ -531,11 +531,15 @@ export default {
               const isNeedsYou = !!row.needs_you;
               const isReportIn = !isNeedsYou && !!row.report_in;
               const dot = isNeedsYou ? "●" : "○";
+              // §2: NEEDS YOU, else a relevo state word (PAUSED, DONE), else
+              // REPORT IN, else no word at all for ACTIVE or empty.
               const stateText = isNeedsYou
                 ? "NEEDS YOU"
-                : isReportIn
-                  ? "REPORT IN"
-                  : (row.display || "ACTIVE");
+                : row.display && row.display !== "ACTIVE"
+                  ? row.display
+                  : isReportIn
+                    ? "REPORT IN"
+                    : "";
               const stateColor = isNeedsYou ? warningColor : isReportIn ? infoColor : successColor;
               const displayRound = row.report_round || row.round;
               const lineA = padLine(`${dot} ${row.name}`, stateText, 37);
@@ -823,7 +827,7 @@ export default {
                   }}
                 >
                   <text
-                    fg={isSelected ? interactiveColor : isNeedsYou ? warningColor : isReportIn ? infoColor : baseColor}
+                    fg={isSelected ? interactiveColor : isNeedsYou ? warningColor : isReportIn ? infoColor : mutedColor}
                   >
                     {isSelected ? <b>{`${ROW_MARKER}${line}`}</b> : `${ROW_PREFIX}${line}`}
                   </text>
@@ -907,7 +911,15 @@ export default {
         const model = parseModel(row.candidate);
         const isNeedsYou = !!row.needs_you;
         const isReportIn = !isNeedsYou && !!row.report_in;
-        const display = isNeedsYou ? "NEEDS YOU" : isReportIn ? "REPORT IN" : (row.display || "ACTIVE");
+        // §2: NEEDS YOU; else a relevo state word (PAUSED, DONE); else REPORT
+        // IN; else no word for ACTIVE.
+        const display = isNeedsYou
+          ? "NEEDS YOU"
+          : row.display && row.display !== "ACTIVE"
+            ? row.display
+            : isReportIn
+              ? "REPORT IN"
+              : "";
 
         // The body scrollbox is the focused renderable (per the plan's
         // <scrollbox focusable focused>), so keys must be handled here too.
@@ -967,7 +979,9 @@ export default {
             </box>
 
             <text fg={mutedColor} flexShrink={0}>
-              {`${name} · ${actor} on ${model} · ${display}`}
+              {display
+                ? `${name} · ${actor} on ${model} · ${display}`
+                : `${name} · ${actor} on ${model}`}
             </text>
 
             {/* Tab row */}
