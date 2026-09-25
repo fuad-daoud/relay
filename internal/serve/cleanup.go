@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -55,13 +56,13 @@ func settled(b store.Binding, now time.Time) bool {
 // nothing. For each settled binding, in order:
 //
 //  1. force-remove the server worktree -- this copy is disposable once the
-//     client holds the result;
+//     client holds the result (teardownServed);
 //  2. delete the binding's branch from the owner's bare repo;
 //  3. list the binding's refs/relevo/<name>/* refs and delete each;
 //  4. archive the record (relevo.Unbind with archive=true).
 //
-// If any of steps 1-3 fails, step 4 does not run, so a failed cleanup is
-// retried next tick with the record still live. Each binding is handled
+// If teardownServed (steps 1-3) fails, step 4 does not run, so a failed cleanup
+// is retried next tick with the record still live. Each binding is handled
 // independently: an error is logged, that binding is skipped, and the walk
 // carries on -- it never fails the tick. The returned error is only an
 // unreadable bindings dir; a missing dir returns nil, as Tick does. The count
@@ -98,30 +99,9 @@ func (s *Server) collectSettled(ctx context.Context) (int, error) {
 			if !settled(b, now) {
 				continue
 			}
-			bare := b.Serve.BareRepo
 
-			if err := rt.Git.RemoveWorktree(ctx, bare, b.Worktree, true); err != nil {
+			if err := teardownServed(ctx, rt, b); err != nil {
 				slog.Warn("collect settled binding failed", "owner", id, "binding", b.Name, "err", err)
-				continue
-			}
-			if err := rt.Git.DeleteBranch(ctx, bare, b.Branch); err != nil {
-				slog.Warn("collect settled binding failed", "owner", id, "binding", b.Name, "err", err)
-				continue
-			}
-			refs, err := rt.Git.ListRefs(ctx, bare, "refs/relevo/"+b.Name+"/")
-			if err != nil {
-				slog.Warn("collect settled binding failed", "owner", id, "binding", b.Name, "err", err)
-				continue
-			}
-			var deleteErr error
-			for _, ref := range refs {
-				if err := rt.Git.DeleteRef(ctx, bare, ref); err != nil {
-					deleteErr = err
-					break
-				}
-			}
-			if deleteErr != nil {
-				slog.Warn("collect settled binding failed", "owner", id, "binding", b.Name, "err", deleteErr)
 				continue
 			}
 
@@ -136,4 +116,126 @@ func (s *Server) collectSettled(ctx context.Context) (int, error) {
 	}
 
 	return collected, nil
+}
+
+// releaseServedRefs deletes the binding's branch and its refs/relevo/<name>/*
+// refs from the owner's bare repo (steps 2-3 of teardownServed).
+func releaseServedRefs(ctx context.Context, rt relevo.Runtime, b store.Binding) error {
+	if b.Serve == nil || b.Serve.BareRepo == "" {
+		return nil
+	}
+	bare := b.Serve.BareRepo
+	if err := rt.Git.DeleteBranch(ctx, bare, b.Branch); err != nil {
+		return err
+	}
+	refs, err := rt.Git.ListRefs(ctx, bare, "refs/relevo/"+b.Name+"/")
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		if err := rt.Git.DeleteRef(ctx, bare, ref); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// teardownServed force-removes the server worktree, then deletes the binding's
+// branch and refs from its bare repo.
+func teardownServed(ctx context.Context, rt relevo.Runtime, b store.Binding) error {
+	if b.Serve == nil || b.Serve.BareRepo == "" {
+		return nil
+	}
+	bare := b.Serve.BareRepo
+	if err := rt.Git.RemoveWorktree(ctx, bare, b.Worktree, true); err != nil {
+		return err
+	}
+	return releaseServedRefs(ctx, rt, b)
+}
+
+// unusedRepos returns the entries of repos that no binding in live references.
+// A binding references path p when b.Serve != nil && filepath.Clean(b.Serve.BareRepo) == filepath.Clean(p),
+// or when b.Serve == nil && filepath.Clean(b.Repo) == filepath.Clean(p).
+// It keeps the input order.
+func unusedRepos(repos []string, live []store.Binding) []string {
+	var unused []string
+	for _, p := range repos {
+		cleanP := filepath.Clean(p)
+		referenced := false
+		for _, b := range live {
+			var ref string
+			if b.Serve != nil {
+				ref = b.Serve.BareRepo
+			} else {
+				ref = b.Repo
+			}
+			if ref != "" && filepath.Clean(ref) == cleanP {
+				referenced = true
+				break
+			}
+		}
+		if !referenced {
+			unused = append(unused, p)
+		}
+	}
+	return unused
+}
+
+// pruneUnusedRepos deletes every bare repo under repos/<owner>/<id>.git that no
+// live binding of that owner references. The caller holds s.mu.
+func (s *Server) pruneUnusedRepos(ctx context.Context) int {
+	reposDir := filepath.Join(s.cfg.Root, "repos")
+	entries, err := os.ReadDir(reposDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		slog.Warn("prune unused repos: read repos dir failed", "err", err)
+		return 0
+	}
+
+	pruned := 0
+	for _, entry := range entries {
+		id, ok := remote.IDFromDir(entry.Name())
+		if !entry.IsDir() || !ok {
+			slog.Warn("unexpected entry in repos dir", "entry", entry.Name())
+			continue
+		}
+
+		ownerRepoDir := filepath.Join(reposDir, entry.Name())
+		ownerBindingsDir := filepath.Join(s.cfg.Root, "bindings", entry.Name())
+		rt := s.runtimeAt(ownerBindingsDir)
+
+		live, err := rt.Store.List()
+		if err != nil {
+			slog.Warn("prune unused repos: list owner bindings failed", "owner", id, "err", err)
+			continue
+		}
+
+		repoEntries, err := os.ReadDir(ownerRepoDir)
+		if err != nil {
+			slog.Warn("prune unused repos: read owner repo dir failed", "owner", id, "err", err)
+			continue
+		}
+
+		var ownerRepos []string
+		for _, re := range repoEntries {
+			if re.IsDir() && strings.HasSuffix(re.Name(), ".git") {
+				ownerRepos = append(ownerRepos, filepath.Join(ownerRepoDir, re.Name()))
+			}
+		}
+
+		for _, path := range unusedRepos(ownerRepos, live) {
+			if err := os.RemoveAll(path); err != nil {
+				slog.Warn("prune unused bare repo failed", "owner", id, "repo", filepath.Base(path), "err", err)
+				continue
+			}
+			slog.Info("pruned unused bare repo", "owner", id, "repo", filepath.Base(path))
+			pruned++
+		}
+
+		_ = os.Remove(ownerRepoDir)
+	}
+
+	return pruned
 }

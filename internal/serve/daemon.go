@@ -51,6 +51,8 @@ func (s *Server) Tick(ctx context.Context) error {
 	if _, err := s.collectSettled(ctx); err != nil {
 		slog.Warn("collect settled failed", "err", err)
 	}
+	// Prune bare repos that no live binding references. Still under s.mu.
+	s.pruneUnusedRepos(ctx)
 	if err := s.admit(ctx); err != nil {
 		slog.Warn("admit failed", "err", err)
 	}

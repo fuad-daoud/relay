@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -304,6 +305,11 @@ func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now ti
 					return nil, err
 				}
 				archived = res.Archived
+				if res.WorktreeKept == "" {
+					if err := releaseServedRefs(ctx, rt, b); err != nil {
+						slog.Warn("release served refs", "owner", id, "binding", b.Name, "err", err)
+					}
+				}
 			}
 
 			results = append(results, GCAbandonedResult{
@@ -361,7 +367,16 @@ func AdminUnbind(ctx context.Context, s *Server, owner string, name string, forc
 		}
 	}
 
-	return relevo.Unbind(ctx, rt, name, true)
+	res, err := relevo.Unbind(ctx, rt, name, true)
+	if err != nil {
+		return res, err
+	}
+	if res.WorktreeKept == "" {
+		if err := releaseServedRefs(ctx, rt, b); err != nil {
+			slog.Warn("release served refs", "owner", id, "binding", b.Name, "err", err)
+		}
+	}
+	return res, nil
 }
 
 // AdminOwnerRuntime resolves owner -- an exact client label or exact client
