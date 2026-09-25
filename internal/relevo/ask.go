@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -28,11 +29,13 @@ var ErrTreelessUnsupported = errors.New("treeless consult actors are not impleme
 // cap. An idle harness pane holds roughly 800 MB.
 var ErrConsultCap = errors.New("binding is at its consult cap")
 
-// consultHeadlessPrompt is the whole prompt a headless consult runs with. It
+// consultHeadlessPrompt is the whole prompt a headless consult runs with. Its
+// single %s is the question reference: the question itself, wrapped in
+// askInlineBlock, when it fits, and "Read: <ask path>" when it does not. It
 // asks for the findings as the final message rather than a file: a
 // `read`-tier process may not be able to write one, and relevo extracts that
 // message from the stream at exit and writes FindingsPath itself.
-const consultHeadlessPrompt = "Read: %s\n\nAnswer as your final message: your findings, complete, in markdown. Do not modify any file in this repository. Do not write a findings file; relevo records your final message."
+const consultHeadlessPrompt = "%s\n\nAnswer as your final message: your findings, complete, in markdown. Do not modify any file in this repository. Do not write a findings file; relevo records your final message."
 
 // roundRole is the record label for a consult that asks a closed round's own
 // builder (#147 part 2). It is a label, not a role table entry: the session
@@ -40,10 +43,38 @@ const consultHeadlessPrompt = "Read: %s\n\nAnswer as your final message: your fi
 // resolved and no harness.RoleSpec is needed.
 const roundRole = "round"
 
-// roundAskPrompt is the whole prompt a round consult runs with. Its origin
+// roundAskPrompt is the whole prompt a round consult runs with. Its single %s
+// is the question reference, exactly as consultHeadlessPrompt's is. Its origin
 // line is a literal because OriginLine has no form for DirToConsult: this
 // payload is addressed to a builder, but it is not a round.
-const roundAskPrompt = "relevo: consult · to builder of round %d · about binding %q (not the human)\n\nYou built round %d of this binding. Answer from what you did and why; do not change anything, do not run tools that write.\n\nRead: %s\n\nAnswer as your final message, complete, in markdown; relevo records it."
+const roundAskPrompt = "relevo: consult · to builder of round %d · about binding %q (not the human)\n\nYou built round %d of this binding. Answer from what you did and why; do not change anything, do not run tools that write.\n\n%s\n\nAnswer as your final message, complete, in markdown; relevo records it."
+
+// inlineAskMax is the largest whole prompt, in bytes, that relevo passes
+// inline. The prompt is one argv element, and Linux's MAX_ARG_STRLEN is 128
+// KiB per argument; half of that leaves room for the wrapper layers. A larger
+// question falls back to a staged file.
+const inlineAskMax = 64 << 10
+
+// askInlineBlock wraps question for a consult's prompt. The delimiters make
+// the question's own markdown unambiguous. One trailing newline on question is
+// trimmed, if present.
+func askInlineBlock(question []byte) string {
+	q := strings.TrimSuffix(string(question), "\n")
+	return "The question:\n\n-----BEGIN QUESTION-----\n" + q + "\n-----END QUESTION-----"
+}
+
+// inlinePrompt renders the prompt with the question inlined and reports
+// whether it fits inlineAskMax. render is the consult's template
+// (consultHeadlessPrompt or roundAskPrompt). The decision depends only on the
+// question and the template, never on a path, so Ask can decide before
+// reserveConsult knows AskPath. A prompt over the limit returns "" and false.
+func inlinePrompt(render func(ref string) string, question []byte) (string, bool) {
+	p := render(askInlineBlock(question))
+	if len(p) <= inlineAskMax {
+		return p, true
+	}
+	return "", false
+}
 
 // AskOptions describes one consult request.
 type AskOptions struct {
@@ -180,11 +211,19 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 			agentName, err, opts.Name, store.MaxAgentNameLen-len("-"+role.Name+"-")-8, role.Name)
 	}
 
+	// The question goes in the prompt when the whole prompt fits inlineAskMax;
+	// otherwise the prompt reads it back from the file reserveConsult stages.
+	render := func(ref string) string { return fmt.Sprintf(consultHeadlessPrompt, ref) }
+	prompt, inline := inlinePrompt(render, body)
+
 	// ── phase 1: reserve ─────────────────────────────── lock held, no external calls
 	consult, cwd, owner, err := reserveConsult(rt, opts, id, role.Name,
-		store.Endpoint{AgentName: agentName, Kind: l.Kind}, body)
+		store.Endpoint{AgentName: agentName, Kind: l.Kind}, body, inline)
 	if err != nil {
 		return AskResult{}, err
+	}
+	if !inline {
+		prompt = render("Read: " + consult.AskPath)
 	}
 
 	// ── phase 2: spawn ──────────────────────────────────────── no lock held
@@ -195,7 +234,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	// branch reads the stream (#147, #144).
 	streamPath := rt.Store.ConsultStreamPath(opts.Name, consult.Round, consult.ID)
 	argv, err := headlessLaunch(c, role, tier, consultTimeout,
-		fmt.Sprintf(consultHeadlessPrompt, consult.AskPath), cwd, rt.Store.Dir(opts.Name))
+		prompt, cwd, rt.Store.Dir(opts.Name))
 	if err != nil {
 		consult.State = store.ConsultSilent
 		consult.Note = "spawn failed: " + brief(err)
@@ -249,7 +288,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 // roleName is a label, which is what lets a round consult call itself
 // roundRole. It also returns the loaded binding's Owner, for the consult's
 // scope unit name (#313), so the caller needs no second load.
-func reserveConsult(rt Runtime, opts AskOptions, id, roleName string, endpoint store.Endpoint, body []byte) (store.Consult, string, string, error) {
+func reserveConsult(rt Runtime, opts AskOptions, id, roleName string, endpoint store.Endpoint, body []byte, inline bool) (store.Consult, string, string, error) {
 	var (
 		consult store.Consult
 		cwd     string
@@ -283,7 +322,11 @@ func reserveConsult(rt Runtime, opts AskOptions, id, roleName string, endpoint s
 			SpawnedAt:    rt.Now().UTC(),
 		}
 
-		if err := os.WriteFile(consult.AskPath, body, 0o644); err != nil {
+		if inline {
+			if err := tx.PutRoundFile(b.Name, b.Round, consult.AskPath, body); err != nil {
+				return fmt.Errorf("record question at %s: %w", consult.AskPath, err)
+			}
+		} else if err := os.WriteFile(consult.AskPath, body, 0o644); err != nil {
 			return fmt.Errorf("stage question at %s: %w", consult.AskPath, err)
 		}
 
@@ -414,7 +457,14 @@ func askRound(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, erro
 		tier = harness.TierRead
 	}
 	askPath := rt.Store.AskPath(opts.Name, b.Round, id)
-	prompt := fmt.Sprintf(roundAskPrompt, opts.Round, opts.Name, opts.Round, askPath)
+	// The question goes in the prompt when the whole prompt fits inlineAskMax;
+	// otherwise the prompt reads it back from the file reserveConsult stages at
+	// this same askPath.
+	render := func(ref string) string { return fmt.Sprintf(roundAskPrompt, opts.Round, opts.Name, opts.Round, ref) }
+	prompt, inline := inlinePrompt(render, body)
+	if !inline {
+		prompt = render("Read: " + askPath)
+	}
 	argv, err := h.Resume(s.ID, prompt, tier)
 	if err != nil {
 		return AskResult{}, fmt.Errorf("%s session %s: %w", s.Kind, short8(s.ID), err)
@@ -422,7 +472,7 @@ func askRound(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, erro
 
 	// ── phase 1: reserve ─────────────────────────────── lock held, no external calls
 	consult, cwd, owner, err := reserveConsult(rt, opts, id, roundRole,
-		store.Endpoint{AgentName: agentName, Kind: s.Kind, SessionID: s.ID}, body)
+		store.Endpoint{AgentName: agentName, Kind: s.Kind, SessionID: s.ID}, body, inline)
 	if err != nil {
 		return AskResult{}, err
 	}

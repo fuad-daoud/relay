@@ -282,7 +282,10 @@ func (s *Store) ViewedAt(name string) (time.Time, bool) {
 	return *rec.ViewedAt, true
 }
 
-// AskPath is where a consult's question is staged.
+// AskPath names a consult's question. relevo passes the question inside the
+// consult's prompt and records it straight into round_file under this name;
+// only a question too large to inline (see relevo's inlineAskMax) is written
+// here as a file for the consult to read. Read it with ReadFile.
 // Layout: <binding dir>/NNN-<id>-ask.md
 //
 // Deliberately not NNN-question.md: that name belongs to QuestionPath, the

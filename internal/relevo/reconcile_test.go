@@ -2002,8 +2002,9 @@ func TestReconcileNeedsYouGoesStale(t *testing.T) {
 // TestVerifyRoundStartsAReviewerInAThrowawayWorktree pins #144's close path:
 // a round sent with --verify closes exactly as before, and the close then
 // creates a detached worktree at the builder's HEAD and launches one read-only
-// headless reviewer in it -- with a question that names the ask file, whose
-// content asks the reviewer to verify round 1 with no gate.
+// headless reviewer in it -- with a question carried in the reviewer's prompt
+// and recorded at the ask path, that asks the reviewer to verify round 1 with
+// no gate.
 //
 // Mutation check (run and report): delete the wantVerify block from
 // Reconcile's close path and this fails on addDetachedWorktreeCalls.
@@ -2062,16 +2063,19 @@ func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
 	}
 
 	askPath := rt.Store.AskPath("webshop", 1, verifyConsultID)
-	if argv := strings.Join(reviewer.Argv, " "); !strings.Contains(argv, askPath) {
-		t.Errorf("reviewer argv does not name the ask file %s:\n%s", askPath, argv)
+	if argv := strings.Join(reviewer.Argv, " "); !strings.Contains(argv, "Verify round 1") {
+		t.Errorf("reviewer argv does not carry the question:\n%s", argv)
 	}
-	question, err := os.ReadFile(askPath)
+	if _, err := os.Stat(askPath); !os.IsNotExist(err) {
+		t.Errorf("ask file exists on disk at %s (err %v), want no file", askPath, err)
+	}
+	question, err := rt.Store.ReadFile(askPath)
 	if err != nil {
-		t.Fatalf("read ask file: %v", err)
+		t.Fatalf("read recorded question: %v", err)
 	}
 	for _, want := range []string{"Verify round 1", "Gate:   none"} {
 		if !strings.Contains(string(question), want) {
-			t.Errorf("ask file does not contain %q:\n%s", want, question)
+			t.Errorf("recorded question does not contain %q:\n%s", want, question)
 		}
 	}
 
@@ -2142,9 +2146,9 @@ func TestVerifyGateLogIsPassed(t *testing.T) {
 		t.Fatalf("round = %d, want 2 after the gate passed", got.Round)
 	}
 
-	question, err := os.ReadFile(rt.Store.AskPath("webshop", 1, verifyConsultID))
+	question, err := rt.Store.ReadFile(rt.Store.AskPath("webshop", 1, verifyConsultID))
 	if err != nil {
-		t.Fatalf("read ask file: %v", err)
+		t.Fatalf("read recorded question: %v", err)
 	}
 	wantLog := rt.Store.GateLogPath("webshop", 1)
 	if !strings.Contains(string(question), "Gate:   "+wantLog) {
