@@ -323,14 +323,8 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   last_seq=$(relevo status --json | jq -r '.bindings[] | select(.name == "NAME") | .last_seq')
   relevo show NAME --log --after $(last_seq) --json
   ```
-- `relevo history [--here|--repo <url|dir>] [--feature L] [--binding N] [--planner S] [--harness K] [--provider P] [--model M] [--candidate T] [--outcome O] [--since D] [--until D] [--archived|--live] [--limit N] [--json] [-q "<query>"] [--by <axis>] [--rows]` —
-  one line per round across every binding relevo has ever recorded, live or archived, newest first. `-q` filters with the query language and `--by` regroups the result. See "The database" below.
-- `relevo history --tab [--since D] [--by binding|model|provider|owner] [--json]` —
-  tokens and cost across bindings, archived ones included. See "Round usage" below.
-- `relevo history --stats [--since D] [--json]` —
-  rounds, outcomes, switches, gate results and consults across bindings,
-  archived ones included, read from the round records; the last 30 days of
-  provider blocks come from the gate history. See "Usage stats" below.
+- `relevo history [--here] [--binding B] [--planner P] [--since D] [--limit N] [-q "<query>"] [--json] [--rows]` —
+  round history as a JSON array across every binding relevo has ever recorded, live or archived, newest first. `-q` filters with the query language. See "The database" below.
 - `relevo show <name> [--round N] [--plan|--report|--diff [--stat|--anchors]|--drift|--log [--follow --after N]|--transcript|--gate|--findings <id>] [--json]` —
   one round's plan, report, diff, drift, log, transcript, gate log or a consult's findings: from a live binding's open round files, or, for anything sealed or archived, from the database. See "The database" below.
 - `relevo wait [NAME|--name N] [--any N1 N2 ...] [--round R] [--timeout D] [--peek]` — block
@@ -425,7 +419,7 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
 - `relevo migrate [--dry-run] [--keep-old-binary] [--state-from DIR] [--state-to DIR]` —
   move a pre-relevo installation's state, switch the client unit and remove the old binary.
 - `relevo serve [--listen :7777] [--state <dir>] [--interval 2s] [--insecure-http] [--max-bundle-bytes N] [--max-builders N]` — run the remote-builder server (listener + daemon).
-- `relevo serve init|enroll|clients|revoke|fingerprint|status|ui|gc|unbind` — server administration, on the server host. `relevo show --owner` and `relevo history --tab --owner` read one owner's round or usage on that host, and `serve ui` is the server's own reader.
+- `relevo serve init|enroll|clients|revoke|fingerprint|status|ui|gc|unbind` — server administration, on the server host. `relevo show --owner` reads one owner's round on that host, and `serve ui` is the server's own reader.
 - `relevo gate --serve [--state DIR]` — list the gates on the server's own ledger.
 - `relevo gate --serve --clear <provider|token> [--state DIR]` — clear a recorded rate limit on the server's ledger.
 - `relevo gate --serve <token> [--for D] [--reason S] [--state DIR]` — record a provider rate limit on the server's ledger.
@@ -473,8 +467,6 @@ name exits 2 and names its replacement:
 | `relevo pull` | `relevo wait (it prints the report)` |
 | `relevo unavailable` | `relevo gate <token>` |
 | `relevo available` | `relevo gate --clear <provider>` |
-| `relevo tab` | `relevo history --tab` |
-| `relevo stats` | `relevo history --stats` |
 | `relevo db` | `relevo doctor (the database row)` |
 
 ### Reviewing a round
@@ -744,10 +736,9 @@ On a fresh server host, the first run looks like:
 
 On the server machine, the admin runs these on the server host. No `--state` is needed: an admin verb reads the running daemon's root from the database's `serve.daemon` record (an explicit `--state` still wins, and a stale record falls back to the default root with a note):
 
-- `relevo serve status [--json]` displays active bindings across all owners, sorted by owner label; `--json` prints the same census as one JSON object with the top-level keys `builders`, `last_contact` and `owners`.
+- `relevo serve status [--json]` prints active bindings across all owners as JSON (top-level keys `builders`, `last_contact` and `owners`), sorted by owner label.
 - `relevo show <name> --owner <label|id>` prints one round's plan, report, diff, drift, log or transcript, with `relevo show`'s flags. Read-only, and it reads live bindings only: a non-live binding reads as "binding not found".
 - `relevo show <name> --owner <label|id> --log` prints that owner's binding log, with `relevo show --log`'s `--round`, `--after`, `--json` and `--follow`. Read-only: `--owner` is an exact label or an exact client id, and nothing is stamped or created.
-- `relevo history --tab [--owner <label|id|all>] [--since 7d] [--by binding|model|provider|owner]` sums recorded usage: with `--owner` for that one owner, and `--owner all` (or no `--owner`) for every owner, where a binding group reads `<label>/<name>` and `--by owner` groups by owner label. Reads only; it creates nothing.
 - `relevo serve clients` lists enrolled clients and their revocation status.
 - `relevo serve gc --abandoned <duration>` prunes abandoned bindings whose last activity is older than the threshold by archiving them (running rounds are never touched).
 - A **DONE** served binding is collected once its last round has been acked by the client, or after seven days without an ack: the daemon removes its worktree, deletes its branch and every `refs/relevo/<name>/*` ref in the owner's bare repo, and archives its record in the database (this cleanup lands in the server's next round). Every server unbind releases the binding's branch and refs as well. A bare repo is deleted once no live binding uses it, and the next bind of that repository recreates it.
