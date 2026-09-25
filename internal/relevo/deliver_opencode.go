@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -39,6 +40,33 @@ type OpencodeDeliverer struct {
 	Now           func() time.Time
 	Alive         func(pid int) bool // nil -> the same rule the claim store uses
 	FallbackAfter time.Duration      // zero -> DefaultFallbackAfter
+
+	postedMu sync.Mutex
+	posted   map[opencodeKey]time.Time
+}
+
+type opencodeKey struct {
+	sessionID string
+	origin    string
+}
+
+func (d *OpencodeDeliverer) hasPosted(sessionID, origin string) bool {
+	d.postedMu.Lock()
+	defer d.postedMu.Unlock()
+	if d.posted == nil {
+		return false
+	}
+	_, ok := d.posted[opencodeKey{sessionID: sessionID, origin: origin}]
+	return ok
+}
+
+func (d *OpencodeDeliverer) recordPosted(sessionID, origin string, t time.Time) {
+	d.postedMu.Lock()
+	defer d.postedMu.Unlock()
+	if d.posted == nil {
+		d.posted = make(map[opencodeKey]time.Time)
+	}
+	d.posted[opencodeKey{sessionID: sessionID, origin: origin}] = t
 }
 
 // opencodeService is $XDG_CONFIG_HOME/opencode/service.json. Verified shape
@@ -133,6 +161,10 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, planner store.Endpoint,
 		return OutcomeDelivered, "already present", nil
 	}
 
+	if d.hasPosted(planner.SessionID, origin) {
+		return OutcomeUnavailable, "posted but not seen in the session", nil
+	}
+
 	req, err := d.buildRequest(ctx, svc, planner.SessionID, payload)
 	if err != nil {
 		return OutcomeNotMine, "", fmt.Errorf("build opencode request: %w", err)
@@ -147,6 +179,8 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, planner store.Endpoint,
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return OutcomeUnavailable, fmt.Sprintf("post: %d", resp.StatusCode), nil
 	}
+
+	d.recordPosted(planner.SessionID, origin, d.now())
 
 	// 200 means admitted, not delivered (§3.4): confirm by reading the
 	// session back, polling briefly since the owning process's event bus
@@ -235,14 +269,46 @@ func firstErrorLine(err error) string {
 	return first
 }
 
+// tableSet reports which of OpenCode's tables the database has, so a database
+// that predates session_inbox does not turn into a failed query.
+func (d *OpencodeDeliverer) tableSet(ctx context.Context) (map[string]bool, error) {
+	out, err := d.Exec.Run(ctx, "sqlite3", "-readonly", "-json", d.DBPath,
+		"select name from sqlite_master where type = 'table'")
+	if err != nil {
+		return nil, err
+	}
+
+	trimmed := strings.TrimSpace(string(out))
+	tables := map[string]bool{}
+	if len(trimmed) == 0 {
+		return tables, nil
+	}
+
+	var rows []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &rows); err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		tables[r.Name] = true
+	}
+	return tables, nil
+}
+
 // seen reports whether origin already appears in sessionID's messages as a
-// user turn (§3.4): the inbox table holds admitted work and is consumed, so a
-// user turn is what proves the session actually took it. OpenCode 2.0.14 keeps
-// those in session_message, while the part/message tables only hold pre-2.0
-// turns; either one counts. A failing sqlite3 is not seen and not a Go error --
-// the call site turns it into OutcomeUnavailable.
+// user turn (§3.4) or queued in session_inbox: the inbox table holds admitted
+// work and is consumed, so a user turn or a queued message is what proves the
+// session received it. OpenCode 2.0.14 keeps user turns in session_message,
+// while the part/message tables only hold pre-2.0 turns; any of them counts.
+// A failing sqlite3 is not seen and not a Go error -- the call site turns it
+// into OutcomeUnavailable.
 func (d *OpencodeDeliverer) seen(ctx context.Context, sessionID, origin string) (bool, error) {
-	out, err := d.Exec.Run(ctx, "sqlite3", "-readonly", d.DBPath, opencodeConfirmQuery(sessionID, origin))
+	tables, err := d.tableSet(ctx)
+	if err != nil {
+		return false, err
+	}
+	out, err := d.Exec.Run(ctx, "sqlite3", "-readonly", d.DBPath, opencodeConfirmQuery(sessionID, origin, tables["session_inbox"]))
 	if err != nil {
 		return false, err
 	}
@@ -255,14 +321,14 @@ func (d *OpencodeDeliverer) seen(ctx context.Context, sessionID, origin string) 
 }
 
 // opencodeConfirmQuery is the read-back that proves a session actually took
-// the turn (§3.4): a user text part in the pre-2.0 part/message tables, or a
-// user row in OpenCode 2.0's session_message. The two counts are summed, so
-// either table alone confirms. ' is doubled in both interpolated values, the
-// SQL string-literal escape.
-func opencodeConfirmQuery(sessionID, origin string) string {
+// the turn (§3.4): a user text part in the pre-2.0 part/message tables, a
+// user row in OpenCode 2.0's session_message, or a queued message in
+// session_inbox. The counts are summed, so any matching row confirms.
+// ' is doubled in all interpolated values, the SQL string-literal escape.
+func opencodeConfirmQuery(sessionID, origin string, hasInbox bool) string {
 	sid := strings.ReplaceAll(sessionID, "'", "''")
 	org := strings.ReplaceAll(origin, "'", "''")
-	return fmt.Sprintf(
+	query := fmt.Sprintf(
 		"select (select count(*) from part p join message m on m.id = p.message_id"+
 			" where p.session_id = '%s'"+
 			" and json_extract(m.data, '$.role') = 'user'"+
@@ -273,4 +339,12 @@ func opencodeConfirmQuery(sessionID, origin string) string {
 			" and type = 'user'"+
 			" and json_extract(data, '$.text') like '%%%s%%')",
 		sid, org, sid, org)
+	if hasInbox {
+		query += fmt.Sprintf(
+			" + (select count(*) from session_inbox"+
+				" where session_id = '%s'"+
+				" and payload like '%%%s%%')",
+			sid, org)
+	}
+	return query
 }

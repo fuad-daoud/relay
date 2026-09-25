@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,12 +30,15 @@ type fakeSqliteExec struct {
 }
 
 func (f *fakeSqliteExec) Run(ctx context.Context, bin string, args ...string) ([]byte, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if len(args) > 0 && strings.Contains(args[len(args)-1], "sqlite_master") {
+		return []byte(`[{"name":"session_inbox"}]`), nil
+	}
 	f.calls++
 	if len(args) > 0 {
 		f.queries = append(f.queries, args[len(args)-1])
-	}
-	if f.err != nil {
-		return nil, f.err
 	}
 	n := 0
 	if f.seenFrom > 0 && f.calls >= f.seenFrom {
@@ -459,6 +464,19 @@ func TestOpencodeConfirmSeen(t *testing.T) {
 		want  bool
 	}{
 		{
+			name: "session_inbox row whose payload carries the origin -> seen",
+			stmts: append(append([]string{}, tables...),
+				"create table session_inbox (id text, session_id text, type text, payload text, delivery text, enqueued_seq integer, time_created integer)",
+				"insert into session_inbox values ('inbox1', 'ses_x', 'message', '{\"text\":\""+origin+"\"}', 'queue', 0, 1)"),
+			want: true,
+		},
+		{
+			name: "db with no session_inbox table still works",
+			stmts: append(append([]string{}, tables...),
+				"insert into session_message values ('m1', 'ses_x', 'user', 0, 1, 1, '"+v2UserText+"')"),
+			want: true,
+		},
+		{
 			name: "session_message user row containing the origin -> seen",
 			stmts: append(append([]string{}, tables...),
 				"insert into session_message values ('m1', 'ses_x', 'user', 0, 1, 1, '"+v2UserText+"')"),
@@ -494,5 +512,99 @@ func TestOpencodeConfirmSeen(t *testing.T) {
 				t.Errorf("seen = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestOpencodeDeliverPostsOnce(t *testing.T) {
+	var mu sync.Mutex
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		posts++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
+
+	db := sqliteFixture(t,
+		"create table message (id text, data text)",
+		"create table part (id text, message_id text, session_id text, data text)",
+		"create table session_message (id text, session_id text, type text, seq integer, time_created integer, time_updated integer, data text)",
+		"create table session_inbox (id text, session_id text, type text, payload text, delivery text, enqueued_seq integer, time_created integer)",
+	)
+
+	startTime := time.Unix(1000, 0)
+	curTime := startTime
+	d := &OpencodeDeliverer{
+		StateFiles: []string{stateFile},
+		DBPath:     db,
+		Exec:       cliExec{},
+		Alive:      aliveAlways,
+		Now:        func() time.Time { return curTime },
+	}
+
+	payload1 := "relevo: round 1 · to planner · payload 1\n\nbody 1"
+	plannerEp := opencodePlanner("ses_abc123")
+
+	// Call Deliver for the same payload 5 times (advancing injected clock by 2s each, below FallbackAfter)
+	for i := 1; i <= 5; i++ {
+		out, reason, err := d.Deliver(context.Background(), plannerEp, payload1, "/x/001-report.md", startTime)
+		if err != nil {
+			t.Fatalf("call %d Deliver: %v", i, err)
+		}
+		if out != OutcomeUnavailable {
+			t.Fatalf("call %d out = %v, want OutcomeUnavailable", i, out)
+		}
+		if reason != "posted but not seen in the session" {
+			t.Fatalf("call %d reason = %q, want \"posted but not seen in the session\"", i, reason)
+		}
+		mu.Lock()
+		gotPosts := posts
+		mu.Unlock()
+		if gotPosts != 1 {
+			t.Fatalf("after call %d, got %d POSTs, want 1", i, gotPosts)
+		}
+		curTime = curTime.Add(2 * time.Second)
+	}
+
+	// Then make the row appear in session_inbox -> the next call reports delivered with no POST.
+	out, err := exec.Command("sqlite3", db,
+		"insert into session_inbox values ('inbox1', 'ses_abc123', 'message', '"+payload1+"', 'queue', 0, 100)").CombinedOutput()
+	if err != nil {
+		t.Fatalf("insert session_inbox: %v: %s", err, out)
+	}
+
+	out6, reason6, err := d.Deliver(context.Background(), plannerEp, payload1, "/x/001-report.md", startTime)
+	if err != nil {
+		t.Fatalf("call 6 Deliver: %v", err)
+	}
+	if out6 != OutcomeDelivered {
+		t.Fatalf("call 6 out = %v, reason = %q, want OutcomeDelivered", out6, reason6)
+	}
+	mu.Lock()
+	gotPosts := posts
+	mu.Unlock()
+	if gotPosts != 1 {
+		t.Fatalf("after call 6, got %d POSTs, want 1", gotPosts)
+	}
+
+	// A second payload (different origin) still POSTs once on its own.
+	payload2 := "relevo: round 1 · to planner · payload 2\n\nbody 2"
+	curTime = curTime.Add(2 * time.Second)
+	out7, reason7, err := d.Deliver(context.Background(), plannerEp, payload2, "/x/002-report.md", startTime)
+	if err != nil {
+		t.Fatalf("payload2 Deliver: %v", err)
+	}
+	if out7 != OutcomeUnavailable {
+		t.Fatalf("payload2 out = %v, reason = %q, want OutcomeUnavailable", out7, reason7)
+	}
+	mu.Lock()
+	gotPosts = posts
+	mu.Unlock()
+	if gotPosts != 2 {
+		t.Fatalf("after payload 2, got %d POSTs, want 2", gotPosts)
 	}
 }
