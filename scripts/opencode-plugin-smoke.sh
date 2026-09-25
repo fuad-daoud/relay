@@ -103,13 +103,30 @@ capture "02-after-toast"
 send C-x; sleep 0.4; send o; sleep 1.5
 capture "03-fleet"
 
-# 04-binding (enter on webshop)
+# 04-binding: enter on webshop. Rule 1 opens the report -- webshop needs you
+# and has report_round 3 -- on that round, with no key pressed.
 send Enter; sleep 1.5
 capture "04-binding"
 
-# 05-binding-report (tab to report)
-send Tab; sleep 1.5
+# 04b-landing: escape back to the session, reopen the fleet, down to landing
+# (no report -> the transcript tab), enter.
+send Escape; sleep 0.5
+send C-x; sleep 0.4; send o; sleep 1.0
+send Down; sleep 0.3; send Down; sleep 0.3; send Enter; sleep 1.5
+capture "04b-landing"
+
+# 05-binding-report: back to the fleet, up to webshop, enter -> the report tab.
+send Escape; sleep 0.5
+send C-x; sleep 0.4; send o; sleep 1.0
+send Up; sleep 0.3; send Up; sleep 0.3; send Enter; sleep 1.5
 capture "05-binding-report"
+
+# 05b/05c: two PageDowns, then two polls (>= 12 s) with the body scrolled; the
+# first body line must be unchanged and must not be line 01.
+send PageDown; sleep 0.4; send PageDown; sleep 0.8
+capture "05b-scrolled"
+sleep 12
+capture "05c-after-polls"
 
 # 06-dialog (a)
 send a; sleep 1.5
@@ -216,8 +233,8 @@ check_assertion_11() {
 assert 11 "no line in fake log starts with anything but a relevo verb" check_assertion_11
 
 # 12. 03-fleet shows a recent row below ── recent. history.json lists webshop
-#     r4, webshop r3, ledger r2, landing r1, so the third-newest row is
-#     ledger r2 (the plan's literal, webshop r3, is the fourth).
+#     r4 twice (a builder switch), webshop r3, ledger r2, landing r1, so
+#     ledger r2 is one of the rows shown.
 check_assertion_12() {
   awk '/── recent/{after = 1; next} after' "$OUT/03-fleet.txt" | grep -qE "ledger +r2"
 }
@@ -260,6 +277,48 @@ check_assertion_16() {
 }
 assert 16 "02-after-toast shows the ledger NEEDS YOU toast or relevo 2 need you" check_assertion_16
 
+# 17. rule 1: 04-binding (enter on webshop, needs_you with report_round 3)
+#     arrives on the report tab with no Tab pressed; 04b-landing (no report)
+#     arrives on the transcript tab.
+check_assertion_17() {
+  grep -q "\[ report \]" "$OUT/04-binding.txt" && \
+  grep -q "\[ transcript \]" "$OUT/04b-landing.txt"
+}
+assert 17 "04-binding selects report and 04b-landing selects transcript" check_assertion_17
+
+# 18. the body fills the height under the header rows: on a 45-row terminal the
+#     tall report fixture shows line 30 (>= 30 body lines).
+assert 18 "05-binding-report shows line 30 (the body fills the height)" \
+  grep -q "line 30" "$OUT/05-binding-report.txt"
+
+# 19. scrolling survives two polls: 05b and 05c share their first body line and
+#     it is not line 01.
+check_assertion_19() {
+  local b c
+  b="$(grep -oE "line [0-9]+" "$OUT/05b-scrolled.txt" | head -1)"
+  c="$(grep -oE "line [0-9]+" "$OUT/05c-after-polls.txt" | head -1)"
+  [ -n "$b" ] && [ "$b" = "$c" ] && [ "$b" != "line 01" ]
+}
+assert 19 "05b-scrolled and 05c-after-polls keep the same scrolled position" check_assertion_19
+
+# 20. the binding page header follows needs_you: webshop's fixture display is
+#     ACTIVE but its row needs you, so the header reads NEEDS YOU.
+check_assertion_20() {
+  grep -qE "webshop › r3.*NEEDS YOU" "$OUT/05-binding-report.txt"
+}
+assert 20 "05-binding-report header shows NEEDS YOU for webshop" check_assertion_20
+
+# 21. the round row lists each round once, ascending: r1 r2 r3 r4, with no
+#     repeated number (history.json carries two webshop r4 rows).
+check_assertion_21() {
+  local row
+  row="$(grep -oE "\[ \] round.*" "$OUT/05-binding-report.txt" | head -1)"
+  [ -n "$row" ] || return 1
+  printf '%s\n' "$row" | grep -qE "r1 r2 r3 r4" && \
+  [ -z "$(printf '%s\n' "$row" | grep -oE "r[0-9]+" | sort | uniq -d)" ]
+}
+assert 21 "05-binding-report round row is r1 r2 r3 r4 with no repeat" check_assertion_21
+
 # Mouse is not driven here: tmux send-keys cannot deliver SGR mouse events
 # reliably, so the clickable-row behaviour (onMouseDown on the sidebar and
 # fleet rows) is verified by inspection of tui.tsx, not by this smoke.
@@ -270,5 +329,5 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-echo "Smoke test PASSED (all 16 assertions passed)"
+echo "Smoke test PASSED (all 21 assertions passed)"
 exit 0

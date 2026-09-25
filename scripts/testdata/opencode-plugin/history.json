@@ -12,6 +12,16 @@
   {
     "BindingID": "b_webshop",
     "BindingName": "webshop",
+    "Number": 4,
+    "StartedAt": "2026-09-24T20:02:00Z",
+    "ClosedAt": null,
+    "Outcome": "open",
+    "BuilderCandidate": "opencode/openai/gpt-4o",
+    "ReportOutcome": null
+  },
+  {
+    "BindingID": "b_webshop",
+    "BindingName": "webshop",
     "Number": 3,
     "StartedAt": "2026-09-24T19:00:00Z",
     "ClosedAt": "2026-09-24T19:15:00Z",
