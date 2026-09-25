@@ -7,6 +7,7 @@
 package legacy
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -84,6 +85,40 @@ const (
 type Roots struct {
 	OldState, NewState   string // <XDG_STATE_HOME or ~/.local/state>/{relay,relevo}
 	OldConfig, NewConfig string // <XDG_CONFIG_HOME or ~/.config>/{relay,relevo}
+}
+
+// Prefix is one absolute-directory substitution: every stored path that is Old
+// exactly, or starts with Old followed by "/", becomes New plus the same tail.
+type Prefix struct{ Old, New string }
+
+// Prefixes is the substitution list a rewrite of this Roots applies, in the
+// order migrate builds it: the state root always, the config root when there
+// is one. A pair is left out when either side is empty or Old already equals
+// New. The zero Roots returns an empty slice.
+func (r Roots) Prefixes() []Prefix {
+	var pairs []Prefix
+	add := func(old, new string) {
+		if old == "" || new == "" || old == new {
+			return
+		}
+		pairs = append(pairs, Prefix{Old: old, New: new})
+	}
+	add(r.OldState, r.NewState)
+	add(r.OldConfig, r.NewConfig)
+	return pairs
+}
+
+// RewriteJSON applies every pair to data, in order, and returns the result:
+// each `"<Old>/` becomes `"<New>/`, then each `"<Old>"` becomes `"<New>"`.
+// It is pure -- data is never modified -- and with no pairs it returns data's
+// bytes unchanged.
+func RewriteJSON(data []byte, pairs []Prefix) []byte {
+	out := data
+	for _, p := range pairs {
+		out = bytes.ReplaceAll(out, []byte(`"`+p.Old+`/`), []byte(`"`+p.New+`/`))
+		out = bytes.ReplaceAll(out, []byte(`"`+p.Old+`"`), []byte(`"`+p.New+`"`))
+	}
+	return out
 }
 
 // Status says which of a Roots' four directories exist.

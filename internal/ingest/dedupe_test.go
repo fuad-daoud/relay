@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -120,7 +121,7 @@ func appendTranscript(t *testing.T, d *db.DB, ownerKind, ownerID string, recs []
 // mustPlan builds the plan and fails the test when DedupeMirror errors.
 func mustPlan(t *testing.T, d *db.DB) dedupePlan {
 	t.Helper()
-	plan, err := DedupeMirror(d)
+	plan, err := DedupeMirror(d, nil)
 	if err != nil {
 		t.Fatalf("DedupeMirror: %v", err)
 	}
@@ -250,12 +251,18 @@ func TestDedupeMirrorKeepsEveryRowOfAnUnmappedBinding(t *testing.T) {
 	}
 }
 
-// TestDedupeMirrorPlansIdenticalTranscriptAndKeepsAlteredRendered pins case 4:
-// a transcript re-derived from the round-file stream is planned, and the same
-// transcript with one row's rendered text altered is kept. Mutation that
-// breaks it: drop the Rendered comparison in transcriptRowsEqual, and the
-// altered transcript is planned too.
-func TestDedupeMirrorPlansIdenticalTranscriptAndKeepsAlteredRendered(t *testing.T) {
+// TestDedupeMirrorPlansTranscriptByDerivationOrByStreamLines pins both
+// transcript proofs over three rounds: round 3 is planned because
+// re-derivation from the sealed stream reproduces it exactly; round 4, one of
+// whose rows has altered rendered text, is planned anyway because every row's
+// record JSON is a line of the sealed stream (rendered is derived, so a
+// tampered rendered proves nothing); round 5, one of whose rows carries a
+// record JSON that is no stream line, is kept. Mutation that breaks it: drop
+// the stream-lines fallback, and round 4 is kept instead of planned.
+//
+// Ported from TestDedupeMirrorPlansIdenticalTranscriptAndKeepsAlteredRendered:
+// #476 deliberately changed the altered-rendered case from kept to planned.
+func TestDedupeMirrorPlansTranscriptByDerivationOrByStreamLines(t *testing.T) {
 	d := openTestDB(t)
 	const name = "webshop"
 	bindingID := seedMirrorBinding(t, d, name)
@@ -276,26 +283,123 @@ func TestDedupeMirrorPlansIdenticalTranscriptAndKeepsAlteredRendered(t *testing.
 	}
 	appendTranscript(t, d, db.OwnerRound, round3, same)
 
-	// Round 4: one row's rendered text was altered.
+	// Round 4: one row's rendered text was altered, so exact re-derivation
+	// fails and only the stream-lines proof vouches for it.
 	round4 := seedMirrorRound(t, d, bindingID, 4)
 	putRoundFile(t, d, recordID, "004-builder.jsonl", 4, raw)
 	altered, _ := streamTranscriptRecords("claude", lines, 0)
 	altered[1].Rendered = "tampered"
 	appendTranscript(t, d, db.OwnerRound, round4, altered)
 
+	// Round 5: one row's record JSON is not a line of the stream, so neither
+	// proof holds and the round is kept.
+	round5 := seedMirrorRound(t, d, bindingID, 5)
+	putRoundFile(t, d, recordID, "005-builder.jsonl", 5, raw)
+	stranger, _ := streamTranscriptRecords("claude", lines, 0)
+	stranger[1].RecordJSON = `{"x":1}`
+	appendTranscript(t, d, db.OwnerRound, round5, stranger)
+
 	plan := mustPlan(t, d)
 
-	if plan.stats.TranscriptRoundsDeleted != 1 {
-		t.Errorf("TranscriptRoundsDeleted = %d, want 1", plan.stats.TranscriptRoundsDeleted)
+	if plan.stats.TranscriptRoundsDeleted != 2 {
+		t.Errorf("TranscriptRoundsDeleted = %d, want 2", plan.stats.TranscriptRoundsDeleted)
 	}
-	if plan.stats.TranscriptRowsDeleted != len(same) {
-		t.Errorf("TranscriptRowsDeleted = %d, want %d", plan.stats.TranscriptRowsDeleted, len(same))
+	if plan.stats.TranscriptRowsDeleted != 4 {
+		t.Errorf("TranscriptRowsDeleted = %d, want 4", plan.stats.TranscriptRowsDeleted)
 	}
 	if plan.stats.TranscriptRoundsKept != 1 {
 		t.Errorf("TranscriptRoundsKept = %d, want 1", plan.stats.TranscriptRoundsKept)
 	}
-	if len(plan.transcriptOwners) != 1 || plan.transcriptOwners[0] != round3 {
-		t.Errorf("transcriptOwners = %v, want [%s]", plan.transcriptOwners, round3)
+	if plan.stats.TranscriptRoundsByStreamLines != 1 {
+		t.Errorf("TranscriptRoundsByStreamLines = %d, want 1", plan.stats.TranscriptRoundsByStreamLines)
+	}
+	if plan.stats.TranscriptRowsRenamed != 0 {
+		t.Errorf("TranscriptRowsRenamed = %d, want 0", plan.stats.TranscriptRowsRenamed)
+	}
+	wantOwners := []string{round3, round4}
+	if !reflect.DeepEqual(plan.transcriptOwners, wantOwners) {
+		t.Errorf("transcriptOwners = %v, want %v", plan.transcriptOwners, wantOwners)
+	}
+}
+
+// TestDedupeMirrorPlansRenamedStreamLines pins the rename rewrite inside the
+// stream-lines proof: a row whose stored path still holds the pre-rename old
+// root is planned once the rewrite turns it into the sealed stream's line, and
+// the same scene with no renames keeps it. Mutation that breaks it: skip the
+// rewrite in streamLinesCover, and the first case is kept.
+func TestDedupeMirrorPlansRenamedStreamLines(t *testing.T) {
+	scene := func(t *testing.T) (*db.DB, string) {
+		t.Helper()
+		d := openTestDB(t)
+		const name = "webshop"
+		bindingID := seedMirrorBinding(t, d, name)
+		recordID := seedRecordAt(t, d, name, "claude", dedupeAt)
+		round1 := seedMirrorRound(t, d, bindingID, 1)
+		putRoundFile(t, d, recordID, "001-builder.jsonl", 1, `{"path":"/h/state/new/b/001-plan.md"}`+"\n")
+		appendTranscript(t, d, db.OwnerRound, round1, []db.TranscriptRecord{
+			{Seq: 0, RecordJSON: `{"path":"/h/state/old/b/001-plan.md"}`, Rendered: "the plan"},
+		})
+		return d, round1
+	}
+
+	t.Run("with the rename", func(t *testing.T) {
+		d, round1 := scene(t)
+		plan, err := DedupeMirror(d, []legacy.Prefix{{Old: "/h/state/old", New: "/h/state/new"}})
+		if err != nil {
+			t.Fatalf("DedupeMirror: %v", err)
+		}
+		if plan.stats.TranscriptRoundsDeleted != 1 || plan.stats.TranscriptRoundsByStreamLines != 1 {
+			t.Errorf("stats = %+v, want 1 round deleted by stream lines", plan.stats)
+		}
+		if plan.stats.TranscriptRowsRenamed != 1 {
+			t.Errorf("TranscriptRowsRenamed = %d, want 1", plan.stats.TranscriptRowsRenamed)
+		}
+		if len(plan.transcriptOwners) != 1 || plan.transcriptOwners[0] != round1 {
+			t.Errorf("transcriptOwners = %v, want [%s]", plan.transcriptOwners, round1)
+		}
+	})
+
+	t.Run("without the rename", func(t *testing.T) {
+		d, _ := scene(t)
+		plan := mustPlan(t, d)
+		if plan.stats.TranscriptRoundsKept != 1 || plan.stats.TranscriptRoundsDeleted != 0 {
+			t.Errorf("stats = %+v, want the round kept and nothing deleted", plan.stats)
+		}
+		if len(plan.transcriptOwners) != 0 {
+			t.Errorf("transcriptOwners = %v, want none", plan.transcriptOwners)
+		}
+	})
+}
+
+// TestDedupeMirrorStreamLinesNeverVouchForEmptyRecordJSON pins the empty-row
+// rule: a row with no record JSON is never proven by the stream-lines rule,
+// even when the sealed stream itself holds a blank line, because a log-derived
+// row has no record behind it. The stream body is line1 + "\n\n" + line2 + "\n",
+// and readAppendOnly returns a real empty line between the two, so the blank
+// is in the set; the round is still kept. Mutation that breaks it: drop the
+// empty-RecordJSON check in streamLinesCover, and this round is planned.
+func TestDedupeMirrorStreamLinesNeverVouchForEmptyRecordJSON(t *testing.T) {
+	d := openTestDB(t)
+	const name = "webshop"
+	bindingID := seedMirrorBinding(t, d, name)
+	recordID := seedRecordAt(t, d, name, "claude", dedupeAt)
+
+	line1 := `{"ts":"2026-09-01T10:00:00Z","type":"assistant","message":{"content":"hi"}}`
+	line2 := `{"ts":"2026-09-01T10:00:01Z","type":"user","message":{"content":"go on"}}`
+	round1 := seedMirrorRound(t, d, bindingID, 1)
+	putRoundFile(t, d, recordID, "001-builder.jsonl", 1, line1+"\n\n"+line2+"\n")
+	appendTranscript(t, d, db.OwnerRound, round1, []db.TranscriptRecord{
+		{Seq: 0, RecordJSON: line1, Rendered: "hello"},
+		{Seq: 1, RecordJSON: "", Rendered: "x"},
+	})
+
+	plan := mustPlan(t, d)
+
+	if plan.stats.TranscriptRoundsDeleted != 0 || plan.stats.TranscriptRoundsKept != 1 {
+		t.Errorf("stats = %+v, want the round kept and nothing deleted", plan.stats)
+	}
+	if len(plan.transcriptOwners) != 0 {
+		t.Errorf("transcriptOwners = %v, want none", plan.transcriptOwners)
 	}
 }
 
@@ -445,8 +549,9 @@ func TestDedupeMirrorLeavesABindingMatchingTwoRecordsUnmapped(t *testing.T) {
 // database, so what a run would do is known before one is applied. It skips
 // unless RELEVO_DEDUPE_REHEARSAL names a database file; when set, it copies
 // that file (and its -wal when present) into a temp dir, opens the copy, and
-// logs the plan. It never calls DedupeMirrorOnce and never writes to the named
-// file, so the real database is untouched.
+// logs the plan, passing the substitutions rehearsalRenames builds from the
+// RELEVO_DEDUPE_REHEARSAL_* variables. It never calls DedupeMirrorOnce and
+// never writes to the named file, so the real database is untouched.
 func TestDedupeMirrorRehearsal(t *testing.T) {
 	src := os.Getenv("RELEVO_DEDUPE_REHEARSAL")
 	if src == "" {
@@ -466,7 +571,7 @@ func TestDedupeMirrorRehearsal(t *testing.T) {
 	}
 	defer d.Close()
 
-	plan, err := DedupeMirror(d)
+	plan, err := DedupeMirror(d, rehearsalRenames(t))
 	if err != nil {
 		t.Fatalf("DedupeMirror: %v", err)
 	}
@@ -474,6 +579,30 @@ func TestDedupeMirrorRehearsal(t *testing.T) {
 	t.Logf("rehearsal stats: %+v", plan.stats)
 	t.Logf("rehearsal: %d artifact rows, %d transcript rounds, %d transcript rows planned for deletion",
 		len(plan.artifactIDs), len(plan.transcriptOwners), plan.stats.TranscriptRowsDeleted)
+}
+
+// rehearsalRenames builds the substitution list a rehearsal runs the plan
+// with, from RELEVO_DEDUPE_REHEARSAL_STATE_FROM/_STATE_TO and
+// RELEVO_DEDUPE_REHEARSAL_CONFIG_FROM/_CONFIG_TO: a pair is used only when
+// both of its variables are set, state first, and with none set it returns
+// nil.
+func rehearsalRenames(t *testing.T) []legacy.Prefix {
+	t.Helper()
+	pair := func(fromVar, toVar string) (legacy.Prefix, bool) {
+		from, to := os.Getenv(fromVar), os.Getenv(toVar)
+		if from == "" || to == "" {
+			return legacy.Prefix{}, false
+		}
+		return legacy.Prefix{Old: from, New: to}, true
+	}
+	var renames []legacy.Prefix
+	if p, ok := pair("RELEVO_DEDUPE_REHEARSAL_STATE_FROM", "RELEVO_DEDUPE_REHEARSAL_STATE_TO"); ok {
+		renames = append(renames, p)
+	}
+	if p, ok := pair("RELEVO_DEDUPE_REHEARSAL_CONFIG_FROM", "RELEVO_DEDUPE_REHEARSAL_CONFIG_TO"); ok {
+		renames = append(renames, p)
+	}
+	return renames
 }
 
 // copyRehearsalFile copies src to dst byte for byte.
@@ -548,7 +677,7 @@ func TestDedupeMirrorOnceDeletesBacksUpAndRecordsKV(t *testing.T) {
 	backupDir := t.TempDir()
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
-	stats, ran, err := DedupeMirrorOnce(d, backupDir, now)
+	stats, ran, err := DedupeMirrorOnce(d, backupDir, nil, now)
 	if err != nil {
 		t.Fatalf("DedupeMirrorOnce: %v", err)
 	}
@@ -627,7 +756,7 @@ func TestDedupeMirrorOnceRunsOnlyOnce(t *testing.T) {
 	backupDir := t.TempDir()
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
-	if _, _, err := DedupeMirrorOnce(d, backupDir, now); err != nil {
+	if _, _, err := DedupeMirrorOnce(d, backupDir, nil, now); err != nil {
 		t.Fatalf("first DedupeMirrorOnce: %v", err)
 	}
 
@@ -636,7 +765,7 @@ func TestDedupeMirrorOnceRunsOnlyOnce(t *testing.T) {
 		t.Fatalf("Stats: %v", err)
 	}
 
-	stats, ran, err := DedupeMirrorOnce(d, backupDir, now.Add(time.Hour))
+	stats, ran, err := DedupeMirrorOnce(d, backupDir, nil, now.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("second DedupeMirrorOnce: %v", err)
 	}
@@ -664,6 +793,46 @@ func TestDedupeMirrorOnceRunsOnlyOnce(t *testing.T) {
 	}
 }
 
+// TestDedupeMirrorOnceRunsAfterAV1Run pins the key bump: a database where v1
+// already ran still runs v2 once, because the v1 row is history, not a stop,
+// and it is left in place beside the new v2 row. Mutation that breaks it: set
+// dedupeKVKey back to v1, and this run reports ran false and deletes nothing.
+func TestDedupeMirrorOnceRunsAfterAV1Run(t *testing.T) {
+	d := openTestDB(t)
+	round3 := seedPlannedScene(t, d)
+	if err := d.KVPut("mirror-dedupe.v1", []byte(`{"done_at":"2026-09-24T12:00:00Z"}`)); err != nil {
+		t.Fatalf("KVPut(v1): %v", err)
+	}
+	backupDir := t.TempDir()
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+
+	stats, ran, err := DedupeMirrorOnce(d, backupDir, nil, now)
+	if err != nil {
+		t.Fatalf("DedupeMirrorOnce: %v", err)
+	}
+	if !ran {
+		t.Fatal("ran = false, want true: a v1 row must not stop v2")
+	}
+	if stats.TranscriptRoundsDeleted != 1 {
+		t.Errorf("TranscriptRoundsDeleted = %d, want 1", stats.TranscriptRoundsDeleted)
+	}
+
+	rows, err := d.Transcript(db.OwnerRound, round3, 0, 0)
+	if err != nil {
+		t.Fatalf("Transcript(round): %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("round transcript has %d rows after the run, want 0", len(rows))
+	}
+
+	if _, ok, err := d.KVGet("mirror-dedupe.v1"); err != nil || !ok {
+		t.Errorf("KVGet(v1) after the run = (ok %v, err %v), want (true, nil)", ok, err)
+	}
+	if _, ok, err := d.KVGet(dedupeKVKey); err != nil || !ok {
+		t.Errorf("KVGet(v2) after the run = (ok %v, err %v), want (true, nil)", ok, err)
+	}
+}
+
 // TestDedupeMirrorOnceBackupFailureDeletesNothing pins the ordering: when the
 // backup cannot be written -- here because the path already exists -- the run
 // returns the error with no deletes and no kv row, so the next daemon start
@@ -680,7 +849,7 @@ func TestDedupeMirrorOnceBackupFailureDeletesNothing(t *testing.T) {
 		t.Fatalf("pre-create the backup path: %v", err)
 	}
 
-	_, ran, err := DedupeMirrorOnce(d, backupDir, now)
+	_, ran, err := DedupeMirrorOnce(d, backupDir, nil, now)
 	if err == nil {
 		t.Fatal("DedupeMirrorOnce with an unwritable backup path = nil, want an error")
 	}
@@ -717,7 +886,7 @@ func TestDedupeMirrorOnceWithNothingToDelete(t *testing.T) {
 	backupDir := t.TempDir()
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
-	stats, ran, err := DedupeMirrorOnce(d, backupDir, now)
+	stats, ran, err := DedupeMirrorOnce(d, backupDir, nil, now)
 	if err != nil {
 		t.Fatalf("DedupeMirrorOnce: %v", err)
 	}

@@ -2873,12 +2873,23 @@ func cmdDaemon(args []string) error {
 	}
 
 	// The ingest mirror's proven duplicates are removed once, before daemon.json
-	// is written (D3c). The run backs the database up first and records itself
-	// in the kv table, so every later start is a no-op, and a failure never
-	// stops the daemon: a machine with no database, or one where the backup
-	// could not be written, still runs and retries on the next start.
+	// is written (D3c; v2 #476). The run backs the database up first and records
+	// itself in the kv table, so every later start is a no-op, and a failure
+	// never stops the daemon: a machine with no database, or one where the
+	// backup could not be written, still runs and retries on the next start.
 	if rt.DB != nil {
-		stats, ran, derr := ingest.DedupeMirrorOnce(rt.DB, filepath.Dir(rt.Store.DBPath()), time.Now())
+		// The rename substitutions let the stream-lines proof recognise rows
+		// whose stored paths predate a cutover. Without them those rows are
+		// simply kept, which is the safe direction, so an unavailable roots
+		// resolution is a warning, not a failure.
+		roots, rerr := renameRoots()
+		var renames []legacy.Prefix
+		if rerr != nil {
+			slog.Warn("relevo daemon: mirror dedupe: rename roots unavailable; renamed rows are kept", "err", rerr)
+		} else {
+			renames = roots.Prefixes()
+		}
+		stats, ran, derr := ingest.DedupeMirrorOnce(rt.DB, filepath.Dir(rt.Store.DBPath()), renames, time.Now())
 		if derr != nil {
 			slog.Warn("relevo daemon: mirror dedupe skipped", "err", derr)
 		} else if ran {
@@ -2891,6 +2902,8 @@ func cmdDaemon(args []string) error {
 				"transcript_rounds_deleted", stats.TranscriptRoundsDeleted,
 				"transcript_rows_deleted", stats.TranscriptRowsDeleted,
 				"transcript_rounds_kept", stats.TranscriptRoundsKept,
+				"transcript_rounds_by_stream_lines", stats.TranscriptRoundsByStreamLines,
+				"transcript_rows_renamed", stats.TranscriptRowsRenamed,
 				"backup_path", stats.BackupPath,
 				"vacuum_err", stats.VacuumErr)
 		}

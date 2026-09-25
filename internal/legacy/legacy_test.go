@@ -1,11 +1,73 @@
 package legacy
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+// TestRewriteJSON pins the substitution RewriteJSON applies: only a JSON
+// string value that starts with the old directory changes, a longer name that
+// merely begins with it does not, an unquoted occurrence inside a value does
+// not, and the input bytes are never modified. With no pairs the bytes come
+// back equal.
+func TestRewriteJSON(t *testing.T) {
+	pairs := []Prefix{{Old: "/a/old", New: "/a/new"}}
+	body := []byte(`{"p":"/a/old/x","q":"/a/old","r":"/a/older/x","s":"pre /a/old/x","n":1}`)
+	want := `{"p":"/a/new/x","q":"/a/new","r":"/a/older/x","s":"pre /a/old/x","n":1}`
+
+	before := string(body)
+	got := RewriteJSON(body, pairs)
+	if string(got) != want {
+		t.Errorf("RewriteJSON = %s, want %s", got, want)
+	}
+	if string(body) != before {
+		t.Errorf("RewriteJSON modified its input: %s, want %s", body, before)
+	}
+
+	nilPairs := RewriteJSON(body, nil)
+	if !bytes.Equal(nilPairs, body) {
+		t.Errorf("RewriteJSON with no pairs = %s, want the input %s", nilPairs, body)
+	}
+}
+
+// TestRootsPrefixes pins the substitution list a Roots builds: the state pair
+// first, then the config pair; a pair with an empty side or Old == New is left
+// out; the zero Roots yields nothing.
+func TestRootsPrefixes(t *testing.T) {
+	t.Run("all four roots", func(t *testing.T) {
+		r := Roots{OldState: "/s/old", NewState: "/s/new", OldConfig: "/c/old", NewConfig: "/c/new"}
+		want := []Prefix{{Old: "/s/old", New: "/s/new"}, {Old: "/c/old", New: "/c/new"}}
+		if got := r.Prefixes(); !reflect.DeepEqual(got, want) {
+			t.Errorf("Prefixes() = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("empty OldConfig", func(t *testing.T) {
+		r := Roots{OldState: "/s/old", NewState: "/s/new"}
+		want := []Prefix{{Old: "/s/old", New: "/s/new"}}
+		if got := r.Prefixes(); !reflect.DeepEqual(got, want) {
+			t.Errorf("Prefixes() = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("Old == New is dropped", func(t *testing.T) {
+		r := Roots{OldState: "/s", NewState: "/s", OldConfig: "/c/old", NewConfig: "/c/new"}
+		want := []Prefix{{Old: "/c/old", New: "/c/new"}}
+		if got := r.Prefixes(); !reflect.DeepEqual(got, want) {
+			t.Errorf("Prefixes() = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("zero Roots", func(t *testing.T) {
+		if got := (Roots{}).Prefixes(); len(got) != 0 {
+			t.Errorf("Prefixes() = %+v, want none", got)
+		}
+	})
+}
 
 func TestStateRoot(t *testing.T) {
 	home := "/home/u"
