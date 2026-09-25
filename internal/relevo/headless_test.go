@@ -179,12 +179,11 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 		t.Fatalf("specs = %+v, want one Start", fr.specs)
 	}
 	spec := fr.specs[0]
-	wantLog := rt.Store.BuilderLogPath("webshop", 1)
-	if spec.Dir != "/repo" || spec.LogPath != wantLog {
-		t.Errorf("spec Dir/LogPath = %q/%q, want /repo/%q", spec.Dir, spec.LogPath, wantLog)
-	}
-	if want := rt.Store.BuilderStreamPath("webshop", 1); spec.StreamPath != want {
-		t.Errorf("spec StreamPath = %q, want %q", spec.StreamPath, want)
+	// A new round has no builder.log: stderr joins the stream, so the spec's
+	// LogPath is the stream path itself (builder-log spec §4.4).
+	wantStream := rt.Store.BuilderStreamPath("webshop", 1)
+	if spec.Dir != "/repo" || spec.LogPath != wantStream || spec.StreamPath != wantStream {
+		t.Errorf("spec Dir/LogPath/StreamPath = %q/%q/%q, want /repo/%q/%q", spec.Dir, spec.LogPath, spec.StreamPath, wantStream, wantStream)
 	}
 	if got.Builder.StreamRound != 1 || got.Builder.StreamOffset != 0 {
 		t.Errorf("cursor after a fresh start = round %d offset %d; want 1, 0", got.Builder.StreamRound, got.Builder.StreamOffset)
@@ -199,8 +198,8 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 		t.Errorf("argv %v lacks --add-dir pinned to the binding's CWD (#192)", spec.Argv)
 	}
 	h := fr.handles[0]
-	if got.Builder.PID != h.PID || got.Builder.StartedAt != h.StartedAt.Unix() || got.Builder.LogPath != wantLog {
-		t.Errorf("endpoint after start = %+v, want pid %d started %d log %s", got.Builder, h.PID, h.StartedAt.Unix(), wantLog)
+	if got.Builder.PID != h.PID || got.Builder.StartedAt != h.StartedAt.Unix() || got.Builder.LogPath != wantStream {
+		t.Errorf("endpoint after start = %+v, want pid %d started %d log %s", got.Builder, h.PID, h.StartedAt.Unix(), wantStream)
 	}
 	if !got.Builder.Headless() || got.Builder.PaneID != "" {
 		t.Errorf("mode or pane changed: %+v", got.Builder)
@@ -674,6 +673,20 @@ func readLog(t *testing.T, rt Runtime) string {
 	return string(data)
 }
 
+// seedLegacyLog creates an empty NNN-builder.log for a round, making it a
+// round from before builder-log round 2 (builder-log spec §4.5): the drain
+// renders into it and the readers show it, exactly as before.
+func seedLegacyLog(t *testing.T, rt Runtime, name string, round int) {
+	t.Helper()
+	p := rt.Store.BuilderLogPath(name, round)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 const (
 	agyToolActive = `{"event":"step_update","step_update":{"step_type":"tool","state":"ACTIVE","tool_name":"run_command","tool_info":{"parameters":{"CommandLine":"go test ./..."}}}}` + "\n"
 	agyToolDone   = `{"event":"step_update","step_update":{"step_type":"tool","state":"DONE","tool_name":"run_command"}}` + "\n"
@@ -683,6 +696,7 @@ const (
 func TestDrainStreamRendersNewLinesInOrderAndAdvances(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr) // round 1 open, cursor at 1/0
+	seedLegacyLog(t, rt, "webshop", 1)
 	streamWrite(t, rt, agyToolActive+agyToolDone)
 
 	got, err := reconcile(t, rt, b)
@@ -716,6 +730,7 @@ func TestDrainStreamRendersNewLinesInOrderAndAdvances(t *testing.T) {
 func TestDrainStreamWaitsForAPartialLine(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
+	seedLegacyLog(t, rt, "webshop", 1)
 	whole := strings.TrimSuffix(agyToolActive, "\n")
 	streamWrite(t, rt, whole[:40]) // mid-event, no newline yet
 
@@ -739,6 +754,7 @@ func TestDrainStreamWaitsForAPartialLine(t *testing.T) {
 func TestDrainStreamCursorSurvivesAReload(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
+	seedLegacyLog(t, rt, "webshop", 1)
 	streamWrite(t, rt, agyToolActive)
 	got, err := reconcile(t, rt, b)
 	if err != nil {
@@ -766,6 +782,7 @@ func TestDrainStreamCursorSurvivesAReload(t *testing.T) {
 func TestDrainStreamCursorPastEndRendersFromTheStart(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
+	seedLegacyLog(t, rt, "webshop", 1)
 	streamWrite(t, rt, agyToolActive)
 	b.Builder.StreamOffset = 10_000 // a state file rewritten by hand
 	got, err := reconcile(t, rt, b)
@@ -829,6 +846,7 @@ func TestReconcileHeadlessExitEntryCarriesTheRenderedResult(t *testing.T) {
 func TestDrainStreamKeepsGoingAfterAMarkerClose(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
+	seedLegacyLog(t, rt, "webshop", 1)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("report"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1095,67 +1113,6 @@ func switchHeadless(t *testing.T, rt Runtime, b store.Binding, reason string, cl
 		return err
 	})
 	return out, err
-}
-
-func TestSwitchBuilderHeadlessMarksTheLog(t *testing.T) {
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, fr)
-	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
-
-	logPath := rt.Store.BuilderLogPath("webshop", b.Round)
-	if data, err := os.ReadFile(logPath); err == nil {
-		if strings.Contains(string(data), "--- relevo") {
-			t.Fatalf("log already contains relevo marker before switch: %s", string(data))
-		}
-	} else if !os.IsNotExist(err) {
-		t.Fatalf("unexpected error reading log before switch: %v", err)
-	}
-
-	if _, err := switchHeadless(t, rt, b, "rate-limited", true); err != nil {
-		t.Fatalf("switchBuilder: %v", err)
-	}
-
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("ReadFile(%s): %v", logPath, err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	wantSuffix := ": switched to " + testClaudeRef + " (rate-limited) ---"
-	if !strings.HasSuffix(lines[len(lines)-1], wantSuffix) {
-		t.Errorf("last line = %q, want suffix %q", lines[len(lines)-1], wantSuffix)
-	}
-	if !strings.HasPrefix(lines[len(lines)-1], "--- relevo ") {
-		t.Errorf("last line = %q, want prefix --- relevo ", lines[len(lines)-1])
-	}
-}
-
-func TestSwitchBuilderHeadlessMarkerSurvivesStartFailure(t *testing.T) {
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, fr)
-	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
-	fr.startErr = errors.New("claude: not found")
-
-	got, err := switchHeadless(t, rt, b, "exited", false)
-	if err != nil {
-		t.Fatalf("switchBuilder: %v", err)
-	}
-	if got.State != store.StateNeedsYou {
-		t.Errorf("state = %s, want needs_you", got.State)
-	}
-
-	logPath := rt.Store.BuilderLogPath("webshop", b.Round)
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("ReadFile(%s): %v", logPath, err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	wantSuffix := ": switched to " + testClaudeRef + " (exited) ---"
-	if !strings.HasSuffix(lines[len(lines)-1], wantSuffix) {
-		t.Errorf("last line = %q, want suffix %q", lines[len(lines)-1], wantSuffix)
-	}
-	if !strings.HasPrefix(lines[len(lines)-1], "--- relevo ") {
-		t.Errorf("last line = %q, want prefix --- relevo ", lines[len(lines)-1])
-	}
 }
 
 // exits returns the exit entries in webshop's log.
@@ -1793,13 +1750,6 @@ func TestReconcileHeadlessLostToDaemonRestartResumesSession(t *testing.T) {
 	if len(sw) != 1 || !strings.HasPrefix(sw[0].Note, "resumed session "+sess+" builder (lost to a daemon restart") {
 		t.Fatalf("switch entries = %+v, want one starting %q", sw, "resumed session "+sess+" builder")
 	}
-	data, err := os.ReadFile(b.Builder.LogPath)
-	if err != nil {
-		t.Fatalf("ReadFile(%s): %v", b.Builder.LogPath, err)
-	}
-	if !strings.Contains(string(data), "resumed session "+sess) {
-		t.Errorf("builder log = %q, want the resume marker", string(data))
-	}
 }
 
 // TestReconcileHeadlessLostToDaemonRestartCodexFallsBackFresh pins the
@@ -2139,86 +2089,38 @@ func TestDoneHeadlessStopsTheLiveProcess(t *testing.T) {
 	}
 }
 
-func TestDoneHeadlessMarksTheLog(t *testing.T) {
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, fr)
-	logPath := b.Builder.LogPath
+// N6: `relevo done` records the stop in the ledger, in the same shape
+// `relevo stop` uses (builder-log spec §4.4). A live process gets one KindStop
+// entry with Note "stopped/done"; an idle binding gets none.
+func TestDoneRecordsTheStop(t *testing.T) {
+	t.Run("live process", func(t *testing.T) {
+		fr := newFakeRunner()
+		rt, _ := sentHeadless(t, fr)
 
-	if _, err := Done(context.Background(), rt, "webshop"); err != nil {
-		t.Fatalf("Done: %v", err)
-	}
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("ReadFile(%s): %v", logPath, err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	wantLast := fmt.Sprintf("--- relevo %s: stopped: done ---", rt.Now().Local().Format("15:04:05"))
-	if lines[len(lines)-1] != wantLast {
-		t.Errorf("last line = %q, want %q", lines[len(lines)-1], wantLast)
-	}
-}
-
-func TestStopProcessMarksUnbind(t *testing.T) {
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, fr)
-	logPath := b.Builder.LogPath
-
-	pid, err := stopProcess(context.Background(), rt, b.Builder, "unbind")
-	if err != nil {
-		t.Fatalf("stopProcess: %v", err)
-	}
-	if pid != b.Builder.PID {
-		t.Errorf("pid = %d, want %d", pid, b.Builder.PID)
-	}
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("ReadFile(%s): %v", logPath, err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	wantLast := fmt.Sprintf("--- relevo %s: stopped: unbind ---", rt.Now().Local().Format("15:04:05"))
-	if lines[len(lines)-1] != wantLast {
-		t.Errorf("last line = %q, want %q", lines[len(lines)-1], wantLast)
-	}
-}
-
-func TestStopProcessKillFailureWritesNoMarker(t *testing.T) {
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, fr)
-	fr.killErr = errors.New("boom")
-
-	_, err := stopProcess(context.Background(), rt, b.Builder, "done")
-	if err == nil || !strings.Contains(err.Error(), "boom") {
-		t.Fatalf("err = %v, want boom", err)
-	}
-	data, err := os.ReadFile(b.Builder.LogPath)
-	if err == nil {
-		if strings.Contains(string(data), "--- relevo") {
-			t.Errorf("log contains relevo marker after failed kill: %s", string(data))
+		if _, err := Done(context.Background(), rt, "webshop"); err != nil {
+			t.Fatalf("Done: %v", err)
 		}
-	} else if !os.IsNotExist(err) {
-		t.Fatalf("unexpected error reading log: %v", err)
-	}
-}
-
-func TestStopProcessIdleWritesNoMarker(t *testing.T) {
-	fr := newFakeRunner()
-	rt, b := seedHeadless(t, fr)
-
-	pid, err := stopProcess(context.Background(), rt, b.Builder, "done")
-	if err != nil {
-		t.Fatalf("stopProcess: %v", err)
-	}
-	if pid != 0 {
-		t.Errorf("pid = %d, want 0", pid)
-	}
-	if b.Builder.LogPath != "" {
-		if _, err := os.Stat(b.Builder.LogPath); !os.IsNotExist(err) {
-			t.Errorf("log file should not exist for idle endpoint: %v", err)
+		st := stopEntries(t, rt, "webshop")
+		if len(st) != 1 {
+			t.Fatalf("stop entries = %+v, want exactly one", st)
 		}
-	}
-	if _, err := os.Stat(rt.Store.BuilderLogPath(b.Name, b.Round)); !os.IsNotExist(err) {
-		t.Errorf("log file should not exist for idle endpoint: %v", err)
-	}
+		if st[0].Note != "stopped/done" || st[0].Kind != store.KindStop || !st[0].Confirmed ||
+			st[0].Direction != store.DirToPlanner || st[0].Round != 1 {
+			t.Errorf("stop entry = %+v, want a confirmed stopped/done KindStop on round 1", st[0])
+		}
+	})
+
+	t.Run("idle binding", func(t *testing.T) {
+		fr := newFakeRunner()
+		rt, _ := seedHeadless(t, fr)
+
+		if _, err := Done(context.Background(), rt, "webshop"); err != nil {
+			t.Fatalf("Done: %v", err)
+		}
+		if st := stopEntries(t, rt, "webshop"); len(st) != 0 {
+			t.Errorf("stop entries = %+v, want none when the binding is idle", st)
+		}
+	})
 }
 
 func TestDoneHeadlessIdleKillsNothing(t *testing.T) {
@@ -2640,60 +2542,6 @@ const twoBuilderJSON = `[
 // broken round. A report that eventually appears still closes the round
 // normally, and finishRound clears the exclusion with the switch count.
 
-func TestAppendLogMarker(t *testing.T) {
-	t.Run("appends in order", func(t *testing.T) {
-		p := filepath.Join(t.TempDir(), "builder.log")
-		if err := os.WriteFile(p, []byte("first line\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		t1 := time.Date(2026, 9, 14, 10, 15, 30, 0, time.UTC)
-		t2 := time.Date(2026, 9, 14, 10, 16, 45, 0, time.UTC)
-		appendLogMarker(p, t1, "stopped: done")
-		appendLogMarker(p, t2, "switched to x/y/z (why)")
-
-		want := fmt.Sprintf("first line\n--- relevo %s: stopped: done ---\n--- relevo %s: switched to x/y/z (why) ---\n",
-			t1.Local().Format("15:04:05"),
-			t2.Local().Format("15:04:05"),
-		)
-		got, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != want {
-			t.Errorf("got %q, want %q", string(got), want)
-		}
-	})
-
-	t.Run("creates the file", func(t *testing.T) {
-		p := filepath.Join(t.TempDir(), "builder.log")
-		t1 := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
-		appendLogMarker(p, t1, "stopped: done")
-
-		want := fmt.Sprintf("--- relevo %s: stopped: done ---\n", t1.Local().Format("15:04:05"))
-		got, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != want {
-			t.Errorf("got %q, want %q", string(got), want)
-		}
-	})
-
-	t.Run("empty path is a no-op and unwritable path does not panic", func(t *testing.T) {
-		appendLogMarker("", time.Now(), "stopped: done")
-
-		dir := t.TempDir()
-		appendLogMarker(dir, time.Now(), "stopped: done")
-		info, err := os.Stat(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !info.IsDir() {
-			t.Errorf("%s is no longer a directory", dir)
-		}
-	})
-}
-
 func TestReconcileHeadlessExitPermissionBlockedHalts(t *testing.T) {
 	fr := newFakeRunner()
 	rt := newRuntime(t)
@@ -2939,7 +2787,7 @@ func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
 	if spec.Argv[2] != wantPrompt {
 		t.Errorf("prompt handed to the process:\n%q\nwant the composePrompt:\n%q", spec.Argv[2], wantPrompt)
 	}
-	if spec.Dir != "/repo" || spec.LogPath != rt.Store.BuilderLogPath("webshop", 1) {
+	if want := rt.Store.BuilderStreamPath("webshop", 1); spec.Dir != "/repo" || spec.LogPath != want {
 		t.Errorf("spec = %+v", spec)
 	}
 
@@ -2979,8 +2827,8 @@ func TestSwitchBuilderHeadlessStartsAProcessNotAPane(t *testing.T) {
 	if !got.Builder.Headless() || got.Builder.PID != fr.handles[1].PID || got.Builder.PID == oldPID {
 		t.Errorf("new endpoint = %+v, want headless with the new pid %d", got.Builder, fr.handles[1].PID)
 	}
-	if got.Builder.LogPath != rt.Store.BuilderLogPath("webshop", 1) {
-		t.Errorf("LogPath = %q, want round 1's log", got.Builder.LogPath)
+	if got.Builder.LogPath != rt.Store.BuilderStreamPath("webshop", 1) {
+		t.Errorf("LogPath = %q, want round 1's stream", got.Builder.LogPath)
 	}
 	if got.BuilderCandidate != testClaudeRef || got.RoundSwitches != 1 || got.Round != 1 || got.State != store.StateActive {
 		t.Errorf("bookkeeping: cand=%q switches=%d round=%d state=%s", got.BuilderCandidate, got.RoundSwitches, got.Round, got.State)
@@ -3636,6 +3484,7 @@ func TestStartProcessAppendsSegments(t *testing.T) {
 func TestDrainRendersEachSegmentWithItsKind(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
+	seedLegacyLog(t, rt, "webshop", 1)
 	agyLines := agyToolActive + agyToolDone
 	claudeLine := `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n"
 	streamWrite(t, rt, agyLines+claudeLine)
@@ -3675,6 +3524,7 @@ func TestDrainRendersEachSegmentWithItsKind(t *testing.T) {
 func TestDrainSessionIDComesOnlyFromTheCurrentProcess(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
+	seedLegacyLog(t, rt, "webshop", 1)
 	old := `{"event":"init","conversation_id":"old-sess","init":{}}` + "\n"
 	current := `{"type":"assistant","session_id":"new-sess","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n"
 	streamWrite(t, rt, old+current)
@@ -3716,5 +3566,108 @@ func TestStatusExitCodeReadsTheStream(t *testing.T) {
 	}
 	if logPath := rt.Store.BuilderLogPath("webshop", 1); len(fr.exitPaths) > 0 && fr.exitPaths[0] == logPath {
 		t.Errorf("ExitCode read the log path %s; status must read the stream", logPath)
+	}
+}
+
+// N1: a new round writes no builder.log. The spec's LogPath is the round's
+// stream, so the harness's stderr joins its stdout, and the endpoint points
+// there too (builder-log spec §4.4).
+func TestStartProcessSendsStderrToTheStream(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, fr)
+
+	got, err := startRound(context.Background(), rt, nil, b, "the prompt")
+	if err != nil {
+		t.Fatalf("startRound: %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %+v, want one Start", fr.specs)
+	}
+	spec := fr.specs[0]
+	want := rt.Store.BuilderStreamPath("webshop", 1)
+	if spec.LogPath != want || spec.StreamPath != want {
+		t.Errorf("spec LogPath/StreamPath = %q/%q, want %q", spec.LogPath, spec.StreamPath, want)
+	}
+	if got.Builder.LogPath != want {
+		t.Errorf("b.Builder.LogPath = %q, want the stream %q", got.Builder.LogPath, want)
+	}
+	if _, err := os.Stat(rt.Store.BuilderLogPath("webshop", 1)); !os.IsNotExist(err) {
+		t.Errorf("a new round must write no builder.log; stat err = %v", err)
+	}
+}
+
+// N2: a round that already had a NNN-builder.log when the process started --
+// history, or a round in flight across the upgrade -- keeps writing stderr to
+// that log (builder-log spec §4.5).
+func TestStartProcessKeepsALegacyRoundsLog(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, fr)
+	legacy := rt.Store.BuilderLogPath("webshop", 1)
+	seedLegacyLog(t, rt, "webshop", 1)
+
+	got, err := startRound(context.Background(), rt, nil, b, "the prompt")
+	if err != nil {
+		t.Fatalf("startRound: %v", err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %+v, want one Start", fr.specs)
+	}
+	if fr.specs[0].LogPath != legacy || got.Builder.LogPath != legacy {
+		t.Errorf("spec/endpoint LogPath = %q/%q, want the legacy log %q", fr.specs[0].LogPath, got.Builder.LogPath, legacy)
+	}
+}
+
+// N3: for a new round the drain writes no log. It still advances the cursor
+// past every complete line and captures the session id (builder-log spec §4.4).
+func TestDrainWritesNoLogForANewRound(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	announce := `{"event":"init","conversation_id":"new-sess","init":{}}` + "\n"
+	streamWrite(t, rt, announce+agyToolActive)
+
+	got := drainStream(rt, b)
+	if _, err := os.Stat(rt.Store.BuilderLogPath("webshop", 1)); !os.IsNotExist(err) {
+		t.Errorf("drainStream created a builder.log for a new round: stat err = %v", err)
+	}
+	if want := int64(len(announce + agyToolActive)); got.Builder.StreamOffset != want {
+		t.Errorf("StreamOffset = %d, want the whole stream %d", got.Builder.StreamOffset, want)
+	}
+	if got.Builder.StreamSessionID != "new-sess" {
+		t.Errorf("StreamSessionID = %q, want new-sess from the stream's own init line", got.Builder.StreamSessionID)
+	}
+}
+
+// N4: a legacy round keeps its log: the drain appends the rendered lines to it,
+// exactly as before (builder-log spec §4.4).
+func TestDrainKeepsAppendingALegacyLog(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	seedLegacyLog(t, rt, "webshop", 1)
+	streamWrite(t, rt, agyToolActive+agyToolDone)
+
+	got := drainStream(rt, b)
+	if want := "\u25cf run_command go test ./...\n  \u23bf ok\n"; readLog(t, rt) != want {
+		t.Errorf("log = %q, want %q", readLog(t, rt), want)
+	}
+	if want := int64(len(agyToolActive + agyToolDone)); got.Builder.StreamOffset != want {
+		t.Errorf("StreamOffset = %d, want the whole stream %d", got.Builder.StreamOffset, want)
+	}
+}
+
+// N7: stderr-only agy limits must survive the move of stderr into the stream
+// (builder-log spec §4.4, item 2): builderTail reads the raw stderr line out of
+// the rendered stream, and the limit scan still matches it.
+func TestStderrLimitTextStillDetected(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := sentHeadless(t, fr)
+	const stderrLine = "error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h0m0s."
+	streamWrite(t, rt, agyToolActive+agyToolDone+stderrLine+"\nrelevo-exit:1\n")
+
+	tail := builderTail(rt, b, limitScanLines)
+	if !strings.Contains(tail, stderrLine) {
+		t.Fatalf("builderTail = %q, want it to contain the raw stderr line %q", tail, stderrLine)
+	}
+	if _, ok := matchLimit(tail, limitPatterns(rt, b.BuilderCandidate), rt.Now(), 0); !ok {
+		t.Errorf("matchLimit(%q, agy patterns) did not match; an stderr-only limit must survive the move", tail)
 	}
 }

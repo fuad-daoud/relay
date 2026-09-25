@@ -228,6 +228,16 @@ type spawnFailure struct{ err error }
 func (e spawnFailure) Error() string { return e.err.Error() }
 func (e spawnFailure) Unwrap() error { return e.err }
 
+// legacyLog reports whether a round has a builder log on disk (builder-log
+// spec §4.4): a round started by an older relevo has one, because that relevo
+// opened it for stderr at spawn, and nothing creates one any more. Every
+// decision in builder-log round 2 uses this one rule. Pure apart from one
+// os.Stat.
+func legacyLog(rt Runtime, name string, round int) bool {
+	_, err := os.Stat(rt.Store.BuilderLogPath(name, round))
+	return err == nil
+}
+
 // startProcess is the spawn half of a headless round, shared by startRound
 // and resumeRound (#370): argv is the complete command line, already built by
 // the caller, and c is the candidate it was built for. It does the
@@ -275,7 +285,14 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	// A new process announces its own session on its own stream (#147);
 	// drainStream fills this in again from the first line it writes.
 	b.Builder.StreamSessionID = ""
-	logPath := rt.Store.BuilderLogPath(b.Name, b.Round)
+	// stderr joins the round's stream, as it does for consults and gates
+	// (#420): LogPath == StreamPath for a new round. A round that already had
+	// a NNN-builder.log when the process started -- history, or a round in
+	// flight across the upgrade -- keeps writing stderr to that log instead.
+	logPath := rt.Store.BuilderStreamPath(b.Name, b.Round)
+	if legacyLog(rt, b.Name, b.Round) {
+		logPath = rt.Store.BuilderLogPath(b.Name, b.Round)
+	}
 	spec := ProcSpec{
 		Dir: b.CWD, Argv: argv,
 		Env:        builderEnv(b),
@@ -371,10 +388,12 @@ func carryStream(from, to store.Endpoint) store.Endpoint {
 	return to
 }
 
-// drainStream brings the round's builder log up to date with its stream
-// (transcript spec §4.2): every complete line of the stream file past the
-// endpoint's cursor is rendered with transcript.Render and appended to the
-// log in one write, and the cursor moves past the last newline consumed.
+// drainStream brings a legacy round's builder log up to date with its stream
+// (transcript spec §4.2) and, for a round with no log, only advances the
+// cursor and captures the session id: every complete line of the stream file
+// past the endpoint's cursor is rendered with transcript.Render and, when the
+// round has a log on disk (legacyLog), appended to it in one write. The cursor
+// moves past the last newline consumed either way.
 // A trailing partial line waits for the next tick. The cursor is keyed on
 // StreamRound, not b.Round, so a round that closed on its marker while the
 // builder was still flushing keeps draining until the next round starts.
@@ -392,8 +411,12 @@ func drainStream(rt Runtime, b store.Binding) store.Binding {
 	if round == 0 {
 		return b
 	}
+	logPath := ""
+	if legacyLog(rt, b.Name, round) {
+		logPath = rt.Store.BuilderLogPath(b.Name, round)
+	}
 	b.Builder.StreamOffset = drainFile(
-		rt.Store.BuilderLogPath(b.Name, round),
+		logPath,
 		rt.Store.BuilderStreamPath(b.Name, round),
 		b.Builder.StreamOffset,
 		func(off int64, line []byte) []string {
@@ -411,7 +434,8 @@ func drainStream(rt Runtime, b store.Binding) store.Binding {
 }
 
 // drainFile appends render(off, line) for every complete line of src past off
-// to logPath and returns the new offset. off is the line's own absolute byte
+// to logPath -- nothing when logPath is "", which still advances the offset --
+// and returns the new offset. off is the line's own absolute byte
 // offset in src, so a caller rendering per byte range knows where each line
 // came from. It is the shared body of
 // drainStream and drainSession (#184): it never fails the tick -- every
@@ -446,7 +470,7 @@ func drainFile(logPath, src string, off int64, render func(off int64, line []byt
 		out = append(out, render(lineOff, line)...)
 		lineOff += int64(len(line)) + 1
 	}
-	if len(out) > 0 {
+	if logPath != "" && len(out) > 0 {
 		if err := appendLines(logPath, out); err != nil {
 			slog.Warn("builder "+what, append(append([]any{}, fields...), "err", err)...)
 			return off
@@ -869,7 +893,6 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		}); err != nil {
 			return b, err
 		}
-		appendLogMarker(rt.Store.BuilderLogPath(b.Name, b.Round), now, how+" "+b.BuilderCandidate+" (lost to a daemon restart)")
 		b.State = store.StateActive
 		slog.Info("headless builder relaunched after daemon restart", "binding", b.Name, "round", b.Round, "candidate", b.BuilderCandidate)
 		return b, nil
@@ -994,24 +1017,6 @@ func interruptedNote(t time.Time) string {
 // human can find the process.
 var ErrStopFailed = errors.New("could not stop the builder process")
 
-// appendLogMarker writes a single relevo marker line to a builder's log file
-// without ever failing the caller (spec §4.1).
-func appendLogMarker(path string, now time.Time, text string) {
-	if path == "" {
-		return
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		slog.Warn("builder log marker", "path", path, "err", err)
-		return
-	}
-	defer f.Close()
-	line := "--- relevo " + now.Local().Format("15:04:05") + ": " + text + " ---\n"
-	if _, err := f.WriteString(line); err != nil {
-		slog.Warn("builder log marker", "path", path, "err", err)
-	}
-}
-
 // stopProcess kills a headless endpoint's live process, if it has one. It
 // returns the pid it addressed -- 0 when there was nothing to stop -- and
 // Kill's error. A pane endpoint, or a headless one between rounds, is a
@@ -1027,7 +1032,6 @@ func stopProcess(ctx context.Context, rt Runtime, e store.Endpoint, why string) 
 	if err := rt.Runner.Kill(ctx, handleOf(e)); err != nil {
 		return e.PID, err
 	}
-	appendLogMarker(e.LogPath, rt.Now(), "stopped: "+why)
 	return e.PID, nil
 }
 

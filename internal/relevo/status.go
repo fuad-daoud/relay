@@ -1052,6 +1052,19 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 			return err
 		}
 
+		// The stop is recorded in the ledger, in the same shape relevo stop
+		// uses (closeStopped): the log marker it used to write is gone, and
+		// the round's own record of why the process went away is here
+		// (builder-log spec §4.4).
+		if stopErr == nil && pid != 0 {
+			if err := tx.AppendLog(b.Name, store.LogEntry{
+				TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToPlanner,
+				Kind: store.KindStop, Note: "stopped/done", Confirmed: true,
+			}); err != nil {
+				return err
+			}
+		}
+
 		if rt.Hooks != nil && oldState != store.StateDone {
 			rt.Hooks.Dispatch(ctx, hooks.Event{
 				Type:      hooks.EventStateChanged,

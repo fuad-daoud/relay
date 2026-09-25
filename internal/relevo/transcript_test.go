@@ -64,6 +64,7 @@ func TestRenderStreamMatchesTheDrain(t *testing.T) {
 
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
+	seedLegacyLog(t, rt, "webshop", 1)
 	streamWrite(t, rt, stream)
 
 	b.Builder.Kind = "claude"
@@ -163,6 +164,28 @@ func TestStreamTail(t *testing.T) {
 	want := strings.Join(crossAll[len(crossAll)-n:], "\n")
 	if got := streamTail(crossPath, os.ReadFile, crossSegs, "claude", n); got != want {
 		t.Errorf("streamTail across a segment boundary = %q, want %q", got, want)
+	}
+
+	// N8: a stream whose last 64 KiB renders to fewer than 40 lines. Each
+	// stream line is about 8 KiB of assistant text, so it renders to exactly
+	// one line; a single fixed 64 KiB window (2a's M3) would return about
+	// eight of the forty wanted.
+	bigLine := `{"type":"assistant","message":{"content":[{"type":"text","text":"` + strings.Repeat("x", 8*1024) + `"}]}}` + "\n"
+	var few strings.Builder
+	for few.Len() < 400*1024 {
+		few.WriteString(bigLine)
+	}
+	fewPath := filepath.Join(dir, "003-builder.jsonl")
+	if err := os.WriteFile(fewPath, []byte(few.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fewAll := strings.Split(strings.TrimRight(string(renderStream([]byte(few.String()), nil, "claude")), "\n"), "\n")
+	if len(fewAll) < 40 {
+		t.Fatalf("rendered only %d lines, want at least 40", len(fewAll))
+	}
+	wantFew := strings.Join(fewAll[len(fewAll)-40:], "\n")
+	if got := streamTail(fewPath, os.ReadFile, nil, "claude", 40); got != wantFew {
+		t.Errorf("streamTail(few, 40) = %d bytes, want the last 40 rendered lines (%d bytes); a fixed 64 KiB window is not enough", len(got), len(wantFew))
 	}
 
 	if got := streamTail(filepath.Join(dir, "missing.jsonl"), os.ReadFile, segs, "claude", 5); got != "" {

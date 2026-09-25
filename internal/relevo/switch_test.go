@@ -470,6 +470,7 @@ func TestSwitchRecordsOutgoingUsage(t *testing.T) {
 // old harness's lines are not rendered a second time (or with the new kind).
 func TestSwitchKeepsTheStreamCursor(t *testing.T) {
 	rt, b := sentSwitchable(t) // round 1 open on agy/other/m
+	seedLegacyLog(t, rt, "webshop", 1)
 
 	// Round 1 has produced and rendered one agy line.
 	streamWrite(t, rt, agyToolActive)

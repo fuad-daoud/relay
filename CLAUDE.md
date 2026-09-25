@@ -25,7 +25,10 @@ follows is what is specific to this machine and this repo.
   tree or an open round is kept and `relevo unbind --done` retries. `relevo
   bind --resume` restores a released worktree; rebind a DONE binding only
   after that restore.
-- A headless round's log is at `~/.local/state/relevo/<name>/NNN-builder.log`.
+- A headless round's output is its stream
+  `~/.local/state/relevo/<name>/NNN-builder.jsonl` (stderr included; sealed into the
+  database after the round). Read it rendered with `relevo show <name> --round N --transcript`.
+  Rounds from before builder-log round 2 also have `NNN-builder.log`.
 - When a builder reports a usage limit mid-round, `relevo gate <token>` is
   enough: the daemon switches and resends. Do not rebind by hand unless
   `relevo status` says `NEEDS YOU`.
