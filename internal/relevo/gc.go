@@ -20,15 +20,16 @@ type GCOptions struct {
 
 // GCResult is one binding gc considered.
 type GCResult struct {
-	Name            string `json:"name"`
-	CWD             string `json:"cwd"`
-	Rounds          int    `json:"rounds"`
-	Archived        bool   `json:"archived"`
-	Deleted         bool   `json:"deleted"`
-	WorktreeRemoved string `json:"worktree_removed,omitempty"`
-	WorktreeKept    string `json:"worktree_kept,omitempty"`
-	KeptReason      string `json:"kept_reason,omitempty"`
-	WorktreeGone    string `json:"worktree_gone,omitempty"` // recorded worktree whose directory no longer exists
+	Name            string       `json:"name"`
+	CWD             string       `json:"cwd"`
+	Rounds          int          `json:"rounds"`
+	Archived        bool         `json:"archived"`
+	Deleted         bool         `json:"deleted"`
+	WorktreeRemoved string       `json:"worktree_removed,omitempty"`
+	WorktreeKept    string       `json:"worktree_kept,omitempty"`
+	KeptReason      string       `json:"kept_reason,omitempty"`
+	WorktreeGone    string       `json:"worktree_gone,omitempty"` // recorded worktree whose directory no longer exists
+	Refs            []RefOutcome `json:"refs,omitempty"`
 }
 
 // GC clears away every binding the planner has marked done. Only StateDone is
@@ -37,6 +38,10 @@ type GCResult struct {
 //
 // By default, finished bindings are archived rather than deleted; passing
 // opts.Delete removes them entirely.
+//
+// GC also deletes the binding's branch and client refs once they are on a
+// remote-tracking ref, never an adopted branch, and never while the worktree
+// is kept.
 //
 // The whole sweep runs in one critical section so a binding cannot be marked
 // done, or resumed, between the scan and the removal.
@@ -61,6 +66,17 @@ func GC(ctx context.Context, rt Runtime, opts GCOptions) ([]GCResult, error) {
 			res.WorktreeKept = outcome.Kept
 			res.KeptReason = outcome.Reason
 			res.WorktreeGone = outcome.Gone
+
+			if rt.Git != nil && outcome.Kept == "" {
+				if dir := repoDirOf(b); dir != "" {
+					refs, err := bindingRefCandidates(ctx, rt, dir, b)
+					if err != nil {
+						res.Refs = []RefOutcome{{Ref: "refs/relevo/" + b.Name + "/", Reason: "check failed: " + brief(err)}}
+					} else {
+						res.Refs = cleanRefs(ctx, rt, dir, refs, opts.DryRun)
+					}
+				}
+			}
 
 			if opts.DryRun {
 				out = append(out, res)

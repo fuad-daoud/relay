@@ -675,7 +675,7 @@ type worktreeOutcome struct {
 //  5. the tree is dirty         -> keep, reason "uncommitted changes"
 //  6. otherwise                 -> remove; on failure keep with the git error brief(err)
 //
-// The branch is never removed: a branch holds commits, and commits are work.
+// worktreeTeardown never removes a branch; GC removes a relevo-created branch once it is on a remote-tracking ref (refclean.go).
 func worktreeTeardown(ctx context.Context, rt Runtime, b store.Binding, dryRun bool) worktreeOutcome {
 	if b.Worktree == "" {
 		return worktreeOutcome{}

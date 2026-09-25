@@ -807,6 +807,26 @@ func (c *Client) ListRefs(ctx context.Context, dir, prefix string) ([]string, er
 	return refs, nil
 }
 
+// RefOnRemote reports whether ref's commit is contained in some remote-tracking
+// ref, i.e. whether the work it points at was pushed. It reads local refs only: no fetch, no
+// network. A stale remote-tracking ref still counts.
+//
+// Errors: ErrNotRepo, ErrGitUnavailable, context.DeadlineExceeded, or a wrapped
+// git failure.
+func (c *Client) RefOnRemote(ctx context.Context, dir, ref string) (bool, error) {
+	out, err := c.run(ctx, dir, nil, "for-each-ref", "--count=1", "--format=%(refname)", "--contains", ref, "refs/remotes/")
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line != "" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ListTags lists dir's tags by short name, each mapped to the commit it points
 // at: an annotated tag is peeled to its commit, a lightweight tag already is
 // one (#242).

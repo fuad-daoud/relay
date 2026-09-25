@@ -68,6 +68,8 @@ type Git interface {
 	// ListRefs returns every ref in dir beginning with prefix, the server
 	// cleanup's worklist of a binding's refs/relevo/<name>/* refs.
 	ListRefs(ctx context.Context, dir, prefix string) ([]string, error)
+	// RefOnRemote is the ref cleanup's safety check (nothing unpushed is deleted).
+	RefOnRemote(ctx context.Context, dir, ref string) (bool, error)
 	CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error)
 	// CommitAll stages the whole working tree (git add -A) and commits it
 	// with relevo's fixed identity, returning the new HEAD sha, or ("", nil)

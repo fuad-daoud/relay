@@ -1326,6 +1326,29 @@ func TestUnbindDoneTakesNoBinding(t *testing.T) {
 	}
 }
 
+// TestUnbindSweepTakesNoBinding pins §4.5: --sweep takes no binding and no other
+// flag except --dry-run, so invalid combinations exit 2 before a runtime is built.
+func TestUnbindSweepTakesNoBinding(t *testing.T) {
+	for _, args := range [][]string{
+		{"unbind", "--sweep", "--done"},
+		{"unbind", "--sweep", "--delete"},
+		{"unbind", "--sweep", "--archive"},
+		{"unbind", "--sweep", "--pick"},
+		{"unbind", "--sweep", "webshop"},
+		{"unbind", "--sweep", "--name", "webshop"},
+	} {
+		_, stderr, err := captureOutput(t, func() error { return run(args) })
+		var ec exitCodeErr
+		if !errors.As(err, &ec) || ec.code != 2 {
+			t.Errorf("%v: run = %v, want exit code 2", args, err)
+		}
+		wantMsg := "relevo: --sweep takes no binding and no other flag except --dry-run"
+		if !strings.Contains(string(stderr), wantMsg) {
+			t.Errorf("%v: stderr = %q, want to contain %q", args, string(stderr), wantMsg)
+		}
+	}
+}
+
 // TestRemovedVerbsNameTheirReplacement pins §4.6 and §4.1/§4.3: each removed
 // name exits 2 with one line naming the form that replaces it.
 func TestRemovedVerbsNameTheirReplacement(t *testing.T) {
