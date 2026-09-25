@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { execFile } from "node:child_process";
 import { Show } from "solid-js";
+import { useTerminalDimensions } from "@opentui/solid";
 
 // Module state: persists across setup calls within the same process
 let started = false;
@@ -920,9 +921,23 @@ export default {
         const accentColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || interactiveColor;
         const codeColor = paint(api, "markdown.code") || paint(api, "syntax.string") || successColor;
 
+        // A horizontal rule fills the body width: the terminal width less the
+        // page's 1-column padding on each side (40 columns when the renderer
+        // gives no width). useTerminalDimensions() returns a signal accessor.
+        let ruleWidth = 40;
+        try {
+          const dims: any = useTerminalDimensions();
+          const terminalWidth = typeof dims === "function" ? dims()?.width : dims?.width;
+          if (typeof terminalWidth === "number" && terminalWidth > 0) {
+            ruleWidth = Math.max(1, terminalWidth - 2);
+          }
+        } catch {
+          ruleWidth = 40;
+        }
+
         const renderInline = (str: string) => {
           if (!str) return [];
-          const parts = str.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+          const parts = str.split(/(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]*\]\([^)]*\))/g);
           return parts.filter(Boolean).map((part) => {
             if (part.startsWith("`") && part.endsWith("`") && part.length >= 2) {
               return <text fg={codeColor}>{part.slice(1, -1)}</text>;
@@ -932,6 +947,17 @@ export default {
                 <text fg={baseColor}>
                   <b>{part.slice(2, -2)}</b>
                 </text>
+              );
+            }
+            const linkMatch = part.match(/^\[([^\]]*)\]\(([^)]*)\)$/);
+            if (linkMatch) {
+              return (
+                <>
+                  <text fg={accentColor}>
+                    <u>{linkMatch[1]}</u>
+                  </text>
+                  <text fg={mutedColor}> ({linkMatch[2]})</text>
+                </>
               );
             }
             return <text fg={baseColor}>{part}</text>;
@@ -957,11 +983,28 @@ export default {
                 </box>
               );
             }
-            if (/^#{1,6}(?:\s.*|$)/.test(line)) {
+            if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
               return (
                 <box flexDirection="row">
-                  <text fg={accentColor}>
-                    <b>{line || " "}</b>
+                  <text fg={mutedColor}>{"─".repeat(ruleWidth)}</text>
+                </box>
+              );
+            }
+            const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+            if (headingMatch) {
+              const level = headingMatch[1].length;
+              const headingText = headingMatch[2] || " ";
+              const headingColor = level <= 2 ? accentColor : baseColor;
+              return (
+                <box flexDirection="row">
+                  <text fg={headingColor}>
+                    {level === 1 ? (
+                      <u>
+                        <b>{headingText}</b>
+                      </u>
+                    ) : (
+                      <b>{headingText}</b>
+                    )}
                   </text>
                 </box>
               );
