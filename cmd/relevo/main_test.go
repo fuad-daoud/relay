@@ -22,32 +22,115 @@ import (
 )
 
 // TestMain points the whole package at a fresh temp root: HOME,
-// XDG_CONFIG_HOME and XDG_STATE_HOME all move here, so no test in cmd/relevo
-// reads the user's real config or state (#235). Tests that t.Setenv the same
-// variables keep working: t.Setenv restores to these values.
+// XDG_CONFIG_HOME, XDG_STATE_HOME and XDG_DATA_HOME all move here, and the
+// harness-identity and override variables are unset, so no test in cmd/relevo
+// reads the user's real config, state or data, nor sees the calling harness
+// (#235, #463). Tests that t.Setenv the same variables keep working: t.Setenv
+// restores to these values.
 //
 // It also clears the planner identity a harness injects into the shell that
 // runs the tests (a Claude Code session, an agy conversation, an OpenCode shell
 // marked by the relevo plugin's server hook), so no test resolves the planner
-// of whoever happens to run `go test`. A test that needs one sets it itself.
+// of whoever happens to run `go test`. isolateTestEnv holds the rule; a test
+// that needs one of these variables sets it itself.
 func TestMain(m *testing.M) {
-	for _, v := range []string{
-		"RELEVO_PLANNER", "RELEVO_HARNESS",
-		"CLAUDECODE", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID",
-		"ANTIGRAVITY_CONVERSATION_ID",
-	} {
-		os.Unsetenv(v)
-	}
 	root, err := os.MkdirTemp("", "relevo-cmd-test-")
 	if err != nil {
 		panic(err)
 	}
-	os.Setenv("HOME", root)
-	os.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
-	os.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	isolateTestEnv(root)
 	code := m.Run()
 	os.RemoveAll(root)
 	os.Exit(code)
+}
+
+// isolateTestEnv makes the package start from CI's environment whatever
+// harness runs `go test` (#463). It points HOME, XDG_CONFIG_HOME,
+// XDG_STATE_HOME and XDG_DATA_HOME at root, a temp directory, so no test reads
+// the user's real config, state or data (#235). It then unsets the
+// harness-identity and override variables, so a test never detects the calling
+// harness or picks up the caller's overrides; it unsets a variable when its
+// name is CLAUDECODE or TYPESAFE_API_KEY, or starts with CLAUDE_, RELEVO_ or
+// ANTIGRAVITY_. It never fails: it ignores os.Setenv and os.Unsetenv errors,
+// as TestMain did before.
+func isolateTestEnv(root string) {
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if matchesUnsetRule(name) {
+			os.Unsetenv(name)
+		}
+	}
+	os.Setenv("HOME", root)
+	os.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	os.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	os.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
+}
+
+// matchesUnsetRule reports whether isolateTestEnv unsets the named variable.
+func matchesUnsetRule(name string) bool {
+	return name == "CLAUDECODE" ||
+		name == "TYPESAFE_API_KEY" ||
+		strings.HasPrefix(name, "CLAUDE_") ||
+		strings.HasPrefix(name, "RELEVO_") ||
+		strings.HasPrefix(name, "ANTIGRAVITY_")
+}
+
+// TestIsolateTestEnv pins isolateTestEnv: it must not see the caller's harness
+// or overrides, but must leave near-miss names and the build's own variables
+// alone. It is a pure environment test; it reaches no harness and no network.
+func TestIsolateTestEnv(t *testing.T) {
+	// t.Setenv restores the value from before its call, so every variable
+	// isolateTestEnv changes must be t.Setenv'd first.
+	for _, name := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
+		t.Setenv(name, "/polluted")
+	}
+	t.Setenv("CLAUDECODE", "1")
+	t.Setenv("CLAUDE_ENV_FILE", "/polluted/env")
+	t.Setenv("CLAUDE_PID", "1")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "x")
+	t.Setenv("RELEVO_HARNESS", "opencode")
+	t.Setenv("RELEVO_PLANNER", "p")
+	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "x")
+	t.Setenv("TYPESAFE_API_KEY", "k")
+	t.Setenv("CLAUDEX_KEEP", "1") // near-miss: no underscore after CLAUDE
+	t.Setenv("RELEVO", "1")       // near-miss: no trailing underscore
+
+	root := t.TempDir()
+	isolateTestEnv(root)
+
+	for name, want := range map[string]string{
+		"HOME":            root,
+		"XDG_CONFIG_HOME": filepath.Join(root, "config"),
+		"XDG_STATE_HOME":  filepath.Join(root, "state"),
+		"XDG_DATA_HOME":   filepath.Join(root, "data"),
+	} {
+		if got := os.Getenv(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+
+	for _, name := range []string{
+		"CLAUDECODE", "CLAUDE_ENV_FILE", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID",
+		"RELEVO_HARNESS", "RELEVO_PLANNER",
+		"ANTIGRAVITY_CONVERSATION_ID", "TYPESAFE_API_KEY",
+	} {
+		if _, ok := os.LookupEnv(name); ok {
+			t.Errorf("%s must be unset by isolateTestEnv", name)
+		}
+	}
+
+	for _, name := range []string{"CLAUDEX_KEEP", "RELEVO"} {
+		if _, ok := os.LookupEnv(name); !ok {
+			t.Errorf("%s must survive isolateTestEnv", name)
+		}
+	}
+
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if matchesUnsetRule(name) {
+			t.Errorf("%s matches the unset rule but is still present", name)
+		}
+	}
 }
 
 // TestHelpListsServeVerbs pins that the top-level usage names the server
