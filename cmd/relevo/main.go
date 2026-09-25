@@ -190,6 +190,7 @@ func releaseInputs() release.Inputs {
 	if version == "" {
 		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
 			in.FromModule = true
+			in.VCS = release.HasVCSRevision(info.Settings)
 		}
 	}
 	return in
