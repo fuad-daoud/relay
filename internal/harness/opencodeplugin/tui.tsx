@@ -531,14 +531,14 @@ export default {
               const isNeedsYou = !!row.needs_you;
               const isReportIn = !isNeedsYou && !!row.report_in;
               const dot = isNeedsYou ? "●" : "○";
-              // §2: NEEDS YOU, else REPORT IN, else no word at all for ACTIVE
-              // or empty, else the display word as is.
+              // §2: NEEDS YOU, else a relevo state word (PAUSED, DONE), else
+              // REPORT IN, else no word at all for ACTIVE or empty.
               const stateText = isNeedsYou
                 ? "NEEDS YOU"
-                : isReportIn
-                  ? "REPORT IN"
-                  : row.display && row.display !== "ACTIVE"
-                    ? row.display
+                : row.display && row.display !== "ACTIVE"
+                  ? row.display
+                  : isReportIn
+                    ? "REPORT IN"
                     : "";
               const stateColor = isNeedsYou ? warningColor : isReportIn ? infoColor : successColor;
               const displayRound = row.report_round || row.round;
@@ -911,14 +911,14 @@ export default {
         const model = parseModel(row.candidate);
         const isNeedsYou = !!row.needs_you;
         const isReportIn = !isNeedsYou && !!row.report_in;
-        // §2: no word for ACTIVE; NEEDS YOU, else REPORT IN, else the display
-        // word as is.
+        // §2: NEEDS YOU; else a relevo state word (PAUSED, DONE); else REPORT
+        // IN; else no word for ACTIVE.
         const display = isNeedsYou
           ? "NEEDS YOU"
-          : isReportIn
-            ? "REPORT IN"
-            : row.display && row.display !== "ACTIVE"
-              ? row.display
+          : row.display && row.display !== "ACTIVE"
+            ? row.display
+            : isReportIn
+              ? "REPORT IN"
               : "";
 
         // The body scrollbox is the focused renderable (per the plan's

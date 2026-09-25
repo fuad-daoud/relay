@@ -485,8 +485,7 @@ func TestRenderStatusLineAt80(t *testing.T) {
 	if !strings.HasPrefix(plain2, "○ docs    r2 · agy · report in") {
 		t.Errorf("line 2 prefix mismatch: %q", plain2)
 	}
-	// §2: the delivered report now reads REPORT IN, not the display word.
-	if !strings.HasSuffix(plain2, " 23s · REPORT IN") {
+	if !strings.HasSuffix(plain2, " 23s · PAUSED") {
 		t.Errorf("line 2 suffix mismatch: %q", plain2)
 	}
 }
@@ -508,7 +507,7 @@ func TestRenderStatusLineTruncatesAt40(t *testing.T) {
 		t.Errorf("line 2 expected to contain '…': %q", plain2)
 	}
 
-	suffixes := []string{" 12m", " 4m · NEEDS YOU", " 23s · REPORT IN"}
+	suffixes := []string{" 12m", " 4m · NEEDS YOU", " 23s · PAUSED"}
 	for i, line := range lines {
 		plain := stripSGR(line)
 		if !strings.HasSuffix(plain, suffixes[i]) {
@@ -562,13 +561,8 @@ func TestRenderStatusLineColours(t *testing.T) {
 		t.Errorf("line 1 missing needs you display colour: %q", lines[1])
 	}
 
-	// §2: the delivered report now reads REPORT IN, so line 2 carries four
-	// escape sequences -- the dim dot and the REPORT IN word.
-	if strings.Count(lines[2], "\x1b[") != 4 {
-		t.Errorf("line 2 should contain exactly 4 escape sequences (dot and REPORT IN), got %d: %q", strings.Count(lines[2], "\x1b["), lines[2])
-	}
-	if !strings.Contains(lines[2], ansiReportIn+"REPORT IN"+ansiReset) {
-		t.Errorf("line 2 missing the REPORT IN colour: %q", lines[2])
+	if strings.Count(lines[2], "\x1b[") != 2 {
+		t.Errorf("line 2 should contain exactly 2 escape sequences (the dot only), got %d: %q", strings.Count(lines[2], "\x1b["), lines[2])
 	}
 }
 
@@ -1117,6 +1111,14 @@ func TestRenderStatusLineSharesTheRowRule(t *testing.T) {
 			RoundStart:       now.Add(-2 * time.Minute),
 			LastPayload:      &LastEvent{TS: now.Add(-2 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
 		},
+		{
+			Name:             "paused",
+			Round:            6,
+			Display:          "PAUSED",
+			BuilderCandidate: "agy",
+			RoundStart:       now.Add(-6 * time.Minute),
+			LastPayload:      &LastEvent{TS: now.Add(-1 * time.Minute), Round: 5, Kind: store.KindReport, Direction: store.DirToPlanner},
+		},
 	}}
 
 	rows := StatusLineRows(rep, now)
@@ -1135,6 +1137,7 @@ func TestRenderStatusLineSharesTheRowRule(t *testing.T) {
 		{1, 4, "REPORT IN", "○"},
 		{2, 6, "NEEDS YOU", "●"},
 		{3, 3, "NEEDS YOU", "●"},
+		{4, 5, "PAUSED", "○"},
 	}
 
 	for _, tc := range cases {

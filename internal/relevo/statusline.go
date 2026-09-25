@@ -54,8 +54,8 @@ func AgeText(d time.Duration) string {
 // for Claude Code's statusLine setting per spec §4.3 and §5, amended
 // by docs/specs/2026-09-24-statusline-redesign-design.md. It renders the same
 // row rule the OpenCode sidebar shows (#393): the shown round (report_round
-// when > 0, else round) and the row's word (NEEDS YOU, REPORT IN, the display
-// word, or nothing for ACTIVE) come from StatusLineRows.
+// when > 0, else round) and the row's word (NEEDS YOU, the display word,
+// REPORT IN, or nothing for ACTIVE) come from StatusLineRows.
 func RenderStatusLine(r Report, now time.Time, columns int) string {
 	if len(r.Bindings) == 0 {
 		return ""
@@ -94,20 +94,20 @@ func RenderStatusLine(r Report, now time.Time, columns int) string {
 			mid += " · " + row.Tokens
 		}
 
-		// §2: NEEDS YOU wins; then a delivered report reads REPORT IN; ACTIVE
-		// and empty show no word at all; any other display word shows as is.
+		// §2: NEEDS YOU wins; then a relevo state word (PAUSED, DONE) outranks
+		// a delivered report's REPORT IN; ACTIVE and empty show no word at all.
 		word := ""
 		colouredWord := ""
 		switch {
 		case row.NeedsYou:
 			word = "NEEDS YOU"
 			colouredWord = ansiNeedsYou + word + ansiReset
-		case row.ReportIn:
-			word = "REPORT IN"
-			colouredWord = ansiReportIn + word + ansiReset
 		case row.Display != "" && row.Display != "ACTIVE":
 			word = row.Display
 			colouredWord = word
+		case row.ReportIn:
+			word = "REPORT IN"
+			colouredWord = ansiReportIn + word + ansiReset
 		}
 
 		var rawRight, colouredRight string
