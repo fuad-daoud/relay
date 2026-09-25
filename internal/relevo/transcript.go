@@ -137,9 +137,10 @@ func diskStreamTail(path string, segs []store.StreamSegment, fallback string, n 
 }
 
 // builderTail is the last n lines of a round's builder output: the log when
-// the endpoint writes one (LogPath is this round's BuilderLogPath, which in
-// round 2a is always the case), otherwise the rendered stream's tail. It
-// replaces every logTail(b.Builder.LogPath, n) call site.
+// the endpoint writes one (LogPath is this round's BuilderLogPath: a legacy
+// round, see legacyLog), otherwise the rendered stream's tail, which holds the
+// builder's stderr too. It replaces every logTail(b.Builder.LogPath, n) call
+// site.
 func builderTail(rt Runtime, b store.Binding, n int) string {
 	if b.Builder.LogPath != "" && b.Builder.LogPath == rt.Store.BuilderLogPath(b.Name, b.Round) {
 		return logTail(b.Builder.LogPath, n)

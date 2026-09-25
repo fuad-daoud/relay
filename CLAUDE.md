@@ -28,7 +28,7 @@ follows is what is specific to this machine and this repo.
 - A headless round's output is its stream
   `~/.local/state/relevo/<name>/NNN-builder.jsonl` (stderr included; sealed into the
   database after the round). Read it rendered with `relevo show <name> --round N --transcript`.
-  Rounds from before builder-log round 2 also have `NNN-builder.log`.
+  Rounds from before builder-log round 2 (#478) also have `NNN-builder.log`.
 - When a builder reports a usage limit mid-round, `relevo gate <token>` is
   enough: the daemon switches and resends. Do not rebind by hand unless
   `relevo status` says `NEEDS YOU`.

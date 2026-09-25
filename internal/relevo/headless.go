@@ -493,8 +493,8 @@ func readFrom(path string, off int64) ([]byte, error) {
 }
 
 // appendLines appends lines, each newline-terminated, to the file at path
-// in one write, the same discipline as appendLogMarker: O_APPEND writes of
-// one buffer interleave with the supervisor's stderr at line boundaries.
+// in one write: O_APPEND writes of one buffer interleave with the
+// supervisor's stderr at line boundaries.
 func appendLines(path string, lines []string) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
