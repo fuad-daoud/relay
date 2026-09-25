@@ -196,11 +196,12 @@ func removeVerifyWorktree(ctx context.Context, rt Runtime, b store.Binding, roun
 //
 // Postconditions: on success one headless consult with Role verifyRole is
 // reserved and running in a detached worktree at the builder's HEAD, its
-// question staged at the binding's ask path, and a to_consult/ask entry
-// (note "verify <id>") in the log. On every failure -- no git client, no
-// reviewer candidate, a worktree that could not be created, no runner, a
-// launch that failed -- the worktree is removed when it exists, one
-// to_consult/ask note "verify skipped: <why>" is appended, and (b, nil) is
+// question recorded at the binding's ask path (passed in the prompt and
+// kept in round_file, or staged as a file when too large to inline), and a
+// to_consult/ask entry (note "verify <id>") in the log. On every failure --
+// no git client, no reviewer candidate, a worktree that could not be created,
+// no runner, a launch that failed -- the worktree is removed when it exists,
+// one to_consult/ask note "verify skipped: <why>" is appended, and (b, nil) is
 // returned: a reviewer relevo could not start is not a round failure. Only a
 // store error can fail the call.
 //

@@ -76,7 +76,7 @@ func consultSource(rt Runtime, b store.Binding, c store.Consult, end time.Time) 
 		Harness:    c.Endpoint.Kind,
 		Mode:       usage.ModeHeadless,
 		Worktree:   b.Worktree,
-		StreamPath: c.Endpoint.LogPath, // consults have no stream file today; the reader notes "no stream"
+		StreamPath: c.Endpoint.LogPath, // the consult's stream file: stdout, stderr and the exit trailer (#420)
 		ReadFile:   rt.Store.ReadFile,
 		Start:      c.SpawnedAt,
 		End:        end,
