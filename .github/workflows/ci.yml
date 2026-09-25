@@ -15,8 +15,51 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Docs gate: skip heavy CI when a PR only touches docs/plans, specs, or superpowers.
+  # See scripts/ci-code-changed.sh for the prefix rules.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.gate.outputs.code }}
+    steps:
+      - if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "code=true (push to main)"
+            exit 0
+          fi
+
+          if ! paths=$(git diff --name-only "$BASE...$HEAD" 2>/dev/null); then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "code=true (git diff failed)"
+            exit 0
+          fi
+
+          if [ -z "$paths" ]; then
+            count=0
+          else
+            count=$(printf '%s\n' "$paths" | wc -l | tr -d ' ')
+          fi
+
+          code=$(printf '%s\n' "$paths" | sh scripts/ci-code-changed.sh)
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "code=$code ($count changed paths)"
+
   check:
     name: check (${{ matrix.os }}, go ${{ matrix.go }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     env:
       # Go < 1.24 does not emit an LC_UUID load command on darwin unless
@@ -59,6 +102,8 @@ jobs:
 
   portability:
     name: cross-compile
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
