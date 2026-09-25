@@ -47,6 +47,11 @@ type fakeEnv struct {
 	commandOut    []byte
 	commandErr    error
 
+	// commandFn, when non-nil, answers Command directly; commandOut and
+	// commandErr apply only while it is nil. A test that needs a different
+	// answer per query (session_v2 vs the legacy session table) sets it.
+	commandFn func(bin string, args ...string) ([]byte, error)
+
 	// release* are what ReleaseState reports: the running version, the cached
 	// latest, whether that cache is usable, and the install kind (#293).
 	releaseRunning string
@@ -121,6 +126,9 @@ func (f *fakeEnv) Probe(dir string) error {
 }
 
 func (f *fakeEnv) Command(ctx context.Context, bin string, args ...string) ([]byte, error) {
+	if f.commandFn != nil {
+		return f.commandFn(bin, args...)
+	}
 	if f.commandErr != nil {
 		return nil, f.commandErr
 	}

@@ -51,6 +51,22 @@
       "last_kind": "plan",
       "last_ts": "2026-09-24T20:13:00Z",
       "route": "channel"
+    },
+    {
+      "name": "parked",
+      "round": 1,
+      "display": "PAUSED",
+      "needs_you": false,
+      "report_in": true,
+      "report_round": 1,
+      "harness": "opencode",
+      "candidate": "opencode/openai/gpt-4o",
+      "waiting": "report in",
+      "clock": "1h",
+      "tokens": "2k tok",
+      "last_kind": "report",
+      "last_ts": "2026-09-24T19:00:00Z",
+      "route": "deliverer"
     }
   ]
 }

@@ -72,6 +72,8 @@ case "$cmd" in
 EOF
         exit 0
       fi
+      cat "$DIR/show-report-ledger.json"
+      exit 0
     fi
     cat "$DIR/show-$TAB.json"
     exit 0

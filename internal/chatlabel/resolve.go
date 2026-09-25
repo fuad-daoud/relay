@@ -38,7 +38,12 @@ func (r Resolver) Resolve(ctx context.Context, kind, sessionID, locator string) 
 		defer cancel()
 		out, err := r.Exec.Run(ctx, "sqlite3", "-readonly", r.OpencodeDB, OpencodeQuery(sessionID))
 		if err != nil {
-			return Label{}
+			// A pre-2.0 database has no session_v2, so the first query
+			// fails; the legacy session table holds the title there.
+			out, err = r.Exec.Run(ctx, "sqlite3", "-readonly", r.OpencodeDB, OpencodeLegacyQuery(sessionID))
+			if err != nil {
+				return Label{}
+			}
 		}
 		return Opencode(out)
 	default:
