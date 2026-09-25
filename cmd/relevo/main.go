@@ -82,7 +82,6 @@ Commands:
   ui [:view [args]]  the cockpit: :fleet, :rounds [query], :round <binding> [N]
   done      mark a binding done; relaying stops (--pick to choose it on screen)
   stop      kill the builder process and close its round without a report unless one is already on disk
-  edge      add|list|rm a planner-declared handoff to another binding, fired at the source's round close: relevo edge add <source> --when report --then send --target <binding> --prompt <file> [--mode queue|fire]
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
               --done clears every binding the planner marked DONE [--delete] [--dry-run]
   daemon    run the long-running reconciler
@@ -361,8 +360,6 @@ func run(args []string) error {
 		return cmdDone(args[1:])
 	case "stop":
 		return cmdStop(args[1:])
-	case "edge":
-		return cmdEdge(args[1:])
 	case "daemon":
 		return cmdDaemon(args[1:])
 	case "mcp":
