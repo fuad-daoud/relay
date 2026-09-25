@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -106,6 +107,31 @@ func ProbeAllowedCPUs(ctx context.Context, slice, cpus string) error {
 		return fmt.Errorf("systemd-run AllowedCPUs=%s: %s", cpus, line)
 	}
 	return nil
+}
+
+// ScopeActive reports whether unit's transient scope is still loaded and not
+// yet gone (#445): its ActiveState is active, activating, deactivating or
+// reloading. A missing systemctl is (false, nil) -- there is no unit to be
+// active -- while any other command failure is returned so the caller can log
+// it. The caller treats an error as not active.
+func (r *Runner) ScopeActive(ctx context.Context, unit string) (bool, error) {
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(cctx, "systemctl", "--user", "show", "--property=ActiveState", "--value", ScopeUnitFileName(unit))
+	out, err := cmd.Output()
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	switch strings.TrimSpace(string(out)) {
+	case "active", "activating", "deactivating", "reloading":
+		return true, nil
+	default:
+		return false, nil
+	}
 }
 
 func firstNonEmptyLine(s string) string {

@@ -315,6 +315,38 @@ func TestAddRefusesATreeAnotherBindingDrives(t *testing.T) {
 	if !errors.Is(err, store.ErrCWDTaken) {
 		t.Fatalf("want ErrCWDTaken, got %v", err)
 	}
+	if len(fg.deleteBranchCalls) != 0 {
+		t.Errorf("--cwd adopts a pre-existing tree, so rollback must delete no branch: %+v", fg.deleteBranchCalls)
+	}
+}
+
+// TestAddRollbackDeletesTheBranchItCreated pins #437: when Add cut a worktree
+// and created relevo/<name>, a later refusal rolls both back, so a retry does
+// not fail with "branch already exists".
+func TestAddRollbackDeletesTheBranchItCreated(t *testing.T) {
+	fg := &fakeGit{headCommitID: "commit-head-123"}
+	rt := newForkRuntime(t, fg, nil)
+
+	if err := rt.Store.Save(store.Binding{
+		Name: "incumbent", CWD: rt.Store.WorktreePath("frontend"), Round: 1, State: store.StateActive,
+		Builder: store.Endpoint{Mode: store.ModeHeadless},
+	}); err != nil {
+		t.Fatalf("seed incumbent: %v", err)
+	}
+
+	_, err := Add(context.Background(), rt, AddOptions{
+		Name: "frontend", Candidate: testAgyRef, PlannerID: testPlannerName,
+		Repo: addRepo(t),
+	})
+	if !errors.Is(err, store.ErrCWDTaken) {
+		t.Fatalf("want ErrCWDTaken, got %v", err)
+	}
+	if len(fg.removeWorktreeCalls) != 1 {
+		t.Errorf("removeWorktreeCalls = %+v, want 1", fg.removeWorktreeCalls)
+	}
+	if len(fg.deleteBranchCalls) != 1 || fg.deleteBranchCalls[0].Branch != "relevo/frontend" {
+		t.Errorf("deleteBranchCalls = %+v, want one with Branch %q", fg.deleteBranchCalls, "relevo/frontend")
+	}
 }
 
 func TestAddHeadlessCutsTheWorktreeAndSpawnsNothing(t *testing.T) {

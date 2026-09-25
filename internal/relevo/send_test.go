@@ -483,6 +483,113 @@ func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
 	}
 }
 
+// TestSendKillsTheBuilderWhenTheSendFailsAfterSpawn pins #436's second half:
+// a failure after the process started must stop it and say so, so a busy db
+// never leaves an untracked builder running.
+func TestSendKillsTheBuilderWhenTheSendFailsAfterSpawn(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, fr)
+
+	before, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	old := sendAfterSpawn
+	sendAfterSpawn = func(name string) error { return errors.New("injected") }
+	t.Cleanup(func() { sendAfterSpawn = old })
+
+	_, err = Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{})
+	if err == nil {
+		t.Fatal("Send returned nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "injected") || !strings.Contains(err.Error(), "was stopped") {
+		t.Errorf("Send error = %q, want it to contain both %q and %q", err, "injected", "was stopped")
+	}
+
+	if len(fr.handles) != 1 {
+		t.Fatalf("Start was called %d times, want 1", len(fr.handles))
+	}
+	if len(fr.kills) != 1 || fr.kills[0] != fr.handles[0] {
+		t.Errorf("kills = %+v, want exactly the handle Start returned (%+v)", fr.kills, fr.handles[0])
+	}
+
+	after, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load after: %v", err)
+	}
+	if after.Builder.PID != before.Builder.PID {
+		t.Errorf("builder PID = %d, want unchanged %d", after.Builder.PID, before.Builder.PID)
+	}
+	if after.Round != before.Round {
+		t.Errorf("round = %d, want unchanged %d", after.Round, before.Round)
+	}
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindPlan && e.Round == 1 {
+			t.Errorf("log has a plan entry for round 1, want none: %+v", e)
+		}
+	}
+	logBytes, err := os.ReadFile(rt.Store.BuilderLogPath("webshop", 1))
+	if err != nil {
+		t.Fatalf("read builder log: %v", err)
+	}
+	if !strings.Contains(string(logBytes), "send failed after spawn; builder stopped") {
+		t.Errorf("builder log = %q, want it to contain the stop marker", string(logBytes))
+	}
+}
+
+// TestSendRefusesWhileTheRoundsScopeIsActive pins #445: when the round's
+// scope unit is still loaded, Send refuses before it spawns anything, with
+// ErrScopeActive, and leaves no plan file or NEEDS YOU behind.
+func TestSendRefusesWhileTheRoundsScopeIsActive(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, fr)
+	rt.Scope = &ScopeSpec{}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	fr.scopeActive = map[string]bool{scopeUnitName(b): true}
+
+	_, err = Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{})
+	if !errors.Is(err, ErrScopeActive) {
+		t.Fatalf("Send = %v, want errors.Is(..., ErrScopeActive)", err)
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("Start was called %d times, want 0", len(fr.specs))
+	}
+	after, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load after: %v", err)
+	}
+	if after.State == store.StateNeedsYou {
+		t.Errorf("State = %q, want not NEEDS YOU", after.State)
+	}
+	if _, err := os.Stat(rt.Store.PlanPath("webshop", b.Round)); !os.IsNotExist(err) {
+		t.Errorf("plan file for round %d exists, want none (err=%v)", b.Round, err)
+	}
+}
+
+// TestSendWithScopesOffNeverProbesAScope pins the guard's precondition: with
+// rt.Scope nil, no scope unit can exist, so Send never asks the runner about
+// one and the send proceeds normally.
+func TestSendWithScopesOffNeverProbesAScope(t *testing.T) {
+	fr := newFakeRunner()
+	rt, _ := seedHeadless(t, fr)
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(fr.scopeQueries) != 0 {
+		t.Errorf("scopeQueries = %v, want none (rt.Scope is nil)", fr.scopeQueries)
+	}
+}
+
 func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)

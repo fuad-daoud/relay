@@ -177,6 +177,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		base           string
 		baseRef        string
 		existingBranch bool
+		createdBranch  bool
 	)
 
 	if opts.Branch != "" && opts.CWD != "" {
@@ -256,6 +257,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		if err := rt.Git.AddWorktree(ctx, opts.Repo, cwd, branch, base); err != nil {
 			return AddResult{}, err
 		}
+		createdBranch = true
 		worktree = cwd
 		// The branch the cut came from, for `relevo land` (#136). A --cwd or
 		// --branch binding records none: nothing was cut, so there is no
@@ -268,6 +270,14 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	rollback := func() {
 		if worktree != "" && rt.Git != nil {
 			_ = rt.Git.RemoveWorktree(ctx, opts.Repo, worktree, true)
+		}
+		// A branch Add cut itself (the cut path only: --cwd and --branch
+		// adopt a branch that already existed) is removed too, so a retry
+		// does not fail with "branch already exists" (#437). DeleteBranch is
+		// idempotent on a missing branch, and a failure here is ignored
+		// exactly like the worktree removal's.
+		if createdBranch && rt.Git != nil {
+			_ = rt.Git.DeleteBranch(ctx, opts.Repo, branch)
 		}
 	}
 

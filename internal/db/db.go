@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"strings"
 	"time"
@@ -31,6 +32,17 @@ func parseTime(s string) (time.Time, error) {
 // sqliteBusy is SQLITE_BUSY, sqlite's result code for "database is locked".
 const sqliteBusy = 5
 
+// busyTimeoutMS is the busy_timeout pragma every connection opens with, in
+// milliseconds: how long one statement waits for another writer's lock
+// before the driver returns SQLITE_BUSY. It is a var, not a literal, so a
+// test can shrink it to make lock contention fast.
+var busyTimeoutMS = 5000
+
+// beginRetryFor bounds how long Tx keeps retrying a busy BEGIN IMMEDIATE:
+// once this much time has elapsed since the first attempt, the busy error is
+// returned exactly as it always was. It is a var so a test can set it.
+var beginRetryFor = 30 * time.Second
+
 // DB is a connection to relevo's sqlite database. The zero value is not
 // usable; construct one with Open.
 type DB struct {
@@ -52,7 +64,7 @@ type DB struct {
 // Newer() == true, so an older relevo can read it without downgrading it
 // (#372 §4.5).
 func Open(path string) (*DB, error) {
-	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)"
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)", path, busyTimeoutMS)
 
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -207,6 +219,9 @@ type Tx struct {
 // Tx runs fn inside one BEGIN IMMEDIATE transaction: commit on a nil
 // return, rollback otherwise. A driver busy error is mapped to ErrBusy.
 //
+// A busy BEGIN IMMEDIATE is retried until beginRetryFor has elapsed since the
+// first attempt, then returned as ErrBusy; COMMIT is not retried.
+//
 // A database whose schema is newer than this binary is never written (#372
 // §4.5): Tx refuses with an error wrapping ErrNewerSchema, so every writer --
 // the config store's Put and PutSecret, the daemon's ingest -- fails cleanly
@@ -224,8 +239,21 @@ func (d *DB) Tx(fn func(*Tx) error) error {
 	}
 	defer conn.Close()
 
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return fmt.Errorf("db: tx begin: %w", mapBusy(err))
+	// BEGIN IMMEDIATE takes the write lock at once, so a competing writer
+	// makes it fail busy instead of blocking. Retry until the lock frees or
+	// beginRetryFor has elapsed; fn never runs until BEGIN succeeds, so it
+	// still runs at most once, and a non-busy failure returns at once.
+	start := time.Now()
+	for {
+		_, beginErr := conn.ExecContext(ctx, "BEGIN IMMEDIATE")
+		if beginErr == nil {
+			break
+		}
+		mapped := mapBusy(beginErr)
+		if !errors.Is(mapped, ErrBusy) || time.Since(start) >= beginRetryFor {
+			return fmt.Errorf("db: tx begin: %w", mapped)
+		}
+		time.Sleep(time.Duration(25+rand.Intn(76)) * time.Millisecond)
 	}
 
 	if txErr := fn(&Tx{conn: conn, ctx: ctx}); txErr != nil {

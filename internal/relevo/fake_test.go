@@ -642,6 +642,12 @@ type fakeRunner struct {
 	nextPID   int
 	exitPaths []string
 	rusages   map[int]ProcRusage
+
+	// scopeActive is the answer ScopeActive gives per unit base name; a
+	// missing key is false. scopeQueries records every unit asked for, in
+	// order, so a test can prove that no probe ran.
+	scopeActive  map[string]bool
+	scopeQueries []string
 }
 
 func newFakeRunner() *fakeRunner {
@@ -716,6 +722,14 @@ func (f *fakeRunner) Kill(_ context.Context, h ProcHandle) error {
 func (f *fakeRunner) Rusage(_ context.Context, h ProcHandle, _ string) (ProcRusage, bool) {
 	r, ok := f.rusages[h.PID]
 	return r, ok
+}
+
+// ScopeActive implements ScopeProber: it records the unit and answers from
+// scopeActive, so a send test can prove both that the guard fired and that
+// scopes-off never probes.
+func (f *fakeRunner) ScopeActive(_ context.Context, unit string) (bool, error) {
+	f.scopeQueries = append(f.scopeQueries, unit)
+	return f.scopeActive[unit], nil
 }
 
 // fakeUsage scripts what the usage reader returns and records the Source
