@@ -95,6 +95,27 @@ func TestFormatCandidatesLatencySuffix(t *testing.T) {
 	}
 }
 
+// TestCandidateRoles pins the registry lookup the candidates detail block
+// reads: the roles come from the runtime's registry, in reg.Names() order, and
+// a zero Runtime -- no registry, no set -- answers nil instead of panicking.
+func TestCandidateRoles(t *testing.T) {
+	set := candidateSet(t, testCandidatesJSON)
+	reg, err := roles.Build(nil, set, policy.Policy{})
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+	rt := Runtime{Candidates: set, Registry: reg}
+
+	got := CandidateRoles(rt, testOpencodeRef)
+	if strings.Join(got, ", ") != "builder" {
+		t.Errorf("CandidateRoles(%s) = %v, want [builder]", testOpencodeRef, got)
+	}
+
+	if got := CandidateRoles(Runtime{}, testOpencodeRef); got != nil {
+		t.Errorf("CandidateRoles(zero Runtime) = %v, want nil", got)
+	}
+}
+
 // TestFormatCandidatesHasNoEscapes pins round 3 F1: a planner reads `relevo
 // config` through a pipe, so the candidates block must be plain text -- no SGR
 // sequence anywhere in it.

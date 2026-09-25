@@ -51,7 +51,38 @@ type Report struct {
 	Reliability  Reliability
 	Repos        []GroupRow // key = RoundRow.Repo, "(none)" when nil
 	Features     []GroupRow // only rows with a Feature; empty when none
-	Outcomes     Outcomes
+	// NoFeature is the rows with no feature, keyed "(none)"; the zero value
+	// when every row carried one.
+	NoFeature GroupRow
+	Outcomes  Outcomes
+}
+
+// TokenCounts is a sum of token usage over rounds that recorded any.
+type TokenCounts struct {
+	In, Cache, Write, Out int64
+	Measured              int // rounds with at least one non-nil token field
+}
+
+// Total is the sum of the four token kinds.
+func (c TokenCounts) Total() int64 { return c.In + c.Cache + c.Write + c.Out }
+
+// CachePct is the cache reads' share of input (In+Cache), in percent. ok is
+// false when no input was recorded at all.
+func (c TokenCounts) CachePct() (float64, bool) {
+	input := c.In + c.Cache
+	if input == 0 {
+		return 0, false
+	}
+	return 100 * float64(c.Cache) / float64(input), true
+}
+
+// PerRound is n over the measured rounds. ok is false when no round measured
+// any token.
+func (c TokenCounts) PerRound(n int64) (int64, bool) {
+	if c.Measured == 0 {
+		return 0, false
+	}
+	return n / int64(c.Measured), true
 }
 
 // Totals is the report's headline numbers.
@@ -66,9 +97,12 @@ type Totals struct {
 	CostUSD     float64 // known basis, non-plan
 	PlanRounds  int
 	UnknownCost int   // rounds with basis unknown or nil cost (non-plan)
-	Tokens      int64 // in+cache+write+out
-	Halted      int
-	MedianMS    int64 // closed rounds with DurationMS
+	Tokens      int64 // in+cache+write+out; equals TokenKinds.Total()
+	// TokenKinds is the same total split by kind, summed over every windowed
+	// row (unrecorded included, like Tokens).
+	TokenKinds TokenCounts
+	Halted     int
+	MedianMS   int64 // closed rounds with DurationMS
 }
 
 // ScoreRow is one candidate's line on the scorecard.
@@ -87,6 +121,15 @@ type ScoreRow struct {
 	CommitsPerRound  float64 // mean over rows with Commits != nil; valid when HasCommits
 	HasCommits       bool
 	Few              bool // Rounds < 5
+	// Bindings is the number of distinct RoundRow.BindingID among this
+	// candidate's rows.
+	Bindings int
+	// ReportHalted counts the rows whose ReportOutcome is "halted".
+	ReportHalted int
+	// Switches is the sum of RoundRow.Switches over this candidate's rows.
+	Switches int
+	// TokenKinds is summed over this candidate's scorecard rows.
+	TokenKinds TokenCounts
 }
 
 // Spend is the per-day cost series and the week-over-week totals.
@@ -100,7 +143,15 @@ type Spend struct {
 type DayCost struct {
 	Day        string // YYYY-MM-DD in Loc
 	USD        float64
+	Tokens     int64              // summed over every row of the day, like Tokens
+	Kinds      TokenCounts        // the day's tokens by kind; Tokens = Kinds.Total()
 	ByProvider map[string]float64 // BuilderProvider, "(none)" when nil
+	// ByCandidate is the day's tokens per BuilderCandidate, "(none)" when nil.
+	// Only rows with a non-zero total add a key.
+	ByCandidate map[string]int64
+	// TokensByProvider is the same tokens per BuilderProvider, "(none)" when
+	// nil.
+	TokensByProvider map[string]int64
 }
 
 // Reliability is the switches, limits and gates part of the report.
@@ -124,8 +175,14 @@ type HourRow struct {
 type GroupRow struct {
 	Key                    string
 	Rounds, Halted, Landed int
+	Bindings               int // distinct BindingID among the group's rows
+	Done                   int // rows whose ReportOutcome is "done"
+	ReportHalted           int // rows whose ReportOutcome is "halted"
+	Commits                int // sum of the non-nil RoundRow.Commits
 	CostUSD                float64
+	Tokens                 int64 // in+cache+write+out over the group's rows
 	RoundsPerLand          float64
+	ByCandidate            map[string]int // round count per BuilderCandidate, nil skipped
 }
 
 // Outcomes counts the rounds and the reports that ended them.
@@ -171,6 +228,9 @@ func Build(in Inputs) Report {
 	rep.Reliability = buildReliability(in, rows, loc)
 	rep.Repos = groupRows(in, rows, repoKey)
 	rep.Features = groupRows(in, rows, featureKey)
+	if none := groupRows(in, rows, noFeatureKey); len(none) > 0 {
+		rep.NoFeature = none[0]
+	}
 	rep.Outcomes = buildOutcomes(rows)
 	return rep
 }
@@ -184,7 +244,7 @@ func buildTotals(in Inputs, rows []db.RoundRow) Totals {
 	for _, r := range rows {
 		t.Rounds++
 		bindings[r.BindingID] = true
-		t.Tokens += rowTokens(r)
+		addTokens(&t.TokenKinds, r)
 		if r.Outcome == db.OutcomeHalted {
 			t.Halted++
 		}
@@ -211,6 +271,7 @@ func buildTotals(in Inputs, rows []db.RoundRow) Totals {
 	t.Bindings = len(bindings)
 	t.Candidates = len(candidates)
 	t.MedianMS = median(durations)
+	t.Tokens = t.TokenKinds.Total()
 	return t
 }
 
@@ -219,11 +280,15 @@ func buildTotals(in Inputs, rows []db.RoundRow) Totals {
 func buildScorecard(in Inputs, rows []db.RoundRow) []ScoreRow {
 	type acc struct {
 		rounds, closed, reported, halted int
+		reportHalted                     int
+		switches                         int
+		bindings                         map[string]bool
 		durations                        []int64
 		costSum                          float64
 		costN                            int
 		commitsSum                       float64
 		commitsN                         int
+		tokens                           TokenCounts
 	}
 	accs := map[string]*acc{}
 	var order []string
@@ -242,6 +307,15 @@ func buildScorecard(in Inputs, rows []db.RoundRow) []ScoreRow {
 			order = append(order, tok)
 		}
 		a.rounds++
+		addTokens(&a.tokens, r)
+		if a.bindings == nil {
+			a.bindings = map[string]bool{}
+		}
+		a.bindings[r.BindingID] = true
+		a.switches += r.Switches
+		if r.ReportOutcome != nil && *r.ReportOutcome == "halted" {
+			a.reportHalted++
+		}
 		if closedOutcomes[r.Outcome] {
 			a.closed++
 			if r.DurationMS != nil {
@@ -268,14 +342,18 @@ func buildScorecard(in Inputs, rows []db.RoundRow) []ScoreRow {
 	for _, tok := range order {
 		a := accs[tok]
 		s := ScoreRow{
-			Token:     tok,
-			Rounds:    a.rounds,
-			Closed:    a.closed,
-			Reported:  a.reported,
-			Halted:    a.halted,
-			MedianMS:  median(a.durations),
-			HasMedian: len(a.durations) > 0,
-			Few:       a.rounds < 5,
+			Token:        tok,
+			Rounds:       a.rounds,
+			Closed:       a.closed,
+			Reported:     a.reported,
+			Halted:       a.halted,
+			MedianMS:     median(a.durations),
+			HasMedian:    len(a.durations) > 0,
+			Few:          a.rounds < 5,
+			Bindings:     len(a.bindings),
+			ReportHalted: a.reportHalted,
+			Switches:     a.switches,
+			TokenKinds:   a.tokens,
 		}
 		if a.closed > 0 {
 			s.DonePct = 100 * float64(a.reported) / float64(a.closed)
@@ -317,8 +395,10 @@ func buildSpend(in Inputs, rows []db.RoundRow, since time.Time, loc *time.Locati
 		cur := dayStart(since.In(loc))
 		for !cur.After(end) {
 			sp.Days = append(sp.Days, DayCost{
-				Day:        cur.Format("2006-01-02"),
-				ByProvider: map[string]float64{},
+				Day:              cur.Format("2006-01-02"),
+				ByProvider:       map[string]float64{},
+				ByCandidate:      map[string]int64{},
+				TokensByProvider: map[string]int64{},
 			})
 			cur = cur.AddDate(0, 0, 1)
 		}
@@ -328,13 +408,34 @@ func buildSpend(in Inputs, rows []db.RoundRow, since time.Time, loc *time.Locati
 	for i, d := range sp.Days {
 		idx[d.Day] = i
 	}
+	// kinds accumulates each day's tokens through addTokens (§2); the day's
+	// plain Tokens total is written back below.
+	kinds := make([]TokenCounts, len(sp.Days))
 
 	for _, r := range rows {
+		day := r.StartedAt.In(loc).Format("2006-01-02")
+		if i, ok := idx[day]; ok {
+			addTokens(&kinds[i], r)
+			var row TokenCounts
+			addTokens(&row, r)
+			if n := row.Total(); n > 0 {
+				cand := "(none)"
+				if r.BuilderCandidate != nil {
+					cand = *r.BuilderCandidate
+				}
+				prov := "(none)"
+				if r.BuilderProvider != nil {
+					prov = *r.BuilderProvider
+				}
+				sp.Days[i].ByCandidate[cand] += n
+				sp.Days[i].TokensByProvider[prov] += n
+			}
+		}
 		if !costKnown(in, r) {
 			continue
 		}
 		usd := *r.CostUSD
-		if i, ok := idx[r.StartedAt.In(loc).Format("2006-01-02")]; ok {
+		if i, ok := idx[day]; ok {
 			sp.Days[i].USD += usd
 			prov := "(none)"
 			if r.BuilderProvider != nil {
@@ -353,6 +454,10 @@ func buildSpend(in Inputs, rows []db.RoundRow, since time.Time, loc *time.Locati
 		case !at.Before(fortnight) && at.Before(week):
 			sp.LastWeek += usd
 		}
+	}
+	for i := range sp.Days {
+		sp.Days[i].Kinds = kinds[i]
+		sp.Days[i].Tokens = kinds[i].Total()
 	}
 	return sp
 }
@@ -410,9 +515,15 @@ func buildReliability(in Inputs, rows []db.RoundRow, loc *time.Location) Reliabi
 func groupRows(in Inputs, rows []db.RoundRow, key func(db.RoundRow) (string, bool)) []GroupRow {
 	type acc struct {
 		rounds, halted int
+		bindings       map[string]bool
+		done           int
+		reportHalted   int
+		commits        int
+		byCandidate    map[string]int
 		landed         map[string]bool
 		landedRounds   int
 		cost           float64
+		tokens         TokenCounts
 	}
 	accs := map[string]*acc{}
 	var order []string
@@ -423,11 +534,27 @@ func groupRows(in Inputs, rows []db.RoundRow, key func(db.RoundRow) (string, boo
 		}
 		a := accs[k]
 		if a == nil {
-			a = &acc{landed: map[string]bool{}}
+			a = &acc{landed: map[string]bool{}, bindings: map[string]bool{}, byCandidate: map[string]int{}}
 			accs[k] = a
 			order = append(order, k)
 		}
 		a.rounds++
+		a.bindings[r.BindingID] = true
+		if r.ReportOutcome != nil {
+			switch *r.ReportOutcome {
+			case "done":
+				a.done++
+			case "halted":
+				a.reportHalted++
+			}
+		}
+		if r.Commits != nil {
+			a.commits += *r.Commits
+		}
+		if r.BuilderCandidate != nil {
+			a.byCandidate[*r.BuilderCandidate]++
+		}
+		addTokens(&a.tokens, r)
 		if r.Outcome == db.OutcomeHalted {
 			a.halted++
 		}
@@ -444,11 +571,17 @@ func groupRows(in Inputs, rows []db.RoundRow, key func(db.RoundRow) (string, boo
 	for _, k := range order {
 		a := accs[k]
 		g := GroupRow{
-			Key:     k,
-			Rounds:  a.rounds,
-			Halted:  a.halted,
-			Landed:  len(a.landed),
-			CostUSD: a.cost,
+			Key:          k,
+			Rounds:       a.rounds,
+			Halted:       a.halted,
+			Landed:       len(a.landed),
+			Bindings:     len(a.bindings),
+			Done:         a.done,
+			ReportHalted: a.reportHalted,
+			Commits:      a.commits,
+			ByCandidate:  a.byCandidate,
+			CostUSD:      a.cost,
+			Tokens:       a.tokens.Total(),
 		}
 		if g.Landed > 0 {
 			g.RoundsPerLand = float64(a.landedRounds) / float64(g.Landed)
@@ -479,6 +612,15 @@ func featureKey(r db.RoundRow) (string, bool) {
 		return "", false
 	}
 	return *r.Feature, true
+}
+
+// noFeatureKey buckets the feature-less rows into one "(none)" group; a row
+// with a feature is not in the section at all.
+func noFeatureKey(r db.RoundRow) (string, bool) {
+	if r.Feature == nil {
+		return "(none)", true
+	}
+	return "", false
 }
 
 // buildOutcomes counts the rounds by outcome and the reports by report outcome.
@@ -516,15 +658,29 @@ func costKnown(in Inputs, r db.RoundRow) bool {
 	return r.CostUSD != nil && (r.CostBasis == nil || *r.CostBasis != "unknown") && !isPlan(in, r)
 }
 
-// rowTokens sums a row's token columns; a nil column is zero.
-func rowTokens(r db.RoundRow) int64 {
-	var n int64
-	for _, p := range []*int64{r.InTokens, r.CacheTokens, r.WriteTokens, r.OutTokens} {
-		if p != nil {
-			n += *p
-		}
+// addTokens adds a row's four token columns to c, counting the row as measured
+// when at least one of them is non-nil (§2).
+func addTokens(c *TokenCounts, r db.RoundRow) {
+	measured := false
+	if r.InTokens != nil {
+		c.In += *r.InTokens
+		measured = true
 	}
-	return n
+	if r.CacheTokens != nil {
+		c.Cache += *r.CacheTokens
+		measured = true
+	}
+	if r.WriteTokens != nil {
+		c.Write += *r.WriteTokens
+		measured = true
+	}
+	if r.OutTokens != nil {
+		c.Out += *r.OutTokens
+		measured = true
+	}
+	if measured {
+		c.Measured++
+	}
 }
 
 // oldest is the earliest row's StartedAt.
