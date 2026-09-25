@@ -23,9 +23,9 @@ func showCommand(name string, round int, section string) string {
 	return fmt.Sprintf("relevo show %s --round %d --%s", name, round, section)
 }
 
-// findingsCommand is showCommand's findings form, which names the consult:
+// FindingsCommand is showCommand's findings form, which names the consult:
 // `relevo show <name> --round <n> --findings <id>`.
-func findingsCommand(name string, round int, id string) string {
+func FindingsCommand(name string, round int, id string) string {
 	return fmt.Sprintf("relevo show %s --round %d --findings %s", name, round, id)
 }
 
@@ -55,7 +55,7 @@ func logRef(name string, e store.LogEntry) string {
 		return showCommand(name, e.Round, "report")
 	case store.KindFindings:
 		if id := findingsIDOf(e.Path); id != "" {
-			return findingsCommand(name, e.Round, id)
+			return FindingsCommand(name, e.Round, id)
 		}
 	case store.KindDiff:
 		return showCommand(name, e.Round, "diff")

@@ -847,6 +847,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 // closed and gating are reported so the caller returns exactly what the marker
 // branch does; a marker-absent read comes back unchanged with both false.
 func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, markerNote string, wantVerify bool) (store.Binding, bool, bool, error) {
+	base := b.RoundBaselineTree
 	next, closed, gating, rec, err := closeOnMarker(ctx, rt, tx, b, entries, markerNote)
 	if err != nil {
 		return b, false, false, err
@@ -870,7 +871,7 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		if rec != nil {
 			gateLogPath = rec.LogPath
 		}
-		next, err = startVerifyConsult(ctx, rt, tx, next, closedRound, gateLogPath)
+		next, err = startVerifyConsult(ctx, rt, tx, next, closedRound, verifyDiffCommand(base, next.RoundClosedTree), gateLogPath)
 		if err != nil {
 			return next, true, false, err
 		}

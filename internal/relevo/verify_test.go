@@ -16,21 +16,21 @@ func relevoBlock(body string) string {
 }
 
 // TestVerifyQuestionNamesEveryFile pins what the reviewer is handed (#144):
-// the plan, the report, the diff and the gate log paths, "none" for a round
+// the plan, the report, the diff command and the gate log paths, "none" for a round
 // with no gate, and the block template it must answer with. Mutation check:
 // drop any one argument from the format string and this fails.
 func TestVerifyQuestionNamesEveryFile(t *testing.T) {
 	q := verifyQuestion("webshop", 1,
 		"/state/webshop/001-plan.md",
 		"/state/webshop/001-report.md",
-		"/state/webshop/001-diff.patch",
+		"git diff tree-a tree-b",
 		"/state/webshop/001-gate.log")
 
 	for _, want := range []string{
 		"Verify round 1 of binding \"webshop\"",
 		"/state/webshop/001-plan.md",
 		"/state/webshop/001-report.md",
-		"/state/webshop/001-diff.patch",
+		"git diff tree-a tree-b",
 		"/state/webshop/001-gate.log",
 		"verdict: accepted | rejected",
 		"reasons: [\"...\"]",
@@ -43,6 +43,24 @@ func TestVerifyQuestionNamesEveryFile(t *testing.T) {
 
 	if q := verifyQuestion("webshop", 1, "p", "r", "d", ""); !strings.Contains(q, "Gate:   none") {
 		t.Errorf("empty gate log must read \"Gate:   none\", got:\n%s", q)
+	}
+}
+
+func TestVerifyDiffCommand(t *testing.T) {
+	cases := []struct {
+		baseline string
+		closed   string
+		want     string
+	}{
+		{"tree-a", "tree-b", "git diff tree-a tree-b"},
+		{"", "tree-b", "none"},
+		{"tree-a", "", "none"},
+	}
+	for _, tc := range cases {
+		got := verifyDiffCommand(tc.baseline, tc.closed)
+		if got != tc.want {
+			t.Errorf("verifyDiffCommand(%q, %q) = %q, want %q", tc.baseline, tc.closed, got, tc.want)
+		}
 	}
 }
 

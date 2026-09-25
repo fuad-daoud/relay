@@ -3829,6 +3829,16 @@ func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
 	if !diffEntry.Confirmed {
 		t.Fatal("diff entry must be Confirmed, like every other relevo-bookkeeping entry")
 	}
+	if _, err := os.Stat(st.DiffPath("api", 1)); !os.IsNotExist(err) {
+		t.Fatalf("expected no patch file on disk, got err %v", err)
+	}
+	diffBody, err := st.ReadFile(st.DiffPath("api", 1))
+	if err != nil {
+		t.Fatalf("read stored diff: %v", err)
+	}
+	if string(diffBody) != "--- a/file\n+++ b/file\n" {
+		t.Fatalf("diff body = %q, want %q", string(diffBody), "--- a/file\n+++ b/file\n")
+	}
 
 	var reportEntry store.LogEntry
 	for _, e := range entries {
