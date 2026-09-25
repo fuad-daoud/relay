@@ -6,7 +6,7 @@
   "Archived": false,
   "ArchivedAt": "0001-01-01T00:00:00Z",
   "Section": "transcript",
-  "Text": "transcript of webshop r4",
+  "Text": "● read file=src/index.ts\n  ⎿ ok: export const app = 1;\n● edit file=src/index.ts\n  ⎿ error: permission denied\nbuilding next round",
   "Missing": false,
   "Events": null
 }

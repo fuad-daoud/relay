@@ -95,8 +95,19 @@ wait_ready 60
 sleep 3
 capture "01-session"
 
-# Wait ≥ 12 s after launch to ensure 3rd poll has fired (count >= 3 -> status-2.json)
-sleep 11
+# Open ledger's report tab before status-2 (returns Missing: true -> (no report))
+send C-x; sleep 0.4; send o; sleep 0.8
+send Down; sleep 0.3; send Enter; sleep 1.0
+# ledger starts on transcript tab; cycle tab twice to reach report tab (tabs: plan, report, diff, log, transcript)
+send Tab; sleep 0.3; send Tab; sleep 1.0
+capture "01b-ledger-stale"
+send Escape; sleep 0.4
+# Reset fleet cursor to webshop (index 0) so subsequent fleet navigations start at webshop
+send C-x; sleep 0.4; send o; sleep 0.8
+send Up; sleep 0.3; send Escape; sleep 0.4
+
+# Wait for 3rd poll to fire (count >= 3 -> status-2.json) and capture toast
+sleep 6
 capture "02-after-toast"
 
 # 03-fleet (C-x o)
@@ -127,6 +138,26 @@ send PageDown; sleep 0.4; send PageDown; sleep 0.8
 capture "05b-scrolled"
 sleep 12
 capture "05c-after-polls"
+
+# 05d/05e/05f: transcript, plan as markdown, and stale report refetch
+# From report tab (index 1), tab 3 times to transcript tab (index 4)
+send Tab; sleep 0.3; send Tab; sleep 0.3; send Tab; sleep 1.5
+capture "05e-transcript"
+
+# Tab once more to plan tab (index 0)
+send Tab; sleep 2.5
+capture "05d-plan"
+
+# Back to fleet, open ledger (now report_in with real report body)
+send Escape; sleep 0.5
+send C-x; sleep 0.4; send o; sleep 1.0
+send Down; sleep 0.3; send Enter; sleep 1.5
+capture "05f-ledger-after"
+
+# Return to webshop for 06-dialog
+send Escape; sleep 0.5
+send C-x; sleep 0.4; send o; sleep 1.0
+send Up; sleep 0.3; send Enter; sleep 1.5
 
 # 06-dialog (a)
 send a; sleep 1.5
@@ -344,6 +375,40 @@ check_assertion_24() {
 }
 assert 24 "01-session landing row shows no ACTIVE word" check_assertion_24
 
+# 25. The plan tab (capture 05d-plan) shows a markdown heading rendered
+#     (the fixture plan's # … line appears without the leading # ).
+check_assertion_25() {
+  grep -q "Plan for webshop r4" "$OUT/05d-plan.txt" && \
+  ! grep -q "# Plan for webshop r4" "$OUT/05d-plan.txt"
+}
+assert 25 "05d-plan shows markdown heading rendered without leading #" check_assertion_25
+
+# 26. In 05e-transcript (.ansi capture), the tool-name line and the
+#     ⎿ error: line carry different colour escapes (compare the SGR codes
+#     before each; they must differ), and neither is the default.
+check_assertion_26() {
+  local tool_sgr err_sgr
+  tool_sgr="$(grep -a -m1 "●" "$OUT/05e-transcript.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
+  err_sgr="$(grep -a -m1 "error:" "$OUT/05e-transcript.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
+  [ -n "$tool_sgr" ] && [ -n "$err_sgr" ] && \
+  [ "$tool_sgr" != "$err_sgr" ] && \
+  [ "$tool_sgr" != $'\x1b[0m' ] && [ "$tool_sgr" != $'\x1b[39m' ] && \
+  [ "$err_sgr" != $'\x1b[0m' ] && [ "$err_sgr" != $'\x1b[39m' ]
+}
+assert 26 "05e-transcript tool line and error line carry different non-default colour escapes" check_assertion_26
+
+# 27. Stale report: in the fake relevo, make show <name> --report for ledger
+#     return Missing: true / empty Text on its first call and the real report
+#     afterwards; open ledger's report tab before status-2 (capture shows
+#     (no report)), then again after status-2 has flipped ledger to
+#     report_in -> the report text appears (capture 05f-ledger-after).
+check_assertion_27() {
+  grep -q "(no report)" "$OUT/01b-ledger-stale.txt" && \
+  grep -q "checkout flow implementation is ready" "$OUT/05f-ledger-after.txt" && \
+  ! grep -q "(no report)" "$OUT/05f-ledger-after.txt"
+}
+assert 27 "ledger shows (no report) before status-2 and real report after status-2" check_assertion_27
+
 # Mouse is not driven here: tmux send-keys cannot deliver SGR mouse events
 # reliably, so the clickable-row behaviour (onMouseDown on the sidebar and
 # fleet rows) is verified by inspection of tui.tsx, not by this smoke.
@@ -354,5 +419,5 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-echo "Smoke test PASSED (all 24 assertions passed)"
+echo "Smoke test PASSED (all 27 assertions passed)"
 exit 0

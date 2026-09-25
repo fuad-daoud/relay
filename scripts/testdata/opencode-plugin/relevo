@@ -40,6 +40,7 @@ case "$cmd" in
     ;;
   show)
     TAB="report"
+    NAME="${2:-}"
     for arg in "$@"; do
       case "$arg" in
         --plan) TAB="plan" ;;
@@ -49,6 +50,29 @@ case "$cmd" in
         --transcript) TAB="transcript" ;;
       esac
     done
+    if [ "$NAME" = "ledger" ] && [ "$TAB" = "report" ]; then
+      STATE_DIR="${RELEVO_FAKE_STATE:-/tmp/relevo-fake-state}"
+      mkdir -p "$STATE_DIR"
+      LEDGER_REPORT_FILE="$STATE_DIR/ledger-report.called"
+      if [ ! -f "$LEDGER_REPORT_FILE" ]; then
+        touch "$LEDGER_REPORT_FILE"
+        cat <<'EOF'
+{
+  "Name": "ledger",
+  "Round": 2,
+  "Rounds": 2,
+  "Live": true,
+  "Archived": false,
+  "ArchivedAt": "0001-01-01T00:00:00Z",
+  "Section": "report",
+  "Text": "",
+  "Missing": true,
+  "Events": null
+}
+EOF
+        exit 0
+      fi
+    fi
     cat "$DIR/show-$TAB.json"
     exit 0
     ;;
