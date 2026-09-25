@@ -403,6 +403,14 @@ func (t *Tx) Save(b Binding) error {
 	return t.s.save(b)
 }
 
+// SaveWithLog saves a binding and appends entries to its log in one database
+// transaction: either all of it is written or none is. entries may be empty,
+// in which case it is exactly Save. Each entry gets the next seq after the
+// record's current maximum, in argument order.
+func (t *Tx) SaveWithLog(b Binding, entries ...LogEntry) error {
+	return t.s.saveWithLog(b, entries)
+}
+
 // Load reads one binding under the held lock.
 func (t *Tx) Load(name string) (Binding, error) {
 	return t.s.load(name)
@@ -427,24 +435,46 @@ func (t *Tx) Archive(name string) (string, error) {
 // Unexported methods implement the actual logic, assuming lock is held via Tx.
 
 func (s *Store) save(b Binding) error {
+	b, rec, err := s.prepareSave(b)
+	if err != nil {
+		return err
+	}
+	d, err := s.dbForWrite()
+	if err != nil {
+		return err
+	}
+	if _, err := d.RecordPut(rec); err != nil {
+		return fmt.Errorf("save binding %q: %w", b.Name, err)
+	}
+
+	// A dst/log.jsonl ForkState left waiting is adopted now that the record
+	// exists (§4.3, §4.6).
+	return s.importPresent(b.Name)
+}
+
+// prepareSave validates and stamps a binding and builds the record Save
+// writes, stopping short of the database so SaveWithLog can put the record
+// and the round's entries in one transaction. It is save's old head, with the
+// same checks in the same order and the same errors.
+func (s *Store) prepareSave(b Binding) (Binding, db.Record, error) {
 	// A binding written by a newer relevo is read-only for this binary: its
 	// rewrite would erase every field this relevo does not know (#372). The
 	// check comes first, so a refusal leaves not even a directory or a temp
 	// file behind.
 	if b.Format > BindingFormat {
-		return &ErrNewerFormat{Kind: "binding", Name: b.Name, Have: b.Format, Know: BindingFormat}
+		return b, db.Record{}, &ErrNewerFormat{Kind: "binding", Name: b.Name, Have: b.Format, Know: BindingFormat}
 	}
 	b.Format = storedFormat(recordFormat(b))
 
 	if err := ValidName(b.Name); err != nil {
-		return err
+		return b, db.Record{}, err
 	}
 	if b.CWD == "" {
-		return errors.New("binding has no working directory")
+		return b, db.Record{}, errors.New("binding has no working directory")
 	}
 
 	if err := s.assertCWDFree(b); err != nil {
-		return err
+		return b, db.Record{}, err
 	}
 
 	now := time.Now().UTC()
@@ -460,18 +490,14 @@ func (s *Store) save(b Binding) error {
 	}
 
 	if err := os.MkdirAll(s.Dir(b.Name), bindingDirMode); err != nil {
-		return fmt.Errorf("create binding dir: %w", err)
+		return b, db.Record{}, fmt.Errorf("create binding dir: %w", err)
 	}
 
-	d, err := s.dbForWrite()
-	if err != nil {
-		return err
-	}
 	raw, err := json.Marshal(b)
 	if err != nil {
-		return fmt.Errorf("marshal binding %q: %w", b.Name, err)
+		return b, db.Record{}, fmt.Errorf("marshal binding %q: %w", b.Name, err)
 	}
-	if _, err := d.RecordPut(db.Record{
+	return b, db.Record{
 		Owner:     s.owner,
 		Name:      b.Name,
 		State:     string(b.State),
@@ -480,12 +506,55 @@ func (s *Store) save(b Binding) error {
 		JSON:      string(raw),
 		CreatedAt: b.CreatedAt,
 		UpdatedAt: b.UpdatedAt,
-	}); err != nil {
-		return fmt.Errorf("save binding %q: %w", b.Name, err)
-	}
+	}, nil
+}
 
-	// A dst/log.jsonl ForkState left waiting is adopted now that the record
-	// exists (§4.3, §4.6).
+// saveWithLog saves the binding and appends entries in one database
+// transaction, so a failure anywhere leaves neither the record nor an entry
+// behind. It is Save plus AppendLog's cap check and encoding, with both
+// writes in one Tx.
+func (s *Store) saveWithLog(b Binding, entries []LogEntry) error {
+	// A waiting dst/log.jsonl is adopted before the transaction computes the
+	// entries' seqs; when the record does not exist yet the import leaves the
+	// file for the trailing call below, exactly as save does.
+	if err := s.importPresent(b.Name); err != nil {
+		return err
+	}
+	b, rec, err := s.prepareSave(b)
+	if err != nil {
+		return err
+	}
+	d, err := s.dbForWrite()
+	if err != nil {
+		return err
+	}
+	err = d.Tx(func(dtx *db.Tx) error {
+		id, err := dtx.RecordPut(rec)
+		if err != nil {
+			return fmt.Errorf("save binding %q: %w", b.Name, err)
+		}
+		n, err := dtx.EventMaxSeq(id)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if n >= maxLogEntries {
+				return fmt.Errorf("log exceeds %d entries", maxLogEntries)
+			}
+			n++
+			ev, err := encodeEvent(e, n)
+			if err != nil {
+				return err
+			}
+			if err := dtx.EventAppend(id, ev); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
 	return s.importPresent(b.Name)
 }
 

@@ -315,10 +315,6 @@ func (s *Store) appendLog(name string, e LogEntry) error {
 	if err := ValidName(name); err != nil {
 		return err
 	}
-	if e.TS.IsZero() {
-		e.TS = time.Now().UTC()
-	}
-
 	if err := s.importPresent(name); err != nil {
 		return err
 	}
@@ -344,18 +340,33 @@ func (s *Store) appendLog(name string, e LogEntry) error {
 	if n >= maxLogEntries {
 		return fmt.Errorf("log exceeds %d entries", maxLogEntries)
 	}
-	e.Seq = n + 1
 
-	encoded, err := json.Marshal(e)
+	ev, err := encodeEvent(e, n+1)
 	if err != nil {
-		return fmt.Errorf("encode log entry: %w", err)
+		return err
 	}
 
 	if err := os.MkdirAll(s.Dir(name), bindingDirMode); err != nil {
 		return fmt.Errorf("create binding dir: %w", err)
 	}
 
-	return d.EventAppend(rec.ID, recordEventOf(e, string(encoded)))
+	return d.EventAppend(rec.ID, ev)
+}
+
+// encodeEvent stamps one entry with its seq and a defaulted TS and encodes it
+// for the binding_event columns. appendLog and SaveWithLog share it, so both
+// write identical rows: the error text is the one appendLog returned before
+// the extraction.
+func encodeEvent(e LogEntry, seq int) (db.RecordEvent, error) {
+	if e.TS.IsZero() {
+		e.TS = time.Now().UTC()
+	}
+	e.Seq = seq
+	encoded, err := json.Marshal(e)
+	if err != nil {
+		return db.RecordEvent{}, fmt.Errorf("encode log entry: %w", err)
+	}
+	return recordEventOf(e, string(encoded)), nil
 }
 
 // readLog returns every entry in order. A binding with no record yields nil,

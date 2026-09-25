@@ -331,6 +331,10 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	// the builder already has. Spawning a process does not wait on it, so
 	// holding the lock across it costs milliseconds, not the length of a turn.
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
+		// pending collects this round's log entries, so the binding and all of
+		// them are written in one transaction (#471).
+		var pending []store.LogEntry
+
 		b, err := tx.Load(name)
 		if err != nil {
 			return err
@@ -437,12 +441,11 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 				b.HaltAt = rt.Now().UTC()
 				// The builder change is still recorded first, so the log
 				// explains why the round was sent to the new candidate.
+				var failEntries []store.LogEntry
 				if pf.pick != nil {
-					if appendErr := tx.AppendLog(name, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick)); appendErr != nil {
-						return fmt.Errorf("%v; and appending the builder pick failed: %w", err, appendErr)
-					}
+					failEntries = append(failEntries, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick))
 				}
-				if saveErr := tx.Save(b); saveErr != nil {
+				if saveErr := tx.SaveWithLog(b, failEntries...); saveErr != nil {
 					return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", err, saveErr)
 				}
 				return err
@@ -464,9 +467,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// ErrExtraArgsPermission early return saves nothing, so a builder
 		// change that did not happen must not be recorded.
 		if pf.pick != nil {
-			if err := tx.AppendLog(name, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick)); err != nil {
-				return err
-			}
+			pending = append(pending, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick))
 			pickLine = PickText("builder", *pf.pick, rt.Candidates)
 		}
 
@@ -476,9 +477,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			Path: planPath, Confirmed: true, Late: late,
 			Tier: string(effectiveTier(b)),
 		}
-		if err := tx.AppendLog(name, entry); err != nil {
-			return err
-		}
+		pending = append(pending, entry)
 
 		driftLine := ""
 		if b.Round == hintRound {
@@ -490,9 +489,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 					Path: res.Path, Note: DriftSummary(res),
 					Confirmed: true,
 				}
-				if err := tx.AppendLog(name, driftEntry); err != nil {
-					return err
-				}
+				pending = append(pending, driftEntry)
 				driftLine = DriftLine(res, b.Name, b.Round)
 			}
 		}
@@ -551,14 +548,15 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			b.RoundVerify = rt.Policy.VerifyDefault()
 		}
 
-		return tx.Save(b)
+		return tx.SaveWithLog(b, pending...)
 	})
 	if err != nil {
 		if spawned != nil {
 			// The process is running but the send could not record it: stop
-			// it, and say so in its log, before returning (#436). The
-			// binding's writes rolled back, so the previous state stands and
-			// the planner may resend.
+			// it, and say so in its log, before returning (#436). The binding
+			// and its log entries are one transaction, so nothing of this
+			// round was recorded: the previous state stands and the planner
+			// may resend.
 			kerr := rt.Runner.Kill(context.WithoutCancel(ctx), *spawned)
 			appendLogMarker(rt.Store.BuilderLogPath(name, spawnRound), rt.Now(),
 				"send failed after spawn; builder stopped: "+err.Error())

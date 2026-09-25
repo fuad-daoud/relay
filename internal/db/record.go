@@ -425,6 +425,21 @@ func (t *Tx) EventConfirm(recordID string, seq int, at time.Time, route, newJSON
 	return nil
 }
 
+// EventMaxSeq returns the highest seq recordID has, 0 when it has none, in a
+// write transaction's view. SaveWithLog computes the seqs of the entries it
+// appends from it without leaving the transaction.
+func (t *Tx) EventMaxSeq(recordID string) (int, error) {
+	var n sql.NullInt64
+	if err := t.queryRow(
+		`SELECT MAX(seq) FROM binding_event WHERE record_id = ?`, recordID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("db: event max seq %s: %w", recordID, mapBusy(err))
+	}
+	if !n.Valid {
+		return 0, nil
+	}
+	return int(n.Int64), nil
+}
+
 // EventMaxSeq returns the highest seq recordID has, 0 when it has none.
 func (d *DB) EventMaxSeq(recordID string) (int, error) {
 	var n sql.NullInt64
