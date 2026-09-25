@@ -175,7 +175,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pushMsg:
 		m.stack = append(m.stack, msg.v)
-		return m, nil
+		return m, msg.init
 
 	case popMsg:
 		if len(m.stack) > 1 {
@@ -187,7 +187,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.vs) > 0 {
 			m.stack = msg.vs
 		}
-		return m, nil
+		return m, msg.init
 
 	case noticeMsg:
 		m.notice = msg.text
@@ -375,7 +375,7 @@ func (m Model) View() string {
 		return "loading…"
 	}
 	env := m.env()
-	rows := []string{m.headerView(env), m.contextView(env)}
+	rows := []string{m.headerView(env), fit("", env.Width), m.contextView(env)}
 	if m.err != nil {
 		rows = append(rows, strings.Split(m.errorBlock(env), "\n")...)
 	}

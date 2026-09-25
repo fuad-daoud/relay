@@ -171,8 +171,8 @@ func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 	if got.pane.detail.active != tabDiff {
 		t.Fatalf("expected active tab to remain tabDiff, got %v", got.pane.detail.active)
 	}
-	if got.pane.detail.vp.Width != 100 {
-		t.Fatalf("expected vp.Width 100, got %d", got.pane.detail.vp.Width)
+	if got.pane.detail.vp.Width != got.pane.contentWidth() {
+		t.Fatalf("expected vp.Width %d (contentWidth), got %d", got.pane.contentWidth(), got.pane.detail.vp.Width)
 	}
 	if got.pane.detail.vp.Height != got.pane.viewportHeight() {
 		t.Fatalf("expected vp.Height %d, got %d", got.pane.viewportHeight(), got.pane.detail.vp.Height)

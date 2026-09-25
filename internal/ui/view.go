@@ -49,9 +49,15 @@ type Env struct {
 
 // Stack messages. A view returns these as commands; only the shell acts on
 // them.
-type pushMsg struct{ v View }            // push v on top
-type popMsg struct{}                     // pop the top view (no-op at depth 1)
-type rootMsg struct{ vs []View }         // replace the whole stack (a ':' command); len(vs) >= 1
+type pushMsg struct {
+	v    View
+	init tea.Cmd
+}                    // push v on top
+type popMsg struct{} // pop the top view (no-op at depth 1)
+type rootMsg struct {
+	vs   []View
+	init tea.Cmd
+}                                        // replace the whole stack (a ':' command); len(vs) >= 1
 type noticeMsg struct{ text string }     // set the sticky footer notice
 type prefMsg struct{ key, value string } // key is one of "sort", "dashboard", "dashboard_sort"
 
@@ -65,14 +71,19 @@ type logMsg struct{}
 
 // push returns a command that pushes v and then runs init.
 func push(v View, init tea.Cmd) tea.Cmd {
-	return tea.Batch(func() tea.Msg { return pushMsg{v} }, init)
+	return func() tea.Msg { return pushMsg{v, init} }
 }
 
 // pop returns a command that pops the top view.
 func pop() tea.Cmd { return func() tea.Msg { return popMsg{} } }
 
 // root returns a command that replaces the whole stack.
-func root(vs ...View) tea.Cmd { return func() tea.Msg { return rootMsg{vs} } }
+func root(vs ...View) tea.Cmd { return rootThen(nil, vs...) }
+
+// rootThen returns a command that replaces the whole stack and then runs init.
+func rootThen(init tea.Cmd, vs ...View) tea.Cmd {
+	return func() tea.Msg { return rootMsg{vs, init} }
+}
 
 // notice returns a command that sets the sticky footer notice.
 func notice(text string) tea.Cmd { return func() tea.Msg { return noticeMsg{text} } }

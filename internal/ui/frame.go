@@ -115,10 +115,10 @@ func errorRows(err error, width int) int {
 	return strings.Count(renderError(err, width), "\n") + 1
 }
 
-// bodyHeight is the shell's body height: height minus the header and the
+// bodyHeight is the shell's body height: height minus the header, blank row and the
 // context row, the error block, and the rule and keys rows (§5.3).
 func bodyHeight(env Env) int {
-	h := env.Height - 2 - env.ErrRows - 2
+	h := env.Height - 3 - env.ErrRows - 2
 	if h < 0 {
 		return 0
 	}

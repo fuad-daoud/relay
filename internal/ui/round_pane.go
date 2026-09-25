@@ -8,18 +8,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/usage"
-)
-
-// The pane's own furniture, in rows. Moved here from layout.go (X1), whose
-// only surviving users are the pane's viewport arithmetic and the round
-// view's geometry.
-const (
-	paneHeadRows = 5 // title, planner, builder, tree, blank
-	tabRows      = 2 // tab bar + rule
-	sourceRows   = 2 // source line + blank
 )
 
 // roundPane is one binding's round detail: its state, its fetch
@@ -27,11 +17,12 @@ const (
 // holds exactly one and lends it the fields it cannot own -- src, ctx, now,
 // report, width and rows -- through syncPane on every call.
 type roundPane struct {
-	src    Source
-	ctx    context.Context
-	now    func() time.Time
-	report relevo.Report
-	detail detailModel
+	src     Source
+	ctx     context.Context
+	now     func() time.Time
+	report  relevo.Report
+	detail  detailModel
+	actions bool // Actions != nil: action keys are shown
 
 	// tabInFlight is the pane's own fetch guard, moved from
 	// Model.tabInFlight: true while a fetch is in flight for the tab on
@@ -45,11 +36,25 @@ type roundPane struct {
 	rows  int
 }
 
+// headRows returns the number of furniture rows before the viewport (§2.5).
+func (p roundPane) headRows() int {
+	return 6
+}
+
+// contentWidth is the width allocated for viewport content, accounting for the
+// 5-space left indent (§2.5).
+func (p roundPane) contentWidth() int {
+	cw := p.width - 6
+	if cw < 20 {
+		return 20
+	}
+	return cw
+}
+
 // viewportHeight is the rows left for the viewport after the pane's own
-// furniture, floored at 0. The same formula as Model.viewportHeight
-// (layout.go:103-109).
+// furniture, floored at 0 (§2.5).
 func (p roundPane) viewportHeight() int {
-	h := p.rows - paneHeadRows - tabRows - sourceRows
+	h := p.rows - p.headRows()
 	if h < 0 {
 		return 0
 	}
@@ -94,11 +99,11 @@ func (p roundPane) pointDetailAt(key string) (roundPane, tea.Cmd) {
 	// stamp is best-effort (each Source swallows its own errors) and must
 	// never block re-targeting the pane.
 	p.src.MarkViewed(key)
-	vp := viewport.New(p.width, p.viewportHeight())
+	vp := viewport.New(p.contentWidth(), p.viewportHeight())
 	p.detail = detailModel{
 		name:     key,
 		round:    paneRound(*r),
-		rounds:   r.Round,
+		rounds:   roundsOf(*r),
 		live:     true,
 		active:   p.detail.active,
 		vp:       vp,
@@ -129,7 +134,7 @@ func (p roundPane) pointDetailAtHist(h relevo.HistoryBinding) (roundPane, tea.Cm
 	if p.detail.name == h.Name {
 		return p, nil
 	}
-	vp := viewport.New(p.width, p.viewportHeight())
+	vp := viewport.New(p.contentWidth(), p.viewportHeight())
 	p.detail = detailModel{
 		name:       h.Name,
 		bindingID:  h.ID,
@@ -164,7 +169,11 @@ func (p *roundPane) fillViewport() {
 		return
 	}
 	c := p.detail.cache[p.detail.active]
-	p.detail.vp.SetContent(wrapBody(bodyOf(p.detail.active, c, p.detail.headless), p.detail.vp.Width))
+	w := p.detail.vp.Width
+	if w <= 0 {
+		w = p.contentWidth()
+	}
+	p.detail.vp.SetContent(wrapBody(bodyOf(p.detail.active, c, p.detail.headless), w))
 	p.detail.vp.SetYOffset(y)
 }
 
@@ -188,7 +197,7 @@ func (p roundPane) invalidate() (roundPane, tea.Cmd, bool) {
 
 	p.detail.lastLogTS = r.Last.TS
 	p.detail.round = paneRound(*r)
-	p.detail.rounds = r.Round
+	p.detail.rounds = roundsOf(*r)
 	for _, t := range []tab{tabPlan, tabReport, tabDiff, tabLog} {
 		p.detail.cache[t] = tabContent{} // loaded=false
 		p.detail.scroll[t] = 0           // reset parked offset on invalidation
@@ -293,146 +302,91 @@ func (p roundPane) detailHeader() string {
 	s := fmt.Sprintf("%s · round %d of %d", p.detail.name, p.detail.round, p.detail.rounds)
 	if !p.detail.archivedAt.IsZero() {
 		s += " · archived " + p.detail.archivedAt.Format("2006-01-02")
-	}
-	if p.detail.live && p.detail.round == p.detail.rounds {
-		s += " · live"
+	} else {
+		b := row(p.report, p.detail.name)
+		if b != nil && p.detail.live && p.detail.round == p.detail.rounds && b.RoundEnd.IsZero() {
+			s += " · live"
+		}
 	}
 	return s
 }
 
-// paneHead is the pane's first rows: title with the state pill and the
-// last event, planner, builder, tree, blank -- plus a usage and a spend row
-// when the binding has them, which is why the caller measures it rather than
-// assuming paneHeadRows. Each row is unpadded; view fits them.
-func (p roundPane) paneHead(b *relevo.BindingStatus) []string {
-	label := func(s string) string { return dimStyle.Render(fmt.Sprintf("%-9s", s)) }
-	if b == nil {
-		return []string{"", "", "", "", ""}
-	}
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Render(b.Name) +
-		dimStyle.Render(fmt.Sprintf("  round %d  ", b.Round)) + pillStyle(b.Display).Render(b.Display)
-	if b.Last != nil {
-		right := dimStyle.Render(fmt.Sprintf("%s r%d · %s ago", b.Last.Kind, b.Last.Round, ago(b.Last.TS, p.now())))
-		title = spread(title, right, p.width)
+// tokensLine renders the tokens and facts row at the top of the body (§3.3).
+func (p roundPane) tokensLine(b *relevo.BindingStatus) string {
+	if b == nil || !p.detail.live {
+		left := "   " + faintStyle.Render("no live facts for a released binding")
+		return spread(left, "", p.width)
 	}
 
-	plannerName := b.PlannerName
-	if plannerName == "" {
-		plannerName = b.PlannerID
-	}
-	planner := label("planner") + fmt.Sprintf("%-4s %-9s route %s", plannerName, b.PlannerKind, b.PlannerRoute)
-	// On a serve box the pane belongs to a client, not to this planner: the
-	// client line replaces the planner line (empty OwnerLabel is a planner
-	// row, which renders today's line above).
-	if b.OwnerLabel != "" {
-		planner = label("client") + b.OwnerLabel + "  (" + dimStyle.Render(relevo.ShortOwner(b.Owner)) + ")"
-	}
-
-	var bparts []string
-	if b.Headless != nil {
-		bparts = append(bparts, stateStyle(b.Display).Render(b.BuilderStatus))
-		if b.Headless.PID != 0 {
-			bparts = append(bparts, dimStyle.Render(fmt.Sprintf("pid %d since %s", b.Headless.PID, b.Headless.StartedAt.Local().Format("15:04"))))
-		}
-		bparts = append(bparts, fgStyle.Render("`"+b.BuilderCandidate+"`"))
-	} else {
-		bparts = append(bparts, builderStatusStyle(b.BuilderStatus).Render(b.BuilderStatus))
-	}
-	if b.Consults > 0 {
-		bparts = append(bparts, dimStyle.Render(fmt.Sprintf("%d consults", b.Consults)))
-	}
-	if b.Switches > 0 {
-		bparts = append(bparts, dimStyle.Render(fmt.Sprintf("switched %dx", b.Switches)))
-	}
-	builder := label("builder") + fmt.Sprintf("%-9s ", b.BuilderKind) + strings.Join(bparts, sep)
-
-	rows := []string{title, planner, builder}
-
-	var tparts []string
-	if b.Branch != "" {
-		tparts = append(tparts, fgStyle.Render(b.Branch))
-	} else {
-		tparts = append(tparts, fgStyle.Render(b.CWD))
-	}
-	if b.Dirty {
-		tparts = append(tparts, stateNeedsYouStyle.Render("dirty"))
-	}
-	if lc := b.LastClose; lc != nil {
-		unit := "commits"
-		if lc.Commits == 1 {
-			unit = "commit"
-		}
-		s := fmt.Sprintf("last close r%d: %d %s", lc.Round, lc.Commits, unit)
-		if lc.Tree != "" {
-			s += ", " + lc.Tree
-		}
-		tparts = append(tparts, dimStyle.Render(s))
-	}
-	rows = append(rows, label("tree")+strings.Join(tparts, sep))
-	// usage and spend mirror `relevo status`'s rows (#142): the newest
-	// round's line, then the binding's total. A running round shows its
-	// live figure instead of the last closed one's (#234); spend is
-	// closed rounds only and never shares a cell with the live figure.
+	var rawParts []string
 	if b.LiveUsage != nil {
-		parts := usage.LiveParts(*b.LiveUsage)
-		styled := make([]string, len(parts))
-		for i, p := range parts {
-			switch {
-			case i == 0:
-				styled[i] = accentStyle.Render(p) // the word "live" is the point
-			case i == len(parts)-1:
-				styled[i] = fgStyle.Render(p) // the cost word is the point
-			default:
-				styled[i] = dimStyle.Render(p)
+		rawParts = usage.LiveParts(*b.LiveUsage)
+	} else if b.LastUsage != nil {
+		rawParts = usage.Parts(*b.LastUsage)
+	}
+
+	body := "tokens "
+	if len(rawParts) > 0 {
+		var filtered []string
+		for i, part := range rawParts {
+			isLast := i == len(rawParts)-1
+			if isLast && strings.HasPrefix(part, "unknown") {
+				part = "no price"
+			}
+			if strings.HasPrefix(part, "in ") ||
+				strings.HasPrefix(part, "cache ") ||
+				strings.HasPrefix(part, "out ") ||
+				(strings.HasPrefix(part, "write ") && part != "write 0") ||
+				isLast {
+				filtered = append(filtered, part)
 			}
 		}
-		rows = append(rows, label("usage")+strings.Join(styled, sep))
-	} else if b.LastUsage != nil {
-		parts := usage.Parts(*b.LastUsage)
-		styled := make([]string, len(parts))
-		for i, p := range parts {
-			styled[i] = dimStyle.Render(p)
-		}
-		styled[len(styled)-1] = fgStyle.Render(parts[len(parts)-1]) // the cost word is the point
-		rows = append(rows, label("usage")+strings.Join(styled, sep))
-	}
-	if b.Spend != nil {
-		rows = append(rows, label("spend")+usage.SpendLine(*b.Spend))
-	}
-	rows = append(rows, "")
-	return rows
-}
-
-// histPaneHead is paneHead for a hist (archived) detail: the identity line
-// (detailHeader) alone, padded to paneHead's row budget -- an archived
-// binding carries no live planner/builder/tree facts to show.
-func (p roundPane) histPaneHead() []string {
-	return []string{fgStyle.Render(p.detailHeader()), "", "", "", ""}
-}
-
-// tabBar is the five tab words and, under them, a rule whose heavy accent
-// segment sits under the active word (spec §3.4). No numbers: 1-5 still
-// switch, the footer says so.
-func (p roundPane) tabBar() []string {
-	var words, rule []string
-	for i, t := range tabTitles {
-		label := " " + t + " "
-		if tab(i) == p.detail.active {
-			words = append(words, activeTabStyle.Render(label))
-			rule = append(rule, accentStyle.Render(strings.Repeat("━", lipgloss.Width(label))))
+		if len(filtered) > 0 {
+			body += strings.Join(filtered, " · ")
 		} else {
-			words = append(words, inactiveTabStyle.Render(label))
-			rule = append(rule, ruleStyle.Render(strings.Repeat("─", lipgloss.Width(label))))
+			body += "no usage yet"
+		}
+	} else {
+		body += "no usage yet"
+	}
+
+	if b.LastClose != nil && b.LastClose.Commits > 0 {
+		unit := "commits"
+		if b.LastClose.Commits == 1 {
+			unit = "commit"
+		}
+		body += fmt.Sprintf(" · +%d %s", b.LastClose.Commits, unit)
+	}
+	if s := spendCell(*b); s != "" {
+		body += " · spend " + s
+	}
+
+	left := "   " + faintStyle.Render(body)
+
+	var right string
+	if b.Headless != nil && b.Headless.PID != 0 {
+		right = faintStyle.Render(fmt.Sprintf("pid %d since %s", b.Headless.PID, b.Headless.StartedAt.Local().Format("15:04"))) + "  "
+	}
+
+	return spread(left, right, p.width)
+}
+
+// tabsRow renders the pill tabs and the round stepper on the right (§2.4).
+func (p roundPane) tabsRow() string {
+	words := make([]string, len(tabTitles))
+	for i, t := range tabTitles {
+		if tab(i) == p.detail.active {
+			words[i] = chip(chipAccentStyle, t)
+		} else {
+			words[i] = mutedStyle.Render(chip(normalStyle, t))
 		}
 	}
-	gap := ruleStyle.Render("──")
-	line := strings.Join(rule, gap)
-	if pad := p.width - lipgloss.Width(line); pad > 0 {
-		line += ruleStyle.Render(strings.Repeat("─", pad))
-	}
-	// tabSpans (mouse.go) assumes this two-space join to compute each
-	// word's column span; change both together.
-	return []string{strings.Join(words, "  "), line}
+	left := "  " + strings.Join(words, "   ")
+
+	rightText := fmt.Sprintf("  r%d of %d  ", p.detail.round, p.detail.rounds)
+	right := faintStyle.Render("round  ") + chip(kbdStyle, "[") + textStyle.Bold(true).Render(rightText) + chip(kbdStyle, "]") + "  "
+
+	return spread(left, right, p.width)
 }
 
 // sourceLine says, in one faint line, what the viewport is showing.
@@ -517,21 +471,19 @@ func (p roundPane) hintLine(b *relevo.BindingStatus) (string, bool) {
 	return accentStyle.Render("relevo: ") + fgStyle.Render(b.Waiting.Hint), true
 }
 
-// view draws exactly rows rows at width: head, tabs, source, blank,
-// viewport, with the hint replacing the last viewport row when it applies.
-// The viewport is resized to what is left after a head that grew by foreign
-// rows. Model.paneView keeps the empty-fleet branch.
+// view draws exactly rows rows at width (§2.5, §5).
 func (p roundPane) view(width int) string {
 	b := row(p.report, p.detail.name)
-	rows := []string{}
-	if p.detail.name != "" && !p.detail.live {
-		rows = append(rows, p.histPaneHead()...)
-	} else {
-		rows = append(rows, p.paneHead(b)...)
+	out := []string{
+		p.tokensLine(b),
+		"",
+		p.tabsRow(),
+		"",
+		"     " + p.sourceLine(),
+		"",
 	}
-	rows = append(rows, p.tabBar()...)
-	rows = append(rows, p.sourceLine(), "")
-	budget := p.rows - len(rows)
+
+	budget := p.rows - len(out)
 	if budget < 0 {
 		budget = 0
 	}
@@ -541,20 +493,23 @@ func (p roundPane) view(width int) string {
 		vpRows--
 	}
 	vp := p.detail.vp
-	vp.Width = width
+	vp.Width = p.contentWidth()
 	vp.Height = vpRows
 	if vpRows > 0 {
-		rows = append(rows, strings.Split(vp.View(), "\n")...)
+		vpLines := strings.Split(vp.View(), "\n")
+		for _, l := range vpLines {
+			out = append(out, "     "+l)
+		}
 	}
 	if hasHint && budget > 0 {
-		rows = append(rows, hint)
+		out = append(out, hint)
 	}
-	for len(rows) < p.rows {
-		rows = append(rows, "")
+	for len(out) < p.rows {
+		out = append(out, "")
 	}
-	rows = rows[:p.rows]
-	for i := range rows {
-		rows[i] = fit(rows[i], width)
+	out = out[:p.rows]
+	for i := range out {
+		out[i] = fit(out[i], width)
 	}
-	return strings.Join(rows, "\n")
+	return strings.Join(out, "\n")
 }

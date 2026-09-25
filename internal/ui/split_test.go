@@ -307,8 +307,9 @@ func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 }
 
 // TestPaneHeadShowsClientLine: an owner-labelled row's planner line is
+// TestContextShowsClientLine: an owner-labelled row's planner line is
 // replaced by the client line; a planner row keeps the planner line.
-func TestPaneHeadShowsClientLine(t *testing.T) {
+func TestContextShowsClientLine(t *testing.T) {
 	id := "SHA256:VLERFMZnvN5HSw/GCBr6FXPEgs4QeAfdU95BUhMMqI0"
 
 	client := relevo.BindingStatus{
@@ -316,12 +317,15 @@ func TestPaneHeadShowsClientLine(t *testing.T) {
 		BuilderKind: "agy", BuilderStatus: "blocked",
 	}
 	p := paneModel(t, client, tabReport)
-	head := stripANSI(strings.Join(p.paneHead(&client), "\n"))
-	if !strings.Contains(head, "client") || !strings.Contains(head, "zen") {
-		t.Errorf("no client line:\n%s", head)
+	rv := roundView{pane: p}
+	env := testEnv(p.src, relevo.Report{Bindings: []relevo.BindingStatus{client}}, p.width, p.rows)
+	ctxLeft, _ := rv.Context(env)
+	ctx := stripANSI(ctxLeft)
+	if !strings.Contains(ctx, "client zen") {
+		t.Errorf("no client line:\n%s", ctx)
 	}
-	if strings.Contains(head, "planner") {
-		t.Errorf("the planner line must be replaced:\n%s", head)
+	if strings.Contains(ctx, "planner") {
+		t.Errorf("the planner line must be replaced:\n%s", ctx)
 	}
 
 	planner := relevo.BindingStatus{
@@ -330,12 +334,15 @@ func TestPaneHeadShowsClientLine(t *testing.T) {
 		PlannerID: "planner-9f2", PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel",
 	}
 	p = paneModel(t, planner, tabReport)
-	head = stripANSI(strings.Join(p.paneHead(&planner), "\n"))
-	if !strings.Contains(head, "planner") {
-		t.Errorf("planner row must keep its planner line:\n%s", head)
+	rv = roundView{pane: p}
+	env = testEnv(p.src, relevo.Report{Bindings: []relevo.BindingStatus{planner}}, p.width, p.rows)
+	ctxLeft, _ = rv.Context(env)
+	ctx = stripANSI(ctxLeft)
+	if !strings.Contains(ctx, "architect-1") {
+		t.Errorf("planner row must keep its planner line:\n%s", ctx)
 	}
-	if strings.Contains(head, "client") {
-		t.Errorf("planner row must not show a client line:\n%s", head)
+	if strings.Contains(ctx, "client") {
+		t.Errorf("planner row must not show a client line:\n%s", ctx)
 	}
 }
 
@@ -350,27 +357,18 @@ func TestPaneHeadUsageAndSpendRows(t *testing.T) {
 	b.LastUsage = &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 9 * 60_000,
 		Tokens: usage.Tokens{In: 100, CacheRead: 15_000_000, Out: 55_000}, Cost: usage.Cost{USD: 4.71, Basis: usage.Measured}, Samples: 1}
 	b.Spend = &usage.Spend{Rounds: 2, Measured: 4.71, Unknown: 1}
-	head := p.paneHead(&b)
-	joined := stripANSI(strings.Join(head, "\n"))
-	if !strings.Contains(joined, "usage    claude-sonnet-5 · 9m · in 100 · cache 15.0M (100%) · write 0 · out 55k · $4.71") {
-		t.Errorf("no usage row in the block's own idiom:\n%s", joined)
+	tokens := stripANSI(p.tokensLine(&b))
+	if !strings.Contains(tokens, "tokens in 100 · cache 15.0M (100%) · out 55k · $4.71") {
+		t.Errorf("no usage row in the block's own idiom:\n%s", tokens)
 	}
-	if !strings.Contains(joined, "spend    2 rounds · $4.71 · 1 unknown") {
-		t.Errorf("no spend row:\n%s", joined)
-	}
-	if head[len(head)-1] != "" {
-		t.Error("the block still ends with its blank row")
-	}
-	b.LastUsage, b.Spend = nil, nil
-	p2 := paneModel(t, b, tabReport)
-	if n := len(p2.paneHead(&b)); n != 5 {
-		t.Errorf("without usage the block is 5 rows, got %d", n)
+	if !strings.Contains(tokens, "spend $4.71") {
+		t.Errorf("no spend row:\n%s", tokens)
 	}
 }
 
-// TestPaneHeadLiveUsageRow pins the live figure's place in the header
-// (#234): a running round's `usage` row is the live one, exactly one, and
-// the closed round's row does not appear beside it; spend keeps its row.
+// TestPaneHeadLiveUsageRow pins the live figure's place in the card
+// (#234): a running round's `tokens` row is the live one, exactly one, and
+// the closed round's row does not appear beside it; spend keeps its place.
 func TestPaneHeadLiveUsageRow(t *testing.T) {
 	var b relevo.BindingStatus
 	for _, r := range threeRows() {
@@ -385,18 +383,17 @@ func TestPaneHeadLiveUsageRow(t *testing.T) {
 		Tokens: usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 3_100, Out: 8_200},
 		Cost:   usage.Cost{USD: 0.04, Basis: usage.Measured}, Samples: 3}
 	b.Spend = &usage.Spend{Rounds: 2, Measured: 0.16}
-	head := p.paneHead(&b)
-	joined := stripANSI(strings.Join(head, "\n"))
-	if n := strings.Count(joined, "usage    "); n != 1 {
-		t.Errorf("%d usage rows, want exactly one:\n%s", n, joined)
+	tokens := stripANSI(p.tokensLine(&b))
+	if n := strings.Count(tokens, "tokens "); n != 1 {
+		t.Errorf("%d usage rows, want exactly one:\n%s", n, tokens)
 	}
-	if !strings.Contains(joined, "usage    live · glm-5.3-flash") {
-		t.Errorf("the usage row must be the live one:\n%s", joined)
+	if !strings.Contains(tokens, "tokens in 2k · cache 91k (95%) · write 3k · out 8k · $0.04") {
+		t.Errorf("the usage row must be the live one:\n%s", tokens)
 	}
-	if strings.Contains(joined, "gemini-3-pro") || strings.Contains(joined, "6m") {
-		t.Errorf("the closed round's row must yield to the live one:\n%s", joined)
+	if strings.Contains(tokens, "gemini-3-pro") || strings.Contains(tokens, "6m") {
+		t.Errorf("the closed round's row must yield to the live one:\n%s", tokens)
 	}
-	if !strings.Contains(joined, "spend    2 rounds · $0.16") {
-		t.Errorf("no spend row:\n%s", joined)
+	if !strings.Contains(tokens, "spend $0.16") {
+		t.Errorf("no spend row:\n%s", tokens)
 	}
 }

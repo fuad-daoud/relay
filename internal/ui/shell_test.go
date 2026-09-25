@@ -1,8 +1,12 @@
 package ui
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -208,5 +212,167 @@ func TestHelpListsGlobalAndViewKeys(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("help must list %q:\n%s", want, body)
 		}
+	}
+}
+
+type sentinelMsg struct{}
+
+// TestPushDeliversInitAfterPush verifies that push returns a pushMsg, not a
+// tea.BatchMsg, and that Model.Update grows the stack and returns the init cmd.
+func TestPushDeliversInitAfterPush(t *testing.T) {
+	v := fakeView{}
+	init := func() tea.Msg { return sentinelMsg{} }
+	cmd := push(v, init)
+	msg := cmd()
+	pushM, ok := msg.(pushMsg)
+	if !ok {
+		t.Fatalf("push(v, init) result must be pushMsg, got %T", msg)
+	}
+	if _, ok := msg.(tea.BatchMsg); ok {
+		t.Fatalf("push(v, init) must not return tea.BatchMsg")
+	}
+
+	m := splitModel(t, 140, 40, relevo.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
+	origDepth := len(m.stack)
+	res, returnedCmd := m.Update(pushM)
+	m = res.(Model)
+	if len(m.stack) != origDepth+1 {
+		t.Errorf("stack depth = %d, want %d", len(m.stack), origDepth+1)
+	}
+	if returnedCmd == nil {
+		t.Fatal("expected non-nil cmd from pushMsg")
+	}
+	gotSentinel := returnedCmd()
+	if _, ok := gotSentinel.(sentinelMsg); !ok {
+		t.Errorf("cmd produced %T, want sentinelMsg", gotSentinel)
+	}
+}
+
+// TestRootThenDeliversInitAfterRoot verifies that rootThen returns a rootMsg,
+// not a tea.BatchMsg, and that Model.Update replaces the stack and returns the init cmd.
+func TestRootThenDeliversInitAfterRoot(t *testing.T) {
+	v := fakeView{}
+	init := func() tea.Msg { return sentinelMsg{} }
+	cmd := rootThen(init, v)
+	msg := cmd()
+	rootM, ok := msg.(rootMsg)
+	if !ok {
+		t.Fatalf("rootThen(init, v) result must be rootMsg, got %T", msg)
+	}
+	if _, ok := msg.(tea.BatchMsg); ok {
+		t.Fatalf("rootThen(init, v) must not return tea.BatchMsg")
+	}
+
+	m := splitModel(t, 140, 40, relevo.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
+	m.stack = append(m.stack, fakeView{}, fakeView{})
+	res, returnedCmd := m.Update(rootM)
+	m = res.(Model)
+	if len(m.stack) != 1 {
+		t.Errorf("stack depth = %d, want 1", len(m.stack))
+	}
+	if returnedCmd == nil {
+		t.Fatal("expected non-nil cmd from rootMsg")
+	}
+	gotSentinel := returnedCmd()
+	if _, ok := gotSentinel.(sentinelMsg); !ok {
+		t.Errorf("cmd produced %T, want sentinelMsg", gotSentinel)
+	}
+}
+
+// TestOpenRoundReplyNeverBeatsPush:
+// - From :fleet with a working row and a plan file on a temp store, press enter. Execute the returned cmd once.
+// - The message must be a pushMsg, with no tabMsg among the messages that cmd produces.
+// - Feed it to Update, run the returned init, and feed its tabMsg to Update. The plan tab is loaded and tabInFlight is false.
+func TestOpenRoundReplyNeverBeatsPush(t *testing.T) {
+	st := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: st}
+	name := "webshop"
+	b := newTestBinding(name)
+	b.Round = 1
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	planPath := st.PlanPath(name, 1)
+	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, []byte("# Round 1 plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep := relevo.Report{
+		Bindings: []relevo.BindingStatus{
+			{Name: name, Round: 1, Display: "ACTIVE", BuilderStatus: "working"},
+		},
+	}
+	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Second})
+	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	m = res.(Model)
+	res, _ = m.Update(statusMsg{report: rep})
+	m = res.(Model)
+
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = res.(Model)
+	if cmd == nil {
+		t.Fatal("expected cmd from enter")
+	}
+	msg := cmd()
+	pushM, ok := msg.(pushMsg)
+	if !ok {
+		t.Fatalf("expected pushMsg from enter cmd, got %T", msg)
+	}
+	if _, ok := msg.(tea.BatchMsg); ok {
+		t.Fatalf("expected pushMsg, not tea.BatchMsg")
+	}
+	if _, ok := msg.(tabMsg); ok {
+		t.Fatalf("cmd must not produce tabMsg")
+	}
+
+	res, initCmd := m.Update(pushM)
+	m = res.(Model)
+	if len(m.stack) != 2 {
+		t.Fatalf("stack depth = %d, want 2", len(m.stack))
+	}
+	if initCmd == nil {
+		t.Fatal("expected init cmd from pushMsg")
+	}
+	initMsg := initCmd()
+	tMsg, ok := initMsg.(tabMsg)
+	if !ok {
+		t.Fatalf("expected tabMsg from init cmd, got %T", initMsg)
+	}
+
+	res, _ = m.Update(tMsg)
+	m = res.(Model)
+
+	rv, ok := m.top().(roundView)
+	if !ok {
+		t.Fatalf("top view must be roundView, got %T", m.top())
+	}
+	if !rv.pane.detail.cache[tabPlan].loaded {
+		t.Error("plan tab must be loaded")
+	}
+	if rv.pane.tabInFlight {
+		t.Error("tabInFlight must be false")
+	}
+}
+
+func TestFrameBlankRowUnderHeader(t *testing.T) {
+	m := splitModel(t, 132, 34,
+		relevo.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"},
+	)
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("Model.View() produced %d lines, want at least 3", len(lines))
+	}
+	// line index 1 is blank (spaces only)
+	if strings.Trim(lines[1], " ") != "" || len(lines[1]) == 0 {
+		t.Errorf("line index 1 must be blank (spaces only), got %q", lines[1])
+	}
+	// line index 2 is the context row
+	ctxLeft, ctxRight := m.top().Context(m.env())
+	expectedContext := fit(spread(ctxLeft, ctxRight, 132), 132)
+	if lines[2] != expectedContext {
+		t.Errorf("line index 2 must be context row:\n got  %q\n want %q", lines[2], expectedContext)
 	}
 }

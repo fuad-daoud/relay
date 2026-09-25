@@ -7,10 +7,12 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/muesli/termenv"
 )
 
 func TestFleetGroupsOrderAndOmission(t *testing.T) {
@@ -335,5 +337,37 @@ func TestFleetCardCommitPlural(t *testing.T) {
 	plain2 := stripANSI(card2)
 	if !strings.Contains(plain2, "+2 commits") {
 		t.Errorf("Commits=2 must render '+2 commits', got:\n%s", plain2)
+	}
+}
+
+func TestFleetUnreadTintOnlyOnIdle(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	defer lipgloss.SetColorProfile(orig)
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	bIdle := relevo.BindingStatus{
+		Name:          "b-idle",
+		Display:       "ACTIVE",
+		BuilderStatus: "idle",
+		Unread:        true,
+	}
+	bDone := relevo.BindingStatus{
+		Name:    "b-done",
+		Display: "DONE",
+		Unread:  true,
+	}
+
+	idleLine := fleetRowLine(bIdle, groupIdle, false, railNow, 120)
+	doneLine := fleetRowLine(bDone, groupDone, false, railNow, 120)
+
+	accentEscape := strings.Split(accentStyle.Render("X"), "X")[0]
+	if accentEscape == "" {
+		t.Fatalf("accent colour escape sequence must not be empty in TrueColor")
+	}
+	if !strings.Contains(idleLine, accentEscape) {
+		t.Errorf("unread idle row line must contain accent colour escape %q, got: %q", accentEscape, idleLine)
+	}
+	if strings.Contains(doneLine, accentEscape) {
+		t.Errorf("unread done row line must NOT contain accent colour escape %q, got: %q", accentEscape, doneLine)
 	}
 }
