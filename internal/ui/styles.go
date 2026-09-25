@@ -13,11 +13,14 @@ var (
 	warnStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f2b84b"))
 	greenStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#5fd08f"))
 	redStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff6b81"))
+	dangerStyle = redStyle
+	shadeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#2a2f39"))
 
 	selBandStyle    = lipgloss.NewStyle().Background(lipgloss.Color("#1a1f28"))
 	chipWarnStyle   = lipgloss.NewStyle().Background(lipgloss.Color("#3a2e14")).Foreground(lipgloss.Color("#f2b84b"))
 	chipGreenStyle  = lipgloss.NewStyle().Background(lipgloss.Color("#15301f")).Foreground(lipgloss.Color("#5fd08f"))
 	chipAccentStyle = lipgloss.NewStyle().Background(lipgloss.Color("#6ea8fe")).Foreground(lipgloss.Color("#0f1115")).Bold(true)
+	chipDangerStyle = lipgloss.NewStyle().Background(lipgloss.Color("#3a1820")).Foreground(lipgloss.Color("#ff6b81")).Bold(true)
 	kbdStyle        = lipgloss.NewStyle().Background(lipgloss.Color("#1d2129")).Foreground(lipgloss.Color("#e6e8ec"))
 
 	// Re-pointed old names so other views survive without code changes (§4).

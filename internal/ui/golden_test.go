@@ -594,12 +594,41 @@ func TestGoldenViews(t *testing.T) {
 			},
 		},
 		{
+			name: "confirm-stop-real-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenActionModel(t, 132, 34, &fakeActions{}, realFleetReport())
+				m = pointer(t, m, "spool-db")
+				res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+				return drain(t, res.(Model), cmd)
+			},
+		},
+		{
 			name: "prompt-gate", width: 140, height: 40,
 			build: func(t *testing.T) Model {
 				m := goldenActionModel(t, 140, 40, &fakeActions{},
 					relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
 				m = pointer(t, m, "worker")
 				res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+				return drain(t, res.(Model), cmd)
+			},
+		},
+		{
+			name: "command-real-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenActionModel(t, 132, 34, &fakeActions{}, realFleetReport())
+				res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+				m = res.(Model)
+				res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+				return res.(Model)
+			},
+		},
+		{
+			name: "retry-list-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				a := &fakeActions{candidates: []string{"gemini-3.8-flash-high", "deepseek-v4.1-flash", "claude-sonnet-5"}}
+				m := goldenActionModel(t, 132, 34, a, realFleetReport())
+				m = pointer(t, m, "spool-db")
+				res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 				return drain(t, res.(Model), cmd)
 			},
 		},

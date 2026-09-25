@@ -371,3 +371,17 @@ func TestFleetUnreadTintOnlyOnIdle(t *testing.T) {
 		t.Errorf("unread done row line must NOT contain accent colour escape %q, got: %q", accentEscape, doneLine)
 	}
 }
+
+func TestFleetCardNoEmptyPart(t *testing.T) {
+	b := relevo.BindingStatus{
+		Name:    "bare-row",
+		Display: "ACTIVE",
+	}
+	f := fleetView{}
+	env := Env{}
+	card := f.cardLines(env, b, 140)
+	plain := stripANSI(strings.Join(card, "\n"))
+	if strings.Contains(plain, "·    ·") {
+		t.Errorf("card contains empty part '·    ·':\n%s", plain)
+	}
+}

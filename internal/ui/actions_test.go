@@ -272,6 +272,9 @@ func TestUnbindKeyConfirmsThenCalls(t *testing.T) {
 	}
 }
 
+// TestGatePromptValidatesDuration: the gate form's duration rule. Ported for
+// O3 (gate's two chained prompts became one form): an invalid duration keeps
+// the form open on `for`; a valid one submits both fields at once.
 func TestGatePromptValidatesDuration(t *testing.T) {
 	fa := &fakeActions{result: Result{Text: "gated", Refresh: true}}
 	m := actionModel(t, fa, relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE", BuilderCandidate: "opencode/cline-pass/glm"})
@@ -279,39 +282,34 @@ func TestGatePromptValidatesDuration(t *testing.T) {
 	res, cmd0 := m.Update(key('g'))
 	m = drain(t, res.(Model), cmd0)
 	if m.overlay == nil {
-		t.Fatal("g must open the gate prompt")
+		t.Fatal("g must open the gate form")
+	}
+	fb, ok := m.overlay.(formBox)
+	if !ok {
+		t.Fatalf("g must open a formBox, got %T", m.overlay)
 	}
 
-	// An invalid duration keeps the prompt open with the error.
-	pb, ok := m.overlay.(promptBox)
-	if !ok {
-		t.Fatalf("g must open a promptBox, got %T", m.overlay)
-	}
-	pb.input.SetValue("nope")
-	m.overlay = pb
+	// An invalid duration keeps the form open with the error.
+	fb.fields[0].input.SetValue("nope")
+	m.overlay = fb
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = res.(Model)
-	kept, ok := m.overlay.(promptBox)
+	kept, ok := m.overlay.(formBox)
 	if !ok {
-		t.Fatalf("an invalid duration must keep the prompt open, got %T", m.overlay)
+		t.Fatalf("an invalid duration must keep the form open, got %T", m.overlay)
 	}
 	if kept.err == "" {
 		t.Error("an invalid duration must show the validation error")
 	}
-
-	// A valid duration advances to the reason prompt.
-	kept.input.SetValue("2h")
-	m.overlay = kept
-	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = drain(t, res.(Model), cmd)
-	reason, ok := m.overlay.(promptBox)
-	if !ok {
-		t.Fatalf("a valid duration must open the reason prompt, got %T", m.overlay)
+	if kept.focus != 0 {
+		t.Errorf("an invalid duration must focus `for`, got focus %d", kept.focus)
 	}
 
-	reason.input.SetValue("quota")
-	m.overlay = reason
-	res, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// A valid duration and reason submit together.
+	kept.fields[0].input.SetValue("2h")
+	kept.fields[1].input.SetValue("quota")
+	m.overlay = kept
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = drain(t, res.(Model), cmd)
 
 	if len(fa.gates) != 1 {
@@ -515,6 +513,9 @@ func TestEnsureYouIdempotent(t *testing.T) {
 
 // --- round 2: send, bind, retry, report ready ---------------------------
 
+// TestSendPromptThenConfirm: the picker's validation and confirm. Ported for
+// O4 (the bare plan-file prompt became the picker): a missing file keeps the
+// picker open with the error, a real file opens the existing send confirm.
 func TestSendPromptThenConfirm(t *testing.T) {
 	dir := t.TempDir()
 	plan := filepath.Join(dir, "plan.md")
@@ -527,22 +528,22 @@ func TestSendPromptThenConfirm(t *testing.T) {
 
 	res, cmd := m.Update(key('s'))
 	m = drain(t, res.(Model), cmd)
-	pb, ok := m.overlay.(promptBox)
+	pb, ok := m.overlay.(sendPicker)
 	if !ok {
-		t.Fatalf("s must open the plan-file prompt, got %T", m.overlay)
+		t.Fatalf("s must open the send picker, got %T", m.overlay)
 	}
 
-	// A file that is not there keeps the prompt open with the error.
+	// A file that is not there keeps the picker open with the error.
 	pb.input.SetValue(filepath.Join(dir, "nope.md"))
 	m.overlay = pb
 	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = res.(Model)
-	kept, ok := m.overlay.(promptBox)
+	kept, ok := m.overlay.(sendPicker)
 	if !ok {
-		t.Fatalf("a missing file must keep the prompt open, got %T", m.overlay)
+		t.Fatalf("a missing file must keep the picker open, got %T", m.overlay)
 	}
 	if kept.err == "" {
-		t.Error("a missing file must show the error under the input")
+		t.Error("a missing file must show the error")
 	}
 	if len(fa.sends) != 0 {
 		t.Fatalf("a missing file must send nothing, sends = %v", fa.sends)
@@ -680,6 +681,9 @@ func TestRetryConfirmText(t *testing.T) {
 	}
 }
 
+// TestRetryKeyCarriesTheChosenCandidate: the list includes the current
+// candidate, disabled. Ported for O5 (the tab-cycled retry prompt became the
+// candidate list): enter on an enabled row opens the confirm and Retry.
 func TestRetryKeyCarriesTheChosenCandidate(t *testing.T) {
 	fa := &fakeActions{candidates: []string{"glm", "haiku"}}
 	m := actionModel(t, fa, relevo.BindingStatus{
@@ -689,16 +693,17 @@ func TestRetryKeyCarriesTheChosenCandidate(t *testing.T) {
 
 	res, cmd := m.Update(key('r'))
 	m = drain(t, res.(Model), cmd)
-	pb, ok := m.overlay.(promptBox)
+	lb, ok := m.overlay.(listBox)
 	if !ok {
-		t.Fatalf("r must open the retry prompt, got %T", m.overlay)
+		t.Fatalf("r must open the retry list, got %T", m.overlay)
 	}
-	if len(pb.choices) != 1 || pb.choices[0] != "haiku" {
-		t.Fatalf("retry choices = %v, want the role's candidates without the current one", pb.choices)
+	if len(lb.items) != 2 {
+		t.Fatalf("items = %+v, want the role's candidates including the current one", lb.items)
+	}
+	if !lb.items[0].disabled || lb.sel != 1 {
+		t.Fatalf("the current candidate must be disabled and sel must start on the ready one: %+v sel=%d", lb.items, lb.sel)
 	}
 
-	pb.input.SetValue("haiku")
-	m.overlay = pb
 	res, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = drain(t, res.(Model), cmd)
 	if _, ok := m.overlay.(confirmBox); !ok {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -37,22 +38,65 @@ type overlay interface {
 	view(width int) []string
 }
 
-// confirmBox is a one-line yes/no confirm: y runs onYes, n and esc cancel
+type modalOverlay interface {
+	modal(width int) (title string, rows []string, want int, danger bool)
+}
+
+// overlayKeyer is optionally implemented by an overlay that shows its own keys
+// in the footer while it is up (§2.1).
+type overlayKeyer interface{ keys() []KeyHelp }
+
+// confirmBox is a one-line yes/no confirm: y runs onYes, any other key cancels
 // (§3, §4.3).
 type confirmBox struct {
-	title string
-	lines []string
-	onYes tea.Cmd
+	kind   string
+	yes    string
+	danger bool
+	title  string
+	lines  []string
+	onYes  tea.Cmd
 }
 
 func (c confirmBox) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 	switch k.String() {
 	case "y", "Y":
 		return c, c.onYes, true
-	case "n", "N", "esc":
+	default:
 		return c, nil, true
 	}
-	return c, nil, false
+}
+
+func (c confirmBox) modal(width int) (string, []string, int, bool) {
+	kind := c.kind
+	if kind == "" {
+		kind = "confirm"
+	}
+	yes := c.yes
+	if yes == "" {
+		yes = "yes"
+	}
+	yStyle := kbdStyle
+	if c.danger {
+		yStyle = chipDangerStyle
+	}
+	buttons := chip(yStyle, "y") + " " + mutedStyle.Render(yes) +
+		"      " + chip(kbdStyle, "n") + mutedStyle.Render(" cancel") +
+		"      " + faintStyle.Render("any other key cancels")
+
+	rows := []string{
+		"",
+		textStyle.Bold(true).Render(c.title),
+		"",
+	}
+	for _, l := range c.lines {
+		rows = append(rows, mutedStyle.Render(l))
+	}
+	rows = append(rows,
+		"",
+		buttons,
+		"",
+	)
+	return kind, rows, 72, c.danger
 }
 
 func (c confirmBox) view(width int) []string {
@@ -61,6 +105,15 @@ func (c confirmBox) view(width int) []string {
 		out = append(out, fit(dimStyle.Render(l), width))
 	}
 	return out
+}
+
+// keys is the confirm's footer: y runs it, n cancels (§2.1).
+func (c confirmBox) keys() []KeyHelp {
+	yes := c.yes
+	if yes == "" {
+		yes = "yes"
+	}
+	return []KeyHelp{{"y", yes}, {"n", "cancel"}}
 }
 
 // promptBox is a single-line input, optionally with a choice list tab cycles
@@ -72,6 +125,7 @@ func (c confirmBox) view(width int) []string {
 // become, so a path prompt lists and cycles the directory's entries (§4.5).
 type promptBox struct {
 	title   string
+	kind    string // box title; "" means "input" (§3.6)
 	input   textinput.Model
 	choices []string
 	onEnter func(value string) tea.Cmd
@@ -86,9 +140,11 @@ type promptBox struct {
 }
 
 // newPromptInput builds the prompt's input, focused, with no prompt string of
-// its own: the box's title is the question.
+// its own: the box's title is the question, and the modals already label their
+// fields (§2.4).
 func newPromptInput() textinput.Model {
 	in := textinput.New()
+	in.Prompt = ""
 	in.Focus()
 	return in
 }
@@ -157,6 +213,40 @@ func (p promptBox) view(width int) []string {
 	return out
 }
 
+// modal renders the prompt as a boxed modal (§3.6): blank, the title in text,
+// blank, the input, the choices hint, the error, blank.
+func (p promptBox) modal(width int) (string, []string, int, bool) {
+	const want = 72
+	kind := p.kind
+	if kind == "" {
+		kind = "input"
+	}
+	rows := []string{
+		"",
+		textStyle.Render(p.title),
+		"",
+		p.input.View(),
+	}
+	if len(p.choices) > 0 {
+		rows = append(rows, faintStyle.Render("tab cycles: "+strings.Join(p.choices, " · ")))
+	}
+	if p.err != "" {
+		rows = append(rows, errorStyle.Render(p.err))
+	}
+	rows = append(rows, "")
+	return kind, rows, want, false
+}
+
+// keys is the prompt's footer: enter, tab when it can complete, esc (§3.6).
+func (p promptBox) keys() []KeyHelp {
+	keys := []KeyHelp{{"enter", "ok"}}
+	if len(p.choices) > 0 || p.complete != nil {
+		keys = append(keys, KeyHelp{"tab", "complete"})
+	}
+	keys = append(keys, KeyHelp{"esc", "cancel"})
+	return keys
+}
+
 // plannerConfirmLine names the planner a confirm affects, when that planner
 // is neither the human at the cockpit nor empty (§4.3). wait is the phrase
 // that follows the name.
@@ -175,7 +265,6 @@ func stopConfirmLines(b relevo.BindingStatus, now time.Time) []string {
 		lines = append(lines, l)
 	}
 	lines = append(lines, joinFacts(actorCell(b)+" on "+candidateText(b), nowCell(b, now), spendCell(b)))
-	lines = append(lines, "y stop · n cancel")
 	return lines
 }
 
@@ -185,7 +274,6 @@ func doneConfirmLines(b relevo.BindingStatus) []string {
 	if l := plannerConfirmLine(b, "owns this binding"); l != "" {
 		lines = append(lines, l)
 	}
-	lines = append(lines, "y done · n cancel")
 	return lines
 }
 
@@ -195,7 +283,6 @@ func unbindConfirmLines(b relevo.BindingStatus) []string {
 	if l := plannerConfirmLine(b, "owns this binding"); l != "" {
 		lines = append(lines, l)
 	}
-	lines = append(lines, "y unbind · n cancel")
 	return lines
 }
 
@@ -214,8 +301,11 @@ func joinFacts(parts ...string) string {
 func stopCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 	key := b.Key()
 	return openOverlay(confirmBox{
-		title: fmt.Sprintf("Stop %s round %d?", key, b.Round),
-		lines: stopConfirmLines(b, env.Now),
+		kind:   "stop",
+		yes:    "stop the round",
+		danger: true,
+		title:  fmt.Sprintf("Stop %s round %d?", key, b.Round),
+		lines:  stopConfirmLines(b, env.Now),
 		onYes: runAction(env.Ctx, "stop", key, func(ctx context.Context) Result {
 			return env.Actions.Stop(ctx, key)
 		}),
@@ -226,8 +316,11 @@ func stopCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 func doneCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 	key := b.Key()
 	return openOverlay(confirmBox{
-		title: fmt.Sprintf("Mark %s done?", key),
-		lines: doneConfirmLines(b),
+		kind:   "done",
+		yes:    "mark done",
+		danger: false,
+		title:  fmt.Sprintf("Mark %s done?", key),
+		lines:  doneConfirmLines(b),
 		onYes: runAction(env.Ctx, "done", key, func(ctx context.Context) Result {
 			return env.Actions.Done(ctx, key)
 		}),
@@ -238,25 +331,30 @@ func doneCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 func unbindCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 	key := b.Key()
 	return openOverlay(confirmBox{
-		title: fmt.Sprintf("Unbind %s? The binding is archived; its branch %s is kept.", key, b.Branch),
-		lines: unbindConfirmLines(b),
+		kind:   "unbind",
+		yes:    "unbind and archive",
+		danger: true,
+		title:  fmt.Sprintf("Unbind %s? The binding is archived; its branch %s is kept.", key, b.Branch),
+		lines:  unbindConfirmLines(b),
 		onYes: runAction(env.Ctx, "unbind", key, func(ctx context.Context) Result {
 			return env.Actions.Unbind(ctx, key)
 		}),
 	})
 }
 
-// gateCmd is the g key's two prompts on b: the duration, then the reason. The
-// duration must parse and be positive, or the prompt stays open (§4.3).
+// gateCmd is the g key's one form on b (§3.3): the duration and the reason,
+// validated and submitted together. The duration must parse and be positive,
+// or the form stays open on that field.
 func gateCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 	key := b.Key()
 	subject := b.BuilderCandidate
 
-	dur := promptBox{
-		title: fmt.Sprintf("gate %s for (e.g. 2h; empty = until cleared):", subject),
-		input: newPromptInput(),
+	forField := formField{
+		label: "for",
+		input: newFormInput(true),
+		hint:  "e.g. 30m, 2h, 1d · empty = until cleared",
 	}
-	dur.validate = func(value string) error {
+	forField.validate = func(value string) error {
 		s := strings.TrimSpace(value)
 		if s == "" {
 			return nil
@@ -270,59 +368,43 @@ func gateCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 		}
 		return nil
 	}
-	dur.onEnter = func(value string) tea.Cmd {
-		forDur, _ := time.ParseDuration(strings.TrimSpace(value))
-		reason := promptBox{title: "reason (optional):", input: newPromptInput()}
-		reason.onEnter = func(r string) tea.Cmd {
+	reasonField := formField{label: "reason", input: newFormInput(false), hint: "optional"}
+
+	header := accentStyle.Bold(true).Render("Gate "+candidateText(b)) +
+		faintStyle.Render("  (provider "+secondSegment(subject)+")")
+
+	return openOverlay(formBox{
+		kind:   "gate",
+		submit: "gate",
+		header: []string{header},
+		note:   []string{"The pick skips it until then. Builders already running are not stopped."},
+		fields: []formField{forField, reasonField},
+		onSubmit: func(values []string) tea.Cmd {
+			forDur, _ := time.ParseDuration(strings.TrimSpace(values[0]))
+			reason := values[1]
 			return runAction(env.Ctx, "gate", key, func(ctx context.Context) Result {
-				return env.Actions.Gate(ctx, subject, forDur, r)
+				return env.Actions.Gate(ctx, subject, forDur, reason)
 			})
-		}
-		return openOverlay(reason)
-	}
-	return openOverlay(dur)
+		},
+	})
 }
 
-// sendCmd is the s key: the plan file prompt, then the send confirm (§4.5).
-// The prompt is pre-filled with the binding tree's docs/plans/ when that
-// directory exists, tab lists and cycles the directory's entries, and enter
-// checks the file is really there before anything is sent.
+// sendCmd is the s key: the plan picker, then the send confirm (§3.4). The
+// picker keeps the prompt's pre-fill (plansDir(b)), tab completion and file
+// validation; it adds a list of the directory's recent plans. root is the
+// binding's tree, which relative values resolve against (§2.5).
 func sendCmd(env Env, b relevo.BindingStatus) tea.Cmd {
-	key := b.Key()
-	p := promptBox{title: "plan file:", input: newPromptInput(), complete: pathCompletion}
+	p := sendPicker{env: env, b: b, input: newPromptInput(), pick: -1, root: b.CWD}
 	if d := plansDir(b); d != "" {
 		p.input.SetValue(d)
 		p.input.CursorEnd()
 	}
-	p.validate = func(value string) error {
-		file := strings.TrimSpace(value)
-		if file == "" {
-			return errors.New("plan file is required")
-		}
-		info, err := os.Stat(file)
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			return fmt.Errorf("%s is a directory", file)
-		}
-		return nil
-	}
-	p.onEnter = func(value string) tea.Cmd {
-		file := strings.TrimSpace(value)
-		return openOverlay(confirmBox{
-			title: sendConfirmTitle(b, file),
-			lines: sendConfirmLines(b),
-			onYes: runAction(env.Ctx, "send", key, func(ctx context.Context) Result {
-				return env.Actions.Send(ctx, key, file)
-			}),
-		})
-	}
 	return openOverlay(p)
 }
 
-// plansDir is <binding tree>/docs/plans/ when that directory exists, "" when
-// it does not. It is the send prompt's pre-fill (§4.5).
+// plansDir is the send picker's pre-fill: the binding tree's docs/plans/
+// directory, made relative to that tree ("docs/plans/"), when it exists, ""
+// when it does not (§4.5, §2.5).
 func plansDir(b relevo.BindingStatus) string {
 	if b.CWD == "" {
 		return ""
@@ -332,7 +414,7 @@ func plansDir(b relevo.BindingStatus) string {
 	if err != nil || !info.IsDir() {
 		return ""
 	}
-	return dir + string(filepath.Separator)
+	return filepath.Join("docs", "plans") + string(filepath.Separator)
 }
 
 // pathCompletion is the plan prompt's tab: the entries of the directory the
@@ -383,7 +465,6 @@ func sendConfirmLines(b relevo.BindingStatus) []string {
 	if l := plannerConfirmLine(b, "is waiting on this round"); l != "" {
 		lines = append(lines, l)
 	}
-	lines = append(lines, "y send · n cancel")
 	return lines
 }
 
@@ -421,8 +502,11 @@ func editorCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 			return noticeMsg{text: "nothing sent"}
 		}
 		return openOverlayMsg{ov: confirmBox{
-			title: sendConfirmTitle(b, path),
-			lines: sendConfirmLines(b),
+			kind:   "send",
+			yes:    "send the plan",
+			danger: false,
+			title:  sendConfirmTitle(b, path),
+			lines:  sendConfirmLines(b),
 			onYes: runAction(env.Ctx, "send", key, func(ctx context.Context) Result {
 				return env.Actions.Send(ctx, key, path)
 			}),
@@ -455,7 +539,7 @@ func planSent(before, after []byte) bool {
 // bindCmd is the b key: name, candidate and feature, in that order, then the
 // bind confirm (§4.5). It takes no binding: the key creates one.
 func bindCmd(env Env) tea.Cmd {
-	name := promptBox{title: "name:", input: newPromptInput()}
+	name := promptBox{kind: "bind", title: "name:", input: newPromptInput()}
 	name.validate = func(value string) error {
 		v := strings.TrimSpace(value)
 		if v == "" {
@@ -466,17 +550,20 @@ func bindCmd(env Env) tea.Cmd {
 	name.onEnter = func(value string) tea.Cmd {
 		binding := strings.TrimSpace(value)
 		cand := promptBox{
+			kind:    "bind",
 			title:   "candidate (tab: …; empty = policy pick):",
 			input:   newPromptInput(),
 			choices: env.Actions.Candidates("builder"),
 		}
 		cand.onEnter = func(c string) tea.Cmd {
-			feature := promptBox{title: "feature (optional):", input: newPromptInput()}
+			feature := promptBox{kind: "bind", title: "feature (optional):", input: newPromptInput()}
 			feature.onEnter = func(f string) tea.Cmd {
 				in := BindInput{Name: binding, Candidate: strings.TrimSpace(c), Feature: strings.TrimSpace(f)}
 				return openOverlay(confirmBox{
-					title: bindConfirmTitle(in),
-					lines: []string{"y bind · n cancel"},
+					kind:   "bind",
+					yes:    "bind",
+					danger: false,
+					title:  bindConfirmTitle(in),
 					onYes: runAction(env.Ctx, "bind", binding, func(ctx context.Context) Result {
 						return env.Actions.Bind(ctx, in)
 					}),
@@ -499,30 +586,90 @@ func bindConfirmTitle(in BindInput) string {
 	return fmt.Sprintf("Bind %s on a new worktree of %s as builder on %s?", in.Name, getwd(), on)
 }
 
-// retryCmd is the r key: which candidate to retry on, then the confirm (§4.5).
-// The choice list is the role's candidates in their order, without the one the
-// binding runs now.
+// retryCmd is the r key: a candidate list, then the confirm (§3.5). The list
+// is the role's candidates in their order, including the current one; the
+// current candidate and any gated one are disabled.
 func retryCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 	key := b.Key()
-	choices := excludeCandidate(env.Actions.Candidates(actorCell(b)), candidateText(b))
-	p := promptBox{title: "retry on (tab cycles):", input: newPromptInput(), choices: choices}
-	p.validate = func(value string) error {
-		if strings.TrimSpace(value) == "" {
-			return errors.New("a candidate is required")
+	current := candidateText(b)
+
+	var items []listItem
+	for _, name := range env.Actions.Candidates(actorCell(b)) {
+		switch {
+		case name == current:
+			note := "last used"
+			if roundOpen(b) {
+				note = fmt.Sprintf("running round %d now", b.Round)
+			}
+			items = append(items, listItem{
+				name: name, status: "current", note: note,
+				statusStyle: mutedStyle, disabled: true,
+			})
+		case gatedBy(env, name) != nil:
+			g := gatedBy(env, name)
+			status := "gated"
+			if !g.Until.IsZero() {
+				status = "gated " + ago(env.Now, g.Until)
+			}
+			items = append(items, listItem{
+				name: name, status: status, note: gateProvider(g.Token),
+				statusStyle: faintStyle, disabled: true,
+			})
+		default:
+			items = append(items, listItem{name: name, status: "ready", statusStyle: greenStyle})
 		}
-		return nil
 	}
-	p.onEnter = func(value string) tea.Cmd {
-		candidate := strings.TrimSpace(value)
-		return openOverlay(confirmBox{
-			title: retryConfirmTitle(b, candidate),
-			lines: retryConfirmLines(b, candidate),
-			onYes: runAction(env.Ctx, "retry", key, func(ctx context.Context) Result {
-				return env.Actions.Retry(ctx, key, candidate)
-			}),
-		})
+
+	sel := -1
+	for i, item := range items {
+		if !item.disabled {
+			sel = i
+			break
+		}
 	}
-	return openOverlay(p)
+
+	header := accentStyle.Bold(true).Render("Retry "+key) +
+		textStyle.Render(fmt.Sprintf(" round %d on another candidate", b.Round))
+
+	var note []string
+	if roundOpen(b) {
+		note = append(note, fmt.Sprintf("Stops round %d, then sends its plan again on the chosen candidate.", b.Round))
+	} else {
+		note = append(note, "Sends the last plan again as a new round on the chosen candidate.")
+	}
+	note = append(note, "The binding stays on it for later rounds.")
+
+	return openOverlay(listBox{
+		kind:   "retry on…",
+		submit: "retry",
+		header: []string{header},
+		note:   note,
+		items:  items,
+		sel:    sel,
+		onPick: func(name string) tea.Cmd {
+			return openOverlay(confirmBox{
+				kind:   "retry",
+				yes:    "stop and retry",
+				danger: true,
+				title:  retryConfirmTitle(b, name),
+				lines:  retryConfirmLines(b, name),
+				onYes: runAction(env.Ctx, "retry", key, func(ctx context.Context) Result {
+					return env.Actions.Retry(ctx, key, name)
+				}),
+			})
+		},
+	})
+}
+
+// gatedBy is the live gate on candidate name, matched by the gate's short
+// name (§3.5), or nil.
+func gatedBy(env Env, name string) *ledger.Gate {
+	for i := range env.Report.Gated {
+		if env.Report.Gated[i].Name == name {
+			return &env.Report.Gated[i]
+		}
+	}
+	return nil
 }
 
 // retryConfirmTitle is the retry confirm's question (§4.5): an open round is
@@ -543,7 +690,6 @@ func retryConfirmLines(b relevo.BindingStatus, candidate string) []string {
 		lines = append(lines, l)
 	}
 	lines = append(lines, "the binding keeps "+candidate+" for later rounds")
-	lines = append(lines, "y retry · n cancel")
 	return lines
 }
 
