@@ -2720,6 +2720,59 @@ func TestSnapshotTreeDirtyTreeCapturesChanges(t *testing.T) {
 	}
 }
 
+// TestSnapshotTreeRacyCleanEntry pins #461. An index entry is "racily clean"
+// when its mtime is not older than the index file's own mtime: git cannot tell
+// a same-tick edit from the recorded content, so it must re-read the file
+// rather than trust the cached stat.
+//
+// SnapshotTree copies `.git/index` to a temp path and points GIT_INDEX_FILE at
+// the copy. io.Copy gives that copy a fresh mtime, which would make the entry
+// look safely older than the index -- so a same-size edit written in the
+// index's own timestamp tick looks clean and the snapshot keeps the OLD blob.
+// Preserving the repository index's mtime on the temp copy keeps the
+// racy-clean check deciding exactly as it would on the real index.
+func TestSnapshotTreeRacyCleanEntry(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+
+	// A fixed past tick, so the setup does not depend on how fast the test
+	// machine is. The file's mtime and the index's mtime are made identical.
+	tick := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	repoDir := initRepo(t)
+	writeGitFile(t, repoDir, "a.txt", "one\n")
+	if err := os.Chtimes(filepath.Join(repoDir, "a.txt"), tick, tick); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "a.txt")
+	runGit(t, repoDir, "commit", "-m", "first")
+
+	// Same size, same mtime: the edit is indistinguishable from the recorded
+	// content by stat alone, so git must re-read a.txt.
+	writeGitFile(t, repoDir, "a.txt", "two\n")
+	if err := os.Chtimes(filepath.Join(repoDir, "a.txt"), tick, tick); err != nil {
+		t.Fatal(err)
+	}
+	// The index was "written in the same tick" as the edit.
+	if err := os.Chtimes(filepath.Join(repoDir, ".git", "index"), tick, tick); err != nil {
+		t.Fatal(err)
+	}
+
+	// Deliberately no runGit call from here to SnapshotTree: runGit does not
+	// set GIT_OPTIONAL_LOCKS=0, so e.g. `git status` would take the index lock,
+	// rewrite the index and smudge the racy entry -- hiding the bug.
+
+	tree, err := client.SnapshotTree(ctx, repoDir)
+	if err != nil {
+		t.Fatalf("SnapshotTree on a racy-clean tree: %v", err)
+	}
+	blob := runGit(t, repoDir, "cat-file", "-p", tree+":a.txt")
+	if blob != "two\n" {
+		t.Fatalf("snapshot a.txt = %q, want %q: a same-size edit in the index's own timestamp tick was treated as clean, keeping the old blob (#461, racy-clean)", blob, "two\n")
+	}
+}
+
 // TestSnapshotTreeUnbornHeadFallsBack snapshots a repo that has no commits
 // yet: HEAD^{tree} does not resolve, so SnapshotTree must fall through to the
 // existing temp-index path and still capture the untracked file.
