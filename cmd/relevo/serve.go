@@ -1022,6 +1022,7 @@ func cmdServeUI(args []string) error {
 			LegacyPath: filepath.Join(root, "ui.json"),
 		},
 		PipeHint: "relevo serve ui needs a terminal; use relevo serve status when piping",
+		Version:  buildVersion(),
 	})
 }
 

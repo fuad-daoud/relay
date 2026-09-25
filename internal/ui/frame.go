@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 const maxErrorLines = 8
@@ -137,16 +136,24 @@ func needsYouCount(n int) string {
 }
 
 // headerView is row 1: the breadcrumb on the left, attention and the clock
-// on the right, on the header bar (§5.3).
+// headerView is row 1: the relevo mark and crumbs on the left, attention, version
+// and the clock on the right (§2.2). No gates, no background.
 func (m Model) headerView(env Env) string {
-	left := lipgloss.NewStyle().Bold(true).Render(" relevo")
+	var allCrumbs []string
 	for _, v := range m.stack {
-		for _, c := range v.Crumbs() {
-			left += " › " + c
+		allCrumbs = append(allCrumbs, v.Crumbs()...)
+	}
+	left := "  " + accentStyle.Bold(true).Render("◆ relevo")
+	if len(allCrumbs) == 1 {
+		left += "   " + chip(kbdStyle, allCrumbs[0])
+	} else if len(allCrumbs) > 1 {
+		var crumbParts []string
+		for i := 0; i < len(allCrumbs)-1; i++ {
+			crumbParts = append(crumbParts, mutedStyle.Render(allCrumbs[i]))
 		}
+		left += "   " + strings.Join(crumbParts, faintStyle.Render(" › ")) + faintStyle.Render(" › ") + chip(kbdStyle, allCrumbs[len(allCrumbs)-1])
 	}
 
-	var right []string
 	n := 0
 	for _, b := range env.Report.Bindings {
 		// A report ready for the human planner needs them exactly as a
@@ -155,16 +162,18 @@ func (m Model) headerView(env Env) string {
 			n++
 		}
 	}
-	if n > 0 {
-		right = append(right, stateNeedsYouStyle.Render("● "+needsYouCount(n)))
-	}
-	for _, g := range env.Report.Gated {
-		right = append(right, stateNeedsYouStyle.Render(fmt.Sprintf("%s gated %s", g.Token, relevo.GateUntilText(g.Until))))
-	}
-	right = append(right, dimStyle.Render(env.Now.Local().Format("15:04")+" "))
 
-	bar := headerBar.Render(fit(spread(left, strings.Join(right, "  ·  "), env.Width), env.Width))
-	return bar
+	var rightParts []string
+	if n > 0 {
+		rightParts = append(rightParts, chip(chipWarnStyle.Bold(true), "● "+needsYouCount(n)))
+	}
+	if sv := shortVersion(m.opts.Version); sv != "" {
+		rightParts = append(rightParts, faintStyle.Render(sv))
+	}
+	rightParts = append(rightParts, mutedStyle.Render(env.Now.Local().Format("15:04")))
+	right := strings.Join(rightParts, "    ") + "  "
+
+	return fit(spread(left, right, env.Width), env.Width)
 }
 
 // contextView is row 2: the top view's context, spread to width (§5.3).
@@ -179,35 +188,25 @@ func (m Model) errorBlock(env Env) string {
 	return renderError(m.err, env.Width)
 }
 
-// ruleView is the full-width rule above the keys row (§5.3).
-func (m Model) ruleView(env Env) string {
-	if env.Width <= 0 {
-		return ""
-	}
-	return ruleStyle.Render(strings.Repeat("─", env.Width))
-}
-
 // keysView is the last row: the global tail and as many of the top view's
-// keys as fit, the notices and the refresh failure on the right (§5.3,
-// §2.3b). The globals -- ':' command, '? help' and 'q quit'/'esc back' -- are
-// always laid out; the view's keys follow in their Keys() order and a key that
-// does not fit is dropped whole, never cut, so half a key is never shown. The
-// notice side wins as it always has, and '? help' lists every key that was
-// dropped.
+// keys as fit, the notices and the refresh failure on the right (§2.2).
+// Each key is a kbd chip ` k ` followed by ` label` in muted. Keys are separated by
+// five spaces. The view's `Keys()` come first, then the global tail `: command`,
+// `? all keys`, `q quit` (root) / `esc back` (deeper). Drop and notice rules are unchanged.
 func (m Model) keysView(env Env) string {
-	key := func(k, v string) string { return fgStyle.Render(k) + " " + dimStyle.Render(v) }
+	key := func(k, v string) string { return chip(kbdStyle, k) + " " + mutedStyle.Render(v) }
 	var tail []string
-	tail = append(tail, key(":", "command"), key("?", "help"))
+	tail = append(tail, key(":", "command"), key("?", "all keys"))
 	if len(m.stack) > 1 {
 		tail = append(tail, key("esc", "back"))
 	} else {
 		tail = append(tail, key("q", "quit"))
 	}
-	tailText := strings.Join(tail, "   ")
+	tailText := strings.Join(tail, "     ")
 
 	var notes []string
 	if w := m.workingText(); w != "" {
-		notes = append(notes, dimStyle.Render(w))
+		notes = append(notes, mutedStyle.Render(w))
 	}
 	if m.notice != "" {
 		notes = append(notes, m.noticeStyle().Render(m.notice))
@@ -223,14 +222,14 @@ func (m Model) keysView(env Env) string {
 	if room < 0 {
 		room = 0
 	}
-	avail := room - lipgloss.Width(tailText) - 3 // 3 for the gap before the tail
+	avail := room - lipgloss.Width(tailText) - 5 // 5 for the gap before the tail
 	var parts []string
 	used := 0
 	for _, kh := range m.top().Keys() {
 		p := key(kh.Key, kh.Help)
 		w := lipgloss.Width(p)
 		if len(parts) > 0 {
-			w += 3
+			w += 5
 		}
 		if used+w > avail {
 			break
@@ -240,7 +239,7 @@ func (m Model) keysView(env Env) string {
 	}
 	left := tailText
 	if len(parts) > 0 {
-		left = strings.Join(parts, "   ") + "   " + tailText
+		left = strings.Join(parts, "     ") + "     " + tailText
 	}
 
 	if lipgloss.Width(left)+1+lipgloss.Width(right) > env.Width {
@@ -360,7 +359,11 @@ func (m Model) helpBody(env Env, height int) string {
 	}
 	lines = append(lines, "")
 	lines = append(lines, accentStyle.Render("view"))
-	for _, kh := range m.top().Keys() {
+	keys := m.top().Keys()
+	if hk, ok := m.top().(helpKeyer); ok {
+		keys = hk.HelpKeys()
+	}
+	for _, kh := range keys {
 		lines = append(lines, line(kh))
 	}
 	return strings.Join(fitLines(lines, env.Width, height), "\n")

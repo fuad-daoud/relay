@@ -27,7 +27,7 @@ func TestFleetWindowTopLines(t *testing.T) {
 	// 10 two-line rows (each row has a question line under it).
 	var two []fleetLine
 	for i := 0; i < 10; i++ {
-		two = append(two, fleetLine{text: fmt.Sprintf("row %d", i), row: i}, fleetLine{text: "  └ q", row: i})
+		two = append(two, fleetLine{text: fmt.Sprintf("row %d", i), row: i}, fleetLine{text: "  ╰ q", row: i})
 	}
 
 	cases := []struct {
@@ -112,7 +112,14 @@ func press(t *testing.T, m Model, r rune) Model {
 func assertCursorVisible(t *testing.T, m Model, name string) {
 	t.Helper()
 	view := m.View()
-	if !strings.Contains(plain(view), "▎ "+name) {
+	found := false
+	for _, line := range strings.Split(plain(view), "\n") {
+		if strings.Contains(line, "▍") && strings.Contains(line, name) {
+			found = true
+			break
+		}
+	}
+	if !found {
 		t.Errorf("view must show the cursor row for %s, got:\n%s", name, view)
 	}
 	if !strings.Contains(plain(view), "relevo") {

@@ -40,6 +40,10 @@ type Options struct {
 	// action key and makes one do nothing when pressed: `relevo serve ui`
 	// passes none, and `relevo ui` gets the planner adapter Run builds.
 	Actions Actions
+
+	// Version is the running binary's version string (§2.2). "" hides the
+	// version in the header.
+	Version string
 }
 
 const minInterval = 500 * time.Millisecond

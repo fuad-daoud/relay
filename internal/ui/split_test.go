@@ -137,7 +137,10 @@ func TestFleetNameColumnShowsOwnerName(t *testing.T) {
 // TestSortToggleKeepsSelection pins §5.4's `a`: it flips the order, keeps
 // the selection, and returns the sort pref.
 func TestSortToggleKeepsSelection(t *testing.T) {
-	m := splitModel(t, 140, 40, threeRows()...)
+	b1 := relevo.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &relevo.LastEvent{TS: railNow.Add(-6 * time.Minute)}}
+	b2 := relevo.BindingStatus{Name: "docs", Round: 1, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &relevo.LastEvent{TS: railNow.Add(-time.Hour)}}
+	b3 := relevo.BindingStatus{Name: "webshop", Round: 4, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &relevo.LastEvent{TS: railNow.Add(-2 * time.Minute)}}
+	m := splitModel(t, 140, 40, b1, b2, b3)
 	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = res.(Model)
 	fv := fleet(m)
@@ -202,7 +205,7 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 	if !strings.Contains(stripANSI(m.keysView(m.env())), "hello") {
 		t.Errorf("keys row must carry the notice: %q", stripANSI(m.keysView(m.env())))
 	}
-	if !strings.Contains(stripANSI(m.keysView(m.env())), ": command") || !strings.Contains(stripANSI(m.keysView(m.env())), "? help") {
+	if !strings.Contains(stripANSI(m.keysView(m.env())), "command") || !strings.Contains(stripANSI(m.keysView(m.env())), "all keys") {
 		t.Errorf("the globals must be in the keys row: %q", stripANSI(m.keysView(m.env())))
 	}
 
@@ -227,24 +230,32 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 	if strings.Contains(f, "[ ] round") {
 		t.Errorf("the view's keys must be the side that gives way: %q", f)
 	}
-	if !strings.Contains(f, "? help") || !strings.Contains(f, "esc back") {
+	if !strings.Contains(f, "all keys") || !strings.Contains(f, "back") {
 		t.Errorf("the global tail must survive the squeeze: %q", f)
 	}
 }
 
-// TestHeaderGatesAndClock pins the header's right side (§5.3): the gates
-// and the clock.
+// TestHeaderGatesAndClock pins the header's right side (§5.3): the clock
+// and needs-you count, and the gated line in the fleet body (D2).
 func TestHeaderGatesAndClock(t *testing.T) {
 	t.Cleanup(relevo.SetGateClock(func() time.Time { return railNow }))
 	m := splitModel(t, 140, 40, threeRows()...)
 	m.report.Gated = []ledger.Gate{{Token: "codex", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)}}
 	h := stripANSI(m.headerView(m.env()))
-	if !strings.Contains(h, "codex gated until 15:30") || !strings.Contains(h, "14:02") {
-		t.Errorf("header = %q", h)
+	if strings.Contains(h, "gated") {
+		t.Errorf("header must not contain gates (D2): %q", h)
+	}
+	if !strings.Contains(h, "14:02") {
+		t.Errorf("header must carry clock: %q", h)
 	}
 	// The needs-you count is on the header too.
 	if !strings.Contains(h, "● 1 needs you") {
 		t.Errorf("header must carry the needs-you count: %q", h)
+	}
+	// Gates are rendered in the fleet body instead (§2.3, D2).
+	body := stripANSI(fleet(m).Body(m.env(), 140, 40))
+	if !strings.Contains(body, "gated  codex") {
+		t.Errorf("fleet body must contain gated line: %q", body)
 	}
 }
 
