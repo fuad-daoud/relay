@@ -448,6 +448,8 @@ var globalKeys = []KeyHelp{
 	{"?", "help"},
 	{"esc", "back"},
 	{"q", "quit / back"},
+	{"wheel", "scroll"},
+	{"shift+drag", "select text"},
 }
 
 // actKeys are the keys the help modal's ACT ON THE ROW column collects (§3.2).

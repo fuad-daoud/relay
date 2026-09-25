@@ -15,8 +15,8 @@
      working  │  home/end    first/last                                                  ?           help                    │              
    ●  api     │  enter       open                                                        esc         back                    │              
    ●  atlas   │  a           sort                                                        q           quit / back             │              
-   ●  worker  │  .           done rows                                                                                       │              
-              │  /           filter                                                                                          │              
+   ●  worker  │  .           done rows                                                   wheel       scroll                  │              
+              │  /           filter                                                      shift+drag  select text             │              
      on hold  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯              
    ◐  ledger              r3 · paused             -                       architect-1   ~$1.63                                              
                                                                                                                                             

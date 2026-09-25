@@ -162,6 +162,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.updateKey(msg)
 
+	case tea.MouseMsg:
+		return m.updateMouse(msg)
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -358,6 +361,42 @@ func (m Model) updateKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, pop()
 	}
 	return m.updateTop(k)
+}
+
+// wheelStep is the number of up/down keys one wheel event becomes. It
+// matches the bubbles viewport's default MouseWheelDelta of 3.
+const wheelStep = 3
+
+// updateMouse turns one wheel event into wheelStep arrow keys for the top
+// view (§4), and throws away every other mouse event. It is never forwarded
+// to updateStack.
+func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	var k tea.KeyMsg
+	switch {
+	case msg.Action != tea.MouseActionPress:
+		return m, nil
+	case msg.Button == tea.MouseButtonWheelUp:
+		k = tea.KeyMsg{Type: tea.KeyUp}
+	case msg.Button == tea.MouseButtonWheelDown:
+		k = tea.KeyMsg{Type: tea.KeyDown}
+	default:
+		return m, nil
+	}
+	if m.cmd.open || m.overlay != nil || m.help || m.top().Capturing() {
+		return m, nil
+	}
+	var cmds []tea.Cmd
+	for range wheelStep {
+		next, cmd := m.updateTop(k)
+		m = next.(Model)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	if len(cmds) == 0 {
+		return m, nil
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // updateTop forwards one message to the top view alone.
