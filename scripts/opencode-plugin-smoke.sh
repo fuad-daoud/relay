@@ -376,24 +376,28 @@ check_assertion_24() {
 assert 24 "01-session landing row shows no ACTIVE word" check_assertion_24
 
 # 25. In 05d-plan.ansi, the plan fixture's heading line carries a non-empty
-#     SGR sequence that differs from the one on a plain paragraph line.
+#     SGR sequence that differs from the one on a plain paragraph line. The
+#     plain capture shows the heading words without the leading "# ".
 check_assertion_25() {
   local head_sgr body_sgr
   head_sgr="$(grep -a -m1 "Plan for webshop" "$OUT/05d-plan.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
   body_sgr="$(grep -a -m1 "Implement cart" "$OUT/05d-plan.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
   [ -n "$head_sgr" ] && [ -n "$body_sgr" ] && \
-  [ "$head_sgr" != "$body_sgr" ]
+  [ "$head_sgr" != "$body_sgr" ] && \
+  grep -qE "^[[:space:]]*Plan for webshop r4" "$OUT/05d-plan.txt"
 }
 assert 25 "05d-plan heading carries different SGR sequence from plain body" check_assertion_25
 
 # 25b. In 05-binding-report.ansi, the report fixture's heading line carries a
-#      non-empty SGR sequence that differs from the one on a plain paragraph line.
+#      non-empty SGR sequence that differs from the one on a plain paragraph
+#      line. The plain capture shows the heading words without the leading "# ".
 check_assertion_25b() {
   local head_sgr body_sgr
-  head_sgr="$(grep -a -m1 "# Report" "$OUT/05-binding-report.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
+  head_sgr="$(grep -a -m1 "Report" "$OUT/05-binding-report.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
   body_sgr="$(grep -a -m1 "checkout flow" "$OUT/05-binding-report.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
   [ -n "$head_sgr" ] && [ -n "$body_sgr" ] && \
-  [ "$head_sgr" != "$body_sgr" ]
+  [ "$head_sgr" != "$body_sgr" ] && \
+  grep -qE "^[[:space:]]*Report([[:space:]]|$)" "$OUT/05-binding-report.txt"
 }
 assert 25b "05-binding-report heading carries different SGR sequence from plain body" check_assertion_25b
 
@@ -423,6 +427,30 @@ check_assertion_27() {
 }
 assert 27 "ledger shows (no report) before status-2 and real report after status-2" check_assertion_27
 
+# 29. The fixture's "## Scope" heading also loses its marker: the plain capture
+#     shows "Scope" on its own and nowhere shows "## Scope".
+check_assertion_29() {
+  grep -qE "^[[:space:]]*Scope([[:space:]]|$)" "$OUT/05d-plan.txt" && \
+  ! grep -qF "## Scope" "$OUT/05d-plan.txt"
+}
+assert 29 "05d-plan shows the ## heading without its marker" check_assertion_29
+
+# 30. The fixture's "---" line renders as a rule of ─ characters, not as raw
+#     dashes.
+check_assertion_30() {
+  grep -qE "─{3,}" "$OUT/05d-plan.txt" && \
+  ! grep -qE "^[[:space:]]*---[[:space:]]*$" "$OUT/05d-plan.txt"
+}
+assert 30 "05d-plan shows the --- line as a ─ rule" check_assertion_30
+
+# 31. The fixture's link renders as its text followed by the url in
+#     parentheses; the raw "](url)" marker appears nowhere.
+check_assertion_31() {
+  grep -qF "design notes (https://example.com/design)" "$OUT/05d-plan.txt" && \
+  ! grep -qF "](" "$OUT/05d-plan.txt"
+}
+assert 31 "05d-plan shows the link text then (url) and no ](" check_assertion_31
+
 # Mouse is not driven here: tmux send-keys cannot deliver SGR mouse events
 # reliably, so the clickable-row behaviour (onMouseDown on the sidebar and
 # fleet rows) is verified by inspection of tui.tsx, not by this smoke.
@@ -433,5 +461,5 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-echo "Smoke test PASSED (all 28 assertions passed)"
+echo "Smoke test PASSED (all 31 assertions passed)"
 exit 0
