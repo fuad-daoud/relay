@@ -33,7 +33,7 @@ const (
 // server process is not evidence anything arrived.
 type OpencodeDeliverer struct {
 	Client        *http.Client // nil -> &http.Client{Timeout: OpencodeRequestTimeout}
-	StateFile     string       // $XDG_CONFIG_HOME/opencode/service.json
+	StateFiles    []string     // candidate service.json files, tried in order
 	DBPath        string       // $XDG_DATA_HOME/opencode/opencode.db
 	Exec          usage.Exec   // the sqlite3 shell-out; nil -> OutcomeNotMine
 	Now           func() time.Time
@@ -102,8 +102,19 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, planner store.Endpoint,
 		return OutcomeNotMine, reason, nil
 	}
 
-	svc, err := readOpencodeService(d.StateFile)
-	if err != nil || !d.alive(svc.PID) {
+	var (
+		svc   opencodeService
+		found bool
+	)
+	for _, path := range d.StateFiles {
+		s, err := readOpencodeService(path)
+		if err == nil && s.URL != "" {
+			svc = s
+			found = true
+			break
+		}
+	}
+	if !found || !d.alive(svc.PID) {
 		return OutcomeUnavailable, "opencode service not running", nil
 	}
 	if !loopbackOpencodeURL(svc.URL) {

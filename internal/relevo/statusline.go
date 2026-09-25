@@ -273,18 +273,20 @@ type StatusLinePlanner struct {
 
 // StatusLineRow is one binding row in StatusLineDoc (§3).
 type StatusLineRow struct {
-	Name      string `json:"name"`
-	Round     int    `json:"round"`
-	Display   string `json:"display"`
-	Harness   string `json:"harness"`
-	Candidate string `json:"candidate"`
-	Role      string `json:"role,omitempty"`
-	Waiting   string `json:"waiting"`
-	Clock     string `json:"clock"`
-	Tokens    string `json:"tokens"`
-	LastKind  string `json:"last_kind"`
-	LastTS    string `json:"last_ts"`
-	Route     string `json:"route"`
+	Name        string `json:"name"`
+	Round       int    `json:"round"`
+	Display     string `json:"display"`
+	NeedsYou    bool   `json:"needs_you"`
+	ReportRound int    `json:"report_round,omitempty"`
+	Harness     string `json:"harness"`
+	Candidate   string `json:"candidate"`
+	Role        string `json:"role,omitempty"`
+	Waiting     string `json:"waiting"`
+	Clock       string `json:"clock"`
+	Tokens      string `json:"tokens"`
+	LastKind    string `json:"last_kind"`
+	LastTS      string `json:"last_ts"`
+	Route       string `json:"route"`
 }
 
 // StatusLineDoc is the top-level document emitted by relevo status --line --json (§3).
@@ -309,19 +311,30 @@ func StatusLineRows(r Report, now time.Time) []StatusLineRow {
 				lastTS = b.LastPayload.TS.UTC().Format(time.RFC3339)
 			}
 		}
+		toPlannerPayload := b.LastPayload != nil &&
+			b.LastPayload.Direction == store.DirToPlanner &&
+			(b.LastPayload.Kind == store.KindReport || b.LastPayload.Kind == store.KindQuestion)
+
+		needsYou := b.Display == "NEEDS YOU" || toPlannerPayload
+		reportRound := 0
+		if toPlannerPayload {
+			reportRound = b.LastPayload.Round
+		}
 		rows = append(rows, StatusLineRow{
-			Name:      b.Name,
-			Round:     b.Round,
-			Display:   b.Display,
-			Harness:   harness,
-			Candidate: b.BuilderCandidate,
-			Role:      b.Role,
-			Waiting:   waiting(b),
-			Clock:     roundClock(b, now),
-			Tokens:    roundTokens(b),
-			LastKind:  lastKind,
-			LastTS:    lastTS,
-			Route:     b.PlannerRoute,
+			Name:        b.Name,
+			Round:       b.Round,
+			Display:     b.Display,
+			NeedsYou:    needsYou,
+			ReportRound: reportRound,
+			Harness:     harness,
+			Candidate:   b.BuilderCandidate,
+			Role:        b.Role,
+			Waiting:     waiting(b),
+			Clock:       roundClock(b, now),
+			Tokens:      roundTokens(b),
+			LastKind:    lastKind,
+			LastTS:      lastTS,
+			Route:       b.PlannerRoute,
 		})
 	}
 	return rows

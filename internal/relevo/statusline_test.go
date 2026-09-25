@@ -910,4 +910,73 @@ func TestStatusLineRows(t *testing.T) {
 			t.Errorf("json %q does not contain '\"rows\":[]'", s)
 		}
 	})
+
+	t.Run("ACTIVE + to-planner report -> needs_you true, report_round = its round", func(t *testing.T) {
+		b := BindingStatus{
+			Name:    "worker",
+			Round:   4,
+			Display: "ACTIVE",
+			LastPayload: &LastEvent{
+				Round:     3,
+				Kind:      store.KindReport,
+				Direction: store.DirToPlanner,
+			},
+		}
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if !rows[0].NeedsYou {
+			t.Errorf("NeedsYou = %v, want true", rows[0].NeedsYou)
+		}
+		if rows[0].ReportRound != 3 {
+			t.Errorf("ReportRound = %d, want 3", rows[0].ReportRound)
+		}
+	})
+
+	t.Run("NEEDS YOU display with a plan payload -> needs_you true, report_round 0", func(t *testing.T) {
+		b := BindingStatus{
+			Name:    "worker",
+			Round:   2,
+			Display: "NEEDS YOU",
+			LastPayload: &LastEvent{
+				Round:     2,
+				Kind:      store.KindPlan,
+				Direction: store.DirToBuilder,
+			},
+		}
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if !rows[0].NeedsYou {
+			t.Errorf("NeedsYou = %v, want true", rows[0].NeedsYou)
+		}
+		if rows[0].ReportRound != 0 {
+			t.Errorf("ReportRound = %d, want 0", rows[0].ReportRound)
+		}
+	})
+
+	t.Run("ACTIVE + plan to builder -> false, 0", func(t *testing.T) {
+		b := BindingStatus{
+			Name:    "worker",
+			Round:   1,
+			Display: "ACTIVE",
+			LastPayload: &LastEvent{
+				Round:     1,
+				Kind:      store.KindPlan,
+				Direction: store.DirToBuilder,
+			},
+		}
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if rows[0].NeedsYou {
+			t.Errorf("NeedsYou = %v, want false", rows[0].NeedsYou)
+		}
+		if rows[0].ReportRound != 0 {
+			t.Errorf("ReportRound = %d, want 0", rows[0].ReportRound)
+		}
+	})
 }

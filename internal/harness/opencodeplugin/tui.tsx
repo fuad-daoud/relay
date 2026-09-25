@@ -143,7 +143,7 @@ async function pollStatus(api: any) {
           for (const row of doc.rows) {
             const prev = prevRows.get(row.name);
             if (prev) {
-              if (row.display === "NEEDS YOU" && prev.display !== "NEEDS YOU") {
+              if (row.needs_you && !prev.needs_you) {
                 api.ui.toast.show({
                   variant: "warning",
                   title: "relevo",
@@ -155,7 +155,7 @@ async function pollStatus(api: any) {
                 api.ui.toast.show({
                   variant: "info",
                   title: "relevo",
-                  message: `${row.name} r${row.round} report in${row.route === "deliverer" ? ", delivered to chat" : ""}`,
+                  message: `${row.name} r${row.report_round || row.round} report in${row.route === "deliverer" ? ", delivered to chat" : ""}`,
                   duration: 6000,
                 });
               }
@@ -355,14 +355,14 @@ export default {
     // handling reliably instead.
     const showNeedsYouDialog = async (row: any) => {
       const name = row.name;
-      const round = row.round || 1;
+      const round = row.report_round || row.round || 1;
       const waiting = row.waiting || "";
       const candidate = row.candidate || "";
 
       let choice: any;
       try {
         choice = await api.ui.dialog.select({
-          title: `${name} needs you`,
+          title: `${name} needs you · r${round}`,
           placeholder: `${name} needs you · r${round} · ${waiting}`,
           options: [
             { title: "Tell the planner…", value: "tell" },
@@ -499,17 +499,27 @@ export default {
             )}
 
             {rows.map((row) => {
-              const isNeedsYou = row.display === "NEEDS YOU";
+              const isNeedsYou = !!row.needs_you;
               const dot = isNeedsYou ? "●" : "○";
-              const stateText = row.display || (isNeedsYou ? "NEEDS YOU" : "ACTIVE");
+              const stateText = isNeedsYou ? "NEEDS YOU" : (row.display || "ACTIVE");
+              const displayRound = row.report_round || row.round;
               const lineA = padLine(`${dot} ${row.name}`, stateText, 37);
               const lineB = ellipsize(
-                `  r${row.round} · ${row.harness || "opencode"} · ${row.waiting || "--"} · ${row.clock || "--"}`,
+                `  r${displayRound} · ${row.harness || "opencode"} · ${row.waiting || "--"} · ${row.clock || "--"}`,
                 37,
               );
 
               return (
-                <box flexDirection="column">
+                <box
+                  flexDirection="column"
+                  onMouseDown={() => {
+                    api.ui.router.navigate({
+                      type: "plugin",
+                      name: "relevo.binding",
+                      params: { name: row.name, round: displayRound },
+                    });
+                  }}
+                >
                   <box flexDirection="row">
                     <text fg={isNeedsYou ? warningColor : mutedColor}>
                       {isNeedsYou ? <b>{dot} </b> : `${dot} `}
@@ -540,7 +550,7 @@ export default {
         void store.rev;
         lastSlotRenderAt = Date.now();
         const rows: any[] = currentDoc?.rows || [];
-        const needYouCount = rows.filter((r) => r.display === "NEEDS YOU").length;
+        const needYouCount = rows.filter((r) => r.needs_you).length;
         if (needYouCount <= 0) return null;
 
         const warningColor = paint(api, "text.feedback.warning.base");
@@ -582,7 +592,7 @@ export default {
                 bind: "<leader>j",
                 run: () => {
                   const rows: any[] = currentDoc?.rows || [];
-                  const needs = rows.filter((r) => r.display === "NEEDS YOU");
+                  const needs = rows.filter((r) => r.needs_you);
                   if (needs.length === 0) {
                     api.ui.toast.show({
                       variant: "info",
@@ -602,7 +612,7 @@ export default {
                   api.ui.router.navigate({
                     type: "plugin",
                     name: "relevo.binding",
-                    params: { name: target.name, round: target.round },
+                    params: { name: target.name, round: target.report_round || target.round },
                   });
                 },
               },
@@ -651,7 +661,7 @@ export default {
         const rows: any[] = currentDoc?.rows || [];
         const plannerEntry = plannerBySession.get(currentSessionID);
         const plannerName = (plannerEntry && typeof plannerEntry === "object" ? plannerEntry.name : null) || currentDoc?.planner?.name || "";
-        const needYouCount = rows.filter((r) => r.display === "NEEDS YOU").length;
+        const needYouCount = rows.filter((r) => r.needs_you).length;
         const totalCount = rows.length;
 
         // Fetch recent history
@@ -682,10 +692,11 @@ export default {
                 e.preventDefault();
                 const sel = rows[store.fleetSelected ?? 0];
                 if (sel) {
+                  const displayRound = sel.report_round || sel.round;
                   api.ui.router.navigate({
                     type: "plugin",
                     name: "relevo.binding",
-                    params: { name: sel.name, round: sel.round },
+                    params: { name: sel.name, round: displayRound },
                   });
                 }
               } else if (key === "a") {
@@ -727,23 +738,41 @@ export default {
 
             {rows.map((row, i) => {
               const isSelected = (store.fleetSelected ?? 0) === i;
-              const isNeedsYou = row.display === "NEEDS YOU";
+              const isNeedsYou = !!row.needs_you;
               const actor = row.role || "builder";
               const model = parseModel(row.candidate);
+              const displayRound = row.report_round || row.round;
+              const state = isNeedsYou ? "NEEDS YOU" : (row.display || "ACTIVE");
               const nowCol = `${row.waiting || "--"} · ${row.clock || "--"}`;
               const tokensCol = row.tokens || "";
 
               const namePad = row.name.padEnd(14, " ");
               const actorPad = actor.padEnd(9, " ");
               const modelPad = ellipsize(model, 20).padEnd(21, " ");
-              const rndPad = `r${row.round}`.padEnd(5, " ");
-              const statePad = row.display.padEnd(10, " ");
+              const rndPad = `r${displayRound}`.padEnd(5, " ");
+              const statePad = state.padEnd(10, " ");
               const nowPad = ellipsize(nowCol, 26).padEnd(28, " ");
 
               const line = `${namePad} ${actorPad} ${modelPad} ${rndPad} ${statePad} ${nowPad} ${tokensCol}`;
 
               return (
-                <box flexDirection="row" backgroundColor={isSelected ? paint(api, "background.action") : undefined}>
+                <box
+                  flexDirection="row"
+                  backgroundColor={isSelected ? paint(api, "background.action") : undefined}
+                  onMouseDown={() => {
+                    if (isSelected) {
+                      api.ui.router.navigate({
+                        type: "plugin",
+                        name: "relevo.binding",
+                        params: { name: row.name, round: displayRound },
+                      });
+                    } else {
+                      setStore((s: any) => {
+                        s.fleetSelected = i;
+                      });
+                    }
+                  }}
+                >
                   <text
                     fg={isSelected ? interactiveColor : isNeedsYou ? warningColor : baseColor}
                   >
@@ -803,7 +832,7 @@ export default {
         }
 
         const row = (currentDoc?.rows || []).find((r: any) => r.name === name) || {};
-        const round = params.round !== undefined ? params.round : (row.round || 1);
+        const round = params.round !== undefined ? params.round : (row.report_round || row.round || 1);
         currentRouteParams = { name, round };
 
         const tabs = ["plan", "report", "diff", "log", "transcript"];
@@ -822,7 +851,8 @@ export default {
 
         const actor = row.role || "builder";
         const model = parseModel(row.candidate);
-        const display = row.display || "ACTIVE";
+        const isNeedsYou = !!row.needs_you;
+        const display = isNeedsYou ? "NEEDS YOU" : (row.display || "ACTIVE");
 
         // The body scrollbox is the focused renderable (per the plan's
         // <scrollbox focusable focused>), so keys must be handled here too.
@@ -876,7 +906,7 @@ export default {
               <text>
                 <b>{`relevo › fleet › ${name} › r${round}`}</b>
               </text>
-              <text fg={display === "NEEDS YOU" ? warningColor : successColor}>
+              <text fg={isNeedsYou ? warningColor : successColor}>
                 <b>{display}</b>
               </text>
             </box>

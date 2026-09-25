@@ -11,11 +11,18 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
-// opencodeServicePath is where opencode 2.x's shared background service
-// records its listening address and password: written once by `opencode
-// serve --service` (also `opencode service start`), read by every `opencode
-// run` on this machine until it stops (#256).
-const opencodeServicePath = ".config/opencode/service.json"
+// opencodeServicePaths are where opencode 2.x's background service records
+// its listening address: the live record with url and pid is in the state dir
+// on 2.0.14, with the config dir as fallback (#393).
+const (
+	opencodeStateServicePath  = ".local/state/opencode/service.json"
+	opencodeConfigServicePath = ".config/opencode/service.json"
+)
+
+var opencodeServicePaths = []string{
+	opencodeStateServicePath,
+	opencodeConfigServicePath,
+}
 
 // opencodeDBPath is opencode's own SQLite store, already read (through
 // sqlite3, never database/sql) by the usage checks below for round
@@ -41,12 +48,30 @@ const opencodeDBPath = ".local/share/opencode/opencode.db"
 // the base note, because whether the count is readable is never itself a
 // fault.
 func opencodeServiceCheck(ctx context.Context, env Env) Check {
-	svcPath, err := env.HomePath(opencodeServicePath)
-	if err != nil || env.Stat(svcPath) != nil {
+	var usedRelPath string
+	for _, rel := range opencodeServicePaths {
+		svcPath, err := env.HomePath(rel)
+		if err != nil || env.Stat(svcPath) != nil {
+			continue
+		}
+		b, err := env.ReadFile(svcPath)
+		if err != nil {
+			continue
+		}
+		var record struct {
+			URL string `json:"url"`
+		}
+		if err := json.Unmarshal(b, &record); err != nil || record.URL == "" {
+			continue
+		}
+		usedRelPath = rel
+		break
+	}
+	if usedRelPath == "" {
 		return Check{} // caller skips a zero-value row (Name == "")
 	}
 
-	detail := fmt.Sprintf("2.x shared service (~/%s); a killed or switched-away client leaves its session running inside the service (#256)", opencodeServicePath)
+	detail := fmt.Sprintf("2.x shared service (~/%s); a killed or switched-away client leaves its session running inside the service (#256)", usedRelPath)
 	if dbPath, derr := env.HomePath(opencodeDBPath); derr == nil && env.Stat(dbPath) == nil {
 		if n, ok := opencodeSessionCount(ctx, env, dbPath); ok {
 			detail = fmt.Sprintf("%s; %d session(s) recorded in opencode.db", detail, n)

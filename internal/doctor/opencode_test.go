@@ -14,7 +14,8 @@ import (
 // about how opencode 2.x runs, not a misconfiguration), and its session
 // count comes from opencode.db through sqlite3, not the service's HTTP API.
 func TestOpencodeServiceCheck(t *testing.T) {
-	const svcPath = "/fake/home/.config/opencode/service.json"
+	const stateSvcPath = "/fake/home/.local/state/opencode/service.json"
+	const configSvcPath = "/fake/home/.config/opencode/service.json"
 	const dbPath = "/fake/home/.local/share/opencode/opencode.db"
 
 	t.Run("no service.json is silent", func(t *testing.T) {
@@ -26,7 +27,11 @@ func TestOpencodeServiceCheck(t *testing.T) {
 	})
 
 	t.Run("service.json present notes the shared service", func(t *testing.T) {
-		env := &fakeEnv{homeDir: "/fake/home", existingFiles: map[string]bool{svcPath: true}}
+		env := &fakeEnv{
+			homeDir:       "/fake/home",
+			existingFiles: map[string]bool{configSvcPath: true},
+			fileContents:  map[string]string{configSvcPath: `{"url":"http://127.0.0.1:4000"}`},
+		}
 		c := opencodeServiceCheck(context.Background(), env)
 		if c.Group != "opencode" || c.Name != "service" || c.Severity != SevOK {
 			t.Errorf("row = %+v, want an OK opencode/service row", c)
@@ -39,7 +44,8 @@ func TestOpencodeServiceCheck(t *testing.T) {
 	t.Run("opencode.db present adds the session count", func(t *testing.T) {
 		env := &fakeEnv{
 			homeDir:       "/fake/home",
-			existingFiles: map[string]bool{svcPath: true, dbPath: true},
+			existingFiles: map[string]bool{configSvcPath: true, dbPath: true},
+			fileContents:  map[string]string{configSvcPath: `{"url":"http://127.0.0.1:4000"}`},
 			commandOut:    []byte("3\n"),
 		}
 		c := opencodeServiceCheck(context.Background(), env)
@@ -49,7 +55,11 @@ func TestOpencodeServiceCheck(t *testing.T) {
 	})
 
 	t.Run("no opencode.db leaves only the base note", func(t *testing.T) {
-		env := &fakeEnv{homeDir: "/fake/home", existingFiles: map[string]bool{svcPath: true}}
+		env := &fakeEnv{
+			homeDir:       "/fake/home",
+			existingFiles: map[string]bool{configSvcPath: true},
+			fileContents:  map[string]string{configSvcPath: `{"url":"http://127.0.0.1:4000"}`},
+		}
 		c := opencodeServiceCheck(context.Background(), env)
 		if strings.Contains(c.Detail, "session(s)") {
 			t.Errorf("Detail = %q, want no session count with no opencode.db", c.Detail)
@@ -59,7 +69,8 @@ func TestOpencodeServiceCheck(t *testing.T) {
 	t.Run("a failing sqlite3 query still returns the base note", func(t *testing.T) {
 		env := &fakeEnv{
 			homeDir:       "/fake/home",
-			existingFiles: map[string]bool{svcPath: true, dbPath: true},
+			existingFiles: map[string]bool{configSvcPath: true, dbPath: true},
+			fileContents:  map[string]string{configSvcPath: `{"url":"http://127.0.0.1:4000"}`},
 			commandErr:    errors.New("sqlite3: not found"),
 		}
 		c := opencodeServiceCheck(context.Background(), env)
@@ -68,6 +79,41 @@ func TestOpencodeServiceCheck(t *testing.T) {
 		}
 		if strings.Contains(c.Detail, "session(s)") {
 			t.Errorf("Detail = %q, want no session count when the query fails", c.Detail)
+		}
+	})
+
+	t.Run("state file present detail names it", func(t *testing.T) {
+		env := &fakeEnv{
+			homeDir:       "/fake/home",
+			existingFiles: map[string]bool{stateSvcPath: true, configSvcPath: true},
+			fileContents: map[string]string{
+				stateSvcPath:  `{"url":"http://127.0.0.1:4001"}`,
+				configSvcPath: `{"url":"http://127.0.0.1:4002"}`,
+			},
+		}
+		c := opencodeServiceCheck(context.Background(), env)
+		if c.Severity != SevOK {
+			t.Errorf("severity = %v, want SevOK", c.Severity)
+		}
+		if !strings.Contains(c.Detail, "~/.local/state/opencode/service.json") {
+			t.Errorf("Detail = %q, want it to name ~/.local/state/opencode/service.json", c.Detail)
+		}
+	})
+
+	t.Run("only config file detail names it", func(t *testing.T) {
+		env := &fakeEnv{
+			homeDir:       "/fake/home",
+			existingFiles: map[string]bool{configSvcPath: true},
+			fileContents: map[string]string{
+				configSvcPath: `{"url":"http://127.0.0.1:4002"}`,
+			},
+		}
+		c := opencodeServiceCheck(context.Background(), env)
+		if c.Severity != SevOK {
+			t.Errorf("severity = %v, want SevOK", c.Severity)
+		}
+		if !strings.Contains(c.Detail, "~/.config/opencode/service.json") {
+			t.Errorf("Detail = %q, want it to name ~/.config/opencode/service.json", c.Detail)
 		}
 	})
 }
