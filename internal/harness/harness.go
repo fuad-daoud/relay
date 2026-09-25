@@ -120,6 +120,12 @@ type Harness struct {
 	// DocExt is the extension of this kind's shipped definition files under
 	// agents/; "" means "md". codex roles are TOML profiles (spec §5).
 	DocExt string
+	// Files are the non-definition files relevo ships for this kind and
+	// installs under the home: the OpenCode plugin package today (#393
+	// §5.4). A file absent on disk is written only when
+	// InstallOptions.Files is set -- the plugin is opt-in -- and nil for
+	// every kind that ships none.
+	Files []ShippedFile
 }
 
 var knownHarnesses = map[string]Harness{
@@ -190,6 +196,11 @@ var knownHarnesses = map[string]Harness{
 			{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
 			{Name: "reviewer", Path: ".config/opencode/agents/reviewer.md", Doc: "reviewer.opencode"},
 			{Name: "architect", Path: ".config/opencode/agents/architect.md", Doc: "architect.opencode"},
+		},
+		Files: []ShippedFile{
+			{Name: "opencode-plugin/package.json", Path: ".config/opencode/plugins/relevo/package.json", Embed: "opencodeplugin/package.json"},
+			{Name: "opencode-plugin/server.ts", Path: ".config/opencode/plugins/relevo/server.ts", Embed: "opencodeplugin/server.ts"},
+			{Name: "opencode-plugin/tui.tsx", Path: ".config/opencode/plugins/relevo/tui.tsx", Embed: "opencodeplugin/tui.tsx"},
 		},
 	},
 	"codex": {

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // agyConversation is a valid agy conversation id: the lower-case 8-4-4-4-12
@@ -357,4 +358,173 @@ func withEnv(m map[string]string, key, value string) map[string]string {
 	}
 	out[key] = value
 	return out
+}
+
+func TestDetectOpencodeMarker(t *testing.T) {
+	// RELEVO_HARNESS=opencode -> kind opencode
+	ident, ok := Detect(envFunc(map[string]string{"RELEVO_HARNESS": "opencode"}), 42)
+	if !ok {
+		t.Fatal("Detect did not report opencode")
+	}
+	if ident.Kind != "opencode" || ident.SessionID != "" || ident.HostPID != 0 {
+		t.Errorf("Detect = %+v, want opencode//0", ident)
+	}
+
+	// with CLAUDECODE=1 also set -> claude
+	ident, ok = Detect(envFunc(map[string]string{
+		"RELEVO_HARNESS": "opencode",
+		"CLAUDECODE":     "1",
+		"CLAUDE_PID":     "100",
+	}), 42)
+	if !ok || ident.Kind != "claude" {
+		t.Errorf("Detect with CLAUDECODE=1 = %+v (ok %v), want claude", ident, ok)
+	}
+
+	// with a valid agy conversation id also set -> agy
+	ident, ok = Detect(envFunc(map[string]string{
+		"RELEVO_HARNESS":              "opencode",
+		"ANTIGRAVITY_CONVERSATION_ID": agyConversation,
+	}), 42)
+	if !ok || ident.Kind != "agy" {
+		t.Errorf("Detect with agy conversation = %+v (ok %v), want agy", ident, ok)
+	}
+}
+
+func TestResolveOpencodeSession(t *testing.T) {
+	reg := testRegistry(t)
+	ocRec := mustCreate(t, reg, record("pl_occccccccccc", "oc-one", "opencode", "ses_resolved", 0))
+
+	opencodeEnv := envFunc(map[string]string{"RELEVO_HARNESS": "opencode"})
+
+	t.Run("finder returns an id with a record -> that record, ResolutionSession", func(t *testing.T) {
+		rec, res, err := Resolve(reg, ResolveInput{
+			Env: opencodeEnv,
+			CWD: "/repo",
+			OpencodeSession: func(cwd string, now time.Time) (string, error) {
+				return "ses_resolved", nil
+			},
+			Now: testNow,
+		})
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if rec.ID != ocRec.ID {
+			t.Errorf("rec.ID = %q, want %q", rec.ID, ocRec.ID)
+		}
+		if res != ResolutionSession {
+			t.Errorf("resolution = %q, want %q", res, ResolutionSession)
+		}
+	})
+
+	t.Run("id without a record -> errors.As ErrUnregisteredSession AND errors.Is ErrNoPlanner", func(t *testing.T) {
+		_, _, err := Resolve(reg, ResolveInput{
+			Env: opencodeEnv,
+			CWD: "/repo",
+			OpencodeSession: func(cwd string, now time.Time) (string, error) {
+				return "ses_unregistered", nil
+			},
+			Now: testNow,
+		})
+		var unreg ErrUnregisteredSession
+		if !errors.As(err, &unreg) {
+			t.Fatalf("err = %v, want ErrUnregisteredSession", err)
+		}
+		if unreg.Kind != "opencode" || unreg.SessionID != "ses_unregistered" {
+			t.Errorf("unreg = %+v, want opencode/ses_unregistered", unreg)
+		}
+		if !errors.Is(err, ErrNoPlanner) {
+			t.Errorf("err = %v, want errors.Is ErrNoPlanner", err)
+		}
+	})
+
+	t.Run("finder returns ErrNoOpencodeSession -> ErrNoPlanner", func(t *testing.T) {
+		_, _, err := Resolve(reg, ResolveInput{
+			Env: opencodeEnv,
+			CWD: "/repo",
+			OpencodeSession: func(cwd string, now time.Time) (string, error) {
+				return "", ErrNoOpencodeSession
+			},
+			Now: testNow,
+		})
+		if !errors.Is(err, ErrNoPlanner) {
+			t.Fatalf("err = %v, want ErrNoPlanner", err)
+		}
+	})
+
+	t.Run("finder returns ambiguous -> that error", func(t *testing.T) {
+		ambErr := ErrAmbiguousOpencodeSession{Dir: "/repo", Titles: []string{"A", "B"}}
+		_, _, err := Resolve(reg, ResolveInput{
+			Env: opencodeEnv,
+			CWD: "/repo",
+			OpencodeSession: func(cwd string, now time.Time) (string, error) {
+				return "", ambErr
+			},
+			Now: testNow,
+		})
+		if !errors.Is(err, ambErr) {
+			t.Fatalf("err = %v, want %v", err, ambErr)
+		}
+	})
+
+	t.Run("nil finder or CWD \"\" -> ErrNoPlanner without calling it", func(t *testing.T) {
+		called := false
+		finder := func(cwd string, now time.Time) (string, error) {
+			called = true
+			return "ses_resolved", nil
+		}
+
+		// nil finder
+		_, _, err := Resolve(reg, ResolveInput{
+			Env: opencodeEnv,
+			CWD: "/repo",
+			Now: testNow,
+		})
+		if !errors.Is(err, ErrNoPlanner) {
+			t.Fatalf("nil finder: err = %v, want ErrNoPlanner", err)
+		}
+
+		// CWD empty
+		_, _, err = Resolve(reg, ResolveInput{
+			Env:             opencodeEnv,
+			CWD:             "",
+			OpencodeSession: finder,
+			Now:             testNow,
+		})
+		if !errors.Is(err, ErrNoPlanner) {
+			t.Fatalf("empty CWD: err = %v, want ErrNoPlanner", err)
+		}
+		if called {
+			t.Fatal("finder was called when CWD was empty")
+		}
+	})
+
+	t.Run("RELEVO_PLANNER set -> env wins and the finder is never called", func(t *testing.T) {
+		called := false
+		finder := func(cwd string, now time.Time) (string, error) {
+			called = true
+			return "ses_resolved", nil
+		}
+
+		rec, res, err := Resolve(reg, ResolveInput{
+			Env: envFunc(map[string]string{
+				"RELEVO_HARNESS": "opencode",
+				"RELEVO_PLANNER": ocRec.ID,
+			}),
+			CWD:             "/repo",
+			OpencodeSession: finder,
+			Now:             testNow,
+		})
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if rec.ID != ocRec.ID {
+			t.Errorf("rec.ID = %q, want %q", rec.ID, ocRec.ID)
+		}
+		if res != ResolutionEnv {
+			t.Errorf("res = %q, want %q", res, ResolutionEnv)
+		}
+		if called {
+			t.Fatal("finder was called even though RELEVO_PLANNER was set")
+		}
+	})
 }

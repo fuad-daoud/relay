@@ -260,6 +260,10 @@ type Runtime struct {
 	// cannot run, and resolution falls through to the session.
 	ProcStart func(pid int) (int64, error)
 
+	// OpencodeSession finds an opencode session id for the working directory (#393).
+	// Nil when sqlite3 is not on PATH or not configured.
+	OpencodeSession func(cwd string, now time.Time) (string, error)
+
 	// Deliverers routes a planner-bound payload to that planner kind's own
 	// push path (docs/specs/2026-09-22-opencode-delivery-design.md). A kind
 	// with no entry, and a nil map, leave the entry pending for `relevo wait`.

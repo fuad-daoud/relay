@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
 // TestOpencodeServiceCheck pins the 2.x shared-service note (#256): the row
@@ -210,4 +212,156 @@ func TestStripJSONC(t *testing.T) {
 	if !strings.Contains(got, `"a": 1`) || strings.Contains(got, "1,") {
 		t.Errorf("stripJSONC() = %s, want the trailing comma removed", got)
 	}
+}
+
+// TestOpencodePluginCheck pins §7 step 3's plugin rows (#393 §5.5): none
+// present is a quiet OK naming `relevo config agents`, all present and equal to
+// the shipped bytes is the installed OK, and a missing or edited file is a
+// warning naming it.
+func TestOpencodePluginCheck(t *testing.T) {
+	const (
+		pkg = "/fake/home/.config/opencode/plugins/relevo/package.json"
+		srv = "/fake/home/.config/opencode/plugins/relevo/server.ts"
+		tui = "/fake/home/.config/opencode/plugins/relevo/tui.tsx"
+	)
+
+	shipped := func(t *testing.T, name string) string {
+		t.Helper()
+		b, err := harness.ShippedFileBytes("opencode", name)
+		if err != nil {
+			t.Fatalf("ShippedFileBytes(%s): %v", name, err)
+		}
+		return string(b)
+	}
+	allEqual := func(t *testing.T) *fakeEnv {
+		t.Helper()
+		return &fakeEnv{
+			homeDir:       "/fake/home",
+			existingFiles: map[string]bool{pkg: true, srv: true, tui: true},
+			fileContents: map[string]string{
+				pkg: shipped(t, "opencode-plugin/package.json"),
+				srv: shipped(t, "opencode-plugin/server.ts"),
+				tui: shipped(t, "opencode-plugin/tui.tsx"),
+			},
+		}
+	}
+
+	t.Run("none present is ok and names relevo config agents", func(t *testing.T) {
+		env := &fakeEnv{homeDir: "/fake/home", existingFiles: map[string]bool{}}
+		c := opencodePluginCheck(env)
+		if c.Group != "opencode" || c.Name != "plugin" || c.Severity != SevOK {
+			t.Fatalf("row = %+v, want an OK opencode/plugin row", c)
+		}
+		if c.Detail != "not installed -- relevo config agents installs the OpenCode plugin" {
+			t.Errorf("Detail = %q, want the not-installed detail", c.Detail)
+		}
+	})
+
+	t.Run("all present and equal is installed", func(t *testing.T) {
+		c := opencodePluginCheck(allEqual(t))
+		if c.Severity != SevOK || c.Detail != "installed (~/.config/opencode/plugins/relevo)" {
+			t.Errorf("row = %+v, want the installed OK row", c)
+		}
+	})
+
+	t.Run("one missing warns naming it", func(t *testing.T) {
+		env := allEqual(t)
+		delete(env.existingFiles, tui)
+		delete(env.fileContents, tui)
+		c := opencodePluginCheck(env)
+		if c.Severity != SevWarn {
+			t.Fatalf("severity = %v, want warn", c.Severity)
+		}
+		if !strings.Contains(c.Detail, "~/.config/opencode/plugins/relevo/tui.tsx") || !strings.Contains(c.Detail, "missing") {
+			t.Errorf("Detail = %q, want it to name the missing tui.tsx", c.Detail)
+		}
+		if c.Fix != "relevo config agents (add --force to replace your edits)" {
+			t.Errorf("Fix = %q, want the relevo config agents fix", c.Fix)
+		}
+	})
+
+	t.Run("one edited warns naming it", func(t *testing.T) {
+		env := allEqual(t)
+		env.fileContents[srv] = "// my edit\n"
+		c := opencodePluginCheck(env)
+		if c.Severity != SevWarn {
+			t.Fatalf("severity = %v, want warn", c.Severity)
+		}
+		if !strings.Contains(c.Detail, "~/.config/opencode/plugins/relevo/server.ts") || !strings.Contains(c.Detail, "differs") {
+			t.Errorf("Detail = %q, want it to name the edited server.ts", c.Detail)
+		}
+	})
+}
+
+// TestOpencodePluginKeysCheck pins §7 step 3's keys rows (#393 §5.5): no row
+// until the plugin is installed, a WARN when another command takes a key the
+// plugin uses, an OK for a `relevo.` binding and for a config with no
+// keybinds, and an unparseable config skipped rather than failed.
+func TestOpencodePluginKeysCheck(t *testing.T) {
+	const (
+		pkg      = "/fake/home/.config/opencode/plugins/relevo/package.json"
+		jsonc    = "/fake/home/.config/opencode/opencode.jsonc"
+		jsonPath = "/fake/home/.config/opencode/opencode.json"
+		cliPath  = "/fake/home/.config/opencode/cli.json"
+	)
+
+	t.Run("no plugin installed is no row", func(t *testing.T) {
+		env := &fakeEnv{homeDir: "/fake/home", existingFiles: map[string]bool{}, fileContents: map[string]string{}}
+		if c := opencodePluginKeysCheck(env); c.Name != "" {
+			t.Errorf("check = %+v, want a zero-value row while the plugin is absent", c)
+		}
+	})
+
+	t.Run("an unrelated command on a reserved key warns", func(t *testing.T) {
+		env := &fakeEnv{
+			homeDir:       "/fake/home",
+			existingFiles: map[string]bool{pkg: true, jsonc: true},
+			fileContents: map[string]string{
+				jsonc: "{\n  // opencode reads this file with comments\n  \"keybinds\": { \"session.redo\": \"<leader>o\" }\n}\n",
+			},
+		}
+		c := opencodePluginKeysCheck(env)
+		if c.Severity != SevWarn {
+			t.Fatalf("severity = %v, want warn", c.Severity)
+		}
+		if !strings.Contains(c.Detail, "session.redo") || !strings.Contains(c.Detail, "<leader>o") {
+			t.Errorf("Detail = %q, want it to name session.redo and the key", c.Detail)
+		}
+	})
+
+	t.Run("a relevo command on a reserved key is ok", func(t *testing.T) {
+		env := &fakeEnv{
+			homeDir:       "/fake/home",
+			existingFiles: map[string]bool{pkg: true, cliPath: true},
+			fileContents:  map[string]string{cliPath: `{"keybinds":{"relevo.open":"<leader>o"}}`},
+		}
+		c := opencodePluginKeysCheck(env)
+		if c.Severity != SevOK || !strings.Contains(c.Detail, "free") {
+			t.Errorf("row = %+v, want OK: a relevo.* binding is the plugin's own", c)
+		}
+	})
+
+	t.Run("no keybinds is ok", func(t *testing.T) {
+		env := &fakeEnv{
+			homeDir:       "/fake/home",
+			existingFiles: map[string]bool{pkg: true, jsonPath: true},
+			fileContents:  map[string]string{jsonPath: `{"model":"some/model"}`},
+		}
+		c := opencodePluginKeysCheck(env)
+		if c.Severity != SevOK || !strings.Contains(c.Detail, "free") {
+			t.Errorf("row = %+v, want OK with no keybinds", c)
+		}
+	})
+
+	t.Run("an unparseable config is skipped", func(t *testing.T) {
+		env := &fakeEnv{
+			homeDir:       "/fake/home",
+			existingFiles: map[string]bool{pkg: true, jsonc: true},
+			fileContents:  map[string]string{jsonc: "{ not json"},
+		}
+		c := opencodePluginKeysCheck(env)
+		if c.Severity != SevOK {
+			t.Errorf("row = %+v, want OK: an unparseable config never fails the check", c)
+		}
+	})
 }

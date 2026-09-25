@@ -41,19 +41,36 @@ func resolveVerbPlanner(rt Runtime, ref string) (planner.Record, bool, error) {
 	if rt.Now != nil {
 		now = rt.Now()
 	}
+	cwd, _ := os.Getwd()
 	rec, _, err := planner.Resolve(rt.Planners, planner.ResolveInput{
-		Flag:      ref,
-		Env:       os.Getenv,
-		PPID:      os.Getppid(),
-		ProcStart: rt.ProcStart,
-		Now:       now,
+		Flag:            ref,
+		Env:             os.Getenv,
+		PPID:            os.Getppid(),
+		ProcStart:       rt.ProcStart,
+		Now:             now,
+		CWD:             cwd,
+		OpencodeSession: rt.OpencodeSession,
 	})
 	switch {
 	case err == nil:
 		return rec, true, nil
-	case errors.Is(err, planner.ErrNoPlanner):
-		return planner.Record{}, false, ErrNoPlannerSession
 	default:
+		var unreg planner.ErrUnregisteredSession
+		if errors.As(err, &unreg) && unreg.Kind == "opencode" {
+			rec, _, initErr := planner.Init(rt.Planners, planner.InitInput{
+				Kind:      "opencode",
+				SessionID: unreg.SessionID,
+				CWD:       cwd,
+				Now:       now,
+			})
+			if initErr != nil {
+				return planner.Record{}, false, initErr
+			}
+			return rec, true, nil
+		}
+		if errors.Is(err, planner.ErrNoPlanner) {
+			return planner.Record{}, false, ErrNoPlannerSession
+		}
 		return planner.Record{}, false, err
 	}
 }

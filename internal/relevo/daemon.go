@@ -553,6 +553,14 @@ func (d *Daemon) prunePlanners() {
 		slog.Info("forgot dead planner", "planner", rec.Name, "id", rec.ID)
 	}
 
+	idle, err := planner.PruneIdle(rt.Planners, func(id string) int { return counts[id] }, now(), false)
+	if err != nil {
+		slog.Warn("planner prune: idle", "err", err)
+	}
+	for _, rec := range idle {
+		slog.Info("forgot idle planner", "planner", rec.Name, "id", rec.ID)
+	}
+
 	if err := recordPlannerPruned(kv, now()); err != nil {
 		slog.Warn("planner prune: record last run", "err", err)
 	}

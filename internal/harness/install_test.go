@@ -1109,3 +1109,191 @@ func TestOSInstallEnvRoundTrip(t *testing.T) {
 		t.Error("expected error for non-existent binary, got nil")
 	}
 }
+
+// pluginRows returns the results whose Role is a shipped-file label, so a test
+// can read the OpenCode plugin rows apart from the kind's four role rows.
+func pluginRows(results []InstallResult) []InstallResult {
+	var out []InstallResult
+	for _, r := range results {
+		if strings.HasPrefix(r.Role, "opencode-plugin/") {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// TestInstallPluginFilesOptIn pins §7 step 2's opt-in rows: with Files false an
+// absent plugin file produces no row at all, with Files true the three shipped
+// files land (bytes and manifest recorded), a present-and-identical file is
+// kept, DryRun writes nothing, and --role never touches the plugin.
+func TestInstallPluginFilesOptIn(t *testing.T) {
+	t.Run("Files false and nothing on disk produces no plugin rows", func(t *testing.T) {
+		env := freshEnv()
+		results, err := Install(env, InstallOptions{Kind: "opencode"})
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		if got := pluginRows(results); len(got) != 0 {
+			t.Errorf("plugin rows = %+v, want none while the plugin is not opted in", got)
+		}
+	})
+
+	t.Run("Files true writes the three shipped files and records them", func(t *testing.T) {
+		env := freshEnv()
+		results, err := Install(env, InstallOptions{Kind: "opencode", Files: true})
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		rows := pluginRows(results)
+		if len(rows) != 3 {
+			t.Fatalf("plugin rows = %+v, want 3", rows)
+		}
+		h, _ := Lookup("opencode")
+		for i, f := range h.Files {
+			if rows[i].Outcome != OutcomeWrote {
+				t.Errorf("%s outcome = %v, want %v", f.Name, rows[i].Outcome, OutcomeWrote)
+			}
+			if rows[i].Role != f.Name || rows[i].Path != f.Path {
+				t.Errorf("row %d = %+v, want role %q path %q", i, rows[i], f.Name, f.Path)
+			}
+			want, err := ShippedFileBytes("opencode", f.Name)
+			if err != nil {
+				t.Fatalf("ShippedFileBytes(%s): %v", f.Name, err)
+			}
+			if got := env.files["/home/u/"+f.Path]; !bytes.Equal(got, want) {
+				t.Errorf("%s on disk = %d bytes, want the embedded bytes", f.Path, len(got))
+			}
+			if got := env.manifest[f.Path]; got != docSHA(want) {
+				t.Errorf("manifest[%s] = %q, want the shipped sha", f.Path, got)
+			}
+		}
+		if env.saves != 1 {
+			t.Errorf("manifest saves = %d, want 1", env.saves)
+		}
+	})
+
+	t.Run("a second Files false run keeps the three identical", func(t *testing.T) {
+		env := freshEnv()
+		if _, err := Install(env, InstallOptions{Kind: "opencode", Files: true}); err != nil {
+			t.Fatalf("first Install: %v", err)
+		}
+		results, err := Install(env, InstallOptions{Kind: "opencode"})
+		if err != nil {
+			t.Fatalf("second Install: %v", err)
+		}
+		rows := pluginRows(results)
+		if len(rows) != 3 {
+			t.Fatalf("plugin rows = %+v, want 3", rows)
+		}
+		for _, r := range rows {
+			if r.Outcome != OutcomeKeptIdentical {
+				t.Errorf("%s outcome = %v, want %v", r.Role, r.Outcome, OutcomeKeptIdentical)
+			}
+		}
+	})
+
+	t.Run("DryRun reports and writes nothing", func(t *testing.T) {
+		env := freshEnv()
+		results, err := Install(env, InstallOptions{Kind: "opencode", Files: true, DryRun: true})
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		rows := pluginRows(results)
+		if len(rows) != 3 {
+			t.Fatalf("plugin rows = %+v, want 3", rows)
+		}
+		for _, r := range rows {
+			if r.Outcome != OutcomeWouldWrite {
+				t.Errorf("%s outcome = %v, want %v", r.Role, r.Outcome, OutcomeWouldWrite)
+			}
+		}
+		if len(env.writes) != 0 {
+			t.Errorf("DryRun wrote %v, want nothing", env.writes)
+		}
+		if env.saves != 0 {
+			t.Errorf("DryRun saved the manifest %d times, want 0", env.saves)
+		}
+	})
+
+	t.Run("--role installs no plugin rows", func(t *testing.T) {
+		env := freshEnv()
+		results, err := Install(env, InstallOptions{Kind: "opencode", Role: "plan-executor", Files: true})
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		if len(results) != 1 || results[0].Role != "plan-executor" {
+			t.Fatalf("results = %+v, want only the plan-executor role", results)
+		}
+		if got := pluginRows(results); len(got) != 0 {
+			t.Errorf("plugin rows = %+v, want none under --role", got)
+		}
+	})
+}
+
+// TestInstallPluginFilesFollowDefinitionRules pins the rest of §7 step 2: a
+// present plugin file uses the same decision table as a definition -- a copy
+// relevo last wrote is refreshed even without Files, a user edit is kept (and
+// only --force replaces it).
+func TestInstallPluginFilesFollowDefinitionRules(t *testing.T) {
+	const pkgPath = ".config/opencode/plugins/relevo/package.json"
+	const pkgFull = "/home/u/.config/opencode/plugins/relevo/package.json"
+
+	shipped, err := ShippedFileBytes("opencode", "opencode-plugin/package.json")
+	if err != nil {
+		t.Fatalf("ShippedFileBytes: %v", err)
+	}
+
+	t.Run("an unmodified older copy is updated even with Files false", func(t *testing.T) {
+		env := freshEnv()
+		older := []byte("{\n  \"name\": \"relevo\",\n  \"version\": \"0.0.0-old\"\n}\n")
+		env.files[pkgFull] = older
+		env.manifest[pkgPath] = docSHA(older)
+
+		results, err := Install(env, InstallOptions{Kind: "opencode"})
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		rows := pluginRows(results)
+		if len(rows) != 1 || rows[0].Outcome != OutcomeUpdated {
+			t.Fatalf("plugin rows = %+v, want one %v", rows, OutcomeUpdated)
+		}
+		if !bytes.Equal(env.files[pkgFull], shipped) {
+			t.Error("the older plugin copy was not refreshed with the shipped one")
+		}
+		if got := env.manifest[pkgPath]; got != docSHA(shipped) {
+			t.Errorf("manifest[%s] = %q, want the shipped sha", pkgPath, got)
+		}
+	})
+
+	t.Run("a user edit is kept, and Force overwrites it", func(t *testing.T) {
+		edited := []byte("{\n  \"version\": \"mine\"\n}\n")
+
+		env := freshEnv()
+		env.files[pkgFull] = edited
+		results, err := Install(env, InstallOptions{Kind: "opencode"})
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		rows := pluginRows(results)
+		if len(rows) != 1 || rows[0].Outcome != OutcomeKeptDiffers {
+			t.Fatalf("plugin rows = %+v, want one %v", rows, OutcomeKeptDiffers)
+		}
+		if !bytes.Equal(env.files[pkgFull], edited) {
+			t.Error("an edited plugin file must stay as the user wrote it")
+		}
+
+		env2 := freshEnv()
+		env2.files[pkgFull] = edited
+		results2, err := Install(env2, InstallOptions{Kind: "opencode", Force: true})
+		if err != nil {
+			t.Fatalf("Install(Force): %v", err)
+		}
+		rows2 := pluginRows(results2)
+		if len(rows2) != 1 || rows2[0].Outcome != OutcomeOverwrote {
+			t.Fatalf("plugin rows = %+v, want one %v", rows2, OutcomeOverwrote)
+		}
+		if !bytes.Equal(env2.files[pkgFull], shipped) {
+			t.Error("Force did not replace the edited plugin file with the shipped one")
+		}
+	})
+}

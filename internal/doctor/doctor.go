@@ -774,6 +774,16 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 			if kind == "opencode" && cfg.stateRoot != "" {
 				checks = append(checks, opencodeAllowlistCheck(env, cfg.stateRoot))
 			}
+
+			// #393 §5.5: the shipped OpenCode plugin package, and whether
+			// another command already binds a key it uses. The keys row is
+			// silent unless the plugin is installed.
+			if kind == "opencode" {
+				checks = append(checks, opencodePluginCheck(env))
+				if kc := opencodePluginKeysCheck(env); kc.Name != "" {
+					checks = append(checks, kc)
+				}
+			}
 		}
 	}
 

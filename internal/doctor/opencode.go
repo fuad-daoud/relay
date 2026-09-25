@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
 // opencodeServicePath is where opencode 2.x's shared background service
@@ -232,4 +235,178 @@ func stripJSONC(b []byte) []byte {
 
 func jsoncSpace(c byte) bool {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
+}
+
+// opencodePluginDirPath is the home-relative directory the plugin package
+// installs into (#393 §5.5); the installed row names it.
+const opencodePluginDirPath = ".config/opencode/plugins/relevo"
+
+// opencodePluginCheck reports whether relevo's OpenCode plugin package is
+// installed (#393 §5.5). None of the three shipped files present reads as
+// "not installed" -- the plugin is opt-in -- all present and equal to the
+// embedded bytes reads as installed, and any missing or edited file is a
+// warning naming each.
+//
+// The comparison is against the table's embedded copies, through
+// harness.ShippedFileBytes, and harness.DocEqual applies the same
+// trailing-whitespace tolerance the role checks use.
+func opencodePluginCheck(env Env) Check {
+	h, ok := harness.Lookup("opencode")
+	if !ok {
+		return Check{}
+	}
+
+	present := 0
+	var problems []string
+	for _, f := range h.Files {
+		full, err := env.HomePath(f.Path)
+		if err != nil || env.Stat(full) != nil {
+			problems = append(problems, "~/"+f.Path+" is missing")
+			continue
+		}
+		present++
+		shipped, err := harness.ShippedFileBytes("opencode", f.Name)
+		if err != nil {
+			problems = append(problems, "~/"+f.Path+" has no shipped copy")
+			continue
+		}
+		b, err := env.ReadFile(full)
+		if err != nil {
+			problems = append(problems, "~/"+f.Path+" is unreadable")
+			continue
+		}
+		if !harness.DocEqual(shipped, b) {
+			problems = append(problems, "~/"+f.Path+" differs from the shipped copy")
+		}
+	}
+
+	switch {
+	case present == 0:
+		return Check{
+			Group:    "opencode",
+			Name:     "plugin",
+			Severity: SevOK,
+			Detail:   "not installed -- relevo config agents installs the OpenCode plugin",
+		}
+	case len(problems) == 0:
+		return Check{
+			Group:    "opencode",
+			Name:     "plugin",
+			Severity: SevOK,
+			Detail:   "installed (~/" + opencodePluginDirPath + ")",
+		}
+	default:
+		return Check{
+			Group:    "opencode",
+			Name:     "plugin",
+			Severity: SevWarn,
+			Detail:   strings.Join(problems, "; "),
+			Fix:      "relevo config agents (add --force to replace your edits)",
+		}
+	}
+}
+
+// opencodeReservedKeys are the key strings the relevo plugin binds, in both
+// spellings a user may write: the leader form OpenCode documents and the
+// literal chord the leader expands to (#393 §5.5).
+var opencodeReservedKeys = map[string]bool{
+	"<leader>o": true,
+	"<leader>j": true,
+	"ctrl+x o":  true,
+	"ctrl+x j":  true,
+}
+
+// opencodePluginKeysCheck reports whether another command already binds a key
+// the relevo plugin uses (#393 §5.5): a WARN naming the file, command and key,
+// or an OK row when the keys are free. It answers no row (zero Check) unless
+// the plugin is installed, since a clash only matters then.
+//
+// The user's OpenCode config is read in order -- opencode.jsonc, opencode.json,
+// cli.json -- and a file that is absent, unreadable or does not parse is
+// skipped: it never fails the run.
+func opencodePluginKeysCheck(env Env) Check {
+	if !opencodePluginInstalled(env) {
+		return Check{}
+	}
+
+	for _, rel := range []string{
+		".config/opencode/opencode.jsonc",
+		".config/opencode/opencode.json",
+		".config/opencode/cli.json",
+	} {
+		full, err := env.HomePath(rel)
+		if err != nil || env.Stat(full) != nil {
+			continue
+		}
+		body, err := env.ReadFile(full)
+		if err != nil {
+			continue
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal(stripJSONC(body), &cfg); err != nil {
+			continue
+		}
+		keybinds, _ := cfg["keybinds"].(map[string]any)
+		commands := make([]string, 0, len(keybinds))
+		for command := range keybinds {
+			commands = append(commands, command)
+		}
+		sort.Strings(commands)
+		for _, command := range commands {
+			if strings.HasPrefix(command, "relevo.") {
+				continue
+			}
+			for _, key := range opencodeKeyList(keybinds[command]) {
+				if opencodeReservedKeys[key] {
+					return Check{
+						Group:    "opencode",
+						Name:     "plugin keys",
+						Severity: SevWarn,
+						Detail:   fmt.Sprintf("~/%s: %s is bound to %s, which the relevo plugin uses", rel, command, key),
+					}
+				}
+			}
+		}
+	}
+
+	return Check{
+		Group:    "opencode",
+		Name:     "plugin keys",
+		Severity: SevOK,
+		Detail:   "ctrl+x o and ctrl+x j are free",
+	}
+}
+
+// opencodePluginInstalled reports whether at least one shipped plugin file is
+// present under the home: the signal the keys check needs to decide whether to
+// answer a row at all.
+func opencodePluginInstalled(env Env) bool {
+	h, ok := harness.Lookup("opencode")
+	if !ok {
+		return false
+	}
+	for _, f := range h.Files {
+		if full, err := env.HomePath(f.Path); err == nil && env.Stat(full) == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// opencodeKeyList reads a keybinds value: one key string or an array of them.
+// Any other JSON shape contributes nothing.
+func opencodeKeyList(raw any) []string {
+	switch v := raw.(type) {
+	case string:
+		return []string{v}
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, e := range v {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }

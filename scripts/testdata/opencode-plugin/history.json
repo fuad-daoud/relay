@@ -1,0 +1,42 @@
+[
+  {
+    "BindingID": "b_webshop",
+    "BindingName": "webshop",
+    "Number": 4,
+    "StartedAt": "2026-09-24T20:00:00Z",
+    "ClosedAt": null,
+    "Outcome": "open",
+    "BuilderCandidate": "opencode/anthropic/claude-3-5-sonnet",
+    "ReportOutcome": null
+  },
+  {
+    "BindingID": "b_webshop",
+    "BindingName": "webshop",
+    "Number": 3,
+    "StartedAt": "2026-09-24T19:00:00Z",
+    "ClosedAt": "2026-09-24T19:15:00Z",
+    "Outcome": "reported",
+    "BuilderCandidate": "opencode/anthropic/claude-3-5-sonnet",
+    "ReportOutcome": "completed"
+  },
+  {
+    "BindingID": "b_ledger",
+    "BindingName": "ledger",
+    "Number": 2,
+    "StartedAt": "2026-09-24T19:30:00Z",
+    "ClosedAt": null,
+    "Outcome": "open",
+    "BuilderCandidate": "opencode/openai/gpt-4o",
+    "ReportOutcome": null
+  },
+  {
+    "BindingID": "b_landing",
+    "BindingName": "landing",
+    "Number": 1,
+    "StartedAt": "2026-09-24T19:45:00Z",
+    "ClosedAt": null,
+    "Outcome": "open",
+    "BuilderCandidate": "opencode/anthropic/claude-3-5-sonnet",
+    "ReportOutcome": null
+  }
+]

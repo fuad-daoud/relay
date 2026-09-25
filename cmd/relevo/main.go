@@ -746,31 +746,40 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 		return relevo.Runtime{}, err
 	}
 
+	var opencodeSession func(cwd string, now time.Time) (string, error)
+	if _, err := exec.LookPath("sqlite3"); err == nil {
+		opencodeSession = relevo.OpencodeSessionFinder{
+			Exec:   binExec{},
+			DBPath: opencodeDBPath(),
+		}.Find
+	}
+
 	rt := relevo.Runtime{
-		Git:            gitClient,
-		Runner:         proc.New(),
-		Store:          st,
-		Candidates:     L.Candidates,
-		Gates:          gates,
-		GatesDir:       gatesDir,
-		Latency:        gates,
-		Policy:         pol,
-		Registry:       L.Registry,
-		ConfigWarnings: configWarnings,
-		Scope:          scopeFromPolicy(pol.ScopeFor(false)),
-		Classify:       cls,
-		Usage:          reader,
-		Sessions:       relevo.HomeSessionLocator(home),
-		Prices:         prices,
-		Fetcher:        release.NewHTTPFetcher(release.Source(), 5*time.Second),
-		Now:            time.Now,
-		Hooks:          dispatcher,
-		Remote:         remoteClient,
-		Transport:      transport,
-		Roles:          harness.OSRoleChecker(),
-		Channels:       claims,
-		ProcStart:      procStartUnix,
-		Deliverers:     newDeliverers(),
+		Git:             gitClient,
+		Runner:          proc.New(),
+		Store:           st,
+		Candidates:      L.Candidates,
+		Gates:           gates,
+		GatesDir:        gatesDir,
+		Latency:         gates,
+		Policy:          pol,
+		Registry:        L.Registry,
+		ConfigWarnings:  configWarnings,
+		Scope:           scopeFromPolicy(pol.ScopeFor(false)),
+		Classify:        cls,
+		Usage:           reader,
+		Sessions:        relevo.HomeSessionLocator(home),
+		Prices:          prices,
+		Fetcher:         release.NewHTTPFetcher(release.Source(), 5*time.Second),
+		Now:             time.Now,
+		Hooks:           dispatcher,
+		Remote:          remoteClient,
+		Transport:       transport,
+		Roles:           harness.OSRoleChecker(),
+		Channels:        claims,
+		ProcStart:       procStartUnix,
+		OpencodeSession: opencodeSession,
+		Deliverers:      newDeliverers(),
 	}
 	// The registry needs the runtime's own store and clock, so it is wired
 	// here rather than in the literal above. A runtime with no database open
@@ -2061,7 +2070,7 @@ func cmdStatus(args []string) error {
 	all := fs.Bool("all", false, "include bindings marked DONE (hidden by default; relevo unbind --done clears them)")
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	name := fs.String("name", "", "show only this binding (default: all)")
-	line := fs.Bool("line", false, "this planner's builders, one row each, for Claude Code's statusLine setting")
+	line := fs.Bool("line", false, "this planner's builders, one row each, for Claude Code's statusLine setting; with --json, output as JSON")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -2069,11 +2078,11 @@ func cmdStatus(args []string) error {
 	// --line is today's statusline: one row per builder of the calling
 	// planner, so it takes no binding and no other output mode (§4.5).
 	if *line {
-		if *all || *asJSON || *name != "" || len(fs.Args()) > 0 {
-			fmt.Fprintln(os.Stderr, "relevo: --line cannot be combined with --json/--all/--name")
+		if *all || *name != "" || len(fs.Args()) > 0 {
+			fmt.Fprintln(os.Stderr, "relevo: --line cannot be combined with --all/--name")
 			return exitCodeErr{code: 2}
 		}
-		return runStatusline()
+		return runStatusline(*asJSON)
 	}
 
 	target, err := bindingArg(*name, fs.Args())
@@ -2155,39 +2164,65 @@ func cmdStatus(args []string) error {
 
 // runStatusline is statusline's body (the old cmdStatusline), now reached
 // through `status --line` (§4.5): the same output, COLUMNS,
-// RELEVO_STATUSLINE_MARGIN and planner filtering.
-func runStatusline() error {
+// RELEVO_STATUSLINE_MARGIN and planner filtering. With asJSON, it prints
+// StatusLineDoc as JSON.
+func runStatusline(asJSON bool) error {
 	if fi, err := os.Stdin.Stat(); err != nil || relevo.ShouldDrainStdin(fi.Mode()) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	}
-	columns, err := strconv.Atoi(os.Getenv("COLUMNS"))
-	if err != nil || columns <= 0 {
-		columns = 0
+	if !asJSON {
+		columns, err := strconv.Atoi(os.Getenv("COLUMNS"))
+		if err != nil || columns <= 0 {
+			columns = 0
+		}
+		columns = relevo.StatusLineWidth(columns, os.Getenv("RELEVO_STATUSLINE_MARGIN"))
+		rt, err := newRuntime()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
+			return nil
+		}
+		// §3.3: the row set is the calling planner's bindings. A session with no
+		// planner renders nothing, the same as no planner did
+		// before #303.
+		rec, ok := plannerFilter(rt)
+		if !ok {
+			return nil
+		}
+		// #386: the first line names the planner, so each terminal shows which
+		// planner it is. It is printed before PlannerStatus and survives a
+		// PlannerStatus failure: the line is the planner's identity, not a
+		// binding row.
+		fmt.Print(relevo.RenderPlannerLine(rec.Name, columns))
+		rep, err := relevo.PlannerStatus(context.Background(), rt, rec.ID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
+			return nil
+		}
+		fmt.Print(relevo.RenderStatusLine(rep, rt.Now(), columns))
+		return nil
 	}
-	columns = relevo.StatusLineWidth(columns, os.Getenv("RELEVO_STATUSLINE_MARGIN"))
+
 	rt, err := newRuntime()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
+		doc := relevo.StatusLineDoc{Now: time.Now().UTC(), Rows: []relevo.StatusLineRow{}}
+		data, _ := json.Marshal(doc)
+		fmt.Println(string(data))
 		return nil
 	}
-	// §3.3: the row set is the calling planner's bindings. A session with no
-	// planner renders nothing, the same as no planner did
-	// before #303.
 	rec, ok := plannerFilter(rt)
-	if !ok {
-		return nil
+	now := rt.Now().UTC()
+	doc := relevo.StatusLineDoc{Now: now, Rows: []relevo.StatusLineRow{}}
+	if ok {
+		doc.Planner = &relevo.StatusLinePlanner{ID: rec.ID, Name: rec.Name}
+		rep, err := relevo.PlannerStatus(context.Background(), rt, rec.ID)
+		if err == nil {
+			doc.Rows = relevo.StatusLineRows(rep, rt.Now())
+		} else {
+			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
+		}
 	}
-	// #386: the first line names the planner, so each terminal shows which
-	// planner it is. It is printed before PlannerStatus and survives a
-	// PlannerStatus failure: the line is the planner's identity, not a
-	// binding row.
-	fmt.Print(relevo.RenderPlannerLine(rec.Name, columns))
-	rep, err := relevo.PlannerStatus(context.Background(), rt, rec.ID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
-		return nil
-	}
-	fmt.Print(relevo.RenderStatusLine(rep, rt.Now(), columns))
+	data, _ := json.Marshal(doc)
+	fmt.Println(string(data))
 	return nil
 }
 

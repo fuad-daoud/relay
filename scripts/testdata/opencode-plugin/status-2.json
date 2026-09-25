@@ -1,0 +1,49 @@
+{
+  "planner": {
+    "id": "pl_smoke000001",
+    "name": "oc-smoke"
+  },
+  "now": "2026-09-24T20:14:15Z",
+  "rows": [
+    {
+      "name": "webshop",
+      "round": 4,
+      "display": "NEEDS YOU",
+      "harness": "opencode",
+      "candidate": "opencode/anthropic/claude-3-5-sonnet",
+      "waiting": "question in",
+      "clock": "3m",
+      "tokens": "12k tok",
+      "last_kind": "question",
+      "last_ts": "2026-09-24T20:10:00Z",
+      "route": "deliverer"
+    },
+    {
+      "name": "ledger",
+      "round": 2,
+      "display": "NEEDS YOU",
+      "harness": "opencode",
+      "candidate": "opencode/openai/gpt-4o",
+      "waiting": "report in",
+      "clock": "2m",
+      "tokens": "8k tok",
+      "last_kind": "report",
+      "last_ts": "2026-09-24T20:14:10Z",
+      "route": "deliverer"
+    },
+    {
+      "name": "landing",
+      "round": 1,
+      "display": "ACTIVE",
+      "harness": "opencode",
+      "candidate": "opencode/anthropic/claude-3-5-sonnet",
+      "role": "designer",
+      "waiting": "plan sent",
+      "clock": "42s",
+      "tokens": "2k tok",
+      "last_kind": "plan",
+      "last_ts": "2026-09-24T20:13:00Z",
+      "route": "channel"
+    }
+  ]
+}
