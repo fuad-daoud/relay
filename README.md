@@ -413,8 +413,15 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
 - `relevo unbind NAME|--name N|--pick [--archive]` — forget a binding, deleting its directory or
   archiving its record first. `--pick` chooses from a list in the terminal.
 
-- `relevo unbind --done [--dry-run] [--delete]` — clear every binding the planner marked
-  `DONE`, in one pass; also deletes each cleared binding's `relevo/<name>` branch and `refs/relevo/<name>/*` refs once each is on a remote-tracking ref. Archives by default; pass `--delete` to remove each binding's directory instead (`relevo unbind --done --archive` is accepted as a no-op).
+- `relevo unbind --done [--dry-run] [--delete] [--planner P | --all-planners]` —
+  clear the DONE bindings of the calling planner (resolved like every
+  planner-scoped verb), in one pass; also deletes each cleared binding's
+  `relevo/<name>` branch and `refs/relevo/<name>/*` refs once each is on a
+  remote-tracking ref. `--all-planners` clears every planner's, including
+  bindings with no planner. If no planner resolves, it refuses rather than
+  clearing everything, and each line names the binding's planner. Archives by
+  default; pass `--delete` to remove each binding's directory instead
+  (`relevo unbind --done --archive` is accepted as a no-op).
 - `relevo unbind --sweep [--dry-run]` — delete `relevo/<name>` branches and `refs/relevo/<name>/*` refs of bindings that no longer exist, once each is on a remote-tracking ref.
 - `relevo edge add <source> --when report|diff|done|gate --then send --target <binding> --prompt <file> [--mode queue|fire] [--round N]`;
   `relevo edge list <source>`; `relevo edge rm <source> <id>` — declare, list or
@@ -1057,7 +1064,7 @@ A branch adopted with `--branch` is never deleted; `unbind`, `done` and a kept (
 ```
 relevo unbind ai              # delete the binding and its whole directory
 relevo unbind ai --archive    # keep the binding's record, log and rounds in the database
-relevo unbind --done          # archive every DONE binding
+relevo unbind --done          # archive this planner's DONE bindings
 relevo unbind --done --delete # remove them instead
 ```
 

@@ -2193,7 +2193,7 @@ func TestGCRemoteOnlyWhenDone(t *testing.T) {
 	fr := &fakeRemote{}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
-	results, err := GC(ctx, rt, GCOptions{})
+	results, err := GC(ctx, rt, GCOptions{AllPlanners: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}

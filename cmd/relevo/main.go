@@ -34,6 +34,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/legacy"
 	diffpatch "github.com/fuad-daoud/relevo/internal/patch"
 	"github.com/fuad-daoud/relevo/internal/pick"
+	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/release"
@@ -1665,30 +1666,37 @@ func cmdUnbind(args []string) error {
 	name := fs.String("name", "", "binding to unbind")
 	archive := fs.Bool("archive", false, "move the binding aside instead of deleting it, keeping its round log")
 	pickFlag := fs.Bool("pick", false, "choose the binding from a list (needs a terminal)")
-	done := fs.Bool("done", false, "clear every binding the planner marked DONE")
+	done := fs.Bool("done", false, "clear the DONE bindings of the calling planner (--all-planners: of every planner)")
 	delete := fs.Bool("delete", false, "with --done: remove each finished binding's directory instead of archiving it")
 	dryRun := fs.Bool("dry-run", false, "with --done or --sweep: list what would be cleared, change nothing")
 	sweep := fs.Bool("sweep", false, "delete relevo/<name> branches and refs/relevo/<name>/* refs of bindings that no longer exist, once they are on a remote-tracking ref")
+	plannerRef := fs.String("planner", "", "with --done: clear this planner's DONE bindings (id or name; default: $RELEVO_PLANNER, else this session's host)")
+	allPlanners := fs.Bool("all-planners", false, "with --done: clear every planner's DONE bindings, including ones with no planner")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	if *sweep {
-		if *done || *delete || *archive || *pickFlag || *name != "" || len(fs.Args()) > 0 {
+		if *done || *delete || *archive || *pickFlag || *name != "" || len(fs.Args()) > 0 || *plannerRef != "" || *allPlanners {
 			fmt.Fprintln(os.Stderr, "relevo: --sweep takes no binding and no other flag except --dry-run")
 			return exitCodeErr{code: 2}
 		}
 		return runSweep(*dryRun)
 	}
 
+	if (*plannerRef != "" || *allPlanners) && !*done {
+		fmt.Fprintln(os.Stderr, "relevo: --planner and --all-planners go with --done")
+		return exitCodeErr{code: 2}
+	}
+
 	// --done is gc, not unbind: it clears every DONE binding, so naming one or
 	// asking to pick one contradicts it (§4.3).
 	if *done {
 		if *name != "" || len(fs.Args()) > 0 || *pickFlag {
-			fmt.Fprintln(os.Stderr, "relevo: --done clears every DONE binding; do not also name one or pass --pick")
+			fmt.Fprintln(os.Stderr, "relevo: --done clears DONE bindings; do not also name one or pass --pick")
 			return exitCodeErr{code: 2}
 		}
-		return runGC(*delete, *dryRun)
+		return runGC(*delete, *dryRun, *plannerRef, *allPlanners)
 	}
 
 	if *pickFlag {
@@ -1764,27 +1772,48 @@ func runSweep(dryRun bool) error {
 }
 
 // runGC is gc's body (the old cmdGC), now reached through `unbind --done`
-// (§4.3). It clears every binding the planner marked DONE.
-func runGC(delete, dryRun bool) error {
+// (§4.3). It clears the calling planner's DONE bindings, or, with
+// --all-planners, every planner's (#482).
+func runGC(delete, dryRun bool, plannerRef string, all bool) error {
 	rt, err := newRuntime()
 	if err != nil {
 		return err
 	}
 
-	done, err := relevo.GC(context.Background(), rt, relevo.GCOptions{
-		Delete: delete,
-		DryRun: dryRun,
-	})
+	opts, err := gcScope(plannerRef, all, gcResolver(rt))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return exitCodeErr{code: 2}
+	}
+	opts.Delete = delete
+	opts.DryRun = dryRun
+
+	done, err := relevo.GC(context.Background(), rt, opts)
 	if err != nil {
 		return err
 	}
 
 	if len(done) == 0 {
-		fmt.Println("no finished bindings to clear")
+		if opts.AllPlanners {
+			fmt.Println("no finished bindings to clear")
+		} else {
+			fmt.Printf("no finished bindings to clear for planner %s\n", plannerLabel(rt, opts.PlannerID))
+		}
 		return nil
 	}
 
+	labels := make(map[string]string)
+	label := func(id string) string {
+		if l, ok := labels[id]; ok {
+			return l
+		}
+		l := plannerLabel(rt, id)
+		labels[id] = l
+		return l
+	}
+
 	for _, r := range done {
+		lbl := label(r.PlannerID)
 		switch {
 		case dryRun:
 			wtMsg := ""
@@ -1795,12 +1824,12 @@ func runGC(delete, dryRun bool) error {
 			} else if r.WorktreeGone != "" {
 				wtMsg = fmt.Sprintf(" (worktree %s already gone)", r.WorktreeGone)
 			}
-			fmt.Printf("would clear %-10s %s (%d rounds)%s\n", r.Name, r.CWD, r.Rounds, wtMsg)
+			fmt.Printf("would clear %-10s %-14s %s (%d rounds)%s\n", r.Name, "["+lbl+"]", r.CWD, r.Rounds, wtMsg)
 			for _, line := range relevo.RefLines(r.Refs) {
 				fmt.Printf("            %s\n", line)
 			}
 		case r.Archived:
-			fmt.Printf("archived    %-10s\n", r.Name)
+			fmt.Printf("archived    %-10s [%s]\n", r.Name, lbl)
 			if r.WorktreeRemoved != "" {
 				fmt.Printf("            removed worktree %s\n", r.WorktreeRemoved)
 			} else if r.WorktreeKept != "" {
@@ -1813,7 +1842,7 @@ func runGC(delete, dryRun bool) error {
 				fmt.Printf("            %s\n", line)
 			}
 		default:
-			fmt.Printf("deleted     %-10s %s (%d rounds)\n", r.Name, r.CWD, r.Rounds)
+			fmt.Printf("deleted     %-10s [%s] %s (%d rounds)\n", r.Name, lbl, r.CWD, r.Rounds)
 			if r.WorktreeRemoved != "" {
 				fmt.Printf("            removed worktree %s\n", r.WorktreeRemoved)
 			} else if r.WorktreeKept != "" {
@@ -1833,6 +1862,46 @@ func runGC(delete, dryRun bool) error {
 	}
 
 	return nil
+}
+
+// gcResolver is gcScope's production resolve function: the same input
+// plannerFilter (planner.go:517) builds, plus Flag, closed over rt. It never
+// calls planner.Init: unbind --done never registers a planner (#482).
+func gcResolver(rt relevo.Runtime) func(ref string) (planner.Record, error) {
+	return func(ref string) (planner.Record, error) {
+		if rt.Planners == nil {
+			return planner.Record{}, errors.New("no planner registry")
+		}
+		var now time.Time
+		if rt.Now != nil {
+			now = rt.Now()
+		}
+		cwd, _ := os.Getwd()
+		rec, _, err := planner.Resolve(rt.Planners, planner.ResolveInput{
+			Flag:            ref,
+			Env:             os.Getenv,
+			PPID:            os.Getppid(),
+			ProcStart:       rt.ProcStart,
+			Now:             now,
+			CWD:             cwd,
+			OpencodeSession: rt.OpencodeSession,
+		})
+		return rec, err
+	}
+}
+
+// plannerLabel is a GC result line's planner field (#482): "(none)" for "",
+// the record's Name when the registry has it, else the id itself.
+func plannerLabel(rt relevo.Runtime, id string) string {
+	if id == "" {
+		return "(none)"
+	}
+	if rt.Planners != nil {
+		if rec, err := rt.Planners.Get(id); err == nil {
+			return rec.Name
+		}
+	}
+	return id
 }
 
 func cmdSend(args []string) error {

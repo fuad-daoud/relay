@@ -660,7 +660,7 @@ func TestUnbindExistingBranchNeverDeletes(t *testing.T) {
 		if _, err := Done(ctx, rt, "api-auth"); err != nil {
 			t.Fatalf("Done: %v", err)
 		}
-		if _, err := GC(ctx, rt, GCOptions{}); err != nil {
+		if _, err := GC(ctx, rt, GCOptions{AllPlanners: true}); err != nil {
 			t.Fatalf("GC: %v", err)
 		}
 		if len(fg.deleteBranchCalls) != 0 {
