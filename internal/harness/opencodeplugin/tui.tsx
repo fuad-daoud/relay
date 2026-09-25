@@ -1068,10 +1068,11 @@ export default {
           const renderCell = (cell: string, width: number) => {
             const vis = visible(cell);
             if (vis.length <= width) {
+              const pad = width - vis.length;
               return (
                 <>
                   {renderInline(cell)}
-                  <text fg={baseColor}>{" ".repeat(width - vis.length)}</text>
+                  {pad > 0 ? <text fg={baseColor}>{" ".repeat(pad)}</text> : null}
                 </>
               );
             }
@@ -1084,16 +1085,22 @@ export default {
               {widths.map((w, c) => (
                 <>
                   {c > 0 ? <text fg={mutedColor}> │ </text> : null}
-                  <text fg={baseColor}>
-                    <b>{cellText(header[c] || "", w)}</b>
-                  </text>
+                  {w > 0 ? (
+                    <text fg={baseColor}>
+                      <b>{cellText(header[c] || "", w)}</b>
+                    </text>
+                  ) : null}
                 </>
               ))}
             </box>,
           );
+          // An empty <text> node is one OpenTUI draws a column wide; a single
+          // zero-width column makes this line the empty string, so emit the
+          // node only when the line is not.
+          const separator = widths.map((w) => "─".repeat(w)).join("─┼─");
           out.push(
             <box flexDirection="row">
-              <text fg={mutedColor}>{widths.map((w) => "─".repeat(w)).join("─┼─")}</text>
+              {separator !== "" ? <text fg={mutedColor}>{separator}</text> : null}
             </box>,
           );
           for (const r of body) {

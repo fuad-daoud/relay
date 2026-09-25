@@ -520,6 +520,40 @@ check_assertion_37() {
 }
 assert 37 "03-fleet parked shows PAUSED in a different colour from REPORT IN" check_assertion_37
 
+# 38. Every table line (header, separator, body rows -- the lines carrying │
+#     or ┼) has its first │/┼ at the same character column as every other
+#     such line, and its second │/┼ likewise. A cell that exactly fills its
+#     column must not shift the rest of its row. Character positions, not
+#     byte offsets: │ and ┼ are multi-byte in UTF-8.
+check_assertion_38() {
+  python3 - "$OUT/05f-ledger-after.txt" <<'PYEOF'
+import sys
+
+path = sys.argv[1]
+positions = []
+with open(path, encoding="utf-8") as f:
+    for line in f:
+        line = line.rstrip("\n")
+        if "│" not in line and "┼" not in line:
+            continue
+        cols = [i for i, ch in enumerate(line) if ch in "│┼"]
+        if len(cols) < 2:
+            continue
+        positions.append((cols[0], cols[1]))
+
+if not positions:
+    sys.exit(1)
+
+first_col, second_col = positions[0]
+for first, second in positions:
+    if first != first_col or second != second_col:
+        sys.exit(1)
+
+sys.exit(0)
+PYEOF
+}
+assert 38 "05f-ledger-after keeps every table column aligned" check_assertion_38
+
 # Mouse is not driven here: tmux send-keys cannot deliver SGR mouse events
 # reliably, so the clickable-row behaviour (onMouseDown on the sidebar and
 # fleet rows) is verified by inspection of tui.tsx, not by this smoke.
@@ -530,5 +564,5 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-echo "Smoke test PASSED (all 37 assertions passed)"
+echo "Smoke test PASSED (all 38 assertions passed)"
 exit 0
