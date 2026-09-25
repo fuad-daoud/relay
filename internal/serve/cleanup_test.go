@@ -2,11 +2,18 @@ package serve
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -246,5 +253,238 @@ func TestCollectSettledOnTick(t *testing.T) {
 	}
 	if len(freshRefs) != 2 {
 		t.Errorf("fresh refs/relevo/beta/* = %v; want the two seeded refs", freshRefs)
+	}
+}
+
+// N1 TestUnusedRepos (table, pure)
+func TestUnusedRepos(t *testing.T) {
+	tests := []struct {
+		name  string
+		repos []string
+		live  []store.Binding
+		want  []string
+	}{
+		{
+			name:  "repo named by live binding Serve.BareRepo is kept",
+			repos: []string{"/root/repos/owner/repo1.git"},
+			live: []store.Binding{
+				{Name: "b1", Serve: &store.ServeFacts{BareRepo: "/root/repos/owner/repo1.git"}},
+			},
+			want: nil,
+		},
+		{
+			name:  "repo named by nobody is returned",
+			repos: []string{"/root/repos/owner/unused.git"},
+			live: []store.Binding{
+				{Name: "b1", Serve: &store.ServeFacts{BareRepo: "/root/repos/owner/repo1.git"}},
+			},
+			want: []string{"/root/repos/owner/unused.git"},
+		},
+		{
+			name:  "Serve == nil with Repo set counts as reference",
+			repos: []string{"/root/repos/owner/local.git"},
+			live: []store.Binding{
+				{Name: "b2", Repo: "/root/repos/owner/local.git"},
+			},
+			want: nil,
+		},
+		{
+			name:  "path cleaning e.g. trailing slash still matches",
+			repos: []string{"/root/repos/owner/repo1.git/"},
+			live: []store.Binding{
+				{Name: "b1", Serve: &store.ServeFacts{BareRepo: "/root/repos/owner/repo1.git"}},
+			},
+			want: nil,
+		},
+		{
+			name: "input order is kept",
+			repos: []string{
+				"/root/repos/owner/unused-c.git",
+				"/root/repos/owner/used-b.git",
+				"/root/repos/owner/unused-a.git",
+			},
+			live: []store.Binding{
+				{Name: "b1", Serve: &store.ServeFacts{BareRepo: "/root/repos/owner/used-b.git"}},
+			},
+			want: []string{
+				"/root/repos/owner/unused-c.git",
+				"/root/repos/owner/unused-a.git",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := unusedRepos(tc.repos, tc.live)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("unusedRepos() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// N2 TestTickPrunesAnUnusedRepo
+func TestTickPrunesAnUnusedRepo(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	ownerDir, ok := env.id.Dir()
+	if !ok {
+		t.Fatal("client id has no owner dir")
+	}
+
+	// Owner O has repo A with a live binding.
+	env.repoID = "repo-a"
+	bareA, _ := seedServedBinding(t, env, "live-binding", store.ServeFacts{
+		RepoID: env.repoID,
+	})
+
+	// Repo B has only an archived binding.
+	env.repoID = "repo-b"
+	bareB, _ := seedServedBinding(t, env, "archived-binding", store.ServeFacts{
+		RepoID: env.repoID,
+	})
+	rt := env.runtime(t)
+	if _, err := relevo.Unbind(ctx, rt, "archived-binding", true); err != nil {
+		t.Fatalf("unbind archived-binding: %v", err)
+	}
+
+	// Create unrelated file repos/<O>/notes.txt
+	ownerRepoDir := filepath.Join(env.srv.cfg.Root, "repos", ownerDir)
+	notesPath := filepath.Join(ownerRepoDir, "notes.txt")
+	if err := os.WriteFile(notesPath, []byte("some notes"), 0644); err != nil {
+		t.Fatalf("write notes.txt: %v", err)
+	}
+
+	// Create non-owner dir repos/not-an-owner/x.git
+	nonOwnerDir := filepath.Join(env.srv.cfg.Root, "repos", "not-an-owner", "x.git")
+	if err := os.MkdirAll(nonOwnerDir, 0755); err != nil {
+		t.Fatalf("mkdir non-owner dir: %v", err)
+	}
+
+	// For M2: another owner with an unreadable store (bindings path blocked as a file).
+	// On List error, pruneUnusedRepos must skip this owner and preserve its repo.
+	failOwnerHex := strings.Repeat("b", 64)
+	failOwnerRepoDir := filepath.Join(env.srv.cfg.Root, "repos", failOwnerHex)
+	failBareRepo := filepath.Join(failOwnerRepoDir, "unpruned.git")
+	if err := env.gitClient.InitBare(ctx, failBareRepo); err != nil {
+		t.Fatalf("init bare failOwner: %v", err)
+	}
+	failOwnerBindings := filepath.Join(env.srv.cfg.Root, "bindings", failOwnerHex)
+	if err := os.WriteFile(failOwnerBindings, []byte("block-store-lock"), 0644); err != nil {
+		t.Fatalf("write failOwnerBindings file: %v", err)
+	}
+
+	if err := env.srv.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	// A exists, B is gone.
+	if _, err := os.Stat(bareA); err != nil {
+		t.Errorf("repo A stat err = %v, want it to exist", err)
+	}
+	if _, err := os.Stat(bareB); !os.IsNotExist(err) {
+		t.Errorf("repo B stat err = %v, want not exist", err)
+	}
+
+	// notes.txt and not-an-owner/x.git still exist.
+	if _, err := os.Stat(notesPath); err != nil {
+		t.Errorf("notes.txt stat err = %v, want it to exist", err)
+	}
+	if _, err := os.Stat(nonOwnerDir); err != nil {
+		t.Errorf("not-an-owner/x.git stat err = %v, want it to exist", err)
+	}
+
+	// M2 check: failOwner's bare repo is still preserved because List failed.
+	if _, err := os.Stat(failBareRepo); err != nil {
+		t.Errorf("failOwner bare repo stat err = %v, want it preserved on List error", err)
+	}
+}
+
+// N3 TestTickPruneRemovesTheEmptyOwnerDir
+func TestTickPruneRemovesTheEmptyOwnerDir(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	ownerDir, ok := env.id.Dir()
+	if !ok {
+		t.Fatal("client id has no owner dir")
+	}
+
+	bare, _ := seedServedBinding(t, env, "only-binding", store.ServeFacts{
+		RepoID: env.repoID,
+	})
+	rt := env.runtime(t)
+	if _, err := relevo.Unbind(ctx, rt, "only-binding", true); err != nil {
+		t.Fatalf("unbind: %v", err)
+	}
+
+	if err := env.srv.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	// The bare repo is gone.
+	if _, err := os.Stat(bare); !os.IsNotExist(err) {
+		t.Errorf("bare repo stat err = %v, want not exist", err)
+	}
+
+	// The owner dir repos/<O> is gone.
+	ownerRepoDir := filepath.Join(env.srv.cfg.Root, "repos", ownerDir)
+	if _, err := os.Stat(ownerRepoDir); !os.IsNotExist(err) {
+		t.Errorf("owner repo dir %s stat err = %v, want not exist", ownerRepoDir, err)
+	}
+}
+
+// N4 TestCreateAfterPruneRecreatesTheRepo
+func TestCreateAfterPruneRecreatesTheRepo(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	bare, _ := seedServedBinding(t, env, "first-binding", store.ServeFacts{
+		RepoID: env.repoID,
+	})
+	rt := env.runtime(t)
+	if _, err := relevo.Unbind(ctx, rt, "first-binding", true); err != nil {
+		t.Fatalf("unbind: %v", err)
+	}
+
+	if err := env.srv.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	// Verify repo is pruned.
+	if _, err := os.Stat(bare); !os.IsNotExist(err) {
+		t.Fatalf("bare repo %s still exists after tick", bare)
+	}
+
+	// Now create a binding with the same RepoID through the create handler.
+	createBody, err := json.Marshal(remote.CreateBindingRequest{
+		Name:       "recreated",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	if err != nil {
+		t.Fatalf("marshal create body: %v", err)
+	}
+	req := signedRequest(t, env.kp, "POST", "/v1/bindings", createBody)
+	rec := httptest.NewRecorder()
+	env.srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+	}
+
+	// The bare repo exists again.
+	if _, err := os.Stat(bare); err != nil {
+		t.Fatalf("bare repo %s stat err = %v; want it recreated", bare, err)
+	}
+
+	// And the binding records it.
+	b, err := rt.Store.Load("recreated")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	if b.Serve == nil || b.Serve.BareRepo != bare {
+		t.Fatalf("binding BareRepo = %v, want %s", b.Serve, bare)
 	}
 }

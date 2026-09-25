@@ -363,10 +363,15 @@ func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = relevo.Unbind(r.Context(), rt, name, true)
+	res, err := relevo.Unbind(r.Context(), rt, name, true)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
 		return
+	}
+	if res.WorktreeKept == "" {
+		if err := releaseServedRefs(r.Context(), rt, b); err != nil {
+			slog.Warn("release served refs", "owner", caller, "binding", b.Name, "err", err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{})

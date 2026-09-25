@@ -3777,3 +3777,150 @@ func TestRoundFileDriftRunning(t *testing.T) {
 		t.Fatalf("body = %q, want to contain 'not closed'", string(body))
 	}
 }
+
+// N5 TestWireUnbindReleasesRefs
+func TestWireUnbindReleasesRefs(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	bare, _ := seedServedBinding(t, env, "target", store.ServeFacts{
+		RepoID: env.repoID,
+	})
+	_, _ = seedServedBinding(t, env, "sibling", store.ServeFacts{
+		RepoID: env.repoID,
+	})
+
+	req := signedRequest(t, env.kp, "POST", "/v1/bindings/target/unbind", nil)
+	rec := httptest.NewRecorder()
+	env.srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /v1/bindings/target/unbind status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+
+	// Target's branch and refs are gone.
+	if _, ok, err := env.gitClient.RefSHA(ctx, bare, "refs/heads/relevo/target"); err != nil || ok {
+		t.Errorf("branch refs/heads/relevo/target = (ok %v, err %v); want it gone", ok, err)
+	}
+	targetRefs, err := env.gitClient.ListRefs(ctx, bare, "refs/relevo/target/")
+	if err != nil {
+		t.Fatalf("list target refs: %v", err)
+	}
+	if len(targetRefs) != 0 {
+		t.Errorf("target refs = %v; want none", targetRefs)
+	}
+
+	// Sibling's branch and refs are untouched.
+	if _, ok, err := env.gitClient.RefSHA(ctx, bare, "refs/heads/relevo/sibling"); err != nil || !ok {
+		t.Errorf("sibling branch refs/heads/relevo/sibling = (ok %v, err %v); want it present", ok, err)
+	}
+	siblingRefs, err := env.gitClient.ListRefs(ctx, bare, "refs/relevo/sibling/")
+	if err != nil {
+		t.Fatalf("list sibling refs: %v", err)
+	}
+	if len(siblingRefs) != 2 {
+		t.Errorf("sibling refs = %v; want 2 refs", siblingRefs)
+	}
+}
+
+// N6 TestAdminUnbindAndGCAbandonedReleaseRefs
+func TestAdminUnbindAndGCAbandonedReleaseRefs(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	// 1. AdminUnbind releases branch and refs.
+	bareAdmin, _ := seedServedBinding(t, env, "admin-target", store.ServeFacts{
+		RepoID: env.repoID,
+	})
+	res, err := AdminUnbind(ctx, env.srv, string(env.id), "admin-target", false)
+	if err != nil {
+		t.Fatalf("AdminUnbind: %v", err)
+	}
+	if !res.Archived {
+		t.Errorf("AdminUnbind res.Archived = false; want true")
+	}
+	if _, ok, err := env.gitClient.RefSHA(ctx, bareAdmin, "refs/heads/relevo/admin-target"); err != nil || ok {
+		t.Errorf("admin branch = (ok %v, err %v); want gone", ok, err)
+	}
+	adminRefs, err := env.gitClient.ListRefs(ctx, bareAdmin, "refs/relevo/admin-target/")
+	if err != nil {
+		t.Fatalf("list admin refs: %v", err)
+	}
+	if len(adminRefs) != 0 {
+		t.Errorf("admin refs = %v; want none", adminRefs)
+	}
+
+	// 2. GCAbandoned with dryRun=true touches nothing.
+	bareGC, _ := seedServedBinding(t, env, "gc-target", store.ServeFacts{
+		RepoID:   env.repoID,
+		LastSeen: env.srv.cfg.Now().Add(-2 * time.Hour),
+	})
+	gcResults, err := GCAbandoned(ctx, env.srv, time.Hour, env.srv.cfg.Now(), true)
+	if err != nil {
+		t.Fatalf("GCAbandoned dry run: %v", err)
+	}
+	if len(gcResults) != 1 || gcResults[0].Name != "gc-target" || gcResults[0].Archive {
+		t.Fatalf("gcResults = %+v", gcResults)
+	}
+	if _, ok, err := env.gitClient.RefSHA(ctx, bareGC, "refs/heads/relevo/gc-target"); err != nil || !ok {
+		t.Errorf("gc-target branch gone on dry run; want it present")
+	}
+	gcRefs, err := env.gitClient.ListRefs(ctx, bareGC, "refs/relevo/gc-target/")
+	if err != nil {
+		t.Fatalf("list gc refs: %v", err)
+	}
+	if len(gcRefs) != 2 {
+		t.Errorf("gc refs = %v; want 2 refs on dry run", gcRefs)
+	}
+
+	// 3. GCAbandoned with dryRun=false releases branch and refs.
+	gcResults, err = GCAbandoned(ctx, env.srv, time.Hour, env.srv.cfg.Now(), false)
+	if err != nil {
+		t.Fatalf("GCAbandoned real run: %v", err)
+	}
+	if len(gcResults) != 1 || !gcResults[0].Archive {
+		t.Fatalf("gcResults = %+v", gcResults)
+	}
+	if _, ok, err := env.gitClient.RefSHA(ctx, bareGC, "refs/heads/relevo/gc-target"); err != nil || ok {
+		t.Errorf("gc-target branch = (ok %v, err %v); want gone", ok, err)
+	}
+	gcRefsAfter, err := env.gitClient.ListRefs(ctx, bareGC, "refs/relevo/gc-target/")
+	if err != nil {
+		t.Fatalf("list gc refs after: %v", err)
+	}
+	if len(gcRefsAfter) != 0 {
+		t.Errorf("gc refs after = %v; want none", gcRefsAfter)
+	}
+}
+
+// N7 TestUnbindKeepingADirtyWorktreeKeepsItsRefs
+func TestUnbindKeepingADirtyWorktreeKeepsItsRefs(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	bare, wt := seedServedBinding(t, env, "dirty-target", store.ServeFacts{
+		RepoID: env.repoID,
+	})
+
+	dirtyFile := filepath.Join(wt, "dirty.txt")
+	if err := os.WriteFile(dirtyFile, []byte("dirty uncommitted content\n"), 0644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	req := signedRequest(t, env.kp, "POST", "/v1/bindings/dirty-target/unbind", nil)
+	rec := httptest.NewRecorder()
+	env.srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /v1/bindings/dirty-target/unbind status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+
+	if _, ok, err := env.gitClient.RefSHA(ctx, bare, "refs/heads/relevo/dirty-target"); err != nil || !ok {
+		t.Errorf("branch refs/heads/relevo/dirty-target = (ok %v, err %v); want it kept", ok, err)
+	}
+	refs, err := env.gitClient.ListRefs(ctx, bare, "refs/relevo/dirty-target/")
+	if err != nil {
+		t.Fatalf("list refs: %v", err)
+	}
+	if len(refs) != 2 {
+		t.Errorf("refs/relevo/dirty-target/* = %v; want 2 kept refs", refs)
+	}
+}
