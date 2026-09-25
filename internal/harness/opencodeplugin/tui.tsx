@@ -16,6 +16,7 @@ let lastSlotRenderAt = 0;
 let currentSessionID = "";
 let currentRoute = "";
 let currentRouteParams: any = {};
+let dialogOpen = false;
 let notFound = false;
 
 // Body cache for show commands: (name:round:tab) -> Text
@@ -37,6 +38,28 @@ function invalidateBindingBodies(name: string) {
   }
   for (const k of storeSigs.keys()) {
     if (k.startsWith(showPrefix)) {
+      storeSigs.delete(k);
+    }
+  }
+}
+
+function invalidateHistory(name: string) {
+  historyCache.delete(`b:${name}`);
+  for (const k of Array.from(historyCache.keys())) {
+    if (k.startsWith("p:")) {
+      historyCache.delete(k);
+    }
+  }
+  const histBKey = `history:b:${name}`;
+  failedFetches.delete(histBKey);
+  storeSigs.delete(histBKey);
+  for (const f of Array.from(failedFetches)) {
+    if (f.startsWith("history:p:")) {
+      failedFetches.delete(f);
+    }
+  }
+  for (const k of Array.from(storeSigs.keys())) {
+    if (k.startsWith("history:p:")) {
       storeSigs.delete(k);
     }
   }
@@ -175,6 +198,26 @@ async function pollStatus(api: any) {
 
         // Run toasts comparing with prevRows, and invalidate bodies on row changes
         if (!isFirstDoc && Array.isArray(doc.rows)) {
+          const prevNames = new Set(prevRows.keys());
+          const curNames = new Set(doc.rows.map((r: any) => r.name));
+          let rowSetChanged = prevNames.size !== curNames.size;
+          if (!rowSetChanged) {
+            for (const n of curNames) {
+              if (!prevNames.has(n)) {
+                rowSetChanged = true;
+                break;
+              }
+            }
+          }
+          if (rowSetChanged) {
+            for (const n of curNames) {
+              invalidateHistory(n);
+            }
+            for (const n of prevNames) {
+              invalidateHistory(n);
+            }
+          }
+
           for (const row of doc.rows) {
             const prev = prevRows.get(row.name);
             if (prev) {
@@ -185,6 +228,7 @@ async function pollStatus(api: any) {
                 row.round !== prev.round
               ) {
                 invalidateBindingBodies(row.name);
+                invalidateHistory(row.name);
               }
               if (row.needs_you && !prev.needs_you) {
                 api.ui.toast.show({
@@ -477,86 +521,98 @@ export default {
     // strands <->/enter), and the host's api.ui.dialog.select owns all key
     // handling reliably instead.
     const showNeedsYouDialog = async (row: any) => {
-      const name = row.name;
-      const round = row.report_round || row.round || 1;
-      const waiting = row.waiting || "";
-      const candidate = row.candidate || "";
-
-      let choice: any;
+      dialogOpen = true;
       try {
-        choice = await api.ui.dialog.select({
-          title: `${name} needs you · r${round}`,
-          placeholder: `${name} needs you · r${round} · ${waiting}`,
-          options: [
-            { title: "Tell the planner…", value: "tell" },
-            { title: "Send plan file…", value: "send" },
-            { title: "Stop the round", value: "stop" },
-            { title: "Mark done", value: "done" },
-            { title: "Gate the provider…", value: "gate" },
-          ],
-        });
-      } catch {
-        return;
-      }
+        const name = row.name;
+        const round = row.report_round || row.round || 1;
+        const waiting = row.waiting || "";
+        const candidate = row.candidate || "";
 
-      if (choice === "tell") {
-        // Never triggered by the smoke run.
-        const text = await api.ui.dialog.prompt({
-          title: `Tell the planner · ${name}`,
-          placeholder: "message",
-        });
-        if (text) {
-          api.client?.session?.prompt?.({
-            sessionID: currentSessionID,
-            text: `[relevo · ${name} r${round} · ${waiting}]\n${text}`,
+        const sw = stateWord(row);
+        const title = `${name} · r${round}${sw.word ? ` · ${sw.word}` : ""}`;
+        const placeholder = `${name} · r${round} · ${waiting}`;
+
+        let choice: any;
+        try {
+          choice = await api.ui.dialog.select({
+            title,
+            placeholder,
+            options: [
+              { title: "Tell the planner…", value: "tell" },
+              { title: "Send plan file…", value: "send" },
+              { title: "Stop the round", value: "stop" },
+              { title: "Mark done", value: "done" },
+              { title: "Gate the provider…", value: "gate" },
+            ],
           });
-          api.ui.toast.show({
-            variant: "info",
-            title: "relevo",
-            message: "sent to the planner",
-            duration: 4000,
+        } catch {
+          return;
+        }
+
+        if (!choice) return;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        if (choice === "tell") {
+          // Never triggered by the smoke run.
+          const text = await api.ui.dialog.prompt({
+            title: `Tell the planner · ${name}`,
+            placeholder: "message",
           });
+          if (text) {
+            api.client?.session?.prompt?.({
+              sessionID: currentSessionID,
+              text: `[relevo · ${name} r${round} · ${waiting}]\n${text}`,
+            });
+            api.ui.toast.show({
+              variant: "info",
+              title: "relevo",
+              message: "sent to the planner",
+              duration: 4000,
+            });
+          }
+        } else if (choice === "send") {
+          const path = await api.ui.dialog.prompt({
+            title: `Send plan to ${name}`,
+            placeholder: "path to the plan file",
+          });
+          if (path) {
+            const res = await spawnRelevo(["send", "--name", name, "--file", path]);
+            toastFirstLine(res, res.ok ? "sent" : "send error");
+            await pollStatus(api);
+          }
+        } else if (choice === "stop") {
+          const ok = await api.ui.dialog.confirm({
+            title: `Stop ${name} round ${round}?`,
+            message: "The builder is killed; the worktree and branch are kept.",
+          });
+          if (ok) {
+            const res = await spawnRelevo(["stop", "--name", name]);
+            toastFirstLine(res, res.ok ? "stopped" : "stop error");
+            await pollStatus(api);
+          }
+        } else if (choice === "done") {
+          const ok = await api.ui.dialog.confirm({
+            title: `Mark ${name} done?`,
+            message: "This marks the binding done.",
+          });
+          if (ok) {
+            const res = await spawnRelevo(["done", name]);
+            toastFirstLine(res, res.ok ? "done" : "done error");
+            await pollStatus(api);
+          }
+        } else if (choice === "gate") {
+          const reason = await api.ui.dialog.prompt({
+            title: `Gate ${candidate}`,
+            placeholder: "reason",
+          });
+          if (reason) {
+            const res = await spawnRelevo(["gate", candidate, "--reason", reason]);
+            toastFirstLine(res, res.ok ? "gated" : "gate error");
+            await pollStatus(api);
+          }
         }
-      } else if (choice === "send") {
-        const path = await api.ui.dialog.prompt({
-          title: `Send plan to ${name}`,
-          placeholder: "path to the plan file",
-        });
-        if (path) {
-          const res = await spawnRelevo(["send", "--name", name, "--file", path]);
-          toastFirstLine(res, res.ok ? "sent" : "send error");
-          await pollStatus(api);
-        }
-      } else if (choice === "stop") {
-        const ok = await api.ui.dialog.confirm({
-          title: `Stop ${name} round ${round}?`,
-          message: "The builder is killed; the worktree and branch are kept.",
-        });
-        if (ok) {
-          const res = await spawnRelevo(["stop", "--name", name]);
-          toastFirstLine(res, res.ok ? "stopped" : "stop error");
-          await pollStatus(api);
-        }
-      } else if (choice === "done") {
-        const ok = await api.ui.dialog.confirm({
-          title: `Mark ${name} done?`,
-          message: "This marks the binding done.",
-        });
-        if (ok) {
-          const res = await spawnRelevo(["done", name]);
-          toastFirstLine(res, res.ok ? "done" : "done error");
-          await pollStatus(api);
-        }
-      } else if (choice === "gate") {
-        const reason = await api.ui.dialog.prompt({
-          title: `Gate ${candidate}`,
-          placeholder: "reason",
-        });
-        if (reason) {
-          const res = await spawnRelevo(["gate", candidate, "--reason", reason]);
-          toastFirstLine(res, res.ok ? "gated" : "gate error");
-          await pollStatus(api);
-        }
+      } finally {
+        dialogOpen = false;
       }
     };
 
@@ -799,6 +855,7 @@ export default {
             paddingRight={1}
             onKeyDown={(e: any) => {
               const key = e?.name || e?.key;
+              if (dialogOpen) return;
               if (key === "up") {
                 e.preventDefault();
                 setStore((s: any) => {
@@ -899,7 +956,10 @@ export default {
             </box>
 
             {recentHistory.slice(0, 8).map((h) => {
-              const timeStr = h.StartedAt ? new Date(h.StartedAt).toISOString().slice(11, 16) : "--:--";
+              const d = h.StartedAt ? new Date(h.StartedAt) : null;
+              const timeStr = d
+                ? `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
+                : "--:--";
               const binding = (h.BindingName || "").padEnd(14, " ");
               const rnd = `r${h.Number}`.padEnd(5, " ");
               const outcome = h.Outcome || "";
@@ -945,7 +1005,7 @@ export default {
           const dims: any = useTerminalDimensions();
           const terminalWidth = typeof dims === "function" ? dims()?.width : dims?.width;
           if (typeof terminalWidth === "number" && terminalWidth > 0) {
-            ruleWidth = Math.max(1, terminalWidth - 2);
+            ruleWidth = Math.max(1, terminalWidth - 4);
           }
         } catch {
           ruleWidth = 40;
@@ -1120,7 +1180,7 @@ export default {
 
         // relevoLine styles one line of the closing ```relevo block: a muted
         // key, then its value; a blank value reads as the muted em dash.
-        const relevoLine = (line: string) => {
+        const relevoLine = (line: string, next: string = "") => {
           const m = line.match(/^\s*([A-Za-z_][\w-]*):\s?(.*)$/);
           if (!m) {
             return (
@@ -1132,6 +1192,13 @@ export default {
           const key = m[1];
           const value = m[2].trim();
           const blank = value === "" || value === '""' || value === "[]";
+          if (blank && /^\s*-\s/.test(next || "")) {
+            return (
+              <box flexDirection="row">
+                <text fg={mutedColor}>{`  ${key}:`}</text>
+              </box>
+            );
+          }
           let valueColor = baseColor;
           if (key === "status") {
             if (value === "done") valueColor = successColor;
@@ -1191,7 +1258,7 @@ export default {
             }
             if (inFence) {
               if (fenceLang === "relevo") {
-                out.push(relevoLine(line));
+                out.push(relevoLine(line, lines[i + 1] ?? ""));
               } else {
                 out.push(
                   <box flexDirection="row">
@@ -1251,10 +1318,10 @@ export default {
             const listMatch = line.match(/^(\s*(?:[-*]|\d+\.))(\s+.*|$)/);
             if (listMatch) {
               const marker = listMatch[1];
-              const rest = listMatch[2] || "";
+              const rest = (listMatch[2] || "").trimStart();
               out.push(
                 <box flexDirection="row">
-                  <text fg={accentColor}>{marker}</text>
+                  <text fg={accentColor}>{marker + " "}</text>
                   {renderInline(rest)}
                 </box>,
               );
@@ -1403,9 +1470,19 @@ export default {
         // Fetch binding history for round row
         fetchHistory(name, undefined);
         const bHistory = historyCache.get(`b:${name}`) || [];
+        const sortedHistory = [...bHistory].sort((a: any, b: any) => {
+          const ta = a?.StartedAt ? new Date(a.StartedAt).getTime() : 0;
+          const tb = b?.StartedAt ? new Date(b.StartedAt).getTime() : 0;
+          return (Number.isNaN(tb) ? 0 : tb) - (Number.isNaN(ta) ? 0 : ta);
+        });
+        const liveID = sortedHistory[0]?.BindingID;
+        const liveRows =
+          liveID !== undefined
+            ? sortedHistory.filter((h: any) => h?.BindingID === liveID)
+            : sortedHistory;
         // A round can have several history rows (a builder switch adds one),
         // so list each round number once, ascending.
-        const rounds = Array.from(new Set(bHistory.map((h: any) => h.Number))).sort(
+        const rounds = Array.from(new Set(liveRows.map((h: any) => h.Number))).sort(
           (a: number, b: number) => a - b,
         );
         if (rounds.length === 0 && round > 0) rounds.push(round);
@@ -1424,6 +1501,7 @@ export default {
         // The body scrollbox is the focused renderable (per the plan's
         // <scrollbox focusable focused>), so keys must be handled here too.
         const onKey = (e: any) => {
+          if (dialogOpen) return;
           const key = e?.name || e?.key;
           if (key === "tab") {
             e.preventDefault();
