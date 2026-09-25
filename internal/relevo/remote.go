@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -631,12 +632,73 @@ func writeTempAndRename(dest string, r io.Reader) error {
 	return os.Rename(tmpName, dest)
 }
 
-func mirrorLog(ctx context.Context, rt Runtime, server, name string, round int) {
+const maxMirrorBytes = 16 << 20
+
+func mirrorLog(ctx context.Context, rt Runtime, tx *store.Tx, server, name string, round int) {
 	path := rt.Store.BuilderLogPath(name, round)
-	var local int64
-	if fi, err := os.Stat(path); err == nil {
-		local = fi.Size()
+	if legacyLog(rt, name, round) {
+		var local int64
+		if fi, err := os.Stat(path); err == nil {
+			local = fi.Size()
+		}
+		rc, fr, err := rt.Remote.RoundFileFrom(ctx, server, name, round, "log", local)
+		if err != nil || rc == nil {
+			if err != nil {
+				slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
+			}
+			return
+		}
+
+		switch {
+		case fr.Honored && fr.From == local && fr.Size >= local:
+			defer rc.Close()
+			dir := filepath.Dir(path)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				slog.Warn("write builder log failed", "path", path, "err", err)
+				return
+			}
+			f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+			if err != nil {
+				slog.Warn("write builder log failed", "path", path, "err", err)
+				return
+			}
+			defer f.Close()
+			if _, err := io.Copy(f, rc); err != nil {
+				slog.Warn("write builder log failed", "path", path, "err", err)
+			}
+		case fr.Honored && fr.Size < local:
+			_ = rc.Close()
+			rc2, _, err := rt.Remote.RoundFileFrom(ctx, server, name, round, "log", 0)
+			if err != nil || rc2 == nil {
+				if err != nil {
+					slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
+				}
+				return
+			}
+			defer rc2.Close()
+			if err := writeTempAndRename(path, rc2); err != nil {
+				slog.Warn("write builder log failed", "path", path, "err", err)
+			}
+		default:
+			defer rc.Close()
+			if err := writeTempAndRename(path, rc); err != nil {
+				slog.Warn("write builder log failed", "path", path, "err", err)
+			}
+		}
+		return
 	}
+
+	cur, err := rt.Store.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			cur = nil
+		} else {
+			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
+			return
+		}
+	}
+	local := int64(len(cur))
+
 	rc, fr, err := rt.Remote.RoundFileFrom(ctx, server, name, round, "log", local)
 	if err != nil || rc == nil {
 		if err != nil {
@@ -645,22 +707,34 @@ func mirrorLog(ctx context.Context, rt Runtime, server, name string, round int) 
 		return
 	}
 
+	readBounded := func(r io.Reader) ([]byte, bool) {
+		body, err := io.ReadAll(io.LimitReader(r, maxMirrorBytes+1))
+		if err != nil {
+			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
+			return nil, false
+		}
+		if int64(len(body)) > maxMirrorBytes {
+			slog.Warn("mirror builder log over cap; not stored", "server", server, "name", name, "round", round)
+			return nil, false
+		}
+		return body, true
+	}
+
 	switch {
 	case fr.Honored && fr.From == local && fr.Size >= local:
 		defer rc.Close()
-		dir := filepath.Dir(path)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			slog.Warn("write builder log failed", "path", path, "err", err)
+		body, ok := readBounded(rc)
+		if !ok {
 			return
 		}
-		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			slog.Warn("write builder log failed", "path", path, "err", err)
+		full := append(cur, body...)
+		if int64(len(full)) > maxMirrorBytes {
+			slog.Warn("mirror builder log over cap; not stored", "server", server, "name", name, "round", round)
 			return
 		}
-		defer f.Close()
-		if _, err := io.Copy(f, rc); err != nil {
-			slog.Warn("write builder log failed", "path", path, "err", err)
+		if err := tx.PutRoundFile(name, round, path, full); err != nil {
+			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
+			return
 		}
 	case fr.Honored && fr.Size < local:
 		_ = rc.Close()
@@ -672,13 +746,23 @@ func mirrorLog(ctx context.Context, rt Runtime, server, name string, round int) 
 			return
 		}
 		defer rc2.Close()
-		if err := writeTempAndRename(path, rc2); err != nil {
-			slog.Warn("write builder log failed", "path", path, "err", err)
+		body, ok := readBounded(rc2)
+		if !ok {
+			return
+		}
+		if err := tx.PutRoundFile(name, round, path, body); err != nil {
+			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
+			return
 		}
 	default:
 		defer rc.Close()
-		if err := writeTempAndRename(path, rc); err != nil {
-			slog.Warn("write builder log failed", "path", path, "err", err)
+		body, ok := readBounded(rc)
+		if !ok {
+			return
+		}
+		if err := tx.PutRoundFile(name, round, path, body); err != nil {
+			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
+			return
 		}
 	}
 }
@@ -889,7 +973,7 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		// the same "stalled <age>" (#252).
 		b.StalledSince = view.StalledSince
 		b.Builder.RemoteLive = liveFactsOf(view.Live)
-		mirrorLog(ctx, rt, server, name, b.Round)
+		mirrorLog(ctx, rt, tx, server, name, b.Round)
 		mirrorDriftOnce(ctx, rt, tx, server, name, b.Round)
 		return b, false, nil
 
@@ -1220,9 +1304,26 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 		}
 	} else {
 		defer rcLog.Close()
-		if err := writeTempAndRename(rt.Store.BuilderLogPath(name, n), rcLog); err != nil {
-			slog.Warn("write log failed", "path", rt.Store.BuilderLogPath(name, n), "err", err)
-			return b, nil
+		logPath := rt.Store.BuilderLogPath(name, n)
+		if legacyLog(rt, name, n) {
+			if err := writeTempAndRename(logPath, rcLog); err != nil {
+				slog.Warn("write log failed", "path", logPath, "err", err)
+				return b, nil
+			}
+		} else {
+			body, err := io.ReadAll(io.LimitReader(rcLog, maxMirrorBytes+1))
+			if err != nil {
+				slog.Warn("write log failed", "path", logPath, "err", err)
+				return b, nil
+			}
+			if int64(len(body)) > maxMirrorBytes {
+				slog.Warn("remote log over cap; not stored", "server", server, "name", name, "round", n)
+			} else {
+				if err := tx.PutRoundFile(name, n, logPath, body); err != nil {
+					slog.Warn("write log failed", "path", logPath, "err", err)
+					return b, nil
+				}
+			}
 		}
 	}
 
