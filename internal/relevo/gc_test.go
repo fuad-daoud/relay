@@ -30,9 +30,9 @@ func seedDoneFor(t *testing.T, rt Runtime, name, cwd, plannerID string) {
 	t.Helper()
 	b := store.Binding{
 		Name: name, CWD: cwd,
-		Planner:   store.Endpoint{PaneID: "w1:p1"},
-		Builder:   store.Endpoint{PaneID: "w1:p2"},
-		Round:     3, State: store.StateDone,
+		Planner: store.Endpoint{PaneID: "w1:p1"},
+		Builder: store.Endpoint{PaneID: "w1:p2"},
+		Round:   3, State: store.StateDone,
 		PlannerID: plannerID,
 	}
 	if err := rt.Store.Save(b); err != nil {
