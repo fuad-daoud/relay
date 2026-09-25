@@ -1657,9 +1657,18 @@ func cmdUnbind(args []string) error {
 	pickFlag := fs.Bool("pick", false, "choose the binding from a list (needs a terminal)")
 	done := fs.Bool("done", false, "clear every binding the planner marked DONE")
 	delete := fs.Bool("delete", false, "with --done: remove each finished binding's directory instead of archiving it")
-	dryRun := fs.Bool("dry-run", false, "with --done: list what would be cleared, change nothing")
+	dryRun := fs.Bool("dry-run", false, "with --done or --sweep: list what would be cleared, change nothing")
+	sweep := fs.Bool("sweep", false, "delete relevo/<name> branches and refs/relevo/<name>/* refs of bindings that no longer exist, once they are on a remote-tracking ref")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+
+	if *sweep {
+		if *done || *delete || *archive || *pickFlag || *name != "" || len(fs.Args()) > 0 {
+			fmt.Fprintln(os.Stderr, "relevo: --sweep takes no binding and no other flag except --dry-run")
+			return exitCodeErr{code: 2}
+		}
+		return runSweep(*dryRun)
 	}
 
 	// --done is gc, not unbind: it clears every DONE binding, so naming one or
@@ -1701,6 +1710,49 @@ func cmdUnbind(args []string) error {
 	return nil
 }
 
+func runSweep(dryRun bool) error {
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	dir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	res, err := relevo.SweepRefs(context.Background(), rt, dir, dryRun)
+	if err != nil {
+		return err
+	}
+
+	if len(res.Refs) == 0 {
+		fmt.Printf("no relevo refs in %s\n", dir)
+		return nil
+	}
+
+	for _, line := range relevo.RefLines(res.Refs) {
+		fmt.Println(line)
+	}
+
+	var n, m int
+	for _, r := range res.Refs {
+		if (dryRun && r.WouldDelete) || (!dryRun && r.Deleted) {
+			n++
+		} else if r.Reason != "" {
+			m++
+		}
+	}
+
+	if dryRun {
+		fmt.Printf("%d would be deleted, %d kept\n", n, m)
+	} else {
+		fmt.Printf("%d deleted, %d kept\n", n, m)
+	}
+
+	return nil
+}
+
 // runGC is gc's body (the old cmdGC), now reached through `unbind --done`
 // (§4.3). It clears every binding the planner marked DONE.
 func runGC(delete, dryRun bool) error {
@@ -1734,6 +1786,9 @@ func runGC(delete, dryRun bool) error {
 				wtMsg = fmt.Sprintf(" (worktree %s already gone)", r.WorktreeGone)
 			}
 			fmt.Printf("would clear %-10s %s (%d rounds)%s\n", r.Name, r.CWD, r.Rounds, wtMsg)
+			for _, line := range relevo.RefLines(r.Refs) {
+				fmt.Printf("            %s\n", line)
+			}
 		case r.Archived:
 			fmt.Printf("archived    %-10s\n", r.Name)
 			if r.WorktreeRemoved != "" {
@@ -1744,6 +1799,9 @@ func runGC(delete, dryRun bool) error {
 			} else if r.WorktreeGone != "" {
 				fmt.Printf("            worktree %s was already gone\n", r.WorktreeGone)
 			}
+			for _, line := range relevo.RefLines(r.Refs) {
+				fmt.Printf("            %s\n", line)
+			}
 		default:
 			fmt.Printf("deleted     %-10s %s (%d rounds)\n", r.Name, r.CWD, r.Rounds)
 			if r.WorktreeRemoved != "" {
@@ -1753,6 +1811,9 @@ func runGC(delete, dryRun bool) error {
 					r.WorktreeKept, r.KeptReason, r.WorktreeKept, r.WorktreeKept)
 			} else if r.WorktreeGone != "" {
 				fmt.Printf("            worktree %s was already gone\n", r.WorktreeGone)
+			}
+			for _, line := range relevo.RefLines(r.Refs) {
+				fmt.Printf("            %s\n", line)
 			}
 		}
 	}

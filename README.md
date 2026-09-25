@@ -369,7 +369,9 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   create. Works with `--server`; not with `--cwd`.
   For a `--server` binding the server's own `refs/heads/relevo/<name>` ref is
   kept in the repository beside the adopted branch: every closed round
-  absorbs it and fast-forwards `B` to it, and relevo deletes neither.
+  absorbs it and fast-forwards `B` to it; relevo never deletes the adopted
+  branch; the server's `relevo/<name>` ref is deleted by `unbind --done` once it is on a
+  remote-tracking ref.
   `relevo bind --from` with `--branch` is not available yet.
 - `relevo bind --from <source>@R --name N [--builder CANDIDATE] [--cwd DIR] [--feature LABEL]` —
   branch a new binding from an earlier round of an existing binding, copying
@@ -405,7 +407,8 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   archiving its record first. `--pick` chooses from a list in the terminal.
 
 - `relevo unbind --done [--dry-run] [--delete]` — clear every binding the planner marked
-  `DONE`, in one pass. Archives by default; pass `--delete` to remove each binding's directory instead (`relevo unbind --done --archive` is accepted as a no-op).
+  `DONE`, in one pass; also deletes each cleared binding's `relevo/<name>` branch and `refs/relevo/<name>/*` refs once each is on a remote-tracking ref. Archives by default; pass `--delete` to remove each binding's directory instead (`relevo unbind --done --archive` is accepted as a no-op).
+- `relevo unbind --sweep [--dry-run]` — delete `relevo/<name>` branches and `refs/relevo/<name>/*` refs of bindings that no longer exist, once each is on a remote-tracking ref.
 - `relevo edge add <source> --when report|diff|done|gate --then send --target <binding> --prompt <file> [--mode queue|fire] [--round N]`;
   `relevo edge list <source>`; `relevo edge rm <source> <id>` — declare, list or
   drop a planner's handoff to another binding. See [Edges (triggers)](#edges-triggers).
@@ -940,7 +943,7 @@ relevo bind --from webshop@2 --name webshop-alt
 - **What is copied:** Round history up through the round `--from` names (`SRC@R`): every log entry through R (marked confirmed, with nothing pending) and the round files through R (`NNN-plan.md`, `NNN-report.md`, `NNN-question.md`, `NNN-diff.patch`). The new binding is a fresh record in the database.
 - **What is not copied:** Working tree code state is not rewound. By default, relevo creates a fresh git worktree at `~/.local/state/relevo/.worktrees/<new-name>` on a new branch `relevo/<new-name>` cut from current `HEAD` of the source repository. Pass `--cwd DIR` to bind to an existing directory instead.
 - **State layout:** Relevo keeps worktrees it creates under `.worktrees/` in the state root (`~/.local/state/relevo/.worktrees/`).
-- **Teardown rule:** Relevo removes a worktree it created only when it is clean (`git status` reports no untracked or uncommitted changes), and never removes the branch. If uncommitted edits remain or git is unavailable, `relevo unbind` and `relevo unbind --done` leave the worktree untouched and report the exact command to inspect or remove it manually.
+- **Teardown rule:** Relevo removes a worktree it created only when it is clean (`git status` reports no untracked or uncommitted changes), and removes the branch only through `unbind --done`, once it is pushed. If uncommitted edits remain or git is unavailable, `relevo unbind` and `relevo unbind --done` leave the worktree untouched and report the exact command to inspect or remove it manually.
 
 
 ### Stopping a round
@@ -1039,9 +1042,11 @@ when it is clean. The binding directory itself is never removed by `done`
 branch at the same path; a DONE binding may then be rebound with
 `--rebind`, since the old builder cannot work in the recreated directory.
 
-relevo deletes a branch in **zero** places: not at `unbind`, `unbind --done`, `done`, nor
-on a `bind` rollback. The one exception is a `relevo/<name>` branch `bind --server`
-created seconds earlier and must undo because the server refused the binding.
+relevo deletes a branch in two places:
+- `unbind --done` and `unbind --sweep`, for a `relevo/<name>` branch relevo created, only when its commit is on a remote-tracking ref;
+- the existing `bind --server` rollback exception, which stays (a `relevo/<name>` branch created seconds earlier and undone because the server refused the binding).
+
+A branch adopted with `--branch` is never deleted; `unbind`, `done` and a kept (dirty) worktree never delete anything.
 
 ```
 relevo unbind ai              # delete the binding and its whole directory

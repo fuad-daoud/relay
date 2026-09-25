@@ -47,6 +47,10 @@ type listRefsCall struct {
 	Dir, Prefix string
 }
 
+type refOnRemoteCall struct {
+	Dir, Ref string
+}
+
 type commitTreeCall struct {
 	Dir, Tree, Parent, Message string
 }
@@ -179,9 +183,14 @@ type fakeGit struct {
 	deleteRefCalls []deleteRefCall
 	deleteRefErr   error
 
-	listRefsCalls  []listRefsCall
-	listRefsResult []string
-	listRefsErr    error
+	listRefsCalls    []listRefsCall
+	listRefsResult   []string
+	listRefsByPrefix map[string][]string
+	listRefsErr      error
+
+	refOnRemoteCalls []refOnRemoteCall
+	refOnRemote      map[string]bool
+	refOnRemoteErr   error
 
 	commitTreeCalls []commitTreeCall
 	commitTreeSHA   string
@@ -433,7 +442,18 @@ func (f *fakeGit) ListRefs(ctx context.Context, dir, prefix string) ([]string, e
 	if f.listRefsErr != nil {
 		return nil, f.listRefsErr
 	}
+	if f.listRefsByPrefix != nil {
+		return f.listRefsByPrefix[prefix], nil
+	}
 	return f.listRefsResult, nil
+}
+
+func (f *fakeGit) RefOnRemote(ctx context.Context, dir, ref string) (bool, error) {
+	f.refOnRemoteCalls = append(f.refOnRemoteCalls, refOnRemoteCall{Dir: dir, Ref: ref})
+	if f.refOnRemoteErr != nil {
+		return false, f.refOnRemoteErr
+	}
+	return f.refOnRemote[ref], nil
 }
 
 func (f *fakeGit) CommitTree(ctx context.Context, dir, tree, parent, message string) (string, error) {

@@ -2741,3 +2741,82 @@ func TestSnapshotTreeUnbornHeadFallsBack(t *testing.T) {
 		t.Fatalf("tree %s does not list new_file.txt:\n%s", tree, lsTree)
 	}
 }
+
+// TestRefOnRemote covers RefOnRemote: reports whether ref's commit is contained
+// in some remote-tracking ref (i.e. whether the work was pushed).
+func TestRefOnRemote(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	c := NewClient("git", 0, 0)
+
+	bareDir := t.TempDir()
+	runGit(t, bareDir, "init", "--bare")
+
+	repoDir := initRepo(t)
+	runGit(t, repoDir, "remote", "add", "origin", bareDir)
+
+	writeGitFile(t, repoDir, "file.txt", "v1\n")
+	runGit(t, repoDir, "add", "file.txt")
+	runGit(t, repoDir, "commit", "-m", "commit 1")
+	ancestorSHA := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+	runGit(t, repoDir, "branch", "ancestor-branch", ancestorSHA)
+
+	writeGitFile(t, repoDir, "file.txt", "v2\n")
+	runGit(t, repoDir, "add", "file.txt")
+	runGit(t, repoDir, "commit", "-m", "commit 2")
+	pushedSHA := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
+
+	currentBranch := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "--abbrev-ref", "HEAD"))
+	runGit(t, repoDir, "push", "-u", "origin", currentBranch)
+	runGit(t, repoDir, "fetch", "origin")
+
+	// (a) a local branch at the pushed commit gives true
+	runGit(t, repoDir, "branch", "pushed-branch", pushedSHA)
+	on, err := c.RefOnRemote(ctx, repoDir, "refs/heads/pushed-branch")
+	if err != nil {
+		t.Fatalf("(a) RefOnRemote: %v", err)
+	}
+	if !on {
+		t.Errorf("(a) got false, want true")
+	}
+
+	// (b) a branch with one extra local commit gives false
+	runGit(t, repoDir, "checkout", "-b", "unpushed-branch", pushedSHA)
+	writeGitFile(t, repoDir, "file.txt", "v3\n")
+	runGit(t, repoDir, "add", "file.txt")
+	runGit(t, repoDir, "commit", "-m", "commit 3")
+	on, err = c.RefOnRemote(ctx, repoDir, "refs/heads/unpushed-branch")
+	if err != nil {
+		t.Fatalf("(b) RefOnRemote: %v", err)
+	}
+	if on {
+		t.Errorf("(b) got true, want false")
+	}
+
+	// (c) a branch at an ancestor of the pushed commit gives true
+	on, err = c.RefOnRemote(ctx, repoDir, "refs/heads/ancestor-branch")
+	if err != nil {
+		t.Fatalf("(c) RefOnRemote: %v", err)
+	}
+	if !on {
+		t.Errorf("(c) got false, want true")
+	}
+
+	// (d) a ref under refs/relevo/x/round-1 created with update-ref at the pushed commit gives true
+	if err := c.UpdateRef(ctx, repoDir, "refs/relevo/x/round-1", pushedSHA, ""); err != nil {
+		t.Fatalf("(d) UpdateRef: %v", err)
+	}
+	on, err = c.RefOnRemote(ctx, repoDir, "refs/relevo/x/round-1")
+	if err != nil {
+		t.Fatalf("(d) RefOnRemote: %v", err)
+	}
+	if !on {
+		t.Errorf("(d) got false, want true")
+	}
+
+	// (e) a nonexistent ref gives an error
+	_, err = c.RefOnRemote(ctx, repoDir, "refs/heads/nonexistent")
+	if err == nil {
+		t.Errorf("(e) got nil error, want error for nonexistent ref")
+	}
+}
