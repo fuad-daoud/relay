@@ -167,6 +167,16 @@ send C-x; sleep 0.4; send o; sleep 1.0
 send Up; sleep 0.3; send Enter; sleep 1.5
 capture "05i-reenter"
 
+# S1
+send a; sleep 1.5
+send Down; sleep 0.5
+send Enter; sleep 7
+type_lit "a[b]/plan a.md"; sleep 0.8
+send Enter; sleep 2
+capture "05j-sent"
+send Tab; sleep 1.0; capture "05k-after-dialog-tab"
+send BTab; sleep 1.0
+
 # 06-dialog (a)
 send a; sleep 1.5
 capture "06-dialog"
@@ -185,6 +195,13 @@ send Escape; sleep 0.5
 send C-p; sleep 1.0; send C-u; type_lit "relevo"; sleep 1.5
 capture "10-palette"
 send Escape; sleep 0.5
+
+# S2
+send C-x; sleep 0.4; send o; sleep 1.0
+send Up; sleep 0.3; send Up; sleep 0.3
+send a; sleep 1.5; send Down; sleep 0.3; send Enter; sleep 7
+type_lit "a/fleet [plan] a.md"; sleep 0.8; send Enter; sleep 2
+capture "11-fleet-after-dialog"
 
 tmux kill-session -t "$SESSION_TMUX" 2>/dev/null || true
 
@@ -554,6 +571,95 @@ PYEOF
 }
 assert 38 "05f-ledger-after keeps every table column aligned" check_assertion_38
 
+# 39. (F1) The fake log has a line exactly send --name webshop --file a[b]/plan a.md,
+#     and 05j-sent.txt's header still contains webshop › r3.
+check_assertion_39() {
+  grep -qxF "send --name webshop --file a[b]/plan a.md" "$LOG" && \
+  grep -q "webshop › r3" "$OUT/05j-sent.txt"
+}
+assert 39 "send plan file ran and 05j-sent header contains webshop › r3" check_assertion_39
+
+# 40. (F1) In 11-fleet-after-dialog.txt, the selected row (the line starting with
+#     optional space then › ) is webshop.
+check_assertion_40() {
+  grep -qE "^[[:space:]]*›[[:space:]]+webshop\b" "$OUT/11-fleet-after-dialog.txt"
+}
+assert 40 "11-fleet-after-dialog selected row is webshop" check_assertion_40
+
+# 41. (F2) The round row in 05-binding-report.txt has no r7. Assertion 21's
+#     r1 r2 r3 r4 still holds.
+check_assertion_41() {
+  local row
+  row="$(grep -oE "\[ \] round.*" "$OUT/05-binding-report.txt" | head -1)"
+  [ -n "$row" ] || return 1
+  ! printf '%s\n' "$row" | grep -q "\br7\b" && \
+  printf '%s\n' "$row" | grep -qE "r1 r2 r3 r4"
+}
+assert 41 "05-binding-report round row has no r7 and r1 r2 r3 r4 holds" check_assertion_41
+
+# 42. (F3) 05d-plan.txt has exactly one line made only of ─ and spaces. In
+#     05f-ledger-after.txt, the line after the one containing ── relevo is not a
+#     line made only of ─.
+check_assertion_42() {
+  local rule_count next_line
+  rule_count="$(grep -cE '^[[:space:]]*─+[[:space:]]*$' "$OUT/05d-plan.txt" || true)"
+  [ "$rule_count" -eq 1 ] || return 1
+  next_line="$(awk '/── relevo/{getline; print; exit}' "$OUT/05f-ledger-after.txt")"
+  ! printf '%s\n' "$next_line" | grep -qE '^[[:space:]]*─+[[:space:]]*$'
+}
+assert 42 "05d-plan has one rule line and relevo rule does not wrap in 05f-ledger-after" check_assertion_42
+
+# 43. (F4) 05f-ledger-after.txt has a line matching commands_run:[[:space:]]*$
+#     (no —) and a line containing - git status.
+check_assertion_43() {
+  grep -qE "commands_run:[[:space:]]*$" "$OUT/05f-ledger-after.txt" && \
+  grep -qF -- "- git status" "$OUT/05f-ledger-after.txt"
+}
+assert 43 "05f-ledger-after shows commands_run without em-dash and - git status" check_assertion_43
+
+# 44. (F6) 06-dialog.txt contains webshop · r3 · NEEDS YOU and does not contain
+#     needs you ·.
+check_assertion_44() {
+  grep -q "webshop · r3 · NEEDS YOU" "$OUT/06-dialog.txt" && \
+  ! grep -q "needs you ·" "$OUT/06-dialog.txt"
+}
+assert 44 "06-dialog contains webshop · r3 · NEEDS YOU and does not contain needs you ·" check_assertion_44
+
+# 45. (F7) The fake log has at least 2 lines starting history --json --planner,
+#     because status-2 changes rows and the recent list refetches.
+check_assertion_45() {
+  local count
+  count="$(grep -cE "^history --json --planner" "$LOG" || true)"
+  [ "$count" -ge 2 ]
+}
+assert 45 "fake log has at least 2 lines starting history --json --planner" check_assertion_45
+
+# 46. (F8) 03-fleet.txt's recent list contains the local time of
+#     2026-09-24T20:00:00Z, computed in the script with
+#     date -d 2026-09-24T20:00:00Z +%H:%M.
+check_assertion_46() {
+  local local_time
+  local_time="$(date -d 2026-09-24T20:00:00Z +%H:%M)"
+  awk '/── recent/{after = 1; next} after' "$OUT/03-fleet.txt" | grep -q "$local_time"
+}
+assert 46 "03-fleet recent list contains local time of 2026-09-24T20:00:00Z" check_assertion_46
+
+# 47. The fake log has a line exactly send --name webshop --file a/fleet [plan] a.md.
+check_assertion_47() {
+  grep -qxF "send --name webshop --file a/fleet [plan] a.md" "$LOG"
+}
+assert 47 "fake log has send --name webshop --file a/fleet [plan] a.md" check_assertion_47
+
+# 48. In 05k-after-dialog-tab.txt, the selected tab (the [ … ] word in the tab
+#     row) differs from the selected tab in 05j-sent.txt.
+check_assertion_48() {
+  local tab_j tab_k
+  tab_j="$(grep -E '\bplan\b.*\breport\b' "$OUT/05j-sent.txt" | grep -oE '\[ [^]]+ \]' | head -1 || true)"
+  tab_k="$(grep -E '\bplan\b.*\breport\b' "$OUT/05k-after-dialog-tab.txt" | grep -oE '\[ [^]]+ \]' | head -1 || true)"
+  [ -n "$tab_j" ] && [ -n "$tab_k" ] && [ "$tab_j" != "$tab_k" ]
+}
+assert 48 "05k-after-dialog-tab selected tab differs from 05j-sent" check_assertion_48
+
 # Mouse is not driven here: tmux send-keys cannot deliver SGR mouse events
 # reliably, so the clickable-row behaviour (onMouseDown on the sidebar and
 # fleet rows) is verified by inspection of tui.tsx, not by this smoke.
@@ -564,5 +670,5 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-echo "Smoke test PASSED (all 38 assertions passed)"
+echo "Smoke test PASSED (all 48 assertions passed)"
 exit 0

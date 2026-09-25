@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { execFile } from "node:child_process";
-import { Show } from "solid-js";
+import { Show, createMemo } from "solid-js";
 import { useTerminalDimensions } from "@opentui/solid";
 
 // Module state: persists across setup calls within the same process
@@ -16,6 +16,7 @@ let lastSlotRenderAt = 0;
 let currentSessionID = "";
 let currentRoute = "";
 let currentRouteParams: any = {};
+let dialogOpen = false;
 let notFound = false;
 
 // Body cache for show commands: (name:round:tab) -> Text
@@ -37,6 +38,28 @@ function invalidateBindingBodies(name: string) {
   }
   for (const k of storeSigs.keys()) {
     if (k.startsWith(showPrefix)) {
+      storeSigs.delete(k);
+    }
+  }
+}
+
+function invalidateHistory(name: string) {
+  historyCache.delete(`b:${name}`);
+  for (const k of Array.from(historyCache.keys())) {
+    if (k.startsWith("p:")) {
+      historyCache.delete(k);
+    }
+  }
+  const histBKey = `history:b:${name}`;
+  failedFetches.delete(histBKey);
+  storeSigs.delete(histBKey);
+  for (const f of Array.from(failedFetches)) {
+    if (f.startsWith("history:p:")) {
+      failedFetches.delete(f);
+    }
+  }
+  for (const k of Array.from(storeSigs.keys())) {
+    if (k.startsWith("history:p:")) {
       storeSigs.delete(k);
     }
   }
@@ -175,6 +198,26 @@ async function pollStatus(api: any) {
 
         // Run toasts comparing with prevRows, and invalidate bodies on row changes
         if (!isFirstDoc && Array.isArray(doc.rows)) {
+          const prevNames = new Set(prevRows.keys());
+          const curNames = new Set(doc.rows.map((r: any) => r.name));
+          let rowSetChanged = prevNames.size !== curNames.size;
+          if (!rowSetChanged) {
+            for (const n of curNames) {
+              if (!prevNames.has(n)) {
+                rowSetChanged = true;
+                break;
+              }
+            }
+          }
+          if (rowSetChanged) {
+            for (const n of curNames) {
+              invalidateHistory(n);
+            }
+            for (const n of prevNames) {
+              invalidateHistory(n);
+            }
+          }
+
           for (const row of doc.rows) {
             const prev = prevRows.get(row.name);
             if (prev) {
@@ -185,6 +228,7 @@ async function pollStatus(api: any) {
                 row.round !== prev.round
               ) {
                 invalidateBindingBodies(row.name);
+                invalidateHistory(row.name);
               }
               if (row.needs_you && !prev.needs_you) {
                 api.ui.toast.show({
@@ -434,6 +478,7 @@ export default {
         bindingTab: "plan",
         bindingRound: 0,
         bindingRoundFor: "",
+        dialogOpen: false,
       },
     });
 
@@ -477,86 +522,104 @@ export default {
     // strands <->/enter), and the host's api.ui.dialog.select owns all key
     // handling reliably instead.
     const showNeedsYouDialog = async (row: any) => {
-      const name = row.name;
-      const round = row.report_round || row.round || 1;
-      const waiting = row.waiting || "";
-      const candidate = row.candidate || "";
-
-      let choice: any;
+      dialogOpen = true;
+      setStore((s: any) => {
+        s.dialogOpen = true;
+      });
       try {
-        choice = await api.ui.dialog.select({
-          title: `${name} needs you · r${round}`,
-          placeholder: `${name} needs you · r${round} · ${waiting}`,
-          options: [
-            { title: "Tell the planner…", value: "tell" },
-            { title: "Send plan file…", value: "send" },
-            { title: "Stop the round", value: "stop" },
-            { title: "Mark done", value: "done" },
-            { title: "Gate the provider…", value: "gate" },
-          ],
-        });
-      } catch {
-        return;
-      }
+        const name = row.name;
+        const round = row.report_round || row.round || 1;
+        const waiting = row.waiting || "";
+        const candidate = row.candidate || "";
 
-      if (choice === "tell") {
-        // Never triggered by the smoke run.
-        const text = await api.ui.dialog.prompt({
-          title: `Tell the planner · ${name}`,
-          placeholder: "message",
-        });
-        if (text) {
-          api.client?.session?.prompt?.({
-            sessionID: currentSessionID,
-            text: `[relevo · ${name} r${round} · ${waiting}]\n${text}`,
+        const sw = stateWord(row);
+        const title = `${name} · r${round}${sw.word ? ` · ${sw.word}` : ""}`;
+        const placeholder = `${name} · r${round} · ${waiting}`;
+
+        let choice: any;
+        try {
+          choice = await api.ui.dialog.select({
+            title,
+            placeholder,
+            options: [
+              { title: "Tell the planner…", value: "tell" },
+              { title: "Send plan file…", value: "send" },
+              { title: "Stop the round", value: "stop" },
+              { title: "Mark done", value: "done" },
+              { title: "Gate the provider…", value: "gate" },
+            ],
           });
-          api.ui.toast.show({
-            variant: "info",
-            title: "relevo",
-            message: "sent to the planner",
-            duration: 4000,
+        } catch {
+          return;
+        }
+
+        if (!choice) return;
+
+        if (choice === "tell") {
+          // Never triggered by the smoke run.
+          const text = await api.ui.dialog.prompt({
+            title: `Tell the planner · ${name}`,
+            placeholder: "message",
           });
+          if (text) {
+            api.client?.session?.prompt?.({
+              sessionID: currentSessionID,
+              text: `[relevo · ${name} r${round} · ${waiting}]\n${text}`,
+            });
+            api.ui.toast.show({
+              variant: "info",
+              title: "relevo",
+              message: "sent to the planner",
+              duration: 4000,
+            });
+          }
+        } else if (choice === "send") {
+          const path = await api.ui.dialog.prompt({
+            title: `Send plan to ${name}`,
+            placeholder: "path to the plan file",
+          });
+          if (path) {
+            const res = await spawnRelevo(["send", "--name", name, "--file", path]);
+            toastFirstLine(res, res.ok ? "sent" : "send error");
+            await pollStatus(api);
+          }
+        } else if (choice === "stop") {
+          const ok = await api.ui.dialog.confirm({
+            title: `Stop ${name} round ${round}?`,
+            message: "The builder is killed; the worktree and branch are kept.",
+          });
+          if (ok) {
+            const res = await spawnRelevo(["stop", "--name", name]);
+            toastFirstLine(res, res.ok ? "stopped" : "stop error");
+            await pollStatus(api);
+          }
+        } else if (choice === "done") {
+          const ok = await api.ui.dialog.confirm({
+            title: `Mark ${name} done?`,
+            message: "This marks the binding done.",
+          });
+          if (ok) {
+            const res = await spawnRelevo(["done", name]);
+            toastFirstLine(res, res.ok ? "done" : "done error");
+            await pollStatus(api);
+          }
+        } else if (choice === "gate") {
+          const reason = await api.ui.dialog.prompt({
+            title: `Gate ${candidate}`,
+            placeholder: "reason",
+          });
+          if (reason) {
+            const res = await spawnRelevo(["gate", candidate, "--reason", reason]);
+            toastFirstLine(res, res.ok ? "gated" : "gate error");
+            await pollStatus(api);
+          }
         }
-      } else if (choice === "send") {
-        const path = await api.ui.dialog.prompt({
-          title: `Send plan to ${name}`,
-          placeholder: "path to the plan file",
+      } finally {
+        dialogOpen = false;
+        setStore((s: any) => {
+          s.dialogOpen = false;
         });
-        if (path) {
-          const res = await spawnRelevo(["send", "--name", name, "--file", path]);
-          toastFirstLine(res, res.ok ? "sent" : "send error");
-          await pollStatus(api);
-        }
-      } else if (choice === "stop") {
-        const ok = await api.ui.dialog.confirm({
-          title: `Stop ${name} round ${round}?`,
-          message: "The builder is killed; the worktree and branch are kept.",
-        });
-        if (ok) {
-          const res = await spawnRelevo(["stop", "--name", name]);
-          toastFirstLine(res, res.ok ? "stopped" : "stop error");
-          await pollStatus(api);
-        }
-      } else if (choice === "done") {
-        const ok = await api.ui.dialog.confirm({
-          title: `Mark ${name} done?`,
-          message: "This marks the binding done.",
-        });
-        if (ok) {
-          const res = await spawnRelevo(["done", name]);
-          toastFirstLine(res, res.ok ? "done" : "done error");
-          await pollStatus(api);
-        }
-      } else if (choice === "gate") {
-        const reason = await api.ui.dialog.prompt({
-          title: `Gate ${candidate}`,
-          placeholder: "reason",
-        });
-        if (reason) {
-          const res = await spawnRelevo(["gate", candidate, "--reason", reason]);
-          toastFirstLine(res, res.ok ? "gated" : "gate error");
-          await pollStatus(api);
-        }
+        updateStore();
       }
     };
 
@@ -792,13 +855,17 @@ export default {
         return (
           <box
             focusable
-            focused
+            focused={!store.dialogOpen}
             flexDirection="column"
             height="100%"
             paddingLeft={1}
             paddingRight={1}
             onKeyDown={(e: any) => {
               const key = e?.name || e?.key;
+              // Backstop: the page yields focus while a dialog is open
+              // (`focused={!store.dialogOpen}`), so smoke assertions 47 and
+              // 48 pin the focus rule and not this line.
+              if (dialogOpen) return;
               if (key === "up") {
                 e.preventDefault();
                 setStore((s: any) => {
@@ -899,7 +966,10 @@ export default {
             </box>
 
             {recentHistory.slice(0, 8).map((h) => {
-              const timeStr = h.StartedAt ? new Date(h.StartedAt).toISOString().slice(11, 16) : "--:--";
+              const d = h.StartedAt ? new Date(h.StartedAt) : null;
+              const timeStr = d
+                ? `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
+                : "--:--";
               const binding = (h.BindingName || "").padEnd(14, " ");
               const rnd = `r${h.Number}`.padEnd(5, " ");
               const outcome = h.Outcome || "";
@@ -915,43 +985,43 @@ export default {
     });
 
     // 5. Route: relevo.binding
-    api.ui.router.register({
-      name: "relevo.binding",
-      render: (props: any) => {
-        // read the reactive store so a fetch's updateStore() re-renders this route
-        void store.rev;
-        currentRoute = "relevo.binding";
-        // The render props carry the host's data half; the params this plugin
-        // navigates with stay on the current route. B1's `props?.params || props`
-        // saw neither, so only its fixture fallback ever supplied the name.
-        const params = props?.params || props?.data || api.ui.router.current?.()?.params || {};
-        const name = params.name || "";
+    // BindingPage is a real Solid component: its body runs once per
+    // navigation (Solid does not track component bodies). `render` below
+    // reads nothing from the store, so the host only calls it -- and only
+    // constructs a fresh BindingPage, discarding the old node tree -- on an
+    // actual navigation. Everything the page used to recompute on every
+    // store bump now lives in `view()`, a memo the JSX reads from; only the
+    // JSX expressions that call it re-evaluate on a bump, so the scrollbox
+    // node (and its scroll offset) and the dialog's focus survive a poll.
+    const BindingPage = (bindingProps: any) => {
+      const routeProps = bindingProps.routeProps;
 
-        const warningColor = paint(api, "text.feedback.warning.base");
-        const successColor = paint(api, "text.feedback.success.base");
-        const errorColor = paint(api, "text.feedback.error.base") || warningColor;
-        const mutedColor = paint(api, "text.muted");
-        const infoColor = paint(api, "text.feedback.info.base") || mutedColor;
-        const baseColor = paint(api, "text.base");
-        const interactiveColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || warningColor;
-        const accentColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || interactiveColor;
-        const codeColor = paint(api, "markdown.code") || paint(api, "syntax.string") || successColor;
+      const warningColor = paint(api, "text.feedback.warning.base");
+      const successColor = paint(api, "text.feedback.success.base");
+      const errorColor = paint(api, "text.feedback.error.base") || warningColor;
+      const mutedColor = paint(api, "text.muted");
+      const infoColor = paint(api, "text.feedback.info.base") || mutedColor;
+      const baseColor = paint(api, "text.base");
+      const interactiveColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || warningColor;
+      const accentColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || interactiveColor;
+      const codeColor = paint(api, "markdown.code") || paint(api, "syntax.string") || successColor;
 
-        // A horizontal rule fills the body width: the terminal width less the
-        // page's 1-column padding on each side (40 columns when the renderer
-        // gives no width). useTerminalDimensions() returns a signal accessor.
-        let ruleWidth = 40;
-        try {
-          const dims: any = useTerminalDimensions();
-          const terminalWidth = typeof dims === "function" ? dims()?.width : dims?.width;
-          if (typeof terminalWidth === "number" && terminalWidth > 0) {
-            ruleWidth = Math.max(1, terminalWidth - 2);
-          }
-        } catch {
-          ruleWidth = 40;
+      // A horizontal rule fills the body width: the terminal width less the
+      // page's 1-column padding on each side (40 columns when the renderer
+      // gives no width). useTerminalDimensions() returns a signal accessor;
+      // the page's body runs once, so this is read once too.
+      let ruleWidth = 40;
+      try {
+        const dims: any = useTerminalDimensions();
+        const terminalWidth = typeof dims === "function" ? dims()?.width : dims?.width;
+        if (typeof terminalWidth === "number" && terminalWidth > 0) {
+          ruleWidth = Math.max(1, terminalWidth - 4);
         }
+      } catch {
+        ruleWidth = 40;
+      }
 
-        const renderInline = (str: string) => {
+      const renderInline = (str: string) => {
           if (!str) return [];
           const parts = str.split(/(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]*\]\([^)]*\))/g);
           return parts.filter(Boolean).map((part) => {
@@ -1120,7 +1190,7 @@ export default {
 
         // relevoLine styles one line of the closing ```relevo block: a muted
         // key, then its value; a blank value reads as the muted em dash.
-        const relevoLine = (line: string) => {
+        const relevoLine = (line: string, next: string = "") => {
           const m = line.match(/^\s*([A-Za-z_][\w-]*):\s?(.*)$/);
           if (!m) {
             return (
@@ -1132,6 +1202,13 @@ export default {
           const key = m[1];
           const value = m[2].trim();
           const blank = value === "" || value === '""' || value === "[]";
+          if (blank && /^\s*-\s/.test(next || "")) {
+            return (
+              <box flexDirection="row">
+                <text fg={mutedColor}>{`  ${key}:`}</text>
+              </box>
+            );
+          }
           let valueColor = baseColor;
           if (key === "status") {
             if (value === "done") valueColor = successColor;
@@ -1191,7 +1268,7 @@ export default {
             }
             if (inFence) {
               if (fenceLang === "relevo") {
-                out.push(relevoLine(line));
+                out.push(relevoLine(line, lines[i + 1] ?? ""));
               } else {
                 out.push(
                   <box flexDirection="row">
@@ -1251,10 +1328,10 @@ export default {
             const listMatch = line.match(/^(\s*(?:[-*]|\d+\.))(\s+.*|$)/);
             if (listMatch) {
               const marker = listMatch[1];
-              const rest = listMatch[2] || "";
+              const rest = (listMatch[2] || "").trimStart();
               out.push(
                 <box flexDirection="row">
-                  <text fg={accentColor}>{marker}</text>
+                  <text fg={accentColor}>{marker + " "}</text>
                   {renderInline(rest)}
                 </box>,
               );
@@ -1363,14 +1440,26 @@ export default {
           );
         };
 
+      const tabs = ["plan", "report", "diff", "log", "transcript"];
+
+      // view(): everything the render used to compute at its top level, in
+      // the same order, including the side effects (currentRoute,
+      // currentRouteParams, fetchHistory, fetchShow). One computation per
+      // store bump; the JSX below reads from it instead of the store, so
+      // only the specific expressions that call it re-evaluate.
+      const view = createMemo(() => {
+        void store.rev;
+        currentRoute = "relevo.binding";
+        // The render props carry the host's data half; the params this plugin
+        // navigates with stay on the current route. B1's `props?.params || props`
+        // saw neither, so only its fixture fallback ever supplied the name.
+        const params = routeProps?.params || routeProps?.data || api.ui.router.current?.()?.params || {};
+        const name = params.name || "";
+
         // No binding in the route params: one line, and start no fetch.
         if (!name) {
           currentRouteParams = {};
-          return (
-            <box focusable focused flexDirection="column" height="100%" paddingLeft={1} paddingRight={1}>
-              <text fg={mutedColor}>relevo: no binding selected (esc)</text>
-            </box>
-          );
+          return { name: "" };
         }
 
         const row = (currentDoc?.rows || []).find((r: any) => r.name === name) || {};
@@ -1384,28 +1473,24 @@ export default {
               : (row.report_round || row.round || 1);
         currentRouteParams = { name, round };
 
-        // §4.3: selecting a round stores it against this binding; `[`, `]` and
-        // a round label click all use it.
-        const selectRound = (r: number) => {
-          setStore((s: any) => {
-            s.bindingRound = r;
-            s.bindingRoundFor = name;
-          });
-        };
-
-        // OpenTUI may report `[` only in the key's sequence and not in its
-        // name, so match either.
-        const isKey = (e: any, ch: string) => e?.name === ch || e?.sequence === ch || e?.raw === ch;
-
-        const tabs = ["plan", "report", "diff", "log", "transcript"];
         const currentTab = store.bindingTab || "plan";
 
         // Fetch binding history for round row
         fetchHistory(name, undefined);
         const bHistory = historyCache.get(`b:${name}`) || [];
+        const sortedHistory = [...bHistory].sort((a: any, b: any) => {
+          const ta = a?.StartedAt ? new Date(a.StartedAt).getTime() : 0;
+          const tb = b?.StartedAt ? new Date(b.StartedAt).getTime() : 0;
+          return (Number.isNaN(tb) ? 0 : tb) - (Number.isNaN(ta) ? 0 : ta);
+        });
+        const liveID = sortedHistory[0]?.BindingID;
+        const liveRows =
+          liveID !== undefined
+            ? sortedHistory.filter((h: any) => h?.BindingID === liveID)
+            : sortedHistory;
         // A round can have several history rows (a builder switch adds one),
         // so list each round number once, ascending.
-        const rounds = Array.from(new Set(bHistory.map((h: any) => h.Number))).sort(
+        const rounds = Array.from(new Set(liveRows.map((h: any) => h.Number))).sort(
           (a: number, b: number) => a - b,
         );
         if (rounds.length === 0 && round > 0) rounds.push(round);
@@ -1421,45 +1506,75 @@ export default {
         const sw = stateWord(row);
         const display = sw.word;
 
-        // The body scrollbox is the focused renderable (per the plan's
-        // <scrollbox focusable focused>), so keys must be handled here too.
-        const onKey = (e: any) => {
-          const key = e?.name || e?.key;
-          if (key === "tab") {
-            e.preventDefault();
-            const curIdx = tabs.indexOf(store.bindingTab || "report");
-            const nextIdx = e.shift ? (curIdx - 1 + tabs.length) % tabs.length : (curIdx + 1) % tabs.length;
-            setStore((s: any) => {
-              s.bindingTab = tabs[nextIdx];
-            });
-          } else if (isKey(e, "[")) {
-            let prev: number | undefined;
-            for (const r of rounds) {
-              if (r < round && (prev === undefined || r > prev)) prev = r;
-            }
-            if (prev !== undefined) {
-              e.preventDefault();
-              selectRound(prev);
-            }
-          } else if (isKey(e, "]")) {
-            let next: number | undefined;
-            for (const r of rounds) {
-              if (r > round && (next === undefined || r < next)) next = r;
-            }
-            if (next !== undefined) {
-              e.preventDefault();
-              selectRound(next);
-            }
-          } else if (key === "a") {
-            e.preventDefault();
-            showNeedsYouDialog({ name, round, ...row });
-          }
-        };
+        return { name, row, round, rounds, currentTab, tabContent, actor, model, sw, display };
+      });
 
-        return (
+      // §4.3: selecting a round stores it against this binding; `[`, `]` and
+      // a round label click all use it.
+      const selectRound = (r: number) => {
+        setStore((s: any) => {
+          s.bindingRound = r;
+          s.bindingRoundFor = view().name;
+        });
+      };
+
+      // OpenTUI may report `[` only in the key's sequence and not in its
+      // name, so match either.
+      const isKey = (e: any, ch: string) => e?.name === ch || e?.sequence === ch || e?.raw === ch;
+
+      // The body scrollbox is the focused renderable (per the plan's
+      // <scrollbox focusable focused>), so keys must be handled here too.
+      // Reads view() fresh on every key, not a value captured at mount.
+      const onKey = (e: any) => {
+        // Backstop: the page yields focus while a dialog is open
+        // (`focused={!store.dialogOpen}`), so smoke assertions 47 and 48
+        // pin the focus rule and not this line.
+        if (dialogOpen) return;
+        const v = view();
+        const key = e?.name || e?.key;
+        if (key === "tab") {
+          e.preventDefault();
+          const curIdx = tabs.indexOf(store.bindingTab || "report");
+          const nextIdx = e.shift ? (curIdx - 1 + tabs.length) % tabs.length : (curIdx + 1) % tabs.length;
+          setStore((s: any) => {
+            s.bindingTab = tabs[nextIdx];
+          });
+        } else if (isKey(e, "[")) {
+          let prev: number | undefined;
+          for (const r of v.rounds || []) {
+            if (r < v.round && (prev === undefined || r > prev)) prev = r;
+          }
+          if (prev !== undefined) {
+            e.preventDefault();
+            selectRound(prev);
+          }
+        } else if (isKey(e, "]")) {
+          let next: number | undefined;
+          for (const r of v.rounds || []) {
+            if (r > v.round && (next === undefined || r < next)) next = r;
+          }
+          if (next !== undefined) {
+            e.preventDefault();
+            selectRound(next);
+          }
+        } else if (key === "a") {
+          e.preventDefault();
+          showNeedsYouDialog({ name: v.name, round: v.round, ...v.row });
+        }
+      };
+
+      return (
+        <Show
+          when={view().name}
+          fallback={
+            <box focusable focused flexDirection="column" height="100%" paddingLeft={1} paddingRight={1}>
+              <text fg={mutedColor}>relevo: no binding selected (esc)</text>
+            </box>
+          }
+        >
           <box
             focusable
-            focused
+            focused={!store.dialogOpen}
             flexDirection="column"
             height="100%"
             paddingLeft={1}
@@ -1469,23 +1584,23 @@ export default {
             {/* Header */}
             <box flexDirection="row" justifyContent="space-between" flexShrink={0}>
               <text>
-                <b>{`relevo › fleet › ${name} › r${round}`}</b>
+                <b>{`relevo › fleet › ${view().name} › r${view().round}`}</b>
               </text>
-              <text fg={toneColor(api, sw.tone)}>
-                <b>{display}</b>
+              <text fg={toneColor(api, view().sw.tone)}>
+                <b>{view().display}</b>
               </text>
             </box>
 
             <text fg={mutedColor} flexShrink={0}>
-              {display
-                ? `${name} · ${actor} on ${model} · ${display}`
-                : `${name} · ${actor} on ${model}`}
+              {view().display
+                ? `${view().name} · ${view().actor} on ${view().model} · ${view().display}`
+                : `${view().name} · ${view().actor} on ${view().model}`}
             </text>
 
             {/* Tab row */}
             <box flexDirection="row" gap={2} marginTop={1} flexShrink={0}>
               {tabs.map((t) => {
-                const isSelected = currentTab === t;
+                const isSelected = view().currentTab === t;
                 return (
                   <text fg={isSelected ? interactiveColor : mutedColor}>
                     {isSelected ? <b>{`[ ${t} ]`}</b> : `  ${t}  `}
@@ -1497,8 +1612,8 @@ export default {
             {/* Round row */}
             <box flexDirection="row" gap={1} marginTop={1} flexShrink={0}>
               <text fg={mutedColor}>[ ] round </text>
-              {rounds.map((rNum: number) => {
-                const isSelected = rNum === round;
+              {(view().rounds || []).map((rNum: number) => {
+                const isSelected = rNum === view().round;
                 return (
                   <text
                     fg={isSelected ? interactiveColor : mutedColor}
@@ -1515,43 +1630,51 @@ export default {
                 key keeps the same scrollbox and its scroll offset; a new key
                 (a tab or round change) starts at the top. */}
             <box marginTop={1} flexGrow={1} minHeight={0}>
-              <Show keyed when={`${name}:${round}:${currentTab}`}>
-                <scrollbox flexGrow={1} minHeight={0} focusable focused onKeyDown={onKey}>
-                  {currentTab === "plan" || currentTab === "report" ? (
-                    tabContent ? (
-                      <box flexDirection="column">
-                        {renderMarkdownLines(tabContent)}
-                      </box>
+              <Show keyed when={`${view().name}:${view().round}:${view().currentTab}`}>
+                <scrollbox flexGrow={1} minHeight={0} focusable focused={!store.dialogOpen} onKeyDown={onKey}>
+                  {(() => {
+                    const v = view();
+                    return v.currentTab === "plan" || v.currentTab === "report" ? (
+                      v.tabContent ? (
+                        <box flexDirection="column">
+                          {renderMarkdownLines(v.tabContent)}
+                        </box>
+                      ) : (
+                        <text>{`(no ${v.currentTab})`}</text>
+                      )
+                    ) : v.currentTab === "diff" ? (
+                      <code content={v.tabContent || `(no diff)`} filetype="diff" width="100%" />
+                    ) : v.currentTab === "transcript" ? (
+                      v.tabContent ? (
+                        <box flexDirection="column">
+                          {renderMarkdownLines(v.tabContent, transcriptSpecial)}
+                        </box>
+                      ) : (
+                        <text>{`(no ${v.currentTab})`}</text>
+                      )
+                    ) : v.currentTab === "log" ? (
+                      v.tabContent ? (
+                        <box flexDirection="column">
+                          {v.tabContent.split("\n").map(renderLogLine)}
+                        </box>
+                      ) : (
+                        <text>{`(no ${v.currentTab})`}</text>
+                      )
                     ) : (
-                      <text>{`(no ${currentTab})`}</text>
-                    )
-                  ) : currentTab === "diff" ? (
-                    <code content={tabContent || `(no diff)`} filetype="diff" width="100%" />
-                  ) : currentTab === "transcript" ? (
-                    tabContent ? (
-                      <box flexDirection="column">
-                        {renderMarkdownLines(tabContent, transcriptSpecial)}
-                      </box>
-                    ) : (
-                      <text>{`(no ${currentTab})`}</text>
-                    )
-                  ) : currentTab === "log" ? (
-                    tabContent ? (
-                      <box flexDirection="column">
-                        {tabContent.split("\n").map(renderLogLine)}
-                      </box>
-                    ) : (
-                      <text>{`(no ${currentTab})`}</text>
-                    )
-                  ) : (
-                    <text>{tabContent || `(no ${currentTab})`}</text>
-                  )}
+                      <text>{v.tabContent || `(no ${v.currentTab})`}</text>
+                    );
+                  })()}
                 </scrollbox>
               </Show>
             </box>
           </box>
-        );
-      },
+        </Show>
+      );
+    };
+
+    api.ui.router.register({
+      name: "relevo.binding",
+      render: (routeProps: any) => <BindingPage routeProps={routeProps} />,
     });
   },
 };
