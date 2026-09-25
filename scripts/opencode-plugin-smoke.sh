@@ -375,13 +375,27 @@ check_assertion_24() {
 }
 assert 24 "01-session landing row shows no ACTIVE word" check_assertion_24
 
-# 25. The plan tab (capture 05d-plan) shows a markdown heading rendered
-#     (the fixture plan's # … line appears without the leading # ).
+# 25. In 05d-plan.ansi, the plan fixture's heading line carries a non-empty
+#     SGR sequence that differs from the one on a plain paragraph line.
 check_assertion_25() {
-  grep -q "Plan for webshop r4" "$OUT/05d-plan.txt" && \
-  ! grep -q "# Plan for webshop r4" "$OUT/05d-plan.txt"
+  local head_sgr body_sgr
+  head_sgr="$(grep -a -m1 "Plan for webshop" "$OUT/05d-plan.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
+  body_sgr="$(grep -a -m1 "Implement cart" "$OUT/05d-plan.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
+  [ -n "$head_sgr" ] && [ -n "$body_sgr" ] && \
+  [ "$head_sgr" != "$body_sgr" ]
 }
-assert 25 "05d-plan shows markdown heading rendered without leading #" check_assertion_25
+assert 25 "05d-plan heading carries different SGR sequence from plain body" check_assertion_25
+
+# 25b. In 05-binding-report.ansi, the report fixture's heading line carries a
+#      non-empty SGR sequence that differs from the one on a plain paragraph line.
+check_assertion_25b() {
+  local head_sgr body_sgr
+  head_sgr="$(grep -a -m1 "# Report" "$OUT/05-binding-report.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
+  body_sgr="$(grep -a -m1 "checkout flow" "$OUT/05-binding-report.ansi" | grep -a -oE $'\x1b\\[[0-9;]*m' | head -1 || true)"
+  [ -n "$head_sgr" ] && [ -n "$body_sgr" ] && \
+  [ "$head_sgr" != "$body_sgr" ]
+}
+assert 25b "05-binding-report heading carries different SGR sequence from plain body" check_assertion_25b
 
 # 26. In 05e-transcript (.ansi capture), the tool-name line and the
 #     ⎿ error: line carry different colour escapes (compare the SGR codes
@@ -419,5 +433,5 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-echo "Smoke test PASSED (all 27 assertions passed)"
+echo "Smoke test PASSED (all 28 assertions passed)"
 exit 0

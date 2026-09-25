@@ -918,6 +918,86 @@ export default {
         const baseColor = paint(api, "text.base");
         const interactiveColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || warningColor;
         const accentColor = paint(api, "text.action.base") || paint(api, "text.feedback.info.base") || interactiveColor;
+        const codeColor = paint(api, "markdown.code") || paint(api, "syntax.string") || successColor;
+
+        const renderInline = (str: string) => {
+          if (!str) return [];
+          const parts = str.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+          return parts.filter(Boolean).map((part) => {
+            if (part.startsWith("`") && part.endsWith("`") && part.length >= 2) {
+              return <text fg={codeColor}>{part.slice(1, -1)}</text>;
+            }
+            if (part.startsWith("**") && part.endsWith("**") && part.length >= 4) {
+              return (
+                <text fg={baseColor}>
+                  <b>{part.slice(2, -2)}</b>
+                </text>
+              );
+            }
+            return <text fg={baseColor}>{part}</text>;
+          });
+        };
+
+        const renderMarkdownLines = (text: string) => {
+          const lines = text.split("\n");
+          let inFencedBlock = false;
+          return lines.map((line) => {
+            if (line.trim().startsWith("```")) {
+              inFencedBlock = !inFencedBlock;
+              return (
+                <box flexDirection="row">
+                  <text fg={mutedColor}>{line || " "}</text>
+                </box>
+              );
+            }
+            if (inFencedBlock) {
+              return (
+                <box flexDirection="row">
+                  <text fg={codeColor}>{line || " "}</text>
+                </box>
+              );
+            }
+            if (/^#{1,6}(?:\s.*|$)/.test(line)) {
+              return (
+                <box flexDirection="row">
+                  <text fg={accentColor}>
+                    <b>{line || " "}</b>
+                  </text>
+                </box>
+              );
+            }
+            if (/^\s*>/.test(line)) {
+              return (
+                <box flexDirection="row">
+                  <text fg={mutedColor}>{line || " "}</text>
+                </box>
+              );
+            }
+            const listMatch = line.match(/^(\s*(?:[-*]|\d+\.))(\s+.*|$)/);
+            if (listMatch) {
+              const marker = listMatch[1];
+              const rest = listMatch[2] || "";
+              return (
+                <box flexDirection="row">
+                  <text fg={accentColor}>{marker}</text>
+                  {renderInline(rest)}
+                </box>
+              );
+            }
+            if (line === "") {
+              return (
+                <box flexDirection="row">
+                  <text fg={baseColor}> </text>
+                </box>
+              );
+            }
+            return (
+              <box flexDirection="row">
+                {renderInline(line)}
+              </box>
+            );
+          });
+        };
 
         const renderTranscriptLine = (line: string) => {
           const toolMatch = line.match(/^(\s*●\s+\S+)(.*)$/);
@@ -1149,7 +1229,13 @@ export default {
               <Show keyed when={`${name}:${round}:${currentTab}`}>
                 <scrollbox flexGrow={1} minHeight={0} focusable focused onKeyDown={onKey}>
                   {currentTab === "plan" || currentTab === "report" ? (
-                    <markdown content={tabContent || `(no ${currentTab})`} width="100%" />
+                    tabContent ? (
+                      <box flexDirection="column">
+                        {renderMarkdownLines(tabContent)}
+                      </box>
+                    ) : (
+                      <text>{`(no ${currentTab})`}</text>
+                    )
                   ) : currentTab === "diff" ? (
                     <code content={tabContent || `(no diff)`} filetype="diff" width="100%" />
                   ) : currentTab === "transcript" ? (
