@@ -6,9 +6,9 @@ import (
 	"strings"
 )
 
-// namePattern is the shape of a candidate name (cockpit spec §3.1): lowercase,
-// at most 24 characters, and never containing "/", so a name can never be
-// mistaken for a harness/provider/model token.
+// namePattern is the shape of a candidate name: lowercase, at most 24
+// characters, and never containing "/", so a name can never be mistaken for a
+// harness/provider/model token.
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,23}$`)
 
 // maxNameLen is the longest name namePattern admits.
@@ -19,22 +19,14 @@ func IsName(s string) bool {
 	return namePattern.MatchString(s)
 }
 
-// DeriveNames returns one name per entry, in entry order.
-// Entries with a non-empty Name keep it verbatim (validated by Parse, not here).
-// Reserved first: every explicit name, and every provider name among entries.
-// Then, for each entry without a name, in order:
+// DeriveNames returns one name per entry, in entry order. An entry with a
+// non-empty Name keeps it verbatim; Parse validates it, not here.
 //
-//	base = the model's last "/"-segment, with an effort suffix ("#..." or ":...")
-//	       removed, lowercased, each run of chars outside [a-z0-9.-] turned into
-//	       "-", leading "-" and "." trimmed, truncated to 24; "" becomes "c".
-//	try, taking the first that is not reserved and matches namePattern:
-//	  base
-//	  base + "-" + effort (effort = the removed suffix without "#"/":"; skipped if none)
-//	  harness + "-" + base
-//	  harness + "-" + base + "-" + effort (skipped if no effort)
-//	  base + "-2", base + "-3", ... (truncating base so the whole fits 24)
-//
-// each candidate is truncated to 24, then checked; the chosen name is reserved.
+// Every explicit name and every provider name is reserved first. An entry
+// without a name takes the first free candidate from this order: the model's
+// last "/"-segment slugged and stripped of its "#..."/":..." effort suffix,
+// then that base with the effort appended, then the harness prefixed on either
+// form, then the base with a numeric suffix.
 func DeriveNames(entries []Candidate) []string {
 	reserved := make(map[string]bool, len(entries)*2)
 	for _, e := range entries {
@@ -104,9 +96,9 @@ func deriveBase(model string) (base, effort string) {
 	return slug(seg), effort
 }
 
-// slug normalises s into name characters: lowercased, every run of characters
-// outside [a-z0-9.-] turned into a single "-", leading "-" and "." trimmed,
-// truncated to 24. An empty result becomes "c".
+// slug reduces s to name characters: lowercase [a-z0-9.-], every other run of
+// characters replaced by one "-", leading "-" and "." dropped, truncated to
+// maxNameLen. An empty result becomes "c", the shortest valid name.
 func slug(s string) string {
 	s = strings.ToLower(s)
 

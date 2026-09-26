@@ -7,7 +7,7 @@ import (
 )
 
 // TestDeriveNamesThisMachine pins the seven entries of this machine's config,
-// in order, to the names the cockpit spec §3.1 derives for them.
+// in order, to their derived names.
 func TestDeriveNamesThisMachine(t *testing.T) {
 	entries := []Candidate{
 		{Harness: "agy", Provider: "google", Model: "gemini-3.8-flash-high"},
@@ -34,9 +34,9 @@ func TestDeriveNamesThisMachine(t *testing.T) {
 	}
 }
 
-// TestDeriveNamesCollisions pins every collision rule of §3.1: an effort
-// suffix, the harness prefix, the numbering fallback, an explicit name that
-// reserves its word, a provider name, truncation to 24, and numbering.
+// TestDeriveNamesCollisions pins every collision rule: an effort suffix, the
+// harness prefix, the numbering fallback, an explicit name that reserves its
+// word, a provider name, truncation to 24, and numbering.
 func TestDeriveNamesCollisions(t *testing.T) {
 	tests := []struct {
 		name    string

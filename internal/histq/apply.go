@@ -8,16 +8,15 @@ import (
 
 // Apply is the in-Go half of a query: the conditions db.Query cannot
 // express, applied to the rows it returned. Order is preserved and every
-// condition must hold (a query with none keeps every row).
+// condition must hold; a query with no conditions keeps every row.
 //
 // A bare Word is a case-insensitive substring of the row's binding name,
 // repo or feature -- any of the three. A NumCond compares cost (*CostUSD),
-// tokens (sum of the four token columns, nil counting 0), commits
+// tokens (the sum of the four token columns, nil counting 0), commits
 // (*Commits), duration (minutes, from *DurationMS) or the round number; a
 // nil column fails every comparison. Report, Gate, Basis, Server and Mode
 // compare against ReportOutcome, GateResult, CostBasis, Server and
-// BuilderMode, and a nil column fails too
-// (docs/specs/2026-09-21-dashboard-design.md §3-§4).
+// BuilderMode, and a nil column fails too.
 func (q Query) Apply(rows []db.RoundRow) []db.RoundRow {
 	out := make([]db.RoundRow, 0, len(rows))
 	for _, r := range rows {

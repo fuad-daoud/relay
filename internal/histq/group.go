@@ -40,9 +40,8 @@ type Tiles struct {
 }
 
 // Group buckets rows by an axis and sums each bucket. AxisNone (or "") is
-// no regroup and returns nil. day keys are the StartedAt date in loc, so
-// the caller's timezone decides where a round's day starts.
-// (docs/specs/2026-09-21-dashboard-design.md §4).
+// no regroup and returns nil. day keys are the StartedAt date in loc, so the
+// caller's timezone decides where a round's day starts.
 func Group(rows []db.RoundRow, by Axis, loc *time.Location) []GroupRow {
 	if by == AxisNone || by == "" {
 		return nil

@@ -1,12 +1,6 @@
-// Package histq is relevo's round-history query language: the text
-// `relevo history -q` and, from round 2, the dashboard's filter line share.
-// It parses a query into a db.Filter plus the conditions only Go can apply,
-// and it carries the regroup axis on the same line
-// (docs/specs/2026-09-21-dashboard-design.md §3-§5).
-//
-// It imports internal/db and the standard library only. internal/relevo
-// imports histq, never the other way around, so the parse/group half stays
-// usable from anywhere the db is.
+// Package histq parses relevo's round-history query language, shared by
+// `relevo history -q` and the dashboard filter line, into a db.Filter, the
+// conditions only Go can apply and the regroup axis. It depends on db alone.
 package histq
 
 import (
@@ -21,13 +15,13 @@ import (
 )
 
 // ErrBadSince is ParseSince's error for a window it cannot read. It is the
-// same value relevo.ErrBadSince names, so a caller that matched on that
-// sentinel before ParseSince moved here still does.
+// same value relevo.ErrBadSince names, so a caller matching that sentinel
+// still does.
 var ErrBadSince = errors.New("--since wants 24h, 7d or YYYY-MM-DD")
 
-// ParseSince turns "" (zero: no cut), "24h", "7d" or "2026-09-01" into the
-// instant before which rounds are ignored. `2w` forms are deliberately not
-// accepted (internal/relevo's test pins "7w" as an error).
+// ParseSince turns "" (zero: no cut), "24h", "7d" or a YYYY-MM-DD date into
+// the instant before which rounds are ignored. Only h and d suffixes are
+// accepted; w is deliberately not.
 func ParseSince(s string, now time.Time) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
@@ -129,8 +123,8 @@ func (e ErrQuery) Error() string {
 	return fmt.Sprintf("query: %s at %d: %s", e.Token, e.Pos, e.Reason)
 }
 
-// enum values the spec fixes. histq does not import internal/usage for the
-// basis words: the query language's vocabulary is its own.
+// The query language's vocabulary is its own: it lists the accepted values
+// here rather than importing them from internal/usage.
 var (
 	outcomeValues = []string{
 		db.OutcomeReported, db.OutcomeHalted, db.OutcomeExited,
@@ -248,10 +242,34 @@ func (q *Query) applyKeyValue(key, value string, t token, now time.Time) error {
 	if value == "" {
 		return ErrQuery{Token: t.text, Pos: t.pos, Reason: "empty value"}
 	}
-	badEnum := func(want []string) error {
-		return ErrQuery{Token: t.text, Pos: t.pos, Reason: fmt.Sprintf("%s wants one of %s", key, strings.Join(want, ", "))}
+	if q.applyPlainKey(key, value) {
+		return nil
 	}
+	switch key {
+	case "outcome":
+		if !db.ValidOutcome(value) {
+			return badEnum(key, t, outcomeValues)
+		}
+		q.Filter.Outcome = value
+	case "report", "gate", "basis", "mode":
+		return q.applyEnum(key, value, t)
+	case "since", "until":
+		return q.applyWindow(key, value, t, now)
+	case "round":
+		return q.applyRound(value, t)
+	case "archived":
+		return q.applyArchived(value, t)
+	case "by":
+		return q.applyBy(value, t)
+	default:
+		return ErrQuery{Token: t.text, Pos: t.pos, Reason: "unknown key"}
+	}
+	return nil
+}
 
+// applyPlainKey stores the keys whose value is used verbatim, reporting
+// whether key was one of them.
+func (q *Query) applyPlainKey(key, value string) bool {
 	switch key {
 	case "binding":
 		q.Filter.Binding = value
@@ -271,71 +289,98 @@ func (q *Query) applyKeyValue(key, value string, t token, now time.Time) error {
 		q.Filter.Candidate = value
 	case "state":
 		q.Filter.State = value
-	case "outcome":
-		if !db.ValidOutcome(value) {
-			return badEnum(outcomeValues)
-		}
-		q.Filter.Outcome = value
-	case "report":
-		if !contains(reportValues, value) {
-			return badEnum(reportValues)
-		}
-		q.Report = value
-	case "gate":
-		if !contains(gateValues, value) {
-			return badEnum(gateValues)
-		}
-		q.Gate = value
-	case "basis":
-		if !contains(basisValues, value) {
-			return badEnum(basisValues)
-		}
-		q.Basis = value
 	case "server":
 		q.Server = value
-	case "mode":
-		if !contains(modeValues, value) {
-			return badEnum(modeValues)
-		}
-		q.Mode = value
-	case "since", "until":
-		ts, err := ParseSince(value, now)
-		if err != nil {
-			return ErrQuery{Token: t.text, Pos: t.pos, Reason: err.Error()}
-		}
-		if key == "since" {
-			q.Filter.Since = ts
-			q.Since = value
-		} else {
-			q.Filter.Until = ts
-			q.Until = value
-		}
-	case "round":
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return ErrQuery{Token: t.text, Pos: t.pos, Reason: "round wants a number"}
-		}
-		q.Filter.Round = n
-	case "archived":
-		switch value {
-		case "true":
-			b := true
-			q.Filter.Archived = &b
-		case "false":
-			b := false
-			q.Filter.Archived = &b
-		default:
-			return ErrQuery{Token: t.text, Pos: t.pos, Reason: "archived wants true or false"}
-		}
-	case "by":
-		a, ok := ParseAxis(value)
-		if !ok {
-			return ErrQuery{Token: t.text, Pos: t.pos, Reason: "by wants one of " + axisNames()}
-		}
-		q.By = a
 	default:
-		return ErrQuery{Token: t.text, Pos: t.pos, Reason: "unknown key"}
+		return false
 	}
+	return true
+}
+
+// applyEnum stores a key whose value must come from a fixed list.
+func (q *Query) applyEnum(key, value string, t token) error {
+	want := enumValues(key)
+	if !contains(want, value) {
+		return badEnum(key, t, want)
+	}
+	switch key {
+	case "report":
+		q.Report = value
+	case "gate":
+		q.Gate = value
+	case "basis":
+		q.Basis = value
+	case "mode":
+		q.Mode = value
+	}
+	return nil
+}
+
+// enumValues is the accepted list for an enum key, nil when key is not one.
+func enumValues(key string) []string {
+	switch key {
+	case "report":
+		return reportValues
+	case "gate":
+		return gateValues
+	case "basis":
+		return basisValues
+	case "mode":
+		return modeValues
+	}
+	return nil
+}
+
+// badEnum is the error for a value outside an enum key's list.
+func badEnum(key string, t token, want []string) error {
+	return ErrQuery{Token: t.text, Pos: t.pos, Reason: fmt.Sprintf("%s wants one of %s", key, strings.Join(want, ", "))}
+}
+
+// applyWindow resolves a since/until value and stores both the instant it
+// cuts at and the raw text String prints back.
+func (q *Query) applyWindow(key, value string, t token, now time.Time) error {
+	ts, err := ParseSince(value, now)
+	if err != nil {
+		return ErrQuery{Token: t.text, Pos: t.pos, Reason: err.Error()}
+	}
+	if key == "since" {
+		q.Filter.Since = ts
+		q.Since = value
+		return nil
+	}
+	q.Filter.Until = ts
+	q.Until = value
+	return nil
+}
+
+// applyRound stores a round number key.
+func (q *Query) applyRound(value string, t token) error {
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return ErrQuery{Token: t.text, Pos: t.pos, Reason: "round wants a number"}
+	}
+	q.Filter.Round = n
+	return nil
+}
+
+// applyArchived stores the tri-state archived filter: unset, true or false.
+func (q *Query) applyArchived(value string, t token) error {
+	switch value {
+	case "true", "false":
+		b := value == "true"
+		q.Filter.Archived = &b
+		return nil
+	}
+	return ErrQuery{Token: t.text, Pos: t.pos, Reason: "archived wants true or false"}
+}
+
+// applyBy stores the regroup axis.
+func (q *Query) applyBy(value string, t token) error {
+	a, ok := ParseAxis(value)
+	if !ok {
+		return ErrQuery{Token: t.text, Pos: t.pos, Reason: "by wants one of " + axisNames()}
+	}
+	q.By = a
 	return nil
 }
 

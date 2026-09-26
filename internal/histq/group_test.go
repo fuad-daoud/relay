@@ -12,6 +12,10 @@ import (
 // TestGroupByBuilderSums asserts every counter and sum of the builder axis
 // against the hand-checkable fixture: A = rows 1, 2, 7, 10; B = rows 3, 4, 9;
 // C = rows 5, 6, 8.
+//
+// The cost and unknown columns also pin the basis rule: CostUSD sums only the
+// rows whose basis is not "unknown" (B skips row 3's 3.00, C skips row 8's
+// 1.50) and Unknown counts every such row.
 func TestGroupByBuilderSums(t *testing.T) {
 	groups := Group(fixtureRows(), AxisBuilder, fxLoc)
 	if len(groups) != 3 {
@@ -77,26 +81,6 @@ func TestGroupByBuilderSums(t *testing.T) {
 	}
 }
 
-// TestGroupCostSkipsUnknown pins that CostUSD sums only rows whose basis is
-// not "unknown": B keeps 0.50 + 3.50 = 4.00 and skips row 3's 3.00; C keeps
-// row 6's 0.25 and skips row 8's 1.50. Summing the unknown rows too would
-// make B 7.00 and C 1.75, so this test fails on that mutation.
-func TestGroupCostSkipsUnknown(t *testing.T) {
-	groups := Group(fixtureRows(), AxisBuilder, fxLoc)
-	if len(groups) != 3 {
-		t.Fatalf("len(Group) = %d, want 3", len(groups))
-	}
-	if got := groups[1].CostUSD; math.Abs(got-4.00) > 1e-9 {
-		t.Errorf("%s CostUSD = %v, want 4.00 (row 3's unknown basis skipped)", groups[1].Key, got)
-	}
-	if got := groups[2].CostUSD; math.Abs(got-0.25) > 1e-9 {
-		t.Errorf("%s CostUSD = %v, want 0.25 (rows 5 and 8 skipped)", groups[2].Key, got)
-	}
-	if groups[1].Unknown != 1 || groups[2].Unknown != 2 {
-		t.Errorf("Unknown = %d/%d, want 1/2", groups[1].Unknown, groups[2].Unknown)
-	}
-}
-
 // TestGroupByDayNewestFirst pins the day axis: keys are the local date, and
 // they come out newest first regardless of the cost order.
 func TestGroupByDayNewestFirst(t *testing.T) {
@@ -145,48 +129,36 @@ func TestGroupNoneIsNil(t *testing.T) {
 	}
 }
 
-func TestGroupByBindingKeys(t *testing.T) {
-	assertKeys(t, AxisBinding, []string{"api", "infra", "web"})
-}
-
-func TestGroupByRepoKeys(t *testing.T) {
-	assertKeys(t, AxisRepo, []string{fxRepoAPI, fxRepoWeb})
-}
-
-func TestGroupByFeatureKeys(t *testing.T) {
-	assertKeys(t, AxisFeature, []string{"checkout", "search"})
-}
-
-func TestGroupByHarnessKeys(t *testing.T) {
-	assertKeys(t, AxisHarness, []string{"agy", "claude", "opencode"})
-}
-
-func TestGroupByProviderKeys(t *testing.T) {
-	assertKeys(t, AxisProvider, []string{"antigravity", "anthropic", "openai"})
-}
-
-func TestGroupByModelKeys(t *testing.T) {
-	assertKeys(t, AxisModel, []string{"gpt", "opus", "sonnet"})
-}
-
-func TestGroupByOutcomeKeys(t *testing.T) {
-	assertKeys(t, AxisOutcome, []string{"exited", "halted", "open", "reported"})
-}
-
-// assertKeys pins the key set of one axis, order-insensitively: the ordering
-// rules have their own tests.
-func assertKeys(t *testing.T, by Axis, want []string) {
-	t.Helper()
-	groups := Group(fixtureRows(), by, fxLoc)
-	got := make([]string, len(groups))
-	for i, g := range groups {
-		got[i] = g.Key
+// TestGroupAxisKeys pins the key set of every axis that groups by a column,
+// order-insensitively: the ordering rules have their own tests.
+func TestGroupAxisKeys(t *testing.T) {
+	tests := []struct {
+		by   Axis
+		want []string
+	}{
+		{AxisBinding, []string{"api", "infra", "web"}},
+		{AxisRepo, []string{fxRepoAPI, fxRepoWeb}},
+		{AxisFeature, []string{"checkout", "search"}},
+		{AxisHarness, []string{"agy", "claude", "opencode"}},
+		{AxisProvider, []string{"antigravity", "anthropic", "openai"}},
+		{AxisModel, []string{"gpt", "opus", "sonnet"}},
+		{AxisOutcome, []string{"exited", "halted", "open", "reported"}},
 	}
-	sort.Strings(got)
-	sorted := append([]string(nil), want...)
-	sort.Strings(sorted)
-	if fmt.Sprint(got) != fmt.Sprint(sorted) {
-		t.Errorf("Group(%s) keys = %v, want %v", by, got, sorted)
+
+	for _, tt := range tests {
+		t.Run(string(tt.by), func(t *testing.T) {
+			groups := Group(fixtureRows(), tt.by, fxLoc)
+			got := make([]string, len(groups))
+			for i, g := range groups {
+				got[i] = g.Key
+			}
+			sort.Strings(got)
+			want := append([]string(nil), tt.want...)
+			sort.Strings(want)
+			if fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Errorf("Group(%s) keys = %v, want %v", tt.by, got, want)
+			}
+		})
 	}
 }
 

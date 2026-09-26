@@ -37,10 +37,6 @@ internal/actors/shipped.go
 internal/actors/shipped_test.go
 internal/agentsrc/source.go
 internal/agentsrc/source_test.go
-internal/candidate/candidate.go
-internal/candidate/candidate_test.go
-internal/candidate/names.go
-internal/candidate/names_test.go
 internal/chatlabel/chatlabel.go
 internal/chatlabel/chatlabel_test.go
 internal/chatlabel/resolve.go
@@ -112,9 +108,6 @@ internal/harness/shipped.go
 internal/harness/shipped_test.go
 internal/history/history.go
 internal/history/history_test.go
-internal/histq/apply.go
-internal/histq/group.go
-internal/histq/histq.go
 internal/hooks/events.go
 internal/hooks/executor.go
 internal/hooks/runlog.go
