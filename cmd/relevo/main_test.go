@@ -15,6 +15,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/release"
@@ -40,7 +41,12 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	isolateTestEnv(root)
+	cleanup, err := dbtest.Install()
+	if err != nil {
+		panic(err)
+	}
 	code := m.Run()
+	cleanup()
 	os.RemoveAll(root)
 	os.Exit(code)
 }
