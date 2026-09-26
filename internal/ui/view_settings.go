@@ -429,9 +429,12 @@ func (v settingsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		switch row.Form {
 		case "rounds", "check", "timing", "max_builders", "scope", "serve.scope", "classify":
 			return v, openOverlay(newSettingsForm(env, v.doc, row.Form, row.Key))
-		default:
-			return v, notice(row.Key + " opens its own editor soon")
+		case "webhooks":
+			return v, push(newWebhooksView(env, v.doc))
+		case "scan_patterns":
+			return v, notice("scan_patterns is edited with relevo config set policy")
 		}
+		return v, nil
 	case "r":
 		if n == 0 {
 			return v, nil

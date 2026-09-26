@@ -1270,6 +1270,32 @@ func TestGoldenViews(t *testing.T) {
 			},
 		},
 		{
+			name: "settings-webhooks-empty-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})
+				m = candDown(t, m, 16) // notify.webhooks
+				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			},
+		},
+		{
+			name: "settings-webhooks-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: webhooksDocFrom(t, webhooksFixtureJSON)})
+				m = candDown(t, m, 16) // notify.webhooks
+				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+				return candDown(t, m, 1) // the cursor on the second hook
+			},
+		},
+		{
+			name: "settings-webhook-add-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})
+				m = candDown(t, m, 16) // notify.webhooks
+				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+				return candKeys(t, m, key('a'))
+			},
+		},
+		{
 			name: "audit-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				// The cursor on #4: the list opens on #5, so one down.

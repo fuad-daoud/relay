@@ -100,6 +100,11 @@ type Webhook struct {
 	Format string `json:"format,omitempty"`
 }
 
+// WebhookEvents is every event name a webhook may subscribe to, in the order
+// Parse's own error message lists them. A subscription for state_changed may
+// also carry a ":<state>" suffix naming one target state.
+var WebhookEvents = []string{"state_changed", "round_started", "fork_created", "builder_stalled", "binding_stale"}
+
 // VerifyPolicy configures the default verify flag for `relevo send`.
 type VerifyPolicy struct {
 	// Default is used when neither --verify nor --no-verify was given.
