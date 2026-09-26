@@ -1,7 +1,7 @@
 // Package chatlabel turns what a planner record already stores -- its harness
 // kind, session id and transcript locator -- into the harness's own
 // human-facing name for that session: a chat title or the last prompt, plus a
-// claude.ai link when the session is bridged (#386).
+// claude.ai link when the session is bridged.
 //
 // A label is computed when a command runs and only printed. It is never
 // written to relevo state, never logged and never committed, so fixtures here

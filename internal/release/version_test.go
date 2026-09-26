@@ -51,11 +51,11 @@ func TestParseVersion(t *testing.T) {
 	}
 }
 
-// TestIsReleaseTag pins §4's strict predicate: a tag is a release tag only
+// TestIsReleaseTag pins the strict predicate: a tag is a release tag only
 // when it is exactly vMAJOR.MINOR.PATCH with ASCII digits and nothing before
 // or after. Anything with a suffix, a path separator, surrounding whitespace
 // or a missing "v" is not, because IsReleaseTag is what stands between a tag
-// and a download URL's path (#293).
+// and a download URL's path.
 func TestIsReleaseTag(t *testing.T) {
 	tests := []struct {
 		in   string
@@ -86,7 +86,7 @@ func TestIsReleaseTag(t *testing.T) {
 	}
 }
 
-// TestNewerOrdersDescribeSuffix pins §4.2's ordering: a describe-suffixed
+// TestNewerOrdersDescribeSuffix pins the ordering: a describe-suffixed
 // running version is newer than the tag it describes and older than the next
 // patch. Make a suffix always older and the first case fails.
 func TestNewerOrdersDescribeSuffix(t *testing.T) {

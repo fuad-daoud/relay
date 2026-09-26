@@ -39,7 +39,7 @@ var (
 	ErrNoChecksum = errors.New("no checksum for the archive")
 	// ErrBadTag is a tag that is not exactly a release tag, refused before
 	// any URL is built. DecideUpdate guards this for the CLI, and FetchBinary
-	// checks it again so the downloader is safe on its own (#293).
+	// checks it again so the downloader is safe on its own.
 	ErrBadTag = errors.New("not a release tag")
 	// ErrChecksumMismatch is the archive's SHA-256 not matching its line.
 	ErrChecksumMismatch = errors.New("archive checksum mismatch")
@@ -136,9 +136,9 @@ func (d *Downloader) get(ctx context.Context, url string, limit int64) ([]byte, 
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOffline, err)
+		return nil, fmt.Errorf("%w: %w", ErrOffline, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s: %s", url, resp.Status)
@@ -160,9 +160,9 @@ func (d *Downloader) get(ctx context.Context, url string, limit int64) ([]byte, 
 func extractBinary(data []byte) ([]byte, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNoBinary, err)
+		return nil, fmt.Errorf("%w: %w", ErrNoBinary, err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
 	for {
@@ -171,7 +171,7 @@ func extractBinary(data []byte) ([]byte, error) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrNoBinary, err)
+			return nil, fmt.Errorf("%w: %w", ErrNoBinary, err)
 		}
 		if hdr.Typeflag != tar.TypeReg || path.Clean(hdr.Name) != "relevo" {
 			continue
@@ -197,8 +197,8 @@ func writeTempBinary(destDir string, bin []byte) (string, error) {
 	}
 	tmp := f.Name()
 	fail := func(err error) (string, error) {
-		f.Close()
-		os.Remove(tmp)
+		_ = f.Close()
+		_ = os.Remove(tmp)
 		return "", err
 	}
 
@@ -209,11 +209,11 @@ func writeTempBinary(destDir string, bin []byte) (string, error) {
 		return fail(err)
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return "", err
 	}
 	if err := os.Chmod(tmp, 0o755); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return "", err
 	}
 	return tmp, nil

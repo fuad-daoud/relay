@@ -3,7 +3,7 @@ package release
 import "fmt"
 
 // UpdateAction is what `relevo update` should do, decided by DecideUpdate
-// before anything touches the network or the disk (#293).
+// before anything touches the network or the disk.
 type UpdateAction int
 
 const (
@@ -64,7 +64,7 @@ type UpdateDecision struct {
 
 // DecideUpdate answers, without touching the network or the disk, what
 // `relevo update` should do for req. The rules are ordered and the first
-// match wins; see the plan's §4. Pure, so the table in update_test.go is the
+// match wins. Pure, so the table in update_test.go is the
 // whole truth about this decision.
 func DecideUpdate(req UpdateRequest) UpdateDecision {
 	target := req.Latest
@@ -83,7 +83,7 @@ func DecideUpdate(req UpdateRequest) UpdateDecision {
 		// The latest tag becomes a path segment in the download URL, so a
 		// malformed one must be refused before the switch, for every kind:
 		// it is never downloaded, and never printed into a go install
-		// command either (#293).
+		// command either.
 		return UpdateDecision{
 			Action:  UpdateRefuse,
 			Message: fmt.Sprintf("the latest release tag %q is not a release tag like v0.13.0; nothing was downloaded", req.Latest),

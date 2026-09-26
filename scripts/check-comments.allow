@@ -54,9 +54,6 @@ internal/actors/shipped.go
 internal/actors/shipped_test.go
 internal/agentsrc/source.go
 internal/agentsrc/source_test.go
-internal/chatlabel/chatlabel.go
-internal/chatlabel/chatlabel_test.go
-internal/chatlabel/resolve.go
 internal/config/actors_test.go
 internal/config/config.go
 internal/config/config_test.go
@@ -199,14 +196,6 @@ internal/proc/reap_test.go
 internal/proc/scope_accept_test.go
 internal/proc/scope.go
 internal/proc/scope_test.go
-internal/release/cache.go
-internal/release/cache_test.go
-internal/release/download.go
-internal/release/provenance.go
-internal/release/update.go
-internal/release/update_test.go
-internal/release/version.go
-internal/release/version_test.go
 internal/relevo/add.go
 internal/relevo/add_test.go
 internal/relevo/agy_creds.go
@@ -475,10 +464,6 @@ internal/ui/view_round.go
 internal/ui/view_rounds.go
 internal/ui/view_stats.go
 internal/ui/view_stats_test.go
-internal/upgrade/exe.go
-internal/upgrade/exe_test.go
-internal/upgrade/watch.go
-internal/upgrade/watch_test.go
 internal/usage/agy.go
 internal/usage/carry.go
 internal/usage/carry_test.go

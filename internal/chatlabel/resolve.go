@@ -7,7 +7,7 @@ import (
 )
 
 // Resolver builds a Label for a planner record from what the record already
-// stores (#386). A zero Resolver answers with empty labels: no transcript
+// stores. A zero Resolver answers with empty labels: no transcript
 // path, no sqlite3.
 type Resolver struct {
 	Exec       usage.Exec // the sqlite3 shell-out; nil -> opencode labels are empty

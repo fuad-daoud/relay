@@ -48,7 +48,7 @@ type Decision struct {
 }
 
 // Watcher decides when the file at Path has become a new binary worth
-// re-exec'ing into (#371 §4.3). It is pure: its two inputs, Stat and Preflight,
+// re-exec'ing into. It is pure: its two inputs, Stat and Preflight,
 // are injected, so the whole decision is testable without a file, a process or
 // a clock.
 type Watcher struct {
@@ -83,7 +83,7 @@ func (w *Watcher) Check(ctx context.Context) Decision {
 	if cur == w.Started {
 		// The binary is back to ours, as after a rollback. Both the pending
 		// identity and any refusal are cleared: the refused build is gone, so
-		// if it is installed again it may be tried again (#371 §4.3 step 2).
+		// if it is installed again it may be tried again.
 		w.pending = nil
 		w.refused = nil
 		return Decision{Action: None}

@@ -9,8 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// testKV is a real t.TempDir() database, the medium the cache lives in from
-// this round (P3b plan §7).
+// testKV is a real t.TempDir() database, the medium the cache lives in.
 func testKV(t *testing.T) *db.DB {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -21,11 +20,11 @@ func testKV(t *testing.T) *db.DB {
 	return d
 }
 
-// TestLoadMissingAndMalformed pins §4.3's promise: neither a missing record nor
-// a corrupt one is an error, because a cache that cannot be read must only fail
-// to inform, never fail a caller. Return an error for malformed and this test
-// fails. The corrupt document arrives as a legacy release-check.json, which the
-// import refuses to store (P3b plan §4.4).
+// TestLoadMissingAndMalformed pins the promise that neither a missing record
+// nor a corrupt one is an error, because a cache that cannot be read must only
+// fail to inform, never fail a caller. Return an error for malformed and this
+// test fails. The corrupt document arrives as a legacy release-check.json,
+// which the import refuses to store.
 func TestLoadMissingAndMalformed(t *testing.T) {
 	tests := []struct {
 		name    string

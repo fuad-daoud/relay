@@ -62,7 +62,7 @@ func scriptedWatcher(t *testing.T, stats []statResult, preflights []error, want 
 	return w
 }
 
-// TestWatcherCheck covers §4.3's whole table: the two-check debounce, the sticky
+// TestWatcherCheck covers the whole table: the two-check debounce, the sticky
 // refusal, and the reset when the file goes back to ours or disappears.
 func TestWatcherCheck(t *testing.T) {
 	first, second := id(2), id(3)
@@ -139,7 +139,7 @@ func TestWatcherRefusedExposesIdentity(t *testing.T) {
 	}
 }
 
-// TestWatcherRollbackClearsRefusal pins §4.3 step 2's amendment: when the file
+// TestWatcherRollbackClearsRefusal pins that when the file
 // goes back to our own binary -- a rollback -- any refusal is dropped, so a
 // later reinstall of the refused build is tried again rather than silently
 // skipped.

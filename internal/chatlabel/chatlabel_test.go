@@ -23,59 +23,69 @@ func readFixture(t *testing.T, name string) []byte {
 	return raw
 }
 
-func TestClaudeLatestPromptAndLink(t *testing.T) {
-	label := Claude(readFixture(t, "claude-prompt.jsonl"))
-
-	wantText := "\"The quick brown fox jumps over the lazy dog again…\""
-	if label.Text != wantText {
-		t.Errorf("Text = %q, want %q", label.Text, wantText)
+// TestClaudeTable is every source Claude reads from a transcript tail and how
+// they rank: a custom title beats an ai title beats the last prompt, a
+// garbled line is skipped rather than fatal, and a bridge session id needs its
+// cse_ prefix to become a link. The zero Label row's "-" rendering is
+// TestLabelString's "nothing" row, not repeated here.
+func TestClaudeTable(t *testing.T) {
+	tests := []struct {
+		name     string
+		tail     []byte
+		wantText string
+		wantLink string
+	}{
+		{
+			name:     "the last prompt is quoted, truncated, and paired with its bridge link",
+			tail:     readFixture(t, "claude-prompt.jsonl"),
+			wantText: "\"The quick brown fox jumps over the lazy dog again…\"",
+			wantLink: "https://claude.ai/code/session_01TESTTESTTESTTEST",
+		},
+		{
+			name:     "a custom title wins over the ai title and the last prompt",
+			tail:     readFixture(t, "claude-titled.jsonl"),
+			wantText: "new name",
+		},
+		{
+			name:     "an ai title beats the last prompt",
+			tail:     readFixture(t, "claude-aititle.jsonl"),
+			wantText: "auto title",
+		},
+		{
+			name: "no title source at all is the zero Label",
+			tail: readFixture(t, "claude-none.jsonl"),
+		},
+		{
+			name:     "a garbled line is skipped, not fatal",
+			tail:     readFixture(t, "claude-garbled.jsonl"),
+			wantText: "\"survivor prompt\"",
+		},
+		{
+			name: "a bridge session id without the cse_ prefix carries no link",
+			tail: []byte("{\"type\":\"bridge-session\",\"bridgeSessionId\":\"ses_01TEST\"}\n"),
+		},
 	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Claude(tc.tail)
+			if got.Text != tc.wantText {
+				t.Errorf("Text = %q, want %q", got.Text, tc.wantText)
+			}
+			if got.Link != tc.wantLink {
+				t.Errorf("Link = %q, want %q", got.Link, tc.wantLink)
+			}
+		})
+	}
+}
+
+// TestClaudePromptTruncatesToMaxTextRunes pins the truncation cap itself, so a
+// change to MaxTextRunes cannot drift silently past the literal expected text
+// in TestClaudeTable.
+func TestClaudePromptTruncatesToMaxTextRunes(t *testing.T) {
+	label := Claude(readFixture(t, "claude-prompt.jsonl"))
 	if got := utf8.RuneCountInString(strings.Trim(label.Text, "\"")); got != MaxTextRunes {
 		t.Errorf("prompt text is %d runes, want the truncation cap %d", got, MaxTextRunes)
-	}
-	if want := "https://claude.ai/code/session_01TESTTESTTESTTEST"; label.Link != want {
-		t.Errorf("Link = %q, want %q", label.Link, want)
-	}
-}
-
-func TestClaudeCustomTitleWins(t *testing.T) {
-	label := Claude(readFixture(t, "claude-titled.jsonl"))
-	if want := "new name"; label.Text != want {
-		t.Errorf("Text = %q, want %q", label.Text, want)
-	}
-	if label.Link != "" {
-		t.Errorf("Link = %q, want empty when no bridge-session line is present", label.Link)
-	}
-}
-
-func TestClaudeAITitleBeatsPrompt(t *testing.T) {
-	label := Claude(readFixture(t, "claude-aititle.jsonl"))
-	if want := "auto title"; label.Text != want {
-		t.Errorf("Text = %q, want %q", label.Text, want)
-	}
-}
-
-func TestClaudeNothing(t *testing.T) {
-	label := Claude(readFixture(t, "claude-none.jsonl"))
-	if label != (Label{}) {
-		t.Errorf("Label = %+v, want the zero Label", label)
-	}
-	if got := label.String(); got != "-" {
-		t.Errorf("String() = %q, want %q", got, "-")
-	}
-}
-
-func TestClaudeGarbledLinesSkipped(t *testing.T) {
-	label := Claude(readFixture(t, "claude-garbled.jsonl"))
-	if want := "\"survivor prompt\""; label.Text != want {
-		t.Errorf("Text = %q, want %q", label.Text, want)
-	}
-}
-
-func TestClaudeBridgeWithoutPrefix(t *testing.T) {
-	label := Claude([]byte("{\"type\":\"bridge-session\",\"bridgeSessionId\":\"ses_01TEST\"}\n"))
-	if label.Link != "" {
-		t.Errorf("Link = %q, want empty for an id without the cse_ prefix", label.Link)
 	}
 }
 
@@ -156,7 +166,7 @@ func TestOpencode(t *testing.T) {
 	}
 }
 
-// TestOpencodeLegacyQuery pins the pre-2.0 query (#496): it reads the legacy
+// TestOpencodeLegacyQuery pins the pre-2.0 query: it reads the legacy
 // session table, and it doubles the id's single quotes.
 func TestOpencodeLegacyQuery(t *testing.T) {
 	if got, want := OpencodeLegacyQuery("ses_a'b"), "select title from session where id = 'ses_a''b'"; got != want {
@@ -229,7 +239,7 @@ func (f *fallbackExec) Run(_ context.Context, bin string, args ...string) ([]byt
 	return f.out, nil
 }
 
-// TestResolveOpencodeLegacyFallback pins the pre-2.0 path (#496): a first
+// TestResolveOpencodeLegacyFallback pins the pre-2.0 path: a first
 // query that errors runs the legacy query, whose output is the label.
 func TestResolveOpencodeLegacyFallback(t *testing.T) {
 	fake := &fallbackExec{out: []byte("Pre-2 title\n")}
@@ -273,8 +283,8 @@ func opencodeFixture(t *testing.T, stmts ...string) string {
 	return path
 }
 
-// TestResolveOpencodeV2Title proves the title is read from session_v2 first
-// (#393): OpenCode 2.0.14 keeps its sessions there, and the legacy session
+// TestResolveOpencodeV2Title proves the title is read from session_v2 first:
+// OpenCode 2.0.14 keeps its sessions there, and the legacy session
 // table is only the fallback for pre-2.0 rows.
 func TestResolveOpencodeV2Title(t *testing.T) {
 	db := opencodeFixture(t,
@@ -296,7 +306,7 @@ func TestResolveOpencodeV2Title(t *testing.T) {
 
 // TestResolveOpencodePre2 proves the fallback works against a real
 // pre-2.0-shaped database: a database with no session_v2 table at all still
-// gives the session's title from the legacy session table (#496).
+// gives the session's title from the legacy session table.
 func TestResolveOpencodePre2(t *testing.T) {
 	db := opencodeFixture(t,
 		"create table session (id text, title text)",

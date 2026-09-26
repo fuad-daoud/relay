@@ -72,9 +72,9 @@ func (f *httpFetcher) Latest(ctx context.Context) (string, error) {
 
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrOffline, err)
+		return "", fmt.Errorf("%w: %w", ErrOffline, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("release check: %s: %s", f.endpoint, resp.Status)

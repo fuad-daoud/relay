@@ -56,8 +56,7 @@ type Inputs struct {
 // the kind it otherwise is.
 func Detect(in Inputs) Kind {
 	// Rule 1: the module supplied the version. A VCS stamp or a bare
-	// "(devel)" means the build came from a checkout, not the module cache
-	// (#497; see the table in §1 of docs/plans/2026-09-25-provenance-vcs.md).
+	// "(devel)" means the build came from a checkout, not the module cache.
 	if in.FromModule {
 		if in.VCS || in.Version == "(devel)" {
 			return KindLocalBuild

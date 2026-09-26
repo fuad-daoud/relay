@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestExeIdentityChangesOnRename pins §4.2's point: identity follows the bytes.
+// TestExeIdentityChangesOnRename pins that identity follows the bytes.
 // A rename over the path is what `make install` does, and it must read as a new
 // identity; a second stat of the same file must not.
 func TestExeIdentityChangesOnRename(t *testing.T) {

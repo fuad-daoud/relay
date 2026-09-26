@@ -12,13 +12,13 @@ import (
 // TTL is how long a cached answer stands before the daemon refreshes it.
 const TTL = 24 * time.Hour
 
-// cacheKey is the kv row the release cache lives in (P3b plan §1).
+// cacheKey is the kv row the release cache lives in.
 const cacheKey = "release-check"
 
 // Cache is the last answer relevo got from the release endpoint. It lives in
-// the machine database's kv row "release-check" (P3b plan §1), which was the
+// the machine database's kv row "release-check", which was the
 // file <state>/release-check.json: Load and Save take the db.KV and the
-// legacy path, so nothing here builds an XDG path of its own (#42).
+// legacy path, so nothing here builds an XDG path of its own.
 type Cache struct {
 	Latest    string    `json:"latest"` // "v0.7.0"
 	CheckedAt time.Time `json:"checked_at"`
@@ -26,7 +26,7 @@ type Cache struct {
 }
 
 // Load reads the cache from the kv row "release-check", importing a present
-// legacyPath file (release-check.json) on first read (P3b plan §4.3, §4.4). An
+// legacyPath file (release-check.json) on first read. An
 // absent row and no file is (Cache{}, false, nil) -- not an error. A malformed
 // document is the same: a corrupt cache must never fail a caller, it must only
 // fail to inform one. That includes a legacy file whose bytes are not JSON: the

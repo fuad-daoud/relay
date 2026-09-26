@@ -1,6 +1,6 @@
 // Package release answers the two questions relevo asks about its own
 // distribution without ever touching the network: how this binary was
-// installed (#293), and whether a newer release exists in an answer the
+// installed, and whether a newer release exists in an answer the
 // daemon cached. The fetch itself sits behind an interface in fetch.go.
 package release
 
@@ -49,7 +49,7 @@ func ParseVersion(s string) (v Version, ok bool) {
 // digits, with nothing before or after. Leading zeros are allowed; a suffix,
 // a path separator or surrounding whitespace is not. It is checked byte by
 // byte, because this string is about to become a path segment in a download
-// URL, and it is the precondition AssetURLs and FetchBinary name (#293).
+// URL, and it is the precondition AssetURLs and FetchBinary name.
 func IsReleaseTag(s string) bool {
 	if len(s) < 5 || s[0] != 'v' {
 		return false
