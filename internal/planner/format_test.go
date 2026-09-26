@@ -17,30 +17,24 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// update rewrites the golden file, but only when PlannerFormat was bumped:
-// see goldenDecision.
+// update rewrites the golden file, but only when PlannerFormat was bumped.
 var update = flag.Bool("update", false, "rewrite testdata/record-shape.golden when PlannerFormat was bumped")
 
-// recordGoldenPath is the golden file TestRecordShapeMatchesFormat compares
-// against, and the one -update rewrites.
 const recordGoldenPath = "testdata/record-shape.golden"
 
-// The messages the planner record's golden test fails with, the same rules as
-// internal/store's TestBindingShapeMatchesFormat.
 const (
 	recordShapeMsg   = "planner.Record's JSON shape changed: bump planner.PlannerFormat, then run go test ./internal/planner -run TestRecordShapeMatchesFormat -update"
 	recordRefusalMsg = "bump planner.PlannerFormat first; an older relevo would erase the new fields"
 	recordStaleMsg   = "planner.Record's golden format line is stale; run go test ./internal/planner -run TestRecordShapeMatchesFormat -update"
 )
 
-// recordGolden is the parsed golden: its format line and its key paths.
 type recordGolden struct {
 	format int
 	keys   []string
 }
 
-// parseRecordGolden reads the golden file format: "format <N>" on the first
-// line, then one key path per line.
+// parseRecordGolden reads "format <N>" on the first line, then one key path
+// per line.
 func parseRecordGolden(raw []byte) (recordGolden, error) {
 	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
 	if len(lines) == 0 || lines[0] == "" {
@@ -57,7 +51,6 @@ func parseRecordGolden(raw []byte) (recordGolden, error) {
 	return recordGolden{format: n, keys: lines[1:]}, nil
 }
 
-// marshalRecordGolden writes the golden file format.
 func marshalRecordGolden(format int, keys []string) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "format %d\n", format)
@@ -68,9 +61,8 @@ func marshalRecordGolden(format int, keys []string) []byte {
 	return []byte(b.String())
 }
 
-// goldenDecision is the -update rule as a pure function: write rewrites the
-// golden and a non-empty msg fails the test instead. same reports whether the
-// key paths already match the golden.
+// goldenDecision is the -update rule: write rewrites the golden, a non-empty
+// msg fails the test instead.
 func goldenDecision(goldenFormat, codeFormat int, same bool) (write bool, msg string) {
 	if same && goldenFormat == codeFormat {
 		return false, ""
@@ -81,9 +73,8 @@ func goldenDecision(goldenFormat, codeFormat int, same bool) (write bool, msg st
 	return false, recordRefusalMsg
 }
 
-// checkRecordShape compares keys against the golden and returns the message to
-// fail with, or "" when all is well. When update is true it rewrites the
-// golden whenever goldenDecision allows it.
+// checkRecordShape compares keys against the golden and returns the message
+// to fail with, or "" when all is well.
 func checkRecordShape(g recordGolden, codeFormat int, keys []string, update bool) string {
 	same := slices.Equal(g.keys, keys)
 	if update {
@@ -110,8 +101,7 @@ func checkRecordShape(g recordGolden, codeFormat int, keys []string, update bool
 	return ""
 }
 
-// readRecordGolden reads the golden, treating a missing file as the
-// pre-creation state: format 0 and no keys.
+// readRecordGolden treats a missing file as format 0 and no keys.
 func readRecordGolden(t *testing.T) recordGolden {
 	t.Helper()
 	raw, err := os.ReadFile(recordGoldenPath)
@@ -128,9 +118,8 @@ func readRecordGolden(t *testing.T) recordGolden {
 	return g
 }
 
-// TestRecordShapeMatchesFormat pins Record's JSON shape against the golden
-// file: a new field is a new key path, and that fails until PlannerFormat is
-// bumped and the golden regenerated.
+// TestRecordShapeMatchesFormat pins Record's JSON shape against the golden:
+// a new field is a new key path.
 func TestRecordShapeMatchesFormat(t *testing.T) {
 	g := readRecordGolden(t)
 	keys := jsonshape.Keys(reflect.TypeOf(Record{}))
@@ -143,9 +132,9 @@ func TestRecordShapeMatchesFormat(t *testing.T) {
 	}
 }
 
-// TestRecordShapeFailurePath exercises the golden test's failure path without
-// mutating the real type: a struct with one extra field fails with the bump
-// message, and -update without a bump refuses.
+// TestRecordShapeFailurePath exercises the golden test's failure path: an
+// extra field fails with the bump message, and -update without a bump
+// refuses.
 func TestRecordShapeFailurePath(t *testing.T) {
 	type recordWithANewField struct {
 		Record
@@ -174,9 +163,8 @@ func TestStoredFormat(t *testing.T) {
 	}
 }
 
-// TestRegistryWriteRefusesANewerFormat pins the planner half of §4.1: a record
-// written by a newer relevo loads, and writing it back is refused with
-// ErrNewerFormat, leaving the row byte-for-byte as it was.
+// TestRegistryWriteRefusesANewerFormat pins that a record written by a
+// newer relevo loads, and writing it back is refused with ErrNewerFormat.
 func TestRegistryWriteRefusesANewerFormat(t *testing.T) {
 	reg := testRegistry(t)
 	rec := record("pl_aaaaaaaaaaaa", "alpha", "claude", "sess-1", 0)

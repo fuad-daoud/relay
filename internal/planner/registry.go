@@ -15,23 +15,19 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// plannerKeyPrefix is the kv prefix every record's row shares: one record is
-// one `planner/<id>` row holding exactly the JSON the file held (P3b round 2
-// §3).
+// plannerKeyPrefix is the kv prefix every record's row shares.
 const plannerKeyPrefix = "planner/"
 
-// registryKey is the row a record's JSON lives under.
 func registryKey(id string) string { return plannerKeyPrefix + id }
 
 // lockFileName is the pre-database registry's lock file, removed by the
-// import. It has no meaning over kv rows: the flock is gone with FileRegistry.
+// import.
 const lockFileName = ".lock"
 
-// seenRefreshInterval is how stale seen_at must be before Touch rewrites it
-// (§3.1: resolving CLI calls refresh it at most once per minute).
+// seenRefreshInterval is how stale seen_at must be before Touch rewrites it.
 const seenRefreshInterval = time.Minute
 
-// Registry owns the planner records (§4.1).
+// Registry owns the planner records.
 type Registry interface {
 	Get(id string) (Record, error)
 	ByName(name string) (Record, error)
@@ -43,32 +39,23 @@ type Registry interface {
 	SetHost(id string, pid int, startedAt int64) (Record, error)
 	Rename(id, name string) (Record, error)
 	Touch(id string, now time.Time) error
-	// Forget removes a record. inUse is the caller's guard -- the CLI passes
-	// one that scans the store's non-DONE bindings for PlannerID == id -- and
-	// a true answer refuses the removal with ErrInUse. A nil callback refuses
-	// nothing.
+	// Forget removes a record; inUse refuses with ErrInUse for a non-DONE
+	// binding, nil refuses nothing.
 	Forget(id string, inUse func(id string) bool) error
 }
 
-// DBRegistry is relevo's registry over the store root database's kv rows: one
-// JSON record per `planner/<id>` row, holding the same document the file under
-// <Root>/<id>.json held (P3b round 2 §4.1).
-//
-// Every mutating method runs its whole read-modify-write inside one
-// DBTxKV.Tx (BEGIN IMMEDIATE), replacing FileRegistry's flock: `relevo planner
-// init` and a concurrent `relevo mcp`, or two hook firings, serialise, and
-// whichever runs second sees the first's record (§4.1). A read takes no
-// transaction and creates nothing.
+// DBRegistry is relevo's registry over the store root database's kv rows.
+// Every mutating method runs inside one DBTxKV.Tx, so two hook firings
+// serialise: whichever runs second sees the first's record.
 type DBRegistry struct {
-	// KV is the kv handle the records live in: the store root's database.
 	KV db.DBTxKV
 
 	// Now supplies the clock for records this registry writes. Nil means
 	// time.Now; tests pin it.
 	Now func() time.Time
 
-	// Root is the pre-database planners directory (store.PlannersDir) the
-	// import reads once per registry. "" imports nothing.
+	// Root is the pre-database planners directory the import reads once.
+	// "" imports nothing.
 	Root string
 
 	importOnce sync.Once
@@ -84,11 +71,10 @@ func (r *DBRegistry) now() time.Time {
 	return time.Now()
 }
 
-// ensureImported adopts the pre-database record files once per registry: every
-// <Root>/*.json present is put to planner/<id> and removed, and then the lock
-// file and -- when nothing is left in it -- the directory itself go (§4.1). A
-// malformed record file fails the import loudly and stays where it is, exactly
-// as a corrupt file failed list before. It is a no-op with no Root.
+// ensureImported adopts the pre-database record files once per registry: each
+// <Root>/*.json is put to planner/<id> and removed, then the lock file and an
+// emptied directory go too. A malformed file fails loudly and stays put; a
+// missing Root is a no-op.
 func (r *DBRegistry) ensureImported() error {
 	if r.Root == "" {
 		return nil
@@ -108,9 +94,6 @@ func (r *DBRegistry) importFiles() error {
 
 	for _, e := range entries {
 		name := e.Name()
-		// The same filter the directory scan applied: a directory, a
-		// dot-prefixed name (.lock, .agy) and anything without the .json
-		// extension is not a record.
 		if e.IsDir() || strings.HasPrefix(name, ".") || !strings.HasSuffix(name, ".json") {
 			continue
 		}
@@ -120,19 +103,15 @@ func (r *DBRegistry) importFiles() error {
 		}
 	}
 
-	// The lock has no meaning over kv rows, and an empty directory must not
-	// linger. A directory still holding .agy/ -- which the agy credential
-	// import empties (§4.3) -- is not empty, so it stays.
+	// A directory still holding .agy/ is not empty, so it stays.
 	_ = os.Remove(filepath.Join(r.Root, lockFileName))
 	_ = os.Remove(r.Root)
 	return nil
 }
 
-// ops is initLocked's lock-free view of this registry over one transaction, so
-// the whole `planner init` sequence is one BEGIN IMMEDIATE.
+// ops is initLocked's lock-free view of this registry over one transaction.
 func (r *DBRegistry) ops(kv db.KVTx) regOps { return kvOps{reg: r, kv: kv} }
 
-// kvOps runs the registry's lock-free operations over one KVTx.
 type kvOps struct {
 	reg *DBRegistry
 	kv  db.KVTx
@@ -164,9 +143,7 @@ func (o kvOps) touchForced(id string, now time.Time) (Record, error) {
 	return o.reg.touchForcedIn(o.kv, id, now)
 }
 
-// decodeRecord decodes one row's document. A corrupt record is loud and names
-// its key (§6.1): silently skipping it would turn "your registry is broken"
-// into "unknown planner", which sends the reader chasing the wrong problem.
+// decodeRecord decodes one row's document, naming its key on failure.
 func decodeRecord(key string, raw []byte) (Record, error) {
 	var rec Record
 	if err := json.Unmarshal(raw, &rec); err != nil {
@@ -175,10 +152,7 @@ func decodeRecord(key string, raw []byte) (Record, error) {
 	return rec, nil
 }
 
-// --- reads (no transaction) -------------------------------------------------
-
-// Get returns the record with that id, or ErrNotFound. An id that does not
-// have §3.1's shape cannot name a record, so it is ErrNotFound too.
+// Get returns the record with that id, or ErrNotFound.
 func (r *DBRegistry) Get(id string) (Record, error) {
 	if err := r.ensureImported(); err != nil {
 		return Record{}, err
@@ -221,8 +195,7 @@ func (r *DBRegistry) byNameFrom(kv db.KVTx, name string) (Record, error) {
 	return Record{}, fmt.Errorf("%s: %w", name, ErrNotFound)
 }
 
-// BySession returns the record whose CURRENT session is (kind, sessionID), or
-// ErrNotFound. Earlier sessions in a record's history never match.
+// BySession returns the record whose current session is (kind, sessionID).
 func (r *DBRegistry) BySession(kind, sessionID string) (Record, error) {
 	if err := r.ensureImported(); err != nil {
 		return Record{}, err
@@ -243,10 +216,7 @@ func (r *DBRegistry) bySessionFrom(kv db.KVTx, kind, sessionID string) (Record, 
 	return Record{}, fmt.Errorf("%s/%s: %w", kind, sessionID, ErrNotFound)
 }
 
-// ByHost returns the record holding that live (pid, startedAt), or ErrNotFound.
-// Both must match, and pid must be positive: a record with no host (explicit
-// registration) never matches, and a pid alone is not identity -- the machine
-// reuses pids, which is what startedAt is for (§4.1).
+// ByHost returns the record holding that live (pid, startedAt).
 func (r *DBRegistry) ByHost(pid int, startedAt int64) (Record, error) {
 	if err := r.ensureImported(); err != nil {
 		return Record{}, err
@@ -270,8 +240,7 @@ func (r *DBRegistry) byHostFrom(kv db.KVTx, pid int, startedAt int64) (Record, e
 	return Record{}, fmt.Errorf("host %d@%d: %w", pid, startedAt, ErrNotFound)
 }
 
-// List returns every record, sorted by name. No rows is an empty registry, not
-// an error.
+// List returns every record, sorted by name.
 func (r *DBRegistry) List() ([]Record, error) {
 	if err := r.ensureImported(); err != nil {
 		return nil, err
@@ -305,11 +274,8 @@ func (r *DBRegistry) listFrom(kv db.KVTx) ([]Record, error) {
 	return records, nil
 }
 
-// --- writes (one transaction each) ------------------------------------------
-
-// Create adds a record, refusing a name, session or live host another record
-// already holds, and refusing invalid input. CreatedAt and SeenAt default to
-// the registry's clock when the caller leaves them zero.
+// Create adds a record, refusing a name, session or live host another
+// record already holds.
 func (r *DBRegistry) Create(rec Record) (Record, error) {
 	if err := r.ensureImported(); err != nil {
 		return Record{}, err
@@ -358,9 +324,8 @@ func (r *DBRegistry) createIn(kv db.KVTx, rec Record) (Record, error) {
 	return rec, nil
 }
 
-// MoveSession points the record at a new session and appends the old one to
-// its history with To = now (§3.1). A session another record holds is
-// ErrSessionTaken.
+// MoveSession points the record at a new session, appending the old one to
+// its history with To = now.
 func (r *DBRegistry) MoveSession(id, sessionID, transcript string, now time.Time) (Record, error) {
 	if err := r.ensureImported(); err != nil {
 		return Record{}, err
@@ -404,9 +369,7 @@ func (r *DBRegistry) moveSessionIn(kv db.KVTx, id, sessionID, transcript string,
 		})
 		rec.SessionID = sessionID
 	}
-	// The hook's transcript_path for the new session replaces the old one when
-	// it carries one; an empty path leaves the stored locator alone rather
-	// than blanking a value that is still the best relevo has.
+	// An empty transcript path leaves the stored locator alone.
 	if transcript != "" {
 		rec.TranscriptLocator = transcript
 	}
@@ -420,9 +383,8 @@ func (r *DBRegistry) moveSessionIn(kv db.KVTx, id, sessionID, transcript string,
 	return rec, nil
 }
 
-// SetHost points the record at a harness process, refusing a live host another
-// record already holds. pid 0 means "unknown" and clears the start time with
-// it.
+// SetHost points the record at a harness process, refusing a live host
+// another record already holds. pid 0 clears the start time too.
 func (r *DBRegistry) SetHost(id string, pid int, startedAt int64) (Record, error) {
 	if err := r.ensureImported(); err != nil {
 		return Record{}, err
@@ -514,9 +476,8 @@ func (r *DBRegistry) renameIn(kv db.KVTx, id, name string) (Record, error) {
 	return rec, nil
 }
 
-// Touch records that a planner was heard from, at most once per minute (§3.1).
-// It is best effort by contract -- callers ignore the error -- and it only
-// moves seen_at forward.
+// Touch moves seen_at forward, at most once per minute. Best effort:
+// callers ignore its error.
 func (r *DBRegistry) Touch(id string, now time.Time) error {
 	if err := r.ensureImported(); err != nil {
 		return err
@@ -539,10 +500,7 @@ func (r *DBRegistry) touchIn(kv db.KVTx, id string, now time.Time) error {
 	return r.writeIn(kv, rec)
 }
 
-// touchForcedIn stamps seen_at with no throttle and returns the updated
-// record. `relevo planner init` always writes -- its postcondition is "its
-// seen_at is now" (§4.4) -- so it cannot ride the once-a-minute rule Touch
-// applies to resolving calls.
+// touchForcedIn stamps seen_at with no throttle, unlike Touch.
 func (r *DBRegistry) touchForcedIn(kv db.KVTx, id string, now time.Time) (Record, error) {
 	rec, err := r.getFrom(kv, id)
 	if err != nil {
@@ -558,8 +516,8 @@ func (r *DBRegistry) touchForcedIn(kv db.KVTx, id string, now time.Time) (Record
 	return rec, nil
 }
 
-// Forget removes a record. inUse is the caller's liveness guard: a true answer
-// refuses with ErrInUse rather than deleting a record a live binding names.
+// Forget removes a record; inUse refuses with ErrInUse rather than deleting
+// one a live binding names.
 func (r *DBRegistry) Forget(id string, inUse func(id string) bool) error {
 	if err := r.ensureImported(); err != nil {
 		return err
@@ -581,12 +539,10 @@ func (r *DBRegistry) forgetIn(kv db.KVTx, id string, inUse func(id string) bool)
 	return nil
 }
 
-// writeIn puts one record's whole document in its row: exactly the JSON the
-// file held, marshalled without an indent.
+// writeIn puts one record's whole document in its row.
 func (r *DBRegistry) writeIn(kv db.KVTx, rec Record) error {
-	// A record written by a newer relevo is read-only for this binary: its
-	// rewrite would erase every field this relevo does not know (#372). The
-	// check comes first, so a refusal writes nothing at all.
+	// A record written by a newer relevo is read-only: its rewrite would
+	// erase fields this relevo does not know.
 	if rec.Format > PlannerFormat {
 		return &store.ErrNewerFormat{Kind: "planner record", Name: rec.Name, Have: rec.Format, Know: PlannerFormat}
 	}

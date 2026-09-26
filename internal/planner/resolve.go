@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-// ErrUnregisteredSession reports a detected session that has no planner record in the registry.
+// ErrUnregisteredSession reports a detected session that has no planner
+// record in the registry.
 type ErrUnregisteredSession struct {
 	Kind      string
 	SessionID string
@@ -20,8 +21,7 @@ func (e ErrUnregisteredSession) Is(target error) bool {
 	return target == ErrNoPlanner
 }
 
-// Resolution says which step of Resolve's order produced a record (§4.3), for
-// the debug line "planner=<id> via=<resolution>" (§6.2).
+// Resolution says which step of Resolve's order produced a record.
 type Resolution string
 
 const (
@@ -31,10 +31,8 @@ const (
 	ResolutionSession Resolution = "session"
 )
 
-// ResolveInput is everything Resolve may look at: the flag the caller was
-// given, the environment, the caller's parent pid, and how to read a process's
-// start time. Nothing is read from the process itself, so the order is
-// table-tested.
+// ResolveInput is everything Resolve may look at. Nothing is read from the
+// process itself.
 type ResolveInput struct {
 	// Flag is --planner's value, empty when it was not given.
 	Flag string
@@ -42,25 +40,21 @@ type ResolveInput struct {
 	Env func(string) string
 	// PPID is os.Getppid(), Detect's fallback host pid.
 	PPID int
-	// ProcStart reads a process's start time in Unix seconds (spec §4.2's
-	// ProcStart). A nil ProcStart, or an error from it, means the host step
-	// cannot run -- which is not an error, just a fall-through.
+	// ProcStart reads a process's start time in Unix seconds. A nil
+	// ProcStart, or an error from it, is a fall-through, not an error.
 	ProcStart func(pid int) (int64, error)
 	// Now stamps the seen_at of whatever Resolve hits.
 	Now time.Time
 	// CWD is the caller's working directory; "" skips the opencode step.
 	CWD string
-	// OpencodeSession finds an opencode session id for the working directory;
-	// nil skips the opencode step.
+	// OpencodeSession finds an opencode session id for CWD; nil skips the
+	// opencode step.
 	OpencodeSession func(cwd string, now time.Time) (string, error)
 }
 
-// Resolve is how every verb except `init` gets its planner: flag > env > host >
-// session, first hit wins (§4.3).
-//
-// It never creates a record. Only `relevo planner init` does, so a missing hook
-// is loud -- ErrNoPlanner with the fix in its text -- rather than a silently
-// unnamed planner.
+// Resolve is how every verb except `init` gets its planner: flag > env > host
+// > session, first hit wins. It never creates a record; a missing hook is
+// loud (ErrNoPlanner) rather than a silently unnamed planner.
 func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 	env := in.Env
 	if env == nil {
@@ -85,10 +79,7 @@ func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 
 	ident, detected := Detect(env, in.PPID)
 
-	// The host step covers `relevo mcp` and a session whose hook could not
-	// export RELEVO_PLANNER. A ProcStart error means "no host match" -- the ps
-	// read failed, so there is nothing to compare -- and falls through to the
-	// session step rather than failing the caller.
+	// A ProcStart error falls through to the session step.
 	if detected && ident.HostPID > 0 && in.ProcStart != nil {
 		if startedAt, err := in.ProcStart(ident.HostPID); err == nil {
 			rec, err := reg.ByHost(ident.HostPID, startedAt)
@@ -135,10 +126,7 @@ func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 	return Record{}, "", ErrNoPlanner
 }
 
-// lookupRef resolves one flag or environment value: as an id when it has the
-// id shape, else as a name (§4.3). A value matching no record is
-// ErrUnknownPlanner naming it, which is what tells the reader the value is
-// wrong rather than the session unregistered.
+// lookupRef resolves ref as an id when it has that shape, else as a name.
 func lookupRef(reg Registry, ref string) (Record, error) {
 	lookup := reg.ByName
 	if ValidID(ref) == nil {
@@ -155,10 +143,8 @@ func lookupRef(reg Registry, ref string) (Record, error) {
 	return Record{}, ErrUnknownPlanner{Ref: ref}
 }
 
-// hit is the shared tail of every resolved step: refresh seen_at and report
-// how the record was found. Touch is best effort by contract -- a resolution
-// must not fail because a timestamp could not be written -- so its error is
-// deliberately dropped.
+// hit refreshes seen_at and reports how the record was found; Touch's error
+// is dropped since a resolution must not fail on a timestamp write.
 func hit(reg Registry, rec Record, res Resolution, now time.Time) (Record, Resolution, error) {
 	_ = reg.Touch(rec.ID, now)
 	return rec, res, nil
