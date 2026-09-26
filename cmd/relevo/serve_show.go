@@ -13,7 +13,7 @@ import (
 // serveShowUsage is the removed `relevo serve show` usage line, updated to
 // the verb that carries the --owner route now (§4.1). cmdShow prints it when
 // an --owner invocation names more than one section.
-const serveShowUsage = "usage: relevo show <name> --owner <label|id> [--round N] [--plan|--report|--diff|--drift|--log|--transcript] [--json] [--state <dir>]"
+const serveShowUsage = "usage: relevo show <name> --owner <label|id> [--round N] [--plan|--report|--diff|--drift|--log|--transcript|--summary|--artifacts] [--json] [--state <dir>]"
 
 // serveLog is cmdServeLog's body, moved so `relevo show <name> --owner
 // <label> --log` calls it (§4.1). It takes the parsed values: state is the
@@ -66,7 +66,7 @@ func serveLog(owner, state, name string, round, after int, asJSON, follow bool) 
 // create it, and the database belongs to the client that ran the work, not to
 // the server admin's read -- and prefixes the stderr header with the owner's
 // label so the reader can see whose round it is.
-func serveShow(owner, state, name string, round int, section relevo.ShowSection, asJSON bool) error {
+func serveShow(owner, state, name string, round int, section relevo.ShowSection, asJSON bool, artifactRel string) error {
 	root, d, err := adminRootFor(state)
 	if err != nil {
 		return err
@@ -90,7 +90,7 @@ func serveShow(owner, state, name string, round int, section relevo.ShowSection,
 		return exitCodeErr{code: 1}
 	}
 
-	opts := relevo.ShowOptions{Name: name, Round: round, Section: section, JSON: asJSON}
+	opts := relevo.ShowOptions{Name: name, Round: round, Section: section, JSON: asJSON, ArtifactRel: artifactRel}
 	if err := printShow(rt, opts, false, false, label+"/"); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			fmt.Fprintf(os.Stderr, "relevo serve show: %s/%s: binding not found (serve show reads live bindings only)\n", owner, name)

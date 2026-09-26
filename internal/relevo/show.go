@@ -34,12 +34,14 @@ const (
 	ShowTranscript ShowSection = "transcript"
 	ShowGate       ShowSection = "gate"
 	ShowFindings   ShowSection = "findings"
+	ShowSummary    ShowSection = "summary"
+	ShowArtifacts  ShowSection = "artifacts"
 )
 
 // ValidShowSection reports whether s is one of the ShowSection values.
 func ValidShowSection(s ShowSection) bool {
 	switch s {
-	case ShowPlan, ShowReport, ShowDiff, ShowDrift, ShowLog, ShowTranscript, ShowGate, ShowFindings:
+	case ShowPlan, ShowReport, ShowDiff, ShowDrift, ShowLog, ShowTranscript, ShowGate, ShowFindings, ShowSummary, ShowArtifacts:
 		return true
 	}
 	return false
@@ -55,6 +57,9 @@ type ShowOptions struct {
 	// FindingsID is the consult whose findings --findings names (§4.2). It is
 	// meaningful only with Section == ShowFindings.
 	FindingsID string
+	// ArtifactRel is `--artifact`'s file. With Section == ShowArtifacts it
+	// names one Rel to return raw instead of the list; meaningful only there.
+	ArtifactRel string
 }
 
 // ShowResult is one round's requested section, resolved from a live
@@ -74,6 +79,9 @@ type ShowResult struct {
 	Missing bool
 	// Events is filled for Section log: one entry per event, in order.
 	Events []store.LogEntry
+	// Artifacts is filled for Section artifacts: the round's artifact files,
+	// summary.md first, then by rel.
+	Artifacts []ArtifactFile `json:"artifacts,omitempty"`
 }
 
 // Show resolves opts against a live binding's files; then, for a name that is
@@ -249,30 +257,72 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 	readBytes := func(path string) ([]byte, bool, error) {
 		return readBytesMissing(rt.Store.ReadFile, path)
 	}
-	if err := showSections(rt, b.Name, round, entries, b.Builder, read, readBytes, opts, &res); err != nil {
+	if err := showSections(rt, b.Name, round, bindingRole(b), b.Shape, entries, b.Builder, read, readBytes, opts, &res); err != nil {
 		return ShowResult{}, err
 	}
 	return res, nil
 }
 
 // showSections resolves opts.Section into res for one round of name: the
-// section switch showLive and showArchived share. entries is the binding's
-// whole log, which ShowLog filters by round; read yields one round file's
-// bytes, reporting missing rather than an error when the file is absent.
-// live is the round's endpoint, which ShowTranscript needs to render the
-// stream with the endpoint's own segments and kind; readBytes is read's
+// section switch showLive and showArchived share. actor and shape name the
+// binding's actor and shape, which a reader's report and its artifact
+// sections need (the artifact directory is NNN-<actor>/). entries is the
+// binding's whole log, which ShowLog filters by round; read yields one round
+// file's bytes, reporting missing rather than an error when the file is
+// absent. live is the round's endpoint, which ShowTranscript needs to render
+// the stream with the endpoint's own segments and kind; readBytes is read's
 // contract for RoundTranscript.
-func showSections(rt Runtime, name string, round int, entries []store.LogEntry, live store.Endpoint, read func(path string) (text string, missing bool, err error), readBytes func(path string) ([]byte, bool, error), opts ShowOptions, res *ShowResult) error {
+func showSections(rt Runtime, name string, round int, actor, shape string, entries []store.LogEntry, live store.Endpoint, read func(path string) (text string, missing bool, err error), readBytes func(path string) ([]byte, bool, error), opts ShowOptions, res *ShowResult) error {
 	var err error
 	switch opts.Section {
 	case ShowPlan:
 		res.Text, res.Missing, err = read(rt.Store.PlanPath(name, round))
 	case ShowReport:
-		res.Text, res.Missing, err = read(rt.Store.ReportPath(name, round))
+		// reportPathFor: a reader's report is its artifact directory's
+		// summary.md, read through the artifact helper so a live, sealed or
+		// archived round all answer; a writer's is the flat NNN-report.md.
+		if shape == store.ShapeReader {
+			var text []byte
+			text, err = readSummary(rt, name, round, actor)
+			if err == nil {
+				if text == nil {
+					res.Missing = true
+				} else {
+					res.Text = string(text)
+				}
+			}
+		} else {
+			res.Text, res.Missing, err = read(rt.Store.ReportPath(name, round))
+		}
 	case ShowDiff:
 		res.Text, res.Missing, err = read(rt.Store.DiffPath(name, round))
 	case ShowDrift:
 		res.Text, res.Missing, err = read(rt.Store.DriftPath(name, round))
+	case ShowSummary:
+		var text []byte
+		text, err = readSummary(rt, name, round, actor)
+		if err == nil {
+			if text == nil {
+				res.Missing = true
+			} else {
+				res.Text = string(text)
+			}
+		}
+	case ShowArtifacts:
+		if opts.ArtifactRel != "" {
+			// --artifact: one file's bytes, raw. An unlisted rel is
+			// ErrNoArtifact, which the caller reports as an error.
+			var data []byte
+			data, err = ReadArtifact(rt, name, round, actor, opts.ArtifactRel)
+			if err == nil {
+				res.Text = string(data)
+			}
+		} else {
+			res.Artifacts, err = RoundArtifacts(rt, name, round, actor)
+			if err == nil {
+				res.Missing = len(res.Artifacts) == 0
+			}
+		}
 	case ShowTranscript:
 		// The round's transcript: its NNN-builder.log when one exists, and
 		// otherwise its stream rendered per segment (§4.5).
@@ -375,7 +425,7 @@ func showArchived(rt Runtime, ab store.ArchivedBinding, opts ShowOptions) (ShowR
 	readBytes := func(path string) ([]byte, bool, error) {
 		return rt.Store.ArchivedFile(ab.RecordID, filepath.Base(path))
 	}
-	if err := showSections(rt, ab.Binding.Name, round, entries, ab.Binding.Builder, read, readBytes, opts, &res); err != nil {
+	if err := showSections(rt, ab.Binding.Name, round, bindingRole(ab.Binding), ab.Binding.Shape, entries, ab.Binding.Builder, read, readBytes, opts, &res); err != nil {
 		return ShowResult{}, err
 	}
 	return res, nil
@@ -465,10 +515,12 @@ func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, er
 			res.Text = strings.Join(lines, "\n")
 			res.Missing = len(recs) == 0
 		}
-	case ShowGate, ShowFindings:
+	case ShowGate, ShowFindings, ShowSummary, ShowArtifacts:
 		// A gate log and a consult's findings are round files, not ingest
 		// artifacts, so an archived (database-only) binding has no row to
-		// read them from: report Missing rather than an empty section.
+		// read them from: report Missing rather than an empty section. The
+		// same holds for the artifact sections: showDB holds no artifact
+		// rows.
 		res.Missing = true
 	}
 	if err != nil {

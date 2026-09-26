@@ -78,12 +78,12 @@ func formatScope(sc *policy.ScopePolicy, defaultText string) string {
 	return strings.Join(parts, " · ")
 }
 
-// Settings returns the 17 policy rows in display order, filled from d.Policy.
+// Settings returns the 18 policy rows in display order, filled from d.Policy.
 func Settings(d ConfigDoc, cpus int) []Setting {
 	p := d.Policy
 	defMaxBuilders := max(1, cpus-1)
 
-	var rows [17]Setting
+	var rows [18]Setting
 
 	// 1: rounds / max_switches
 	rows[0] = Setting{
@@ -119,12 +119,22 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "rounds",
 	}
 
-	// 4: check / gate.default
+	// 4: rounds / artifact_max_mb
+	rows[3] = Setting{
+		Group:   "rounds",
+		Key:     "artifact_max_mb",
+		Value:   strconv.Itoa(int(p.ArtifactMaxBytes() / (1 << 20))),
+		Default: strconv.Itoa(policy.DefaultArtifactMaxMB),
+		Set:     p.ArtifactMaxMB != nil,
+		Form:    "rounds",
+	}
+
+	// 5: check / gate.default
 	gDef := "none"
 	if p.GateDefault() != "" {
 		gDef = p.GateDefault()
 	}
-	rows[3] = Setting{
+	rows[4] = Setting{
 		Group:   "check",
 		Key:     "gate.default",
 		Value:   gDef,
@@ -133,8 +143,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "check",
 	}
 
-	// 5: check / gate.timeout
-	rows[4] = Setting{
+	// 6: check / gate.timeout
+	rows[5] = Setting{
 		Group:   "check",
 		Key:     "gate.timeout",
 		Value:   FormatDuration(p.GateTimeout()),
@@ -143,8 +153,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "check",
 	}
 
-	// 6: check / gate.regate
-	rows[5] = Setting{
+	// 7: check / gate.regate
+	rows[6] = Setting{
 		Group:   "check",
 		Key:     "gate.regate",
 		Value:   strconv.Itoa(p.GateRegate()),
@@ -153,8 +163,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "check",
 	}
 
-	// 7: timing / limit_gate_default
-	rows[6] = Setting{
+	// 8: timing / limit_gate_default
+	rows[7] = Setting{
 		Group:   "timing",
 		Key:     "limit_gate_default",
 		Value:   FormatDuration(p.LimitGateDefault()),
@@ -163,8 +173,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "timing",
 	}
 
-	// 8: timing / stall_after
-	rows[7] = Setting{
+	// 9: timing / stall_after
+	rows[8] = Setting{
 		Group:   "timing",
 		Key:     "stall_after",
 		Value:   FormatDuration(p.StallAfter()),
@@ -173,8 +183,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "timing",
 	}
 
-	// 9: timing / progress_interval
-	rows[8] = Setting{
+	// 10: timing / progress_interval
+	rows[9] = Setting{
 		Group:   "timing",
 		Key:     "progress_interval",
 		Value:   FormatDuration(p.ProgressInterval()),
@@ -183,8 +193,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "timing",
 	}
 
-	// 10: timing / explore_after
-	rows[9] = Setting{
+	// 11: timing / explore_after
+	rows[10] = Setting{
 		Group:   "timing",
 		Key:     "explore_after",
 		Value:   FormatDuration(p.ExploreAfter()),
@@ -193,8 +203,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "timing",
 	}
 
-	// 11: timing / stale_after
-	rows[10] = Setting{
+	// 12: timing / stale_after
+	rows[11] = Setting{
 		Group:   "timing",
 		Key:     "stale_after",
 		Value:   FormatDuration(p.StaleAfter()),
@@ -203,8 +213,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "timing",
 	}
 
-	// 12: processes / scope
-	rows[11] = Setting{
+	// 13: processes / scope
+	rows[12] = Setting{
 		Group:   "processes",
 		Key:     "scope",
 		Value:   formatScope(p.Scope, "on · no limits"),
@@ -213,12 +223,12 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "scope",
 	}
 
-	// 13: processes / serve.max_builders
+	// 14: processes / serve.max_builders
 	smbVal := defMaxBuilders
 	if p.Serve != nil && p.Serve.MaxBuilders != nil {
 		smbVal = *p.Serve.MaxBuilders
 	}
-	rows[12] = Setting{
+	rows[13] = Setting{
 		Group:   "processes",
 		Key:     "serve.max_builders",
 		Value:   strconv.Itoa(smbVal),
@@ -227,12 +237,12 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "max_builders",
 	}
 
-	// 14: processes / serve.scope
+	// 15: processes / serve.scope
 	ssVal := "as scope"
 	if p.Serve != nil && p.Serve.Scope != nil {
 		ssVal = formatScope(p.Serve.Scope, "as scope")
 	}
-	rows[13] = Setting{
+	rows[14] = Setting{
 		Group:   "processes",
 		Key:     "serve.scope",
 		Value:   ssVal,
@@ -241,7 +251,7 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "serve.scope",
 	}
 
-	// 15: scan / scan_patterns
+	// 16: scan / scan_patterns
 	spVal := "none"
 	switch len(p.ScanPatterns) {
 	case 0:
@@ -251,7 +261,7 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 	default:
 		spVal = fmt.Sprintf("%d patterns", len(p.ScanPatterns))
 	}
-	rows[14] = Setting{
+	rows[15] = Setting{
 		Group:   "scan",
 		Key:     "scan_patterns",
 		Value:   spVal,
@@ -260,12 +270,12 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "scan_patterns",
 	}
 
-	// 16: scan / classify
+	// 17: scan / classify
 	clVal := "off"
 	if p.Classify != nil && p.Classify.Provider != "" {
 		clVal = p.Classify.Provider
 	}
-	rows[15] = Setting{
+	rows[16] = Setting{
 		Group:   "scan",
 		Key:     "classify",
 		Value:   clVal,
@@ -274,7 +284,7 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "classify",
 	}
 
-	// 17: notify / notify.webhooks
+	// 18: notify / notify.webhooks
 	nwVal := "none"
 	var nwCount int
 	if p.Notify != nil {
@@ -288,7 +298,7 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 	default:
 		nwVal = fmt.Sprintf("%d webhooks", nwCount)
 	}
-	rows[16] = Setting{
+	rows[17] = Setting{
 		Group:   "notify",
 		Key:     "notify.webhooks",
 		Value:   nwVal,
@@ -307,6 +317,8 @@ func SettingPaths(key string) []string {
 		return []string{"max_switches"}
 	case "max_tier":
 		return []string{"max_tier"}
+	case "artifact_max_mb":
+		return []string{"artifact_max_mb"}
 	case "verify.default":
 		return []string{"verify"}
 	case "gate.default":

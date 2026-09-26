@@ -129,7 +129,7 @@ func TestSettingsCheckFormSetsCommand(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 3 // gate.default
+	v.cur = 4 // gate.default
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "check" || f.focus != 0 {
@@ -158,7 +158,7 @@ func TestSettingsTimingFormBadDuration(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 7 // stall_after
+	v.cur = 8 // stall_after
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "timing" || f.focus != 1 {
@@ -252,7 +252,7 @@ func TestSettingsResetUnsetNotices(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 3 // gate.default, unset in the fixture
+	v.cur = 4 // gate.default, unset in the fixture
 
 	_, cmd := v.Update(key('r'), env)
 	if cmd == nil {
@@ -277,7 +277,7 @@ func TestSettingsServeScopeFormSetsCPUQuota(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 13 // serve.scope
+	v.cur = 14 // serve.scope
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "serve.scope" {
@@ -314,7 +314,7 @@ func TestSettingsServeScopeFormClearingSliceRemovesServe(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 13 // serve.scope
+	v.cur = 14 // serve.scope
 
 	f := settingsFormFrom(t, v, env)
 	f = f.setFocus(1) // slice
@@ -348,7 +348,7 @@ func TestSettingsScopeFormBadMemoryMax(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 11 // scope
+	v.cur = 12 // scope
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "scope" {
@@ -383,7 +383,7 @@ func TestSettingsClassifyFormTurnsOn(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 15 // classify
+	v.cur = 16 // classify
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "classify" {
@@ -433,7 +433,7 @@ func TestSettingsClassifyFormTurnsOffIgnoresPendingFields(t *testing.T) {
 	fa := &fakeActions{doc: doc}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 15 // classify
+	v.cur = 16 // classify
 
 	f := settingsFormFrom(t, v, env)
 	if f.fields[0].sel != 1 {
@@ -469,7 +469,7 @@ func TestSettingsClassifyFormTabSkipsDisabledFields(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 15 // classify
+	v.cur = 16 // classify
 
 	f := settingsFormFrom(t, v, env)
 	for i := 0; i < 5; i++ {
@@ -505,12 +505,12 @@ func TestSettingsResetRefusalIsPlainWords(t *testing.T) {
 	}
 }
 
-// f. down from verify.default lands on gate.default, never on a rule line.
+// f. down from the last rounds row lands on gate.default, never on a rule line.
 func TestSettingsDownSkipsRule(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 2 // verify.default
+	v.cur = 3 // artifact_max_mb, the last rounds row
 
 	next, _ := v.Update(tea.KeyMsg{Type: tea.KeyDown}, env)
 	v = next.(settingsView)
