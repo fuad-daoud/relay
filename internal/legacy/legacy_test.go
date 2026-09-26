@@ -9,11 +9,9 @@ import (
 	"testing"
 )
 
-// TestRewriteJSON pins the substitution RewriteJSON applies: only a JSON
-// string value that starts with the old directory changes, a longer name that
-// merely begins with it does not, an unquoted occurrence inside a value does
-// not, and the input bytes are never modified. With no pairs the bytes come
-// back equal.
+// TestRewriteJSON pins that only a JSON string value starting with the old
+// directory changes, a longer name merely beginning with it does not, and the
+// input bytes are never modified.
 func TestRewriteJSON(t *testing.T) {
 	pairs := []Prefix{{Old: "/a/old", New: "/a/new"}}
 	body := []byte(`{"p":"/a/old/x","q":"/a/old","r":"/a/older/x","s":"pre /a/old/x","n":1}`)
@@ -34,9 +32,7 @@ func TestRewriteJSON(t *testing.T) {
 	}
 }
 
-// TestRootsPrefixes pins the substitution list a Roots builds: the state pair
-// first, then the config pair; a pair with an empty side or Old == New is left
-// out; the zero Roots yields nothing.
+// TestRootsPrefixes pins the pair order and the empty/equal-side drop rule.
 func TestRootsPrefixes(t *testing.T) {
 	t.Run("all four roots", func(t *testing.T) {
 		r := Roots{OldState: "/s/old", NewState: "/s/new", OldConfig: "/c/old", NewConfig: "/c/new"}
@@ -100,93 +96,72 @@ func TestConfigRoot(t *testing.T) {
 	}
 }
 
-func TestProbe(t *testing.T) {
-	rootsUnder := func(dir string) Roots {
-		return Roots{
-			OldState:  filepath.Join(dir, "relay-state"),
-			NewState:  filepath.Join(dir, "relevo-state"),
-			OldConfig: filepath.Join(dir, "relay-config"),
-			NewConfig: filepath.Join(dir, "relevo-config"),
-		}
+func TestProbeAllFourAbsent(t *testing.T) {
+	got, err := Probe(rootsUnder(t.TempDir()))
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
 	}
-	mkdirAll := func(t *testing.T, paths ...string) {
-		t.Helper()
-		for _, p := range paths {
-			if err := os.MkdirAll(p, 0o755); err != nil {
-				t.Fatal(err)
-			}
-		}
+	if got != (Status{}) {
+		t.Errorf("Probe = %+v, want every root absent", got)
 	}
-
-	t.Run("all four absent", func(t *testing.T) {
-		got, err := Probe(rootsUnder(t.TempDir()))
-		if err != nil {
-			t.Fatalf("Probe: %v", err)
-		}
-		if got != (Status{}) {
-			t.Errorf("Probe = %+v, want every root absent", got)
-		}
-	})
-
-	t.Run("all four present", func(t *testing.T) {
-		r := rootsUnder(t.TempDir())
-		mkdirAll(t, r.OldState, r.NewState, r.OldConfig, r.NewConfig)
-		got, err := Probe(r)
-		if err != nil {
-			t.Fatalf("Probe: %v", err)
-		}
-		want := Status{OldState: true, NewState: true, OldConfig: true, NewConfig: true}
-		if got != want {
-			t.Errorf("Probe = %+v, want %+v", got, want)
-		}
-	})
-
-	t.Run("a path that exists but is not a directory is taken", func(t *testing.T) {
-		r := rootsUnder(t.TempDir())
-		if err := os.WriteFile(r.OldState, []byte("not a dir"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		got, err := Probe(r)
-		if err != nil {
-			t.Fatalf("Probe: %v", err)
-		}
-		if !got.OldState {
-			t.Errorf("Probe = %+v, want OldState true for a non-directory", got)
-		}
-		if got.NewState || got.OldConfig || got.NewConfig {
-			t.Errorf("Probe = %+v, want only OldState true", got)
-		}
-	})
-
-	t.Run("unreadable parent is an error naming the path", func(t *testing.T) {
-		if os.Geteuid() == 0 {
-			t.Skip("root ignores directory permissions")
-		}
-		dir := t.TempDir()
-		parent := filepath.Join(dir, "locked")
-		if err := os.MkdirAll(parent, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		// A parent the test can no longer stat into, restored for cleanup:
-		// RemoveAll cannot descend into a 000 directory.
-		t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
-		if err := os.Chmod(parent, 0o000); err != nil {
-			t.Fatal(err)
-		}
-
-		r := Roots{OldState: filepath.Join(parent, "relay")}
-		_, err := Probe(r)
-		if err == nil {
-			t.Fatal("Probe over an unreadable parent must error")
-		}
-		if !strings.Contains(err.Error(), r.OldState) {
-			t.Errorf("Probe error = %q, want it to name %q", err, r.OldState)
-		}
-	})
 }
 
-// TestUnmigratedAndStaleTruthTable pins both predicates over every one of the
-// sixteen Status values.
+func TestProbeAllFourPresent(t *testing.T) {
+	r := rootsUnder(t.TempDir())
+	mkdirAll(t, r.OldState, r.NewState, r.OldConfig, r.NewConfig)
+	got, err := Probe(r)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	want := Status{OldState: true, NewState: true, OldConfig: true, NewConfig: true}
+	if got != want {
+		t.Errorf("Probe = %+v, want %+v", got, want)
+	}
+}
+
+func TestProbeNonDirectoryCountsAsPresent(t *testing.T) {
+	r := rootsUnder(t.TempDir())
+	if err := os.WriteFile(r.OldState, []byte("not a dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Probe(r)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if !got.OldState {
+		t.Errorf("Probe = %+v, want OldState true for a non-directory", got)
+	}
+	if got.NewState || got.OldConfig || got.NewConfig {
+		t.Errorf("Probe = %+v, want only OldState true", got)
+	}
+}
+
+func TestProbeUnreadableParentIsAnErrorNamingThePath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	parent := filepath.Join(dir, "locked")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) }) // RemoveAll can't descend into 000
+	if err := os.Chmod(parent, 0o000); err != nil {
+		t.Fatal(err)
+	}
+
+	r := Roots{OldState: filepath.Join(parent, "relay")}
+	_, err := Probe(r)
+	if err == nil {
+		t.Fatal("Probe over an unreadable parent must error")
+	}
+	if !strings.Contains(err.Error(), r.OldState) {
+		t.Errorf("Probe error = %q, want it to name %q", err, r.OldState)
+	}
+}
+
+// TestUnmigratedAndStaleTruthTable pins both predicates over all sixteen
+// Status values.
 func TestUnmigratedAndStaleTruthTable(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -203,9 +178,7 @@ func TestUnmigratedAndStaleTruthTable(t *testing.T) {
 		{"both config", false, false, true, true, false, true},
 		{"new state only", false, true, false, false, false, false},
 		{"new state, new config", false, true, false, true, false, false},
-		// P2a: once the relevo state root exists, config lives in its DB, so
-		// a missing old config is no longer unmigrated (§4.9).
-		{"new state, old config", false, true, true, false, false, false},
+		{"new state, old config", false, true, true, false, false, false}, // NewState exists: config is in its DB
 		{"new state, both config", false, true, true, true, false, true},
 		{"old state only", true, false, false, false, true, false},
 		{"old state, new config", true, false, false, true, true, false},
@@ -213,9 +186,7 @@ func TestUnmigratedAndStaleTruthTable(t *testing.T) {
 		{"old state, both config", true, false, true, true, true, true},
 		{"both state", true, true, false, false, false, true},
 		{"both state, new config", true, true, false, true, false, true},
-		// P2a: the new state root exists, so its DB holds config; a leftover
-		// old config directory is stale, not unmigrated (§4.9).
-		{"both state, old config", true, true, true, false, false, true},
+		{"both state, old config", true, true, true, false, false, true}, // leftover old config is stale, not unmigrated
 		{"all four", true, true, true, true, false, true},
 	}
 

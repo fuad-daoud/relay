@@ -13,12 +13,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
-// Default is the provider and model relevo config init seeds a harness with.
 type Default struct{ Provider, Model string }
 
-// Defaults is the README's documented example, one per harness kind. The values
-// are relevo's real defaults: they are the placeholders a clean machine edits,
-// and they pass candidate.Load as written.
+// Defaults is the README's documented example: relevo's real defaults, which pass candidate.Load as written.
 var Defaults = map[string]Default{
 	"claude":   {"anthropic", "sonnet"},
 	"opencode": {"openrouter", "z-ai/glm-5.3-flash"},
@@ -34,12 +31,7 @@ type Files struct {
 	Actors     []byte   // JSON, the builder actor over the plan's candidate names
 }
 
-// Plan builds starter candidates, a policy and a builder actor for every
-// harness binary on PATH, in harness.All() order. It is an error when none is
-// found: relevo config init has nothing to seed.
-//
-// The candidates carry no roles and no tier, and the policy is only max_tier:
-// the actors section decides who serves what (A2 round 2 R5).
+// Plan builds starter candidates, a policy and a builder actor for every harness binary on PATH, erroring when none is found.
 func Plan(env harness.InstallEnv) (Files, error) {
 	var kinds []string
 	var candidates []candidate.Candidate
