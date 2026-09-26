@@ -546,7 +546,10 @@ export default {
 
         const sw = stateWord(row);
         const title = `${name} · r${round}${sw.word ? ` · ${sw.word}` : ""}`;
-        const placeholder = `${name} · r${round} · ${waiting}`;
+        // The title already carries the name, the round and the status, so the hint says who is working and why it needs you.
+        const who = rowActor(row) + " on " + (row.harness || "opencode");
+        const reason = typeof row.status === "string" ? row.reason : row.waiting;
+        const placeholder = who + (reason ? " · " + reason : "");
 
         let choice: any;
         try {
