@@ -1,8 +1,6 @@
 package mcp
 
-// InstructionsChannel is the model-facing text handed back in initialize's
-// result when relevo mcp runs in channel mode (spec
-// docs/specs/2026-09-21-planner-channel-design.md §3.7, #303 §4.5): events
+// InstructionsChannel is the model-facing text for channel mode: events
 // arrive as <channel source="relevo"> blocks, and the model acts on each.
 const InstructionsChannel = `relevo is handing you round events over this channel instead of
 typing them into your input box. A <channel source="relevo" ...> block can
@@ -38,10 +36,8 @@ Every other relevo verb -- bind, show, wait, gate, config, and the rest --
 is not a tool here; run it with Bash.
 `
 
-// InstructionsTools is initialize's text when relevo mcp runs in tools mode
-// (#303 §4.5, D6): nothing is pushed, so the model gets each report by
-// running the background wait after every send and reading what the wait
-// prints when it exits (P4a round 2 §4.1).
+// InstructionsTools is the model-facing text for tools mode: nothing is
+// pushed, so the model runs a background wait after every send.
 const InstructionsTools = `relevo is running in tools mode: no events arrive on their own. Everything
 relevo tells you arrives as the output of a command you started.
 
@@ -88,9 +84,7 @@ Every other relevo verb -- bind, show, wait, gate, config, and the rest --
 is not a tool here; run it with Bash.
 `
 
-// InstructionsFor picks the text for mode. The mode is known before
-// initialize is answered, so the model is told from its first turn which one
-// it is in (#303 §4.5).
+// InstructionsFor picks the text for mode.
 func InstructionsFor(mode Mode) string {
 	if mode == ModeChannel {
 		return InstructionsChannel

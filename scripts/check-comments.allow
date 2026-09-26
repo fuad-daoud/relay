@@ -118,10 +118,6 @@ internal/harness/shipped.go
 internal/harness/shipped_test.go
 internal/history/history.go
 internal/history/history_test.go
-internal/hooks/events.go
-internal/hooks/executor.go
-internal/hooks/runlog.go
-internal/hooks/webhook.go
 internal/ingest/cursor.go
 internal/ingest/dedupe.go
 internal/ingest/dedupe_test.go
@@ -139,15 +135,6 @@ internal/ledger/ledger.go
 internal/ledger/ledger_test.go
 internal/legacy/legacy.go
 internal/legacy/legacy_test.go
-internal/mcp/instructions.go
-internal/mcp/mode.go
-internal/mcp/send_builder_test.go
-internal/mcp/server.go
-internal/mcp/server_test.go
-internal/mcp/tools.go
-internal/mcp/verbs.go
-internal/mcp/verbs_test.go
-internal/mcp/waitcmd_test.go
 internal/migrate/detect.go
 internal/migrate/migrate.go
 internal/migrate/migrate_test.go

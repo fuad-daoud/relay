@@ -9,8 +9,7 @@ import (
 	"testing"
 )
 
-// fakeVerbs is a Verbs whose three methods are swappable per test; a nil
-// field returns (nil, nil).
+// fakeVerbs is a Verbs whose three methods are swappable per test; a nil field returns (nil, nil).
 type fakeVerbs struct {
 	statusFn func(ctx context.Context, a StatusArgs) (any, error)
 	sendFn   func(ctx context.Context, a SendArgs) (any, error)
@@ -38,16 +37,13 @@ func (f *fakeVerbs) Done(ctx context.Context, a DoneArgs) (any, error) {
 	return f.doneFn(ctx, a)
 }
 
-// runServer drives Serve over an in-memory pipe with one line per request,
-// closing the input after writing them (EOF), and returns everything Serve
-// wrote to out.
+// runServer drives Serve over an in-memory pipe, one line per request, and returns everything it wrote.
 func runServer(t *testing.T, verbs Verbs, requests []string) []byte {
 	t.Helper()
 	return runServerWith(t, &Server{Verbs: verbs, Version: "0.6.0-test"}, requests)
 }
 
-// runServerWith is runServer over a caller-built Server, for the tests that
-// need a Notice (#371 §4.10) or another field runServer leaves zero.
+// runServerWith is runServer over a caller-built Server, for tests that need a Notice or other field runServer leaves zero.
 func runServerWith(t *testing.T, srv *Server, requests []string) []byte {
 	t.Helper()
 	pr, pw := io.Pipe()
@@ -324,9 +320,7 @@ func TestServerPushEmitsNotificationAndDropsBadKey(t *testing.T) {
 	}
 }
 
-// TestServerAppendsNoticeToToolResults pins §4.10: when Notice returns text it
-// is one more text content block on the tool result, on a verb error's result
-// exactly as on a success.
+// TestServerAppendsNoticeToToolResults: a verb error's result gets the notice block exactly as a success does.
 func TestServerAppendsNoticeToToolResults(t *testing.T) {
 	const notice = "note: relevo was upgraded to v0.8.0; this session's relevo MCP server is still v0.7.0. Reconnect it (/mcp) or restart the session to load the new version."
 
@@ -381,9 +375,6 @@ func TestServerAppendsNoticeToToolResults(t *testing.T) {
 	}
 }
 
-// TestServerNoticeNilOrEmptyIsUnchanged pins the other half of §4.10: a nil
-// Notice and one that returns "" both leave the tool result byte-identical to
-// what the server wrote before notices existed.
 func TestServerNoticeNilOrEmptyIsUnchanged(t *testing.T) {
 	verbs := func() Verbs {
 		return &fakeVerbs{statusFn: func(context.Context, StatusArgs) (any, error) {

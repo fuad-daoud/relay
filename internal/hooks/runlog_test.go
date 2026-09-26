@@ -10,8 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// testRunLog returns a KVLog over a fresh temp database, with dir the state
-// root a legacy hooks.log would live in.
+// testRunLog returns a KVLog over a fresh temp database and its state root.
 func testRunLog(t *testing.T) (*KVLog, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -52,8 +51,6 @@ func TestKVLogAppendAndRead(t *testing.T) {
 	}
 }
 
-// TestKVLogCapsAt200 pins the cap: the newest 200 runs survive and the oldest
-// are dropped.
 func TestKVLogCapsAt200(t *testing.T) {
 	log, _ := testRunLog(t)
 	for i := 0; i < runLogCap+5; i++ {
@@ -71,9 +68,6 @@ func TestKVLogCapsAt200(t *testing.T) {
 	}
 }
 
-// TestKVLogImportsLegacyFile pins the import: a present <root>/hooks.log
-// becomes one "imported" run holding the file's last 4 KiB, and the file is
-// removed.
 func TestKVLogImportsLegacyFile(t *testing.T) {
 	log, dir := testRunLog(t)
 	path := filepath.Join(dir, legacyLogName)
@@ -100,8 +94,6 @@ func TestKVLogImportsLegacyFile(t *testing.T) {
 	}
 }
 
-// TestKVLogKeepsExistingRowOverFile pins the KVImportFile rule: a row already
-// present wins, and the file is left where it is.
 func TestKVLogKeepsExistingRowOverFile(t *testing.T) {
 	log, dir := testRunLog(t)
 	if err := log.Append(HookRun{At: time.Now().UTC(), Event: "state_changed"}); err != nil {

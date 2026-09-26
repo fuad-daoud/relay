@@ -11,8 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// serveOnce drives a fully-built Server over an in-memory pipe with one line
-// per request, so a test can set Mode as well as Verbs.
+// serveOnce drives a fully-built Server, so a test can set Mode as well as Verbs.
 func serveOnce(t *testing.T, srv *Server, requests []string) []byte {
 	t.Helper()
 	pr, pw := io.Pipe()
@@ -62,34 +61,36 @@ func callSend(t *testing.T, mode Mode, res any) string {
 	return result.Content[0].Text
 }
 
-// TestMCPToolsModeSendResultCarriesBackgroundWait is the plan's required case
-// for #303 §4.5: in tools mode the send tool's result ends with the exact
-// background-wait command, carrying this binding's name and its round budget.
-func TestMCPToolsModeSendResultCarriesBackgroundWait(t *testing.T) {
-	text := callSend(t, ModeTools, sendResult{SendResult: relevo.SendResult{Round: 1}, WaitBudget: "24h0m0s"})
-
-	want := "background wait (run with run_in_background, then end your turn):\n" +
-		"  relevo wait --name webshop --timeout 24h0m0s"
-	if !strings.HasSuffix(text, want) {
-		t.Fatalf("send result text = %q, want it to end with:\n%s", text, want)
+// TestMCPSendResultDependsOnMode covers the two mode-specific shapes of a
+// send tool result, replacing TestMCPToolsModeSendResultCarriesBackgroundWait
+// and TestMCPChannelModeSendResultHasNoWaitLine.
+func TestMCPSendResultDependsOnMode(t *testing.T) {
+	res := sendResult{SendResult: relevo.SendResult{Round: 1}, WaitBudget: "24h0m0s"}
+	tests := []struct {
+		name  string
+		mode  Mode
+		check func(t *testing.T, text string)
+	}{
+		{"tools mode carries the background wait", ModeTools, func(t *testing.T, text string) {
+			want := "background wait (run with run_in_background, then end your turn):\n" +
+				"  relevo wait --name webshop --timeout 24h0m0s"
+			if !strings.HasSuffix(text, want) {
+				t.Fatalf("send result text = %q, want it to end with:\n%s", text, want)
+			}
+		}},
+		{"channel mode has no wait line", ModeChannel, func(t *testing.T, text string) {
+			if strings.Contains(text, "background wait") || strings.Contains(text, "relevo wait") {
+				t.Fatalf("channel-mode send result must carry no wait line, got %q", text)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.check(t, callSend(t, tt.mode, res))
+		})
 	}
 }
 
-// TestMCPChannelModeSendResultHasNoWaitLine is the other half of §4.5: in
-// channel mode the event arrives by itself, so the result carries no wait
-// command -- a report must not arrive twice, once by channel and once by pull.
-func TestMCPChannelModeSendResultHasNoWaitLine(t *testing.T) {
-	text := callSend(t, ModeChannel, sendResult{SendResult: relevo.SendResult{Round: 1}, WaitBudget: "24h0m0s"})
-
-	if strings.Contains(text, "background wait") || strings.Contains(text, "relevo wait") {
-		t.Fatalf("channel-mode send result must carry no wait line, got %q", text)
-	}
-}
-
-// TestMCPInstructionsDependOnMode is §4.5's mode-dependent instructions: the
-// mode is known before initialize is answered, and the two texts say
-// different things. The channel text keeps no broken/orphaned mention, and
-// the tools text is where the background wait is explained.
 func TestMCPInstructionsDependOnMode(t *testing.T) {
 	channel := InstructionsFor(ModeChannel)
 	tools := InstructionsFor(ModeTools)

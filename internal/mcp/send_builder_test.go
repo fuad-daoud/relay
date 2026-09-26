@@ -9,8 +9,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestSendToolSchemaHasBuilderProperty pins (#318) that the MCP send tool
-// advertises the builder argument.
 func TestSendToolSchemaHasBuilderProperty(t *testing.T) {
 	for _, tool := range Tools() {
 		if tool.Name != "send" {
@@ -32,9 +30,7 @@ func TestSendToolSchemaHasBuilderProperty(t *testing.T) {
 	t.Fatal("no send tool in Tools()")
 }
 
-// TestRelevoVerbsSendPassesBuilder pins (#318) that RelevoVerbs.Send forwards
-// SendArgs.Builder into SendOptions: a dry run reports the new candidate, while
-// the same call without it reports the binding's own.
+// TestRelevoVerbsSendPassesBuilder: a dry run reports the new candidate; the same call without it reports the binding's own.
 func TestRelevoVerbsSendPassesBuilder(t *testing.T) {
 	s := store.New(t.TempDir())
 	set := writeCandidates(t, `[
@@ -71,8 +67,7 @@ func TestRelevoVerbsSendPassesBuilder(t *testing.T) {
 		t.Errorf("Candidate = %q, want claude/test/m (Send must pass Builder through)", d.Candidate)
 	}
 
-	// Control: the same call without a builder reports the binding's own
-	// candidate, so the assertion above is the forwarding and nothing else.
+	// Control: without a builder, the binding's own candidate comes back.
 	res, err = v.Send(context.Background(), SendArgs{Name: "webshop", File: plan, DryRun: true})
 	if err != nil {
 		t.Fatalf("Send dry-run without builder: %v", err)

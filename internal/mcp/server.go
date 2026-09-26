@@ -11,22 +11,17 @@ import (
 	"sync"
 )
 
-// ProtocolVersion is what initialize always answers, regardless of what the
-// client offered: Claude Code refuses to register a channel that negotiates
-// a newer version, and an older client accepts the one it knows (spec §6).
+// ProtocolVersion is what initialize always answers: Claude Code refuses a channel that negotiates a newer one.
 const ProtocolVersion = "2025-06-18"
 
-// ServerName is this MCP server's name, and the "source" attribute Claude
-// Code stamps on every pushed channel event.
+// ServerName is this server's name and the channel event's "source" attribute.
 const ServerName = "relevo"
 
-// Mode is whether this process claims the pane and pushes events, or only
-// serves tools (spec §7: the delivery hole and its guard).
+// Mode is whether this process claims the pane and pushes events, or only serves tools.
 type Mode int
 
 const (
-	// ModeTools serves tools/list and tools/call; it writes no claim and
-	// pushes nothing.
+	// ModeTools serves tools/list and tools/call only; it pushes nothing.
 	ModeTools Mode = iota
 	// ModeChannel additionally claims its pane and drains its mailbox.
 	ModeChannel
@@ -38,35 +33,27 @@ const maxLineBytes = 16 << 20
 // metaKeyPattern is what Claude Code accepts as a meta key: an identifier.
 var metaKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// Server is relevo mcp's JSON-RPC 2.0 loop over stdio. It implements
-// relevo.Pusher via Push, so cmd/relevo can hand it straight to relevo.Drain.
+// Server is relevo mcp's JSON-RPC 2.0 loop over stdio; it implements relevo.Pusher via Push.
 type Server struct {
 	Verbs   Verbs
 	Version string // serverInfo.version
-	// Mode picks the instructions text when Instructions is empty (#303
-	// §4.5): channel mode hears events, tools mode gets reports from the
-	// background wait.
+	// Mode picks the instructions text when Instructions is empty.
 	Mode Mode
-	// Instructions overrides the mode's text when non-empty. Tests use it;
-	// cmd/relevo leaves it empty so the mode decides.
+	// Instructions overrides the mode's text when non-empty; tests use it.
 	Instructions string
 	Log          io.Writer // stderr; nil -> discard
-	// Notice, when non-nil and returning a non-empty string, is appended as
-	// one more text content block to every tools/call result (#371 §4.10):
-	// it is how a planner session's relevo mcp says the daemon has moved on
-	// to a newer relevo than this server. nil, or "", changes nothing.
+	// Notice, when set and non-empty, appends one more text block to every
+	// tools/call result: how a planner session hears the daemon moved on to
+	// a newer relevo.
 	Notice func() string
-	// OnInitialized is called once, after notifications/initialized. The
-	// command wires the poll loop start here so nothing is pushed before
-	// the client has acknowledged initialize.
+	// OnInitialized fires once, after notifications/initialized.
 	OnInitialized func()
 
 	logger     *log.Logger
 	loggerOnce sync.Once
 
-	// out is the transport's outbound side, set once at the top of Serve.
-	// The request loop (via writeResponse) and the poll goroutine (via
-	// Push) both write to it, so every write is serialised by writeMu.
+	// out is the transport's outbound side, set once at the top of Serve; the
+	// request loop and the poll goroutine (via Push) both write to it through writeMu.
 	out     io.Writer
 	writeMu sync.Mutex
 }
@@ -82,10 +69,7 @@ func (s *Server) log() *log.Logger {
 	return s.logger
 }
 
-// Serve reads one JSON object per line from in until EOF or ctx is done,
-// dispatching each per the method table (spec §6), and writes responses to
-// out. Once Serve has started, Push may be called concurrently from another
-// goroutine (the poll loop) and writes safely to the same out.
+// Serve reads one JSON object per line from in until EOF or ctx is done, dispatching each per the method table.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	s.out = out
 
@@ -229,10 +213,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req Request) {
 	s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Result: s.withNotice(result)})
 }
 
-// withNotice appends the upgrade notice as one more text content block on a
-// tool result (#371 §4.10). It runs on a verb error's ToolResult too, because
-// that is how the model reads a failure. A nil Notice and a notice that reads
-// as "" both leave the result exactly as it is without one.
+// withNotice appends the upgrade notice as one more content block; a nil Notice, or "", leaves the result unchanged.
 func (s *Server) withNotice(r ToolResult) ToolResult {
 	if s.Notice == nil {
 		return r
@@ -268,10 +249,8 @@ func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage)
 		if rpcErr != nil || err != nil || a.DryRun {
 			return out, rpcErr
 		}
-		// #303 §4.5: in tools mode nothing is pushed, so the send result
-		// ends with the background wait the model must start and end its
-		// turn on. In channel mode the event arrives by itself and the
-		// result carries no such line.
+		// Tools mode gets no push, so the result ends with the background
+		// wait to start; channel mode already gets the event.
 		if s.Mode == ModeTools {
 			return appendWaitCommand(out, a.Name, budgetOf(res)), nil
 		}
@@ -294,8 +273,7 @@ func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage)
 }
 
 // toolResultFrom turns a verb's (result, error) into a ToolResult: a verb
-// error becomes isError:true with the message verbatim, never a JSON-RPC
-// error, so the model reads it as data and can act (spec §6).
+// error becomes isError:true, never a JSON-RPC error, so the model can act on it.
 func toolResultFrom(res any, err error) (ToolResult, *RPCError) {
 	if err != nil {
 		return textResult(err.Error(), true), nil
@@ -327,11 +305,8 @@ func (s *Server) writeLine(raw []byte) {
 	}
 }
 
-// Push implements relevo.Pusher: it writes a notifications/claude/channel
-// line to the transport Serve is using, dropping any meta key that is not a
-// Claude-Code-legal identifier (with a log line -- Claude Code would drop it
-// silently otherwise). It is safe to call concurrently with Serve's own
-// request loop.
+// Push implements relevo.Pusher, writing one notifications/claude/channel
+// line; a meta key that is not a legal identifier is dropped and logged.
 func (s *Server) Push(ctx context.Context, content string, meta map[string]string) error {
 	clean := make(map[string]string, len(meta))
 	for k, v := range meta {
