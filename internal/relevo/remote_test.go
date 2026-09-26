@@ -5822,3 +5822,31 @@ func TestForwardAvailableSendsTheServerTokenForTheSameName(t *testing.T) {
 		t.Fatalf("Available calls = %v, want exactly one for the server token", available)
 	}
 }
+
+// TestReconcileRemoteUnknownServerIsNotRunning pins both halves of the
+// unknown-server classification: the status stops claiming a running round,
+// and a config mistake never halts a round that may be fine on the server.
+func TestReconcileRemoteUnknownServerIsNotRunning(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.Builder.RemoteStatus = string(remote.RoundRunning)
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: client.ErrUnknownServer}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateActive {
+		t.Fatalf("state = %s, want active: an unknown server must not halt the round", got.State)
+	}
+	if got.Builder.RemoteStatus != "unknown server" {
+		t.Fatalf("RemoteStatus = %q, want the unknown-server status", got.Builder.RemoteStatus)
+	}
+}
