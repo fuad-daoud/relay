@@ -413,16 +413,34 @@ func TestContractHistory(t *testing.T) {
 		// "pl_fixturehistory".
 		{"history-planner", []string{"history", "--json", "--planner", "sess-fixturehistory"}},
 		{"history-limit", []string{"history", "--json", "--limit", "1"}},
-		// "outcome:done" is not a valid db.Round.Outcome (only reported,
-		// halted, exited, switched, done_no_report, open are); this pins
-		// today's actual behaviour -- a rejected query, exit 2, no JSON on
-		// stdout -- exactly as the plan's literal example asks for. See the
-		// round's report, "looks wrong".
-		{"history-q", []string{"history", "--json", "-q", "outcome:done"}},
+		// "reported" is a valid db.Round.Outcome that both fixture bindings
+		// carry a round for (hist-alpha/1, hist-beta/2), so the query
+		// matches a non-empty set of rows.
+		{"history-q", []string{"history", "--json", "-q", "outcome:reported"}},
 	} {
 		stdout, _, _ := captureOutput(t, func() error { return run(c.args) })
 		assertGolden(t, c.golden, normalize(stdout))
 	}
+
+	// "outcome:done" is not a valid db.Round.Outcome (only reported, halted,
+	// exited, switched, done_no_report, open are); this pins today's actual
+	// rejected-query behaviour -- exit 2 and a stderr message, no JSON on
+	// stdout -- separately from the valid-query rows above, since agents do
+	// hit it.
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"history", "--json", "-q", "outcome:done"})
+	})
+	var ec exitCodeErr
+	if !errors.As(err, &ec) {
+		t.Fatalf("history -q outcome:done: error %v is not an exitCodeErr", err)
+	}
+	if ec.code != 2 {
+		t.Errorf("history -q outcome:done: exit code = %d, want 2", ec.code)
+	}
+	if len(stdout) != 0 {
+		t.Errorf("history -q outcome:done: stdout = %q, want empty", stdout)
+	}
+	assertGolden(t, "history-q-invalid", normalize(stderr))
 }
 
 // ---------------------------------------------------------------------

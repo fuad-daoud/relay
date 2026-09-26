@@ -174,3 +174,41 @@ Do not skip silently.
 
 Report: the list of goldens written (file -> contract ID), anything "pinned
 lower" or "not pinned" with reasons, and the three mutation checks.
+
+## Round 3
+
+# Cleanup P0a (round 3) -- pin a valid `history -q` query
+
+Round 3 of `cl-golden-cli2`. Round 2 committed the CLI/MCP contract goldens
+(`9ad02e2`). One of them pins nothing useful: `history-q.golden` is empty,
+because the query the plan suggested (`-q 'outcome:done'`) is not a valid
+outcome, so the command exits 2 with no stdout.
+
+### Rules
+
+- **Run every command in the foreground and wait for it**; never background a
+  command or end your turn before the report and done marker exist (a headless
+  builder's process exits when its turn ends).
+- Only `cmd/relevo/contract_test.go`, `cmd/relevo/testdata/contract/history-q*.golden`
+  and the plan copy may change. No production `.go` file.
+- If a step is impossible as written, stop and report.
+
+### Steps
+
+1. In `TestContractHistory*` (cmd/relevo/contract_test.go), change the `-q`
+   case to a valid query that matches at least one fixture round, for example
+   `-q 'outcome:reported'` (valid outcomes: reported, halted, exited, switched,
+   done_no_report, open -- pick one the fixture actually has). The golden must
+   be non-empty JSON.
+2. Keep the rejected-query behaviour pinned as a separate row
+   `history-q-invalid`: `-q 'outcome:done'` -> exit code 2 and its stderr
+   message (normalised), since agents do hit it.
+3. `go test ./cmd/relevo -run Contract -update` for those rows only, then
+   `go test ./cmd/relevo -run Contract -count=2` without `-update`, and
+   `taskset -c 0 go test ./cmd/relevo -run Contract -count=1`.
+4. `git diff --name-only HEAD | grep -v -E '_test\.go$|/testdata/|^docs/plans/'`
+   prints nothing. `make check` passes (foreground).
+5. Append a "Round 3" section with this plan to
+   `docs/plans/2026-09-26-cleanup-p0a-golden-cli.md`; commit once.
+
+Report: the query chosen and the two goldens' contents (first lines).
