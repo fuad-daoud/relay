@@ -23,6 +23,7 @@ type ConfigDoc struct {
 	Actors     map[string]actors.Actor
 	Agents     map[string]actors.AgentEntry
 	Policy     policy.Policy
+	PolicyRaw  json.RawMessage // the stored policy body, verbatim; nil when the section is absent
 }
 
 // CandidateInput is what the add/edit candidate form submits.
@@ -105,6 +106,7 @@ func LoadConfigDoc(s *config.Store) (ConfigDoc, error) {
 			return ConfigDoc{}, err
 		}
 		d.Policy = p
+		d.PolicyRaw = append(json.RawMessage(nil), body...)
 	}
 
 	return d, nil
