@@ -185,3 +185,42 @@ exported API is byte-identical to round 1's (`go doc -all` declaration lines,
 diffed via a throwaway `git worktree` at round 1's commit). Two mutation
 checks (one in `legacy`, one in `patch`) confirmed the surviving tests still
 pin real behaviour.
+
+## Fix round
+
+# Cleanup P3 (fix) -- bring `patch.Annotate` under the complexity limit
+
+The branch `relevo/cl-p3-leaves1` (PR #534, checked out in this worktree)
+finished `internal/jsonshape`, `legacy`, `patch` and `setup`. Its builder ran on a
+machine without golangci-lint, so `make lint` skipped, and one finding slipped
+through:
+
+```
+internal/patch/anchors.go:13:1: cognitive complexity 33 of func `Annotate` is high (> 30) (gocognit)
+```
+
+## Rules
+
+- **Run every command in the foreground and wait for it**; never background a
+  command or end your turn before the report and done marker exist.
+- Only `internal/patch/*.go` may change (plus the plan copy). `Annotate`'s
+  signature and behaviour are frozen; its tests and goldens must pass unchanged.
+- Do not add a `//nolint`, a lint exclusion or an allow-list entry.
+- Keep the package's §1 targets from its plan: non-test lines at or below 309,
+  non-test comment lines at or below 13 (today 295 and 13).
+- If a step is impossible as written, stop and report.
+
+## Steps
+
+1. `golangci-lint version` must print 2.14.0; if not, stop and report.
+2. Reduce `Annotate`'s cognitive complexity to 30 or less by extracting one or two
+   named helpers for its nested branches (no comments on helpers whose names say
+   what they do).
+3. `golangci-lint run ./...` reports 0 issues; `go test ./internal/patch/... -count=1`
+   passes; `make check` (foreground) passes with lint actually running (its
+   output shows golangci-lint's result, not "skipping lint").
+4. Append a "Fix round" section with this plan to
+   `docs/plans/2026-09-26-cleanup-p3-leaves1.md`; commit once. Do not push.
+
+Report: the helpers extracted, the new complexity, and the patch package's line
+and comment counts.

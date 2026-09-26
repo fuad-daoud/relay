@@ -23,22 +23,7 @@ func Annotate(b []byte) ([]byte, error) {
 			buf.WriteByte('\n')
 		}
 
-		dashGutter := rf.path + ":-"
-		maxWidth := 0
-		for _, rh := range rf.hunks {
-			if w := len(rf.path + ":" + strconv.Itoa(rh.newStart)); w > maxWidth {
-				maxWidth = w
-			}
-			for _, l := range rh.lines {
-				w := len(dashGutter)
-				if l.Kind != '-' {
-					w = len(rf.path + ":" + strconv.Itoa(l.New))
-				}
-				if w > maxWidth {
-					maxWidth = w
-				}
-			}
-		}
+		maxWidth := gutterWidth(rf)
 		pad := func(g string) string {
 			if n := maxWidth - len(g); n > 0 {
 				return g + strings.Repeat(" ", n)
@@ -54,7 +39,7 @@ func Annotate(b []byte) ([]byte, error) {
 
 			for _, l := range rh.lines {
 				if l.Kind == '-' {
-					buf.WriteString(pad(dashGutter))
+					buf.WriteString(pad(rf.path + ":-"))
 					buf.WriteString("      ")
 				} else {
 					buf.WriteString(pad(rf.path + ":" + strconv.Itoa(l.New)))
@@ -68,4 +53,24 @@ func Annotate(b []byte) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+func gutterWidth(rf rawFile) int {
+	dash := rf.path + ":-"
+	maxWidth := 0
+	for _, rh := range rf.hunks {
+		if w := len(rf.path + ":" + strconv.Itoa(rh.newStart)); w > maxWidth {
+			maxWidth = w
+		}
+		for _, l := range rh.lines {
+			w := len(dash)
+			if l.Kind != '-' {
+				w = len(rf.path + ":" + strconv.Itoa(l.New))
+			}
+			if w > maxWidth {
+				maxWidth = w
+			}
+		}
+	}
+	return maxWidth
 }
