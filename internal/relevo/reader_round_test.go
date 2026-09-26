@@ -31,7 +31,7 @@ func readerRepo(t *testing.T) string {
 	return repo
 }
 
-// TestReaderRoundRunsInItsScratch (A5 R4a §6.1): sending to a reader binding
+// TestReaderRoundRunsInItsScratch (A5 R4a): sending to a reader binding
 // creates ScratchWorktreePath(name, 1) and runs the process there, and the
 // prompt names the scratch tree, the artifact dir and the reviewer's output.
 func TestReaderRoundRunsInItsScratch(t *testing.T) {
@@ -78,7 +78,7 @@ func TestReaderRoundRunsInItsScratch(t *testing.T) {
 	}
 }
 
-// TestReaderScratchFailureDoesNotStartTheRound (A5 R4a §6.2): when the scratch
+// TestReaderScratchFailureDoesNotStartTheRound (A5 R4a): when the scratch
 // cannot be created, send wraps ErrScratch with its step, starts nothing, and
 // leaves the binding's own tree alone -- there is no fallback to b.CWD.
 func TestReaderScratchFailureDoesNotStartTheRound(t *testing.T) {
@@ -125,7 +125,7 @@ func TestReaderScratchFailureDoesNotStartTheRound(t *testing.T) {
 	}
 }
 
-// TestReaderRelaunchReusesTheScratch (A5 R4a §6.3): a mid-round switch starts
+// TestReaderRelaunchReusesTheScratch (A5 R4a): a mid-round switch starts
 // the replacement in the round's existing scratch. A marker file written into
 // the scratch before the switch survives it, which is what tells reuse apart
 // from recreation.
@@ -190,7 +190,7 @@ func TestReaderRelaunchReusesTheScratch(t *testing.T) {
 	}
 }
 
-// TestWriterRoundStillRunsInCWD (A5 R4a §6.4): a writer round is unchanged --
+// TestWriterRoundStillRunsInCWD (A5 R4a): a writer round is unchanged --
 // it runs in b.CWD and creates no scratch.
 func TestWriterRoundStillRunsInCWD(t *testing.T) {
 	t.Parallel()
@@ -219,7 +219,7 @@ func TestWriterRoundStillRunsInCWD(t *testing.T) {
 	}
 }
 
-// TestReaderTierAtLeastEdit (A5 R4a §6.5): a reader binds at edit or higher,
+// TestReaderTierAtLeastEdit (A5 R4a): a reader binds at edit or higher,
 // a max_tier below edit refuses the bind by name, and a harness that refuses
 // edit (opencode) gets its lowest writing tier, yolo.
 func TestReaderTierAtLeastEdit(t *testing.T) {

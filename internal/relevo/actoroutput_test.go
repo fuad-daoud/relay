@@ -6,7 +6,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// TestActorOutputShippedLabels pins the shipped output labels (A5 R4a §3):
+// TestActorOutputShippedLabels pins the shipped output labels (A5 R4a):
 // reviewer gives findings, researcher notes, architect plan, and an agent that
 // names none falls back to defaultOutput.
 func TestActorOutputShippedLabels(t *testing.T) {

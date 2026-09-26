@@ -309,9 +309,20 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		return b, false, false, nil, nil
 	}
 
-	b, done, rec, err := gateStep(ctx, rt, tx, b)
-	if err != nil {
-		return b, false, false, nil, fmt.Errorf("close round on marker: gate: %w", err)
+	// A reader has no check, so the gate never runs for it: done is true with
+	// no record, exactly as an ungated writer.
+	var (
+		done bool
+		rec  *store.GateRecord
+	)
+	if b.Shape == store.ShapeReader {
+		done = true
+	} else {
+		var err error
+		b, done, rec, err = gateStep(ctx, rt, tx, b)
+		if err != nil {
+			return b, false, false, nil, fmt.Errorf("close round on marker: gate: %w", err)
+		}
 	}
 	if !done {
 		return b, false, true, nil, nil
@@ -328,7 +339,10 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		gateSuffix = "\n" + gateLine(b.Name, b.Round, *rec, tail)
 	}
 
-	reportPath := rt.Store.ReportPath(b.Name, b.Round)
+	reportPath, serr := writeReaderSummary(rt, b)
+	if serr != nil {
+		slog.Warn("reader summary not written", "binding", b.Name, "round", b.Round, "err", serr)
+	}
 	if _, err := os.Stat(reportPath); err == nil {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
 		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
@@ -348,6 +362,19 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 }
 
 func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord, usage *usage.Usage, rusage *store.Rusage, prior *usage.Tokens) (store.Binding, error) {
+	// A reader's report is its artifact directory's summary.md: it is written
+	// here from the runner's final message when the runner wrote none itself,
+	// and it is the path the report entry records. A writer's report is the
+	// flat NNN-report.md the caller computed.
+	if p, err := writeReaderSummary(rt, b); err != nil {
+		slog.Warn("reader summary not written", "binding", b.Name, "round", b.Round, "err", err)
+	} else {
+		path = p
+	}
+	// The round's throwaway worktree goes away at close, after the summary is
+	// on disk: the artifact directory lives under the binding, not the scratch.
+	removeReaderScratch(ctx, rt, b, b.Round)
+
 	now := rt.Now().UTC()
 	roundStart := b.RoundStartedAt
 
@@ -417,7 +444,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	payload = pFirst + pRest
 
 	closed := ""
-	if !HasEntry(entries, b.Round, store.DirToPlanner, store.KindDiff) {
+	if b.Shape != store.ShapeReader && !HasEntry(entries, b.Round, store.DirToPlanner, store.KindDiff) {
 		d := captureDeps(rt)
 		result := capture.RoundDiff(ctx, d, tx, b)
 		facts := capture.CommitFacts(ctx, d, b)

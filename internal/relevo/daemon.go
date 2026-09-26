@@ -147,6 +147,10 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// runs before the no-bindings early return: a machine whose sessions have
 	// all ended is exactly the one left carrying stale records.
 	d.safely("planner prune", func() { d.prunePlanners() })
+	// A reader round's scratch worktree is throwaway: leftovers from a crash
+	// go away here, before the no-bindings early return, because a machine
+	// whose readers are all gone is exactly the one left carrying them.
+	d.safely("scratch sweep", func() { sweepReaderScratch(ctx, d.rt) })
 	// Before the first tick of this process, and after the tarball import
 	// ListArchived runs, every archived record the mirror has not seen is
 	// ingested (P3d §4.2, §4.5).
@@ -405,6 +409,48 @@ func mirrorArchived(ctx context.Context, rt Runtime) {
 				"rounds", stats.Rounds, "events", stats.Events,
 				"artifacts", stats.Artifacts, "transcript", stats.TranscriptRecords)
 		}
+	}
+}
+
+// sweepReaderScratch removes the scratch worktrees whose reader round is no
+// longer open -- the daemon's cleanup of leftovers a crash left behind. It
+// keeps exactly the scratch of each open reader round: a reader whose round is
+// open needs its tree, and every other entry, including one whose binding is
+// gone, goes. Errors are logged per entry by SweepScratch's own join and never
+// fail the tick.
+func sweepReaderScratch(ctx context.Context, rt Runtime) {
+	if rt.Git == nil {
+		return
+	}
+	keep := map[string]int{}
+	bindings, err := rt.Store.List()
+	if err != nil {
+		slog.Warn("scratch sweep: list bindings", "err", err)
+		return
+	}
+	for _, b := range bindings {
+		if b.Shape != store.ShapeReader {
+			continue
+		}
+		entries, err := rt.Store.ReadLog(b.Name)
+		if err != nil {
+			slog.Warn("scratch sweep: read log", "binding", b.Name, "err", err)
+			continue
+		}
+		if roundOpenIn(entries, b.Round) {
+			keep[b.Name] = b.Round
+		}
+	}
+
+	removed, err := SweepScratch(ctx, rt, func(name string, round int) bool {
+		r, ok := keep[name]
+		return ok && r == round
+	})
+	if err != nil {
+		slog.Warn("scratch sweep", "err", err)
+	}
+	for _, path := range removed {
+		slog.Info("removed scratch worktree", "path", path)
 	}
 }
 

@@ -736,7 +736,10 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// Exited after writing a report but without the marker: an exited
 	// process cannot be mid-write, so the report is trusted and the
 	// omission noted (spec §4.4).
-	reportPath := rt.Store.ReportPath(b.Name, b.Round)
+	reportPath, serr := writeReaderSummary(rt, b)
+	if serr != nil {
+		slog.Warn("reader summary not written", "binding", b.Name, "round", b.Round, "err", serr)
+	}
 	if _, err := os.Stat(reportPath); err == nil {
 		_, m, _, err := gateOnLimit(ctx, rt, tx, b, currentBuilderTail(rt, b, availability.LimitScanLines), false)
 		if err != nil {
@@ -997,7 +1000,7 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// delivery (#144), exactly as the pane path orders it: the reviewer
 	// sees the gate's output, so it starts after the gate and before the
 	// planner is told.
-	if wantVerify {
+	if wantVerify && next.Shape != store.ShapeReader {
 		gateLogPath := ""
 		if rec != nil {
 			gateLogPath = rec.LogPath
