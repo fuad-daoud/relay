@@ -1,8 +1,10 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,6 +108,55 @@ func TestOpenIsIdempotent(t *testing.T) {
 	}
 	if want := embeddedVersion(t); count != want {
 		t.Errorf("schema_version has %d rows, want %d", count, want)
+	}
+}
+
+// TestOpenCurrentSchemaWhileAnotherProcessWrites pins that Open on a database
+// whose schema is already current takes no write lock: it must return
+// quickly even while another connection holds BEGIN IMMEDIATE.
+func TestOpenCurrentSchemaWhileAnotherProcessWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open (1st): %v", err)
+	}
+	d.Close()
+
+	oldTimeout := busyTimeoutMS
+	busyTimeoutMS = 200
+	t.Cleanup(func() { busyTimeoutMS = oldTimeout })
+
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)", path, busyTimeoutMS)
+	writer, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open writer: %v", err)
+	}
+	t.Cleanup(func() { writer.Close() })
+
+	ctx := context.Background()
+	conn, err := writer.Conn(ctx)
+	if err != nil {
+		t.Fatalf("writer.Conn: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		t.Fatalf("BEGIN IMMEDIATE: %v", err)
+	}
+	t.Cleanup(func() { _, _ = conn.ExecContext(ctx, "ROLLBACK") })
+
+	start := time.Now()
+	d2, err := Open(path)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Open (2nd) while another connection holds the write lock: %v", err)
+	}
+	defer d2.Close()
+	if elapsed >= 2*time.Second {
+		t.Errorf("Open took %s, want < 2s: a current schema must not wait on the write lock", elapsed)
+	}
+	if d2.Newer() {
+		t.Error("Newer() = true, want false")
 	}
 }
 
