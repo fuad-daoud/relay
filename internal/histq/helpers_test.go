@@ -1,17 +1,16 @@
 package histq
 
 import (
+	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// The shared Task 3 fixture: ten literal rows across three bindings, two
-// repos, two features and three builders, with outcomes reported×6 halted×2
-// exited×1 open×1 over two days. Costs and token counts are round numbers
-// so every sum below is checkable by hand; rows 3 and 8 carry an "unknown"
-// cost basis and row 5 has no cost, no commits and no duration at all.
-
+// The shared fixture: ten literal rows across three bindings, two repos, two
+// features and three builders, in the order the tests index them by, so the
+// builders below concatenate to it exactly. Rows 3 and 8 carry an "unknown"
+// cost basis; row 5 has no cost, no commits and no duration.
 const (
 	fxRepoAPI         = "https://github.com/o/api"
 	fxRepoWeb         = "https://github.com/o/web"
@@ -23,7 +22,8 @@ const (
 // fxLoc renders day keys in UTC, so the fixture's dates are the test's.
 var fxLoc = time.UTC
 
-// fxDay is a 2026-09-<day> timestamp at hour:00 UTC.
+var parseNow = time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+
 func fxDay(day, hour int) time.Time {
 	return time.Date(2026, 9, day, hour, 0, 0, 0, time.UTC)
 }
@@ -36,6 +36,13 @@ func fxInt(v int) *int           { return &v }
 // fixtureRows is the ten-row fixture, newest-first order deliberately not
 // assumed: Group and Apply must work on any order.
 func fixtureRows() []db.RoundRow {
+	rows := fixtureAPIRows()
+	rows = append(rows, fixtureWebRows()...)
+	rows = append(rows, fixtureInfraRows()...)
+	return append(rows, fixtureAPIRound4()...)
+}
+
+func fixtureAPIRows() []db.RoundRow {
 	return []db.RoundRow{
 		{
 			BindingID: "b1", BindingName: "api",
@@ -79,6 +86,11 @@ func fixtureRows() []db.RoundRow {
 			InTokens: fxInt64(500), Server: fxStr("contabo"),
 			DurationMS: fxInt64(1_800_000),
 		},
+	}
+}
+
+func fixtureWebRows() []db.RoundRow {
+	return []db.RoundRow{
 		{
 			BindingID: "b2", BindingName: "web",
 			Repo: fxStr(fxRepoWeb), Feature: fxStr("search"),
@@ -117,6 +129,11 @@ func fixtureRows() []db.RoundRow {
 			InTokens: fxInt64(3000), Server: fxStr("local"),
 			DurationMS: fxInt64(3_000_000),
 		},
+	}
+}
+
+func fixtureInfraRows() []db.RoundRow {
+	return []db.RoundRow{
 		{
 			BindingID: "b3", BindingName: "infra",
 			Repo: fxStr(fxRepoAPI), Feature: fxStr("checkout"),
@@ -156,6 +173,11 @@ func fixtureRows() []db.RoundRow {
 			InTokens: fxInt64(2500), ReportOutcome: fxStr("done"), Server: fxStr("local"),
 			DurationMS: fxInt64(4_800_000),
 		},
+	}
+}
+
+func fixtureAPIRound4() []db.RoundRow {
+	return []db.RoundRow{
 		{
 			BindingID: "b1", BindingName: "api",
 			Repo: fxStr(fxRepoWeb), Feature: fxStr("search"),
@@ -172,8 +194,14 @@ func fixtureRows() []db.RoundRow {
 	}
 }
 
-// fxClosed is StartedAt + d, for the fixture rows that have one.
 func fxClosed(day, hour int, d time.Duration) *time.Time {
 	t := fxDay(day, hour).Add(d)
 	return &t
+}
+
+func eqStr(t *testing.T, name, got, want string) {
+	t.Helper()
+	if got != want {
+		t.Errorf("%s = %q, want %q", name, got, want)
+	}
 }
