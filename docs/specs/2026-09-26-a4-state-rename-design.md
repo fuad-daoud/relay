@@ -11,12 +11,24 @@ Date: 2026-09-26. It amends `docs/specs/2026-09-24-cockpit-design.md` §3.7-§3.
 | D2 | **Per-round artifact directories** (`NNN-<actor>/`, `summary.md`, §3.7's spool row) move to **A5**, their only consumer. A4 keeps the flat `NNN-*` round files. |
 | D3 | **Internal identifiers stay** for now: the `internal/roles` package, `RoleRegistry`, `harness.Role*`, option fields named `Role`. The owner renames them much later. A4 renames what a user, a planner or another binary sees. |
 
-## 2. Vocabulary
+## 2. Vocabulary (confirmed by the owner, 2026-09-26)
 
-- **Actor:** what a binding runs, chosen at bind and fixed (§3.4).
-- **Candidate:** which configured model ran a round.
-- **Runner:** the process slot that runs a binding's rounds. This is today's
-  `builder` endpoint.
+- **Actor**: config only. It links an agent to an ordered candidate list, with a tier
+  and a check. An actor never runs by itself.
+- **Runner**: the live thing. A binding has one runner. The runner **plays** one actor,
+  fixed at bind (§3.4), and each of its rounds runs on one **candidate**. Today's
+  `builder` endpoint is the runner.
+- Words for something running say **runner**:
+  - `runner_status`;
+  - `to_runner`;
+  - "sent to the builder runner" in `relevo wait`;
+  - `runners 3/3` in serve status;
+  - the statusline and the TUI.
+- "Actor" appears only where the config is meant:
+  - `bind --actor <name>`, which picks the actor the runner plays;
+  - the `:actors` view;
+  - the field naming it: `runner.actor` in the binding record, `actor` in
+    `status --json`.
 
 `builder` stays valid **only** as the name of the seeded writer actor.
 
@@ -38,7 +50,7 @@ Date: 2026-09-26. It amends `docs/specs/2026-09-24-cockpit-design.md` §3.7-§3.
 |---|---|
 | `builder` (the Endpoint) | `runner` |
 | `builder_candidate` | `candidate` (the current round's) |
-| `role` ("" = builder) | `actor`, always set; `builder` is written out, not implied by "" |
+| `role` ("" = builder) | `runner.actor`, always set; `builder` is written out, not implied by "" |
 | `builder_missing_since` | `runner_missing_since` |
 | `consults[].role` | `consults[].actor` |
 | log entry `builder_session` | `runner_session` |
@@ -53,7 +65,7 @@ any newer format. That is D1's break, and it is intended.
 |---|---|
 | `builder_candidate` | `candidate` |
 | `builder_name` | `candidate_name` |
-| `role` (omitted for builder) | `actor`, always present |
+| `role` (omitted for builder) | `actor` (the actor the runner plays), always present |
 | `builder_kind` | `harness` |
 | `builder_definition`, `builder_definition_custom` | `agent_definition`, `agent_definition_custom` |
 | `builder_status` | `runner_status` |
@@ -108,7 +120,7 @@ opencode plugin reads `actor` only.
 - **Config:** already done by A1 and A2.
 - **State:** the DB migration 007 (§3.4) runs on open, as every schema migration does.
 - **Binding records:** they are rewritten from format 6 to 7 on first load. `actor`
-  comes from `role`, or `builder`; the renamed keys are moved.
+  comes from `role`, or `builder`, into `runner.actor`; the renamed keys are moved.
 - **Open rounds:** the rewrite refuses while any round is open. `relevo status` says
   `migration pending: N rounds open`, and nothing is lost. The record rewrite runs at
   daemon start and at first CLI open once no round is open. It is recorded as a config
