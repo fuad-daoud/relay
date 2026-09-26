@@ -78,28 +78,33 @@ func joinTailLines(lines []string, n int) string {
 // empty file, or n <= 0), but over renderStream's output, whose entries may
 // themselves contain newlines.
 //
-// When path exists on disk it reads backwards in doubling windows
-// (streamTailWindow first), dropping the first, partial line of a window that
-// does not start at 0 and rendering the rest with their absolute offsets.
-// When the file is not on disk -- a sealed round -- it reads it whole through
-// read and renders it.
-func streamTail(path string, read func(string) ([]byte, error), segs []store.StreamSegment, fallback string, n int) string {
+// from is the earliest byte it may read: 0 for the whole file, a later offset
+// to ignore bytes another process wrote into the same file. When path exists
+// on disk it reads backwards in doubling windows (streamTailWindow first),
+// dropping the first, partial line of a window that does not start at from and
+// rendering the rest with their absolute offsets. When the file is not on disk
+// -- a sealed round -- it reads it whole through read and renders the bytes at
+// from or later.
+func streamTail(path string, read func(string) ([]byte, error), segs []store.StreamSegment, fallback string, n int, from int64) string {
 	if n <= 0 {
 		return ""
 	}
-	if tail, ok := diskStreamTail(path, segs, fallback, n); ok {
+	if tail, ok := diskStreamTail(path, segs, fallback, n, from); ok {
 		return tail
 	}
 	data, err := read(path)
 	if err != nil {
 		return ""
 	}
-	return joinTailLines(renderedLines(renderStream(data, segs, fallback)), n)
+	if from > int64(len(data)) {
+		return ""
+	}
+	return joinTailLines(renderedLines(renderStreamFrom(data[from:], from, segs, fallback)), n)
 }
 
 // diskStreamTail is streamTail's backwards reader. ok is false when the file
 // is not on disk (or cannot be read), so the caller falls back to read.
-func diskStreamTail(path string, segs []store.StreamSegment, fallback string, n int) (string, bool) {
+func diskStreamTail(path string, segs []store.StreamSegment, fallback string, n int, from int64) (string, bool) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", false
@@ -110,17 +115,22 @@ func diskStreamTail(path string, segs []store.StreamSegment, fallback string, n 
 		return "", false
 	}
 	size := fi.Size()
+	if from > size {
+		// Nothing at or after from; the file is on disk, so read must not
+		// supply bytes from before it.
+		return "", true
+	}
 	for window := int64(streamTailWindow); ; window *= 2 {
 		start := size - window
-		if start < 0 {
-			start = 0
+		if start < from {
+			start = from
 		}
 		buf := make([]byte, size-start)
 		if _, err := f.ReadAt(buf, start); err != nil && err != io.EOF {
 			return "", false
 		}
 		body, base := buf, start
-		if start > 0 {
+		if start > from {
 			i := bytes.IndexByte(body, '\n')
 			if i < 0 {
 				// No complete line in the window yet: read a bigger one.
@@ -130,7 +140,7 @@ func diskStreamTail(path string, segs []store.StreamSegment, fallback string, n 
 			body = body[i+1:]
 		}
 		lines := renderedLines(renderStreamFrom(body, base, segs, fallback))
-		if len(lines) >= n || start == 0 {
+		if len(lines) >= n || start == from {
 			return joinTailLines(lines, n), true
 		}
 	}
@@ -145,7 +155,24 @@ func builderTail(rt Runtime, b store.Binding, n int) string {
 	if b.Builder.LogPath != "" && b.Builder.LogPath == rt.Store.BuilderLogPath(b.Name, b.Round) {
 		return logTail(b.Builder.LogPath, n)
 	}
-	return streamTail(rt.Store.BuilderStreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n)
+	return streamTail(rt.Store.BuilderStreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, 0)
+}
+
+// currentBuilderTail is builderTail limited to what the current builder
+// process wrote. A mid-round switch appends the new process's bytes to the
+// same stream file, so scanning the whole round would charge the outgoing
+// builder's lines -- and its provider's quota text -- to the incoming one.
+// The legacy-log branch is unchanged: such a round's log is the round's own
+// and every decision about it already keeps to that log.
+func currentBuilderTail(rt Runtime, b store.Binding, n int) string {
+	if b.Builder.LogPath != "" && b.Builder.LogPath == rt.Store.BuilderLogPath(b.Name, b.Round) {
+		return logTail(b.Builder.LogPath, n)
+	}
+	from := int64(0)
+	if b.Builder.StreamRound == b.Round {
+		from = b.Builder.StreamStart
+	}
+	return streamTail(rt.Store.BuilderStreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, from)
 }
 
 // roundSegments is the segment list of one round: the live endpoint's own

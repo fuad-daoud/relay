@@ -127,12 +127,12 @@ func TestStreamTail(t *testing.T) {
 
 	for _, n := range []int{1, 3, 40} {
 		want := strings.Join(all[len(all)-n:], "\n")
-		if got := streamTail(path, os.ReadFile, segs, "claude", n); got != want {
+		if got := streamTail(path, os.ReadFile, segs, "claude", n, 0); got != want {
 			t.Errorf("streamTail(n=%d) = %q, want %q", n, got, want)
 		}
 		// The same bytes through the read fallback, as a sealed round.
 		read := func(string) ([]byte, error) { return []byte(stream), nil }
-		if got := streamTail(filepath.Join(dir, "absent.jsonl"), read, segs, "claude", n); got != want {
+		if got := streamTail(filepath.Join(dir, "absent.jsonl"), read, segs, "claude", n, 0); got != want {
 			t.Errorf("streamTail read fallback (n=%d) = %q, want %q", n, got, want)
 		}
 	}
@@ -162,7 +162,7 @@ func TestStreamTail(t *testing.T) {
 		t.Fatalf("boundary n = %d, out of range for %d rendered lines", n, len(crossAll))
 	}
 	want := strings.Join(crossAll[len(crossAll)-n:], "\n")
-	if got := streamTail(crossPath, os.ReadFile, crossSegs, "claude", n); got != want {
+	if got := streamTail(crossPath, os.ReadFile, crossSegs, "claude", n, 0); got != want {
 		t.Errorf("streamTail across a segment boundary = %q, want %q", got, want)
 	}
 
@@ -184,14 +184,14 @@ func TestStreamTail(t *testing.T) {
 		t.Fatalf("rendered only %d lines, want at least 40", len(fewAll))
 	}
 	wantFew := strings.Join(fewAll[len(fewAll)-40:], "\n")
-	if got := streamTail(fewPath, os.ReadFile, nil, "claude", 40); got != wantFew {
+	if got := streamTail(fewPath, os.ReadFile, nil, "claude", 40, 0); got != wantFew {
 		t.Errorf("streamTail(few, 40) = %d bytes, want the last 40 rendered lines (%d bytes); a fixed 64 KiB window is not enough", len(got), len(wantFew))
 	}
 
-	if got := streamTail(filepath.Join(dir, "missing.jsonl"), os.ReadFile, segs, "claude", 5); got != "" {
+	if got := streamTail(filepath.Join(dir, "missing.jsonl"), os.ReadFile, segs, "claude", 5, 0); got != "" {
 		t.Errorf("streamTail(missing) = %q, want empty", got)
 	}
-	if got := streamTail(path, os.ReadFile, segs, "claude", 0); got != "" {
+	if got := streamTail(path, os.ReadFile, segs, "claude", 0, 0); got != "" {
 		t.Errorf("streamTail(n=0) = %q, want empty", got)
 	}
 }
