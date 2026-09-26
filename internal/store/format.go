@@ -6,32 +6,21 @@ import (
 )
 
 // BindingFormat is the format of the Binding JSON this binary writes. Format 1
-// is today's shape and is stored as an *absent* "format" field, so a binding
-// saved today stays byte-identical to one saved before the field existed; from
-// format 2 on the number is written. Format 2 adds "role". Format 3 adds
-// `builder.remote_live`, which recordFormat never stamps: it is a poll cache
-// re-fetched on every tick, so an older relevo that drops it on rewrite loses
-// nothing, while stamping it would lock older relevo out of loading a running
-// remote binding (store.go Load refuses a newer format). Format 4 adds
-// `builder.stream_start`, never stamped: an older relevo that drops it makes
-// the current process's usage reads start at byte 0 -- an over-count on a
-// same-harness switch in that round, never lost data. Format 5 adds
-// `builder.stream_segments`, never stamped: an older relevo that drops it
-// renders a switched round with the endpoint's kind, which is the behaviour
-// before format 5.
+// is stored as an *absent* "format" field, so a binding saved today is
+// byte-identical to one saved before the field existed; from format 2 on the
+// number is written.
 //
-// Bump it whenever Binding's JSON shape changes. An older relevo that meets a
-// newer format refuses to save, because its rewrite would erase every field it
-// does not know (#372).
+// Later fields (builder.remote_live, builder.stream_start,
+// builder.stream_segments) are poll caches recordFormat never stamps: an older
+// relevo that drops one loses nothing, while stamping it would lock that older
+// relevo out of loading the binding. Bump BindingFormat whenever Binding's
+// JSON shape changes; an older relevo that meets a newer format refuses to
+// save, because its rewrite would erase fields it does not know.
 const BindingFormat = 5
 
-// recordFormat is the format to write b at: the lowest format that can hold
-// the record (#382 §5.2). A binding whose Role is empty is format 1, so it is
-// byte-identical to a binding written before the field existed; any other role
-// is format 2. An older relevo then refuses to save exactly the bindings it
-// would get wrong, and keeps working on every other one. RemoteLive (format 3),
-// StreamStart (format 4) and StreamSegments (format 5) never raise the
-// record's format; see BindingFormat.
+// recordFormat is the format to write b at: the lowest format that holds the
+// record. A binding whose Role is empty is format 1; any other role is format
+// 2, so an older relevo refuses exactly the bindings it would get wrong.
 func recordFormat(b Binding) int {
 	if b.Role != "" {
 		return 2
@@ -39,9 +28,8 @@ func recordFormat(b Binding) int {
 	return 1
 }
 
-// storedFormat is the number actually written for a known format: 1 is stored
-// as 0 so that the "format" key is omitted, and every other format is written
-// as itself.
+// storedFormat is the number written for a known format: 1 becomes 0 so the
+// "format" key is omitted, and every other format is written as itself.
 func storedFormat(n int) int {
 	if n == 1 {
 		return 0
@@ -50,19 +38,15 @@ func storedFormat(n int) int {
 }
 
 // ErrNewerFormat reports a binding or planner record written by a relevo that
-// knows a newer format. Writing it back would erase the fields this relevo does
-// not understand, so callers refuse instead, and nothing is written.
+// knows a newer format; writing it back would erase fields this relevo does
+// not understand, so callers refuse instead.
 type ErrNewerFormat struct {
-	// Kind names the record: "binding" or "planner record".
 	Kind string
 	Name string
-	// Have is the format on disk; Know is the format this relevo writes.
 	Have int
 	Know int
 }
 
-// ErrNewerFormatSentinel is what errors.Is matches for every ErrNewerFormat,
-// whatever its Kind, Name or formats.
 var ErrNewerFormatSentinel = errors.New("relevo: newer format")
 
 func (e *ErrNewerFormat) Error() string {
@@ -70,14 +54,12 @@ func (e *ErrNewerFormat) Error() string {
 		e.Kind, e.Name, e.Have, e.Know)
 }
 
-// Is makes errors.Is(err, ErrNewerFormatSentinel) match any ErrNewerFormat.
 func (e *ErrNewerFormat) Is(target error) bool {
 	return target == ErrNewerFormatSentinel
 }
 
-// KnownState reports whether s is a state this relevo defines. A false answer
-// means a newer relevo wrote it, so the daemon leaves the binding alone rather
-// than reconciling an unknown state as live.
+// KnownState reports whether s is a state this relevo defines; false means a
+// newer relevo wrote it, so the daemon leaves the binding alone.
 func KnownState(s State) bool {
 	switch s {
 	case StateActive, StateNeedsYou, StateBroken, StateDone, StatePaused:

@@ -21,9 +21,7 @@ import (
 )
 
 // ArchivedBinding is one archived record: the binding it was, the record id
-// its events and sealed round files hang off, and when it was archived
-// (P3d §3). ArchivedAt is the tarball's stamp for a record imported from
-// .archive/, and the gc/unbind stamp for one archived by this binary.
+// its events and sealed round files hang off, and when it was archived.
 type ArchivedBinding struct {
 	Binding    Binding
 	RecordID   string
@@ -31,12 +29,7 @@ type ArchivedBinding struct {
 }
 
 // SealAll seals every round present among name's NNN-* files, ignoring
-// Sealable: the archive and delete paths call it once the builder has been
-// stopped, so nothing that still reads an open round is in flight (P3d §4.1).
-//
-// It is the counterpart of the daemon's per-round seal (sealRounds), which
-// consults Sealable because a round may still be read; here the whole binding
-// is going away, so every round's files go into round_file.
+// Sealable: the caller has already stopped the builder.
 func (t *Tx) SealAll(name string) (int, error) {
 	rounds, err := t.s.RoundsOnDisk(name)
 	if err != nil {
@@ -54,10 +47,8 @@ func (t *Tx) SealAll(name string) (int, error) {
 	return total, nil
 }
 
-// ListArchived returns every archived record, oldest archived_at first. It
-// imports the tarballs in .archive/ first (a file that is present is
-// imported, §4.2), so a root migrated from a pre-P3d relevo answers from the
-// database on the first read.
+// ListArchived returns every archived record, oldest archived_at first,
+// importing the tarballs in .archive/ first.
 func (s *Store) ListArchived() ([]ArchivedBinding, error) {
 	if err := s.importTarballs(); err != nil {
 		return nil, err
@@ -90,8 +81,7 @@ func (s *Store) ListArchived() ([]ArchivedBinding, error) {
 	return out, nil
 }
 
-// ArchivedLog returns the events of the archived record recordID, decoded the
-// way readLog decodes a live binding's (P3d §4.1).
+// ArchivedLog returns the events of the archived record recordID.
 func (s *Store) ArchivedLog(recordID string) ([]LogEntry, error) {
 	d, err := s.dbForRead()
 	if err != nil {
@@ -107,9 +97,6 @@ func (s *Store) ArchivedLog(recordID string) ([]LogEntry, error) {
 	return logEntriesOf(events)
 }
 
-// ArchivedAtOf returns the archived stamp of the record recordID and whether
-// a timestamp was found. It is what the archive source reports to the mirror
-// (ingest.source), which needs the stamp the way tarSource did.
 func (s *Store) ArchivedAtOf(recordID string) (time.Time, bool) {
 	d, err := s.dbForRead()
 	if err != nil || d == nil {
@@ -122,9 +109,7 @@ func (s *Store) ArchivedAtOf(recordID string) (time.Time, bool) {
 	return *rec.ArchivedAt, true
 }
 
-// ArchivedRecord returns the archived record recordID decoded into a Binding,
-// and whether it was found. It fails when the record was written by a newer
-// relevo, exactly as load does for a live one.
+// ArchivedRecord returns recordID decoded into a Binding, and whether it was found.
 func (s *Store) ArchivedRecord(recordID string) (Binding, bool, error) {
 	d, err := s.dbForRead()
 	if err != nil {
@@ -144,9 +129,7 @@ func (s *Store) ArchivedRecord(recordID string) (Binding, bool, error) {
 	return b, true, nil
 }
 
-// ArchivedFile returns the sealed bytes of one of recordID's round files, and
-// whether the record has such a row. It is how the archive source reads an
-// NNN-* member (P3d §4.5).
+// ArchivedFile returns the sealed bytes of one of recordID's round files.
 func (s *Store) ArchivedFile(recordID, name string) ([]byte, bool, error) {
 	d, err := s.dbForRead()
 	if err != nil {
@@ -162,8 +145,7 @@ func (s *Store) ArchivedFile(recordID, name string) ([]byte, bool, error) {
 	return body, ok, nil
 }
 
-// ArchivedFiles returns the basenames of recordID's sealed round files,
-// sorted.
+// ArchivedFiles returns the basenames of recordID's sealed round files.
 func (s *Store) ArchivedFiles(recordID string) ([]string, error) {
 	d, err := s.dbForRead()
 	if err != nil {
@@ -176,9 +158,8 @@ func (s *Store) ArchivedFiles(recordID string) ([]string, error) {
 }
 
 // importTarballs imports every tarball present in .archive/ and removes each
-// one it imported (§4.2). A tarball that does not parse is left in place with
-// one warning per process, so the next process retries it and a corrupt file
-// never fails a read verb. .archive/ itself is removed once it is empty.
+// one it imported. A tarball that does not parse is left in place with one
+// warning per process, so a corrupt file never fails a read verb.
 func (s *Store) importTarballs() error {
 	paths, err := filepath.Glob(filepath.Join(s.ArchiveDir(), "*.tar.gz"))
 	if err != nil {
@@ -204,16 +185,14 @@ func (s *Store) importTarballs() error {
 	return nil
 }
 
-// importTarball imports one gc tarball: its bind.json becomes a record that is
+// importTarball imports one gc tarball: its bind.json becomes a record
 // archived at once, its log.jsonl the record's events, and each NNN-* member a
-// round_file row. All of it runs in one transaction, and the tarball is
-// removed only after that transaction commits, so a crash mid-import leaves
-// the tarball for the next attempt (§4.2, §6).
+// round_file row, all in one transaction. The tarball is removed only after
+// that transaction commits, so a crash mid-import leaves it for the next pass.
 func (s *Store) importTarball(path string) error {
 	fileName, stamp, ok := parseArchiveStamp(filepath.Base(path))
 	if !ok {
-		// Not today's <name>-YYYYMMDD-HHMMSS.tar.gz layout: not ours to
-		// import, and not ours to remove.
+		// Not today's <name>-YYYYMMDD-HHMMSS.tar.gz layout: not ours.
 		return nil
 	}
 
@@ -247,11 +226,7 @@ func (s *Store) importTarball(path string) error {
 		return err
 	}
 
-	// §4.2 step 2: RecordPut a fresh record and RecordArchive it at once, so
-	// it never collides with a live name. RecordPut's lookup is the live row,
-	// so when a live binding already holds the name the archived record is
-	// inserted directly instead -- the import must never touch a live
-	// binding's row.
+	// A live binding holding the name is never touched: insert archived directly.
 	live, _, err := d.RecordGet(s.owner, name)
 	if err != nil {
 		return err
@@ -268,72 +243,84 @@ func (s *Store) importTarball(path string) error {
 	}
 
 	err = d.Tx(func(dtx *db.Tx) error {
-		var id string
-		var perr error
-		if live.ID != "" {
-			id, perr = dtx.RecordPutArchived(rec, stamp)
-		} else {
-			if id, perr = dtx.RecordPut(rec); perr != nil {
-				return perr
-			}
-			perr = dtx.RecordArchive(s.owner, name, stamp)
-		}
+		id, perr := importArchivedRecord(dtx, rec, live.ID != "", stamp)
 		if perr != nil {
 			return perr
 		}
-
-		if logRaw, ok := files["log.jsonl"]; ok {
-			entries, derr := decodeLog(bytes.NewReader(logRaw.body))
-			if derr != nil {
-				return fmt.Errorf("%s: %w", path, derr)
-			}
-			// entry_json keeps each line's exact bytes, as P3a's import does
-			// (§4.2 step 3).
-			lines := splitLogLines(logRaw.body)
-			if len(lines) != len(entries) {
-				return fmt.Errorf("%s: %d entries but %d lines", path, len(entries), len(lines))
-			}
-			evs := make([]db.RecordEvent, 0, len(entries))
-			for i, e := range entries {
-				evs = append(evs, recordEventOf(e, string(lines[i])))
-			}
-			if err := dtx.EventReplaceAll(id, evs); err != nil {
-				return err
-			}
+		if err := importTarballLog(dtx, path, id, files); err != nil {
+			return err
 		}
-
-		now := time.Now().UTC()
-		for base, f := range files {
-			round, isRound := roundOfFile(base)
-			if !isRound {
-				continue
-			}
-			if err := dtx.RoundFilePut(id, base, round, f.body, f.mtime, now); err != nil {
-				return err
-			}
-		}
-		return nil
+		return importTarballRoundFiles(dtx, id, files)
 	})
 	if err != nil {
 		return err
 	}
 
 	// Committed: only now is the tarball removed. A removal that fails is
-	// logged, never returned: the import itself succeeded and the next pass
-	// re-imports the same bytes idempotently.
+	// logged, never returned: the next pass re-imports the same bytes
+	// idempotently.
 	if rerr := os.Remove(path); rerr != nil {
 		slog.Warn("import: could not remove the imported tarball", "path", path, "err", rerr)
 	}
 	return nil
 }
 
+// importArchivedRecord puts and archives the imported record.
+func importArchivedRecord(dtx *db.Tx, rec db.Record, live bool, stamp time.Time) (string, error) {
+	if live {
+		return dtx.RecordPutArchived(rec, stamp)
+	}
+	id, err := dtx.RecordPut(rec)
+	if err != nil {
+		return "", err
+	}
+	if err := dtx.RecordArchive(rec.Owner, rec.Name, stamp); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// importTarballLog writes the tarball's log.jsonl member as the record's
+// events; entry_json keeps each line's exact bytes.
+func importTarballLog(dtx *db.Tx, path, id string, files map[string]tarFile) error {
+	logRaw, ok := files["log.jsonl"]
+	if !ok {
+		return nil
+	}
+	entries, err := decodeLog(bytes.NewReader(logRaw.body))
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	lines := splitLogLines(logRaw.body)
+	if len(lines) != len(entries) {
+		return fmt.Errorf("%s: %d entries but %d lines", path, len(entries), len(lines))
+	}
+	evs := make([]db.RecordEvent, 0, len(entries))
+	for i, e := range entries {
+		evs = append(evs, recordEventOf(e, string(lines[i])))
+	}
+	return dtx.EventReplaceAll(id, evs)
+}
+
+// importTarballRoundFiles writes each NNN-* member as a round_file row.
+func importTarballRoundFiles(dtx *db.Tx, id string, files map[string]tarFile) error {
+	now := time.Now().UTC()
+	for base, f := range files {
+		round, isRound := roundOfFile(base)
+		if !isRound {
+			continue
+		}
+		if err := dtx.RoundFilePut(id, base, round, f.body, f.mtime, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // tarballWarned remembers the tarball paths this process has already warned
-// about, so a corrupt one is logged once per process however often
-// ListArchived runs.
+// about, so a corrupt one is logged once per process.
 var tarballWarned sync.Map
 
-// warnTarballOnce logs the first -- and only the first -- failure to import
-// one tarball in this process.
 func warnTarballOnce(path string, err error) {
 	if _, loaded := tarballWarned.LoadOrStore(path, struct{}{}); loaded {
 		return
@@ -342,9 +329,7 @@ func warnTarballOnce(path string, err error) {
 }
 
 // parseArchiveStamp splits a tarball's file name into the binding name and the
-// stamp archive() wrote into it: <name>-YYYYMMDD-HHMMSS.tar.gz. It replaces
-// ListArchives' name parsing now that the file name is only the import's
-// input.
+// stamp archive() wrote into it: <name>-YYYYMMDD-HHMMSS.tar.gz.
 func parseArchiveStamp(base string) (name string, at time.Time, ok bool) {
 	base = strings.TrimSuffix(base, ".tar.gz")
 	if len(base) < len(archiveStampLayout)+2 {
@@ -369,25 +354,21 @@ type tarFile struct {
 }
 
 // readTarFiles reads every regular member of path whose name is
-// "<top>/<base>", the flat layout tarGzDir wrote, keyed by basename. top is
-// the top-level directory the first member named ("" when it has none).
-//
-// A member over maxArchiveFileBytes fails the read rather than ballooning
-// memory: relevo's own state files are small, and a runaway file means
-// something has gone wrong. This is tarGzDir's inverse, moved here from
-// store.go so the tarball reader and the tarball importer live together.
+// "<top>/<base>", the flat layout tarGzDir wrote, keyed by basename, and
+// returns the top-level directory the first member named. A member over
+// maxArchiveFileBytes fails the read rather than ballooning memory.
 func readTarFiles(path string) (files map[string]tarFile, top string, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return nil, "", fmt.Errorf("%s: %w", path, err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 
 	files = map[string]tarFile{}
 	tr := tar.NewReader(gz)
@@ -406,8 +387,7 @@ func readTarFiles(path string) (files map[string]tarFile, top string, err error)
 		trimmed := strings.Trim(h.Name, "/")
 		parts := strings.SplitN(trimmed, "/", 2)
 		if len(parts) != 2 || parts[1] == "" || strings.Contains(parts[1], "/") {
-			// Not "<name>/<file>", or nested deeper: tarGzDir writes one
-			// flat directory, so this is not a member we understand.
+			// Not "<name>/<file>", or nested deeper: not a member we understand.
 			continue
 		}
 		if top == "" {

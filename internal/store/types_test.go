@@ -9,99 +9,55 @@ import (
 	"time"
 )
 
-func TestBindingRoundClosedTreeJSON(t *testing.T) {
-	t.Run("empty omits round_closed_tree key", func(t *testing.T) {
-		b := Binding{}
-		data, err := json.Marshal(b)
-		if err != nil {
-			t.Fatalf("Marshal: %v", err)
-		}
-		var decoded map[string]any
-		if err := json.Unmarshal(data, &decoded); err != nil {
-			t.Fatalf("Unmarshal: %v", err)
-		}
-		if _, ok := decoded["round_closed_tree"]; ok {
-			t.Errorf("expected round_closed_tree key to be omitted when empty, got JSON: %s", string(data))
-		}
-	})
+// TestBindingZeroValueOmitsOptionalKeys pins omitempty: a binding without a
+// group of optional fields must not serialise that group's keys, so a
+// bind.json written before the fields existed stays byte-identical.
+func TestBindingZeroValueOmitsOptionalKeys(t *testing.T) {
+	cases := []struct {
+		name   string
+		build  func() Binding
+		absent []string
+	}{
+		{"empty binding", func() Binding { return Binding{} }, []string{"round_closed_tree", "round_switches"}},
+		{"no consults", func() Binding { return newBinding("webshop", "/repo") }, []string{"consults", "consult_cap"}},
+		{"no repo ref or feature", func() Binding { return newBinding("webshop", "/repo") }, []string{"repo_ref", "feature", "transcript_locator"}},
+		{"no commit facts", func() Binding { return Binding{} }, []string{"branch", "base", "round_baseline_head"}},
+		{"no headless endpoint fields", func() Binding {
+			return Binding{Builder: Endpoint{AgentName: "b", PaneID: "w1:p2", Kind: "opencode"}}
+		}, []string{"mode", "pid", "started_at", "log_path", "stream_round", "stream_offset"}},
+	}
 
-	t.Run("non-empty includes round_closed_tree key", func(t *testing.T) {
-		const treeID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-		b := Binding{
-			RoundClosedTree: treeID,
-		}
-		data, err := json.Marshal(b)
-		if err != nil {
-			t.Fatalf("Marshal: %v", err)
-		}
-		var decoded map[string]any
-		if err := json.Unmarshal(data, &decoded); err != nil {
-			t.Fatalf("Unmarshal: %v", err)
-		}
-		got, ok := decoded["round_closed_tree"]
-		if !ok {
-			t.Fatalf("expected round_closed_tree key to be present when non-empty, got JSON: %s", string(data))
-		}
-		if got != treeID {
-			t.Errorf("round_closed_tree = %v, want %v", got, treeID)
-		}
-	})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(tc.build())
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			for _, key := range tc.absent {
+				if bytes.Contains(raw, []byte(`"`+key+`"`)) {
+					t.Errorf("serialised %q, which needs omitempty: %s", key, raw)
+				}
+			}
+		})
+	}
 }
 
-func TestBindingSwitchFieldsRoundTrip(t *testing.T) {
-	t.Run("round trip", func(t *testing.T) {
-		s := New(t.TempDir())
-		want := newBinding("webshop", "/repo")
-		want.RoundSwitches = 2
-		want.BuilderMissingSince = time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
-
-		if err := s.Save(want); err != nil {
-			t.Fatalf("Save: %v", err)
-		}
-		got, err := s.Load("webshop")
-		if err != nil {
-			t.Fatalf("Load: %v", err)
-		}
-		if got.RoundSwitches != want.RoundSwitches || !got.BuilderMissingSince.Equal(want.BuilderMissingSince) {
-			t.Errorf("switch fields mismatch: got %+v, want %+v", got, want)
-		}
-	})
-
-	// Only RoundSwitches is checked for omission at zero: encoding/json's
-	// omitempty never treats a zero-value struct (time.Time) as empty, so
-	// BuilderMissingSince always serialises regardless of the tag -- the same
-	// reason BuilderScreenAt/PlannerScreenAt above carry an inert omitempty,
-	// and the reason NudgedAt on Consult drops the tag rather than promise a
-	// disappearance that never happens.
-	t.Run("zero omits round_switches", func(t *testing.T) {
-		b := Binding{}
-		data, err := json.Marshal(b)
-		if err != nil {
-			t.Fatalf("Marshal: %v", err)
-		}
-		if bytes.Contains(data, []byte("round_switches")) {
-			t.Errorf("empty binding serialised \"round_switches\"; field needs omitempty, got JSON: %s", string(data))
-		}
-	})
-}
-
-func TestBindingWithoutConsultsSerialisesWithoutTheKeys(t *testing.T) {
-	// Every bind.json already on disk was written before consults existed.
-	// Loading and re-saving one must not add keys to it.
+func bindingWithSwitchFields() Binding {
 	b := newBinding("webshop", "/repo")
-
-	raw, err := json.Marshal(b)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	for _, key := range []string{"consults", "consult_cap"} {
-		if bytes.Contains(raw, []byte(key)) {
-			t.Errorf("empty binding serialised %q; both fields need omitempty", key)
-		}
-	}
+	b.RoundSwitches = 2
+	b.BuilderMissingSince = time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	return b
 }
 
-func TestConsultRoundTripsThroughJSON(t *testing.T) {
+func bindingWithRepoRef() Binding {
+	b := newBinding("webshop", "/repo")
+	b.RepoRef = &RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"}
+	b.Feature = "auth"
+	b.Planner.TranscriptLocator = "/home/x/.claude/projects/slug/S.jsonl"
+	return b
+}
+
+func bindingWithConsult() Binding {
 	b := newBinding("webshop", "/repo")
 	b.ConsultCap = 4
 	b.Consults = []Consult{{
@@ -114,50 +70,75 @@ func TestConsultRoundTripsThroughJSON(t *testing.T) {
 		State:        ConsultRunning,
 		SpawnedAt:    time.Unix(1757000000, 0).UTC(),
 	}}
+	return b
+}
 
-	raw, err := json.Marshal(b)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	var got Binding
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
+// TestBindingFieldGroupsRoundTrip pins that each optional field group survives
+// a marshal/unmarshal and that its non-zero values are written.
+func TestBindingFieldGroupsRoundTrip(t *testing.T) {
+	treeID := "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+	cases := []struct {
+		name  string
+		build func() Binding
+		want  []string
+	}{
+		{
+			name:  "round closed tree",
+			build: func() Binding { return Binding{RoundClosedTree: treeID} },
+			want:  []string{`"round_closed_tree"`},
+		},
+		{"switch fields", bindingWithSwitchFields, []string{`"round_switches"`}},
+		{
+			name:  "commit facts",
+			build: func() Binding { return Binding{Branch: "relevo/api-auth", Base: "c0ffee", RoundBaselineHead: "beef"} },
+			want:  []string{`"branch"`, `"base"`, `"round_baseline_head"`},
+		},
+		{"repo ref, feature and transcript locator", bindingWithRepoRef, []string{`"repo_ref"`, `"feature"`, `"transcript_locator"`}},
+		{"a consult and its cap", bindingWithConsult, []string{`"consults"`, `"consult_cap"`}},
 	}
 
-	if len(got.Consults) != 1 {
-		t.Fatalf("got %d consults, want 1", len(got.Consults))
-	}
-	if !reflect.DeepEqual(got.Consults[0], b.Consults[0]) {
-		t.Errorf("consult did not round-trip:\n got %+v\nwant %+v", got.Consults[0], b.Consults[0])
-	}
-	if got.ConsultCap != 4 {
-		t.Errorf("ConsultCap = %d, want 4", got.ConsultCap)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := tc.build()
+			raw, err := json.Marshal(in)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			for _, key := range tc.want {
+				if !bytes.Contains(raw, []byte(key)) {
+					t.Errorf("serialised value lacks %s: %s", key, raw)
+				}
+			}
+			var got Binding
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			if !reflect.DeepEqual(got, in) {
+				t.Errorf("round trip mismatch:\n got %+v\nwant %+v", got, in)
+			}
+		})
 	}
 }
 
-func TestSameBindingIgnoresNothingAndCatchesAConsult(t *testing.T) {
-	a := newBinding("webshop", "/repo")
-	b := newBinding("webshop", "/repo")
+// TestSameBindingDetectsAConsultChange pins SameBinding catching a slice
+// change the daemon must persist: an appended consult and a consult moving
+// running -> done.
+func TestSameBindingDetectsAConsultChange(t *testing.T) {
+	base := newBinding("webshop", "/repo")
+	withConsult := func(state ConsultState) Binding {
+		b := base
+		b.Consults = []Consult{{ID: "7f2a3c1d", Role: "reviewer", State: state}}
+		return b
+	}
 
-	if !SameBinding(a, b) {
+	if !SameBinding(base, newBinding("webshop", "/repo")) {
 		t.Fatal("two identically-built bindings compare different")
 	}
-
-	b.Consults = []Consult{{ID: "7f2a3c1d", Role: "reviewer", State: ConsultRunning}}
-	if SameBinding(a, b) {
-		t.Error("a binding differing only by an appended consult compares same; the daemon would skip the save")
+	if SameBinding(base, withConsult(ConsultRunning)) {
+		t.Error("an appended consult compares same; the daemon would skip the save")
 	}
-}
-
-func TestSameBindingCatchesAConsultStateChange(t *testing.T) {
-	a := newBinding("webshop", "/repo")
-	a.Consults = []Consult{{ID: "7f2a3c1d", Role: "reviewer", State: ConsultRunning}}
-
-	b := a
-	b.Consults = []Consult{{ID: "7f2a3c1d", Role: "reviewer", State: ConsultDone}}
-
-	if SameBinding(a, b) {
-		t.Error("a consult moving running -> done compares same; the daemon would never persist the transition")
+	if SameBinding(withConsult(ConsultRunning), withConsult(ConsultDone)) {
+		t.Error("running -> done compares same; the daemon would never persist the transition")
 	}
 }
 
@@ -181,20 +162,7 @@ func TestEndpointHeadless(t *testing.T) {
 	}
 }
 
-func TestEndpointHeadlessFieldsRoundTripAndAreOmittedWhenZero(t *testing.T) {
-	// A pane endpoint written by today's relevo carries none of the new keys.
-	pane := Endpoint{AgentName: "webshop-builder", PaneID: "w1:p2", Kind: "opencode"}
-	data, err := json.Marshal(pane)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	for _, key := range []string{"mode", "pid", "started_at", "log_path", "stream_round", "stream_offset"} {
-		if bytes.Contains(data, []byte(`"`+key+`"`)) {
-			t.Errorf("pane endpoint JSON carries %q: %s", key, data)
-		}
-	}
-
-	// A headless endpoint carries all four and reads back equal.
+func TestEndpointHeadlessFieldsRoundTrip(t *testing.T) {
 	want := Endpoint{
 		AgentName:    "webshop-builder",
 		Kind:         "agy",
@@ -205,7 +173,7 @@ func TestEndpointHeadlessFieldsRoundTripAndAreOmittedWhenZero(t *testing.T) {
 		StreamRound:  3,
 		StreamOffset: 4096,
 	}
-	data, err = json.Marshal(want)
+	data, err := json.Marshal(want)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
@@ -219,6 +187,7 @@ func TestEndpointHeadlessFieldsRoundTripAndAreOmittedWhenZero(t *testing.T) {
 	if !got.Headless() {
 		t.Error("decoded headless endpoint reports Headless() false")
 	}
+
 	var decoded map[string]any
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("Unmarshal map: %v", err)
@@ -231,49 +200,6 @@ func TestEndpointHeadlessFieldsRoundTripAndAreOmittedWhenZero(t *testing.T) {
 	}
 	if decoded["stream_round"] != float64(3) || decoded["stream_offset"] != float64(4096) {
 		t.Errorf("stream cursor keys: %s", data)
-	}
-}
-
-// TestBindingNewFieldsRoundTrip covers RepoRef, Feature and
-// Planner.TranscriptLocator. It deliberately excludes ForkedFrom: the plan
-// for this round asked for a `Binding.ForkedFrom *ForkRef` field, but
-// Binding already has a same-named `ForkedFrom string` field (plus
-// ForkedAtRound int) that internal/relevo/fork.go, internal/relevo/status.go
-// and internal/ui/rail.go read -- a second Go field of the same name is a
-// compile error, not a style question, and none of those three files is in
-// this round's declared scope. See the round 3 report.
-func TestBindingNewFieldsRoundTrip(t *testing.T) {
-	b := newBinding("webshop", "/repo")
-	b.RepoRef = &RepoRef{OriginURL: "https://github.com/o/r", CommonDir: "/repo/.git"}
-	b.Feature = "auth"
-	b.Planner.TranscriptLocator = "/home/x/.claude/projects/slug/S.jsonl"
-
-	raw, err := json.Marshal(b)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	var got Binding
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-	if !reflect.DeepEqual(got, b) {
-		t.Errorf("round trip mismatch:\n got %+v\nwant %+v", got, b)
-	}
-}
-
-func TestBindingWithoutNewFieldsIsByteIdentical(t *testing.T) {
-	b := newBinding("webshop", "/repo")
-	raw, err := json.Marshal(b)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	// "forked_from" is deliberately not checked here: it is not a new key
-	// this round adds (see TestBindingNewFieldsRoundTrip's comment) -- it
-	// already existed, with omitempty, before this round.
-	for _, key := range []string{"repo_ref", "feature", "transcript_locator"} {
-		if bytes.Contains(raw, []byte(key)) {
-			t.Errorf("binding without the new fields serialised %q; field needs omitempty, got JSON: %s", key, raw)
-		}
 	}
 }
 
@@ -304,44 +230,4 @@ func TestValidFeature(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestBindingCommitFactFieldsRoundTripAndAreOmittedWhenEmpty(t *testing.T) {
-	t.Run("empty omits the keys", func(t *testing.T) {
-		data, err := json.Marshal(Binding{})
-		if err != nil {
-			t.Fatalf("Marshal: %v", err)
-		}
-		var decoded map[string]any
-		if err := json.Unmarshal(data, &decoded); err != nil {
-			t.Fatalf("Unmarshal: %v", err)
-		}
-		for _, key := range []string{"branch", "base", "round_baseline_head"} {
-			if _, ok := decoded[key]; ok {
-				t.Errorf("expected %s to be omitted when empty, got JSON: %s", key, data)
-			}
-		}
-	})
-
-	t.Run("set values round-trip", func(t *testing.T) {
-		in := Binding{Branch: "relevo/api-auth", Base: "c0ffee", RoundBaselineHead: "beef"}
-		data, err := json.Marshal(in)
-		if err != nil {
-			t.Fatalf("Marshal: %v", err)
-		}
-		var out Binding
-		if err := json.Unmarshal(data, &out); err != nil {
-			t.Fatalf("Unmarshal: %v", err)
-		}
-		if out.Branch != in.Branch || out.Base != in.Base || out.RoundBaselineHead != in.RoundBaselineHead {
-			t.Errorf("round trip: got %+v, want %+v", out, in)
-		}
-		var decoded map[string]any
-		if err := json.Unmarshal(data, &decoded); err != nil {
-			t.Fatalf("Unmarshal: %v", err)
-		}
-		if decoded["branch"] != "relevo/api-auth" || decoded["base"] != "c0ffee" || decoded["round_baseline_head"] != "beef" {
-			t.Errorf("JSON keys: %s", data)
-		}
-	})
 }

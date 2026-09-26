@@ -15,15 +15,12 @@ import (
 )
 
 // dbForWrite returns the store's database handle, opening it -- and applying
-// its migrations -- on first use. It is the path every write takes, so the
-// first Save/AppendLog/import creates <root>/relevo.db. Path helpers,
-// WithLock alone and DaemonRunning never call it, so serve/admin.go's
-// lock-only store and ingest.go's store.New("/") open no database (P3a plan
-// §3.2, §4.2). The daemon-info write does call it now (P3b plan §4.3).
+// its migrations -- on first use: the path every write takes. Path helpers,
+// WithLock alone and DaemonRunning never call it, so a lock-only or path-only
+// store opens no database.
 //
-// A database whose schema is newer than this binary's is never migrated and is
-// refused from every data method with db.ErrNewerSchema; path helpers keep
-// working.
+// A database whose schema is newer than this binary's is refused with
+// db.ErrNewerSchema.
 func (s *Store) dbForWrite() (*db.DB, error) {
 	if s.shared != nil {
 		return s.shared, nil
@@ -39,7 +36,6 @@ func (s *Store) dbForWrite() (*db.DB, error) {
 			return
 		}
 		if d.Newer() {
-			// Leave no handle open on a database this binary must not touch.
 			_ = d.Close()
 			s.dbErr = db.ErrNewerSchema
 			return
@@ -49,13 +45,10 @@ func (s *Store) dbForWrite() (*db.DB, error) {
 	return s.dbh, s.dbErr
 }
 
-// dbForRead returns the store's database handle without creating the
-// database: when <root>/relevo.db does not exist it returns (nil, nil), which
-// every read path treats as "no rows" -- load returns ErrNotFound, list an
-// empty list, readLog and readLogAfter nil entries, ViewedAt (zero, false).
-// A read must never conjure a database into a root that has none, so only a
-// write -- or the import of a present legacy bind.json/log.jsonl -- creates
-// the file (P3a plan §B1).
+// dbForRead returns the store's database handle without creating the database:
+// (nil, nil) when <root>/relevo.db does not exist, which every read path treats
+// as "no rows". Only a write, or the import of a present legacy file, creates
+// it.
 func (s *Store) dbForRead() (*db.DB, error) {
 	if s.shared != nil {
 		return s.shared, nil
@@ -69,57 +62,40 @@ func (s *Store) dbForRead() (*db.DB, error) {
 	return s.dbForWrite()
 }
 
-// DB returns the store's database handle, opening and migrating it on first
-// use. It is the exported form of dbForWrite, for the packages that keep a
-// small JSON record in the schema-v2 kv table (P3b plan §4.2).
+// DB is the exported form of dbForWrite, opening and migrating on first use.
 func (s *Store) DB() (*db.DB, error) { return s.dbForWrite() }
 
-// DBIfExists returns the store's database handle without creating the
-// database: (nil, nil) when <root>/relevo.db does not exist. It is the
-// exported form of dbForRead, for readers that must not conjure a database
-// into a root that has none.
+// DBIfExists is the exported form of dbForRead.
 func (s *Store) DBIfExists() (*db.DB, error) { return s.dbForRead() }
 
-// importPresent adopts binding name's files, if any, into the database: a
-// present bind.json upserts the record and is deleted, a present log.jsonl
-// replaces that record's events and is deleted, and a present .viewed sidecar
-// becomes the record's viewed_at and is deleted (#143). It is the rule that
-// migrates existing state on first use and keeps hand-written fixtures working
-// (P3a plan §4.3).
+// importPresent adopts binding name's files, if any: a present bind.json
+// upserts the record, a present log.jsonl replaces that record's events, and a
+// present .viewed sidecar becomes the record's viewed_at; each file is deleted
+// once its write committed, so a failed import leaves it where it was.
 //
-// It always runs under the flock, because every caller already holds it. A
-// log.jsonl with no record yet -- a fork directory before its Save (§4.6) --
-// is left in place for save() to adopt. A file is removed only after its DB
-// write committed, so a failed import leaves the file where it was.
+// It always runs under the flock, because every caller already holds it. A log
+// with no record yet (a fork directory before its Save) is left for save() to
+// adopt.
 //
 // A root with none of the three files present imports nothing and opens no
-// database, so a read of a root that has never been written leaves no relevo.db
-// behind (§B1). The presence of a legacy file is the one exception to reads
-// never creating the database.
+// database: the presence of a legacy file is the one exception to reads never
+// creating the database.
 func (s *Store) importPresent(name string) error {
 	bp, lp := s.bindingPath(name), s.logPath(name)
 
-	bpRaw, bpErr := os.ReadFile(bp)
-	if bpErr != nil && !errors.Is(bpErr, os.ErrNotExist) {
-		return fmt.Errorf("read binding %q: %w", name, bpErr)
+	bpRaw, bpPresent, err := readIfPresent(bp, "binding", name)
+	if err != nil {
+		return err
 	}
-	bpPresent := bpErr == nil
-
-	lpRaw, lpErr := os.ReadFile(lp)
-	if lpErr != nil && !errors.Is(lpErr, os.ErrNotExist) {
-		return fmt.Errorf("read log for %q: %w", name, lpErr)
+	lpRaw, lpPresent, err := readIfPresent(lp, "log for", name)
+	if err != nil {
+		return err
 	}
-	lpPresent := lpErr == nil
-
-	// The pre-P3a "<dir>/.viewed" sidecar carries what binding_record.viewed_at
-	// holds now (#143). One stat decides both whether the import has anything to
-	// do and, when it has, the stamp a record without one takes.
 	viewedPath := s.ViewedPath(name)
-	viewedInfo, viewedErr := os.Stat(viewedPath)
-	if viewedErr != nil && !errors.Is(viewedErr, os.ErrNotExist) {
-		return fmt.Errorf("stat viewed %q: %w", name, viewedErr)
+	viewedInfo, viewedPresent, err := statIfPresent(viewedPath, name)
+	if err != nil {
+		return err
 	}
-	viewedPresent := viewedErr == nil
 
 	if !bpPresent && !lpPresent && !viewedPresent {
 		return nil
@@ -131,54 +107,18 @@ func (s *Store) importPresent(name string) error {
 	}
 
 	if bpPresent {
-		b, err := decodeBinding(bpRaw, name)
+		if err := s.importBindingFile(d, name, bpRaw); err != nil {
+			return err
+		}
+	}
+	if lpPresent {
+		adopted, err := s.importLogFile(d, name, lpRaw)
 		if err != nil {
 			return err
 		}
-		// record_json is the file's binding re-marshalled compactly: the
-		// record is authoritative from here on, and the file goes away.
-		raw, err := json.Marshal(b)
-		if err != nil {
-			return fmt.Errorf("marshal binding %q: %w", name, err)
-		}
-		if _, err := d.RecordPut(db.Record{
-			Owner:     s.owner,
-			Name:      b.Name,
-			State:     string(b.State),
-			Round:     b.Round,
-			CWD:       b.CWD,
-			JSON:      string(raw),
-			CreatedAt: b.CreatedAt,
-			UpdatedAt: b.UpdatedAt,
-		}); err != nil {
-			return fmt.Errorf("import binding %q: %w", name, err)
-		}
-	}
-
-	if lpPresent {
-		entries, err := decodeLog(bytes.NewReader(lpRaw))
-		if err != nil {
-			return fmt.Errorf("%q: %w", name, err)
-		}
-		rec, ok, err := d.RecordGet(s.owner, name)
-		if err != nil {
-			return fmt.Errorf("import log %q: %w", name, err)
-		}
-		if !ok {
-			// A log without a record (a fork directory before its Save):
-			// leave it alone and import nothing.
+		// A log without a record: leave everything alone and import nothing.
+		if !adopted {
 			return nil
-		}
-
-		// entry_json keeps each line's exact bytes, so a key a newer relevo
-		// wrote survives the import (§3.1, §4.3).
-		lines := splitLogLines(lpRaw)
-		evs, err := recordEventsOf(entries, lines)
-		if err != nil {
-			return fmt.Errorf("import log %q: %w", name, err)
-		}
-		if err := d.EventReplaceAll(rec.ID, evs); err != nil {
-			return fmt.Errorf("import log %q: %w", name, err)
 		}
 	}
 
@@ -195,35 +135,113 @@ func (s *Store) importPresent(name string) error {
 	}
 
 	// The sidecar's mtime becomes viewed_at only when the record has no stamp
-	// of its own, so an older file never overwrites a newer stamp; either way
-	// the file goes once the record it belongs to has been read.
+	// of its own, so an older file never overwrites a newer stamp.
 	if viewedPresent {
-		rec, ok, err := d.RecordGet(s.owner, name)
-		if err != nil {
+		return s.adoptViewed(d, name, viewedPath, viewedInfo)
+	}
+	return nil
+}
+
+// readIfPresent reads a legacy state file and reports whether it exists.
+func readIfPresent(path, what, name string) ([]byte, bool, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, false, fmt.Errorf("read %s %q: %w", what, name, err)
+		}
+		return nil, false, nil
+	}
+	return raw, true, nil
+}
+
+func statIfPresent(path, name string) (os.FileInfo, bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, false, fmt.Errorf("stat viewed %q: %w", name, err)
+		}
+		return nil, false, nil
+	}
+	return info, true, nil
+}
+
+// importBindingFile adopts a bind.json: record_json is the file's binding
+// re-marshalled compactly.
+func (s *Store) importBindingFile(d *db.DB, name string, raw []byte) error {
+	b, err := decodeBinding(raw, name)
+	if err != nil {
+		return err
+	}
+	compact, err := json.Marshal(b)
+	if err != nil {
+		return fmt.Errorf("marshal binding %q: %w", name, err)
+	}
+	if _, err := d.RecordPut(db.Record{
+		Owner:     s.owner,
+		Name:      b.Name,
+		State:     string(b.State),
+		Round:     b.Round,
+		CWD:       b.CWD,
+		JSON:      string(compact),
+		CreatedAt: b.CreatedAt,
+		UpdatedAt: b.UpdatedAt,
+	}); err != nil {
+		return fmt.Errorf("import binding %q: %w", name, err)
+	}
+	return nil
+}
+
+// importLogFile adopts a log.jsonl; adopted is false when no record exists yet
+// for it. entry_json keeps each line's exact bytes.
+func (s *Store) importLogFile(d *db.DB, name string, raw []byte) (bool, error) {
+	entries, err := decodeLog(bytes.NewReader(raw))
+	if err != nil {
+		return false, fmt.Errorf("%q: %w", name, err)
+	}
+	rec, ok, err := d.RecordGet(s.owner, name)
+	if err != nil {
+		return false, fmt.Errorf("import log %q: %w", name, err)
+	}
+	if !ok {
+		return false, nil
+	}
+
+	lines := splitLogLines(raw)
+	evs, err := recordEventsOf(entries, lines)
+	if err != nil {
+		return false, fmt.Errorf("import log %q: %w", name, err)
+	}
+	if err := d.EventReplaceAll(rec.ID, evs); err != nil {
+		return false, fmt.Errorf("import log %q: %w", name, err)
+	}
+	return true, nil
+}
+
+func (s *Store) adoptViewed(d *db.DB, name, path string, info os.FileInfo) error {
+	rec, ok, err := d.RecordGet(s.owner, name)
+	if err != nil {
+		return fmt.Errorf("import viewed %q: %w", name, err)
+	}
+	if !ok {
+		return nil
+	}
+	if rec.ViewedAt == nil {
+		if err := d.RecordSetViewed(s.owner, name, info.ModTime()); err != nil {
 			return fmt.Errorf("import viewed %q: %w", name, err)
 		}
-		if ok {
-			if rec.ViewedAt == nil {
-				if err := d.RecordSetViewed(s.owner, name, viewedInfo.ModTime()); err != nil {
-					return fmt.Errorf("import viewed %q: %w", name, err)
-				}
-			}
-			if err := os.Remove(viewedPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("remove imported viewed %q: %w", name, err)
-			}
-		}
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove imported viewed %q: %w", name, err)
 	}
 	return nil
 }
 
 // importAll adopts every binding directory under the root that holds a
-// bind.json, before list() reads the database. It reads the root the way list()
-// did before the database: non-directories and dot-directories are skipped.
+// bind.json, before list() reads the database.
 //
-// A directory whose bind.json was written by a newer relevo is left exactly as
-// it is and skipped, so one such file cannot make List -- and so Tick, status
-// and gc -- fail for every other binding (§B4). load and importPresent for
-// that name still return ErrNewerFormat.
+// A directory whose bind.json was written by a newer relevo is left as it is
+// and skipped, so one such file cannot make List fail for every other binding;
+// load still returns ErrNewerFormat for that name.
 func (s *Store) importAll() error {
 	entries, err := os.ReadDir(s.root)
 	if errors.Is(err, os.ErrNotExist) {
@@ -255,13 +273,9 @@ func (s *Store) importAll() error {
 	return nil
 }
 
-// newerFormatWarned remembers the binding names importAll has already warned
-// about in this process, so a newer-format binding is logged once per name per
-// process however often List runs (§B4).
+// newerFormatWarned keeps a newer-format binding logged once per name.
 var newerFormatWarned sync.Map
 
-// warnNewerFormatOnce logs the first -- and only the first -- skip of a
-// binding whose bind.json was written by a newer relevo.
 func warnNewerFormatOnce(name string, err error) {
 	if _, loaded := newerFormatWarned.LoadOrStore(name, struct{}{}); loaded {
 		return
@@ -316,9 +330,7 @@ func (s *Store) anyLegacyPresent() (bool, error) {
 }
 
 // splitLogLines returns a log.jsonl's non-empty lines, in order, so an
-// imported entry's entry_json can keep the line's exact bytes. decodeLog has
-// already validated the stream and assigned Seq positions by the time this
-// runs, so the two agree line for line.
+// imported entry's entry_json can keep the line's exact bytes.
 func splitLogLines(raw []byte) [][]byte {
 	var out [][]byte
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
@@ -333,8 +345,7 @@ func splitLogLines(raw []byte) [][]byte {
 	return out
 }
 
-// recordEventOf projects a decoded LogEntry and its exact JSON onto the
-// binding_event columns.
+// recordEventOf projects a LogEntry onto the binding_event columns.
 func recordEventOf(e LogEntry, entryJSON string) db.RecordEvent {
 	return db.RecordEvent{
 		Seq:         e.Seq,
@@ -350,10 +361,7 @@ func recordEventOf(e LogEntry, entryJSON string) db.RecordEvent {
 }
 
 // recordEventsOf projects decoded entries and their exact JSON onto the event
-// rows EventReplaceAll takes, in order: the conversion importPresent uses for
-// an adopted log.jsonl, shared with ForkState, which writes a copied history
-// straight into dst's events (R3). entryJSON holds one marshalled entry per
-// entry, so a length mismatch is an error exactly as it is for an imported log.
+// rows EventReplaceAll takes, in order.
 func recordEventsOf(entries []LogEntry, entryJSON [][]byte) ([]db.RecordEvent, error) {
 	if len(entries) != len(entryJSON) {
 		return nil, fmt.Errorf("%d entries but %d lines", len(entries), len(entryJSON))
@@ -366,8 +374,8 @@ func recordEventsOf(entries []LogEntry, entryJSON [][]byte) ([]db.RecordEvent, e
 }
 
 // logEntriesOf decodes stored events back into LogEntry values. entry_json is
-// authoritative for the entry's content; Seq, Confirmed, DeliveredAt and Route
-// come from the promoted columns, which confirmIndex maintains (§4.5).
+// authoritative for the content; Seq, Confirmed, DeliveredAt and Route come
+// from the promoted columns.
 func logEntriesOf(events []db.RecordEvent) ([]LogEntry, error) {
 	if len(events) == 0 {
 		return nil, nil
