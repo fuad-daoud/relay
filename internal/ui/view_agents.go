@@ -357,11 +357,11 @@ func nativeAgentKinds(e roles.AgentEntry) []string {
 }
 
 // agentFileLine is one definition-file line (§4): the kind (10, muted), the
-// file path (46), the state (14, muted) when there is one, then `model <pin>`
+// file path (pathW), the state (14, muted) when there is one, then `model <pin>`
 // when the file carries a pin. The caller passes the path already in its `~`
 // form.
-func agentFileLine(kind, path, state, model string) string {
-	line := "   " + mutedStyle.Render(pad(kind, 10)) + pad(path, 46)
+func agentFileLine(kind, path, state, model string, pathW int) string {
+	line := "   " + mutedStyle.Render(pad(kind, 10)) + pad(path, pathW)
 	if state != "" {
 		line += mutedStyle.Render(pad(state, 14))
 	}
@@ -375,23 +375,40 @@ func agentFileLine(kind, path, state, model string) string {
 // then one line per kind with the definition file's `~` path, its state and its
 // model pin. A shipped agent and a custom source agent both list the files
 // relevo manages; a custom native agent lists the file at the kind's convention
-// path instead, which relevo never writes.
+// path instead, which relevo never writes. The path column is one width for the
+// block -- 46, or the longest `~` path it draws plus 2 -- so a long path keeps
+// a gap before the state and every state starts in one column.
 func agentDetailLines(doc relevo.ConfigDoc, r agentRow, width int) []string {
 	meta := r.source + " · " + r.shape + " · " + agentUsedText(r)
 	first := "   " + faintStyle.Bold(true).Render(r.name) + "   " + mutedStyle.Render(meta)
 	out := []string{fit(first, width)}
+	// pathW is measured over the file lines drawn below, then held for all of
+	// them.
+	pathW := 46
+	grow := func(path string) {
+		if w := lipgloss.Width(path) + 2; w > pathW {
+			pathW = w
+		}
+	}
 	if r.source == "custom" && !relevo.IsSourceAgent(doc.Agents, r.name) {
-		for _, f := range customAgentRows(doc, r.name) {
-			out = append(out, fit(agentFileLine(f.kind, tildePath(f.path), "", ""), width))
+		rows := customAgentRows(doc, r.name)
+		for _, f := range rows {
+			grow(tildePath(f.path))
+		}
+		for _, f := range rows {
+			out = append(out, fit(agentFileLine(f.kind, tildePath(f.path), "", "", pathW), width))
 		}
 		return out
+	}
+	for _, f := range r.files {
+		grow(tildePath(f.Path))
 	}
 	for _, f := range r.files {
 		model := ""
 		if f.Model != "" {
 			model = f.Model
 		}
-		out = append(out, fit(agentFileLine(f.Kind, tildePath(f.Path), string(f.State), model), width))
+		out = append(out, fit(agentFileLine(f.Kind, tildePath(f.Path), string(f.State), model, pathW), width))
 	}
 	return out
 }

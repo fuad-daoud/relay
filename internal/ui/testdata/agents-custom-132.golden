@@ -11,10 +11,10 @@
                                                                                                                                     
                                                                                                                                     
    security-reviewer   custom · reader · no actor uses it                                                                           
-   agy       ~/.gemini/config/agents/security-reviewer.md  up to date                                                               
-   claude    ~/.claude/agents/security-reviewer.md         up to date                                                               
-   codex     ~/.codex/security-reviewer.config.toml        up to date                                                               
-   opencode  ~/.config/opencode/agents/security-reviewer.mdup to date                                                               
+   agy       ~/.gemini/config/agents/security-reviewer.md    up to date                                                             
+   claude    ~/.claude/agents/security-reviewer.md           up to date                                                             
+   codex     ~/.codex/security-reviewer.config.toml          up to date                                                             
+   opencode  ~/.config/opencode/agents/security-reviewer.md  up to date                                                             
                                                                                                                                     
                                                                                                                                     
                                                                                                                                     
