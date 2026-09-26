@@ -644,7 +644,8 @@ What this means in practice:
   agent session kept running inside the shared service, still editing the
   worktree relevo had already switched away from. `relevo doctor` notes the shared
   service (and, when readable, its session count from opencode.db) whenever
-  `~/.config/opencode/service.json` exists.
+  `~/.config/opencode/service.json` exists. They also pass `--thinking`, so
+  the model's reasoning reaches the transcript.
 
 **Scopes.** A local headless round runs in its own transient systemd scope
 named `relevo-round-local-<binding>-<round>` (an owned remote binding uses its

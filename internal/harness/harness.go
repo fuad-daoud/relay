@@ -326,7 +326,8 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 		// worktree relevo has switched away from. --standalone starts a
 		// private server instead, so a headless round's kill is a real kill
 		// again.
-		print = []string{"run", PromptPlaceholder, "-m", provider + "/" + model, "--agent", role.Definition, "--format", "json", "--standalone"}
+		// --thinking is passed too: without it, opencode leaves reasoning out of the json stream.
+		print = []string{"run", PromptPlaceholder, "-m", provider + "/" + model, "--agent", role.Definition, "--format", "json", "--thinking", "--standalone"}
 		promptAt = 1
 	// 2026-09-18 probe: agy's stream `init` event reports `cwd` = the
 	// process directory, yet its first `run_command` ran outside any

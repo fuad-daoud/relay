@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/transcript"
 )
 
 // limitScanLines is how many trailing lines of a builder's output a
@@ -70,7 +71,9 @@ var monthByName = map[string]time.Month{
 // matchLimit scans text line by line from the last line backwards and
 // returns the first (i.e. most recent) line any pattern matches. Until is
 // parseReset(line, now) when that succeeds, else now.Add(fallback). ok is
-// false when no line matches or patterns is empty. Never errors.
+// false when no line matches or patterns is empty. Thinking lines are
+// skipped, because a model reasoning about a limit is not hitting one.
+// Never errors.
 func matchLimit(text string, patterns []*regexp.Regexp, now time.Time, fallback time.Duration) (LimitMatch, bool) {
 	if len(patterns) == 0 {
 		return LimitMatch{}, false
@@ -78,6 +81,9 @@ func matchLimit(text string, patterns []*regexp.Regexp, now time.Time, fallback 
 	lines := strings.Split(text, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := lines[i]
+		if transcript.IsThinking(line) {
+			continue
+		}
 		matched := false
 		for _, p := range patterns {
 			if p.MatchString(line) {
