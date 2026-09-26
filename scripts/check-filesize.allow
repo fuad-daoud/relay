@@ -1,6 +1,5 @@
 internal/db/read.go
 internal/db/write.go
-internal/doctor/doctor.go
 internal/ingest/ingest.go
 internal/relevo/bind.go
 internal/relevo/configedit.go

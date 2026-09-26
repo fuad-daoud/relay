@@ -19,10 +19,6 @@ func writeDoctorFile(t *testing.T, path, body string) {
 	}
 }
 
-// TestDoctorPluginRow is the plan's required case for §4.8's first row: the
-// relevo plugin enabled in the user's or the project's settings reads OK, an
-// existing claude candidate with neither reads FAIL, and no claude candidate
-// at all leaves the row out entirely.
 func TestDoctorPluginRow(t *testing.T) {
 	enabled := `{"enabledPlugins":{"relevo@relevo":true}}`
 
@@ -83,9 +79,6 @@ func TestDoctorPluginRow(t *testing.T) {
 	})
 }
 
-// TestDoctorPlannerRow is the plan's required case for §4.8's third row: it
-// exists only inside a Claude Code session, and fails on a resolve miss or a
-// session with no relevo mcp child process.
 func TestDoctorPlannerRow(t *testing.T) {
 	rec := &planner.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
 
@@ -139,9 +132,6 @@ func TestDoctorPlannerRow(t *testing.T) {
 	})
 }
 
-// TestPlannerRowNamesChat is #386's doctor surface: the planner row names the
-// planner's chat after its name and id, and an empty chat leaves the detail
-// byte-identical to the string the code produced before the field existed.
 func TestPlannerRowNamesChat(t *testing.T) {
 	rec := &planner.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
 
@@ -173,8 +163,7 @@ func TestPlannerRowNamesChat(t *testing.T) {
 	})
 }
 
-// TestDoctorPluginHookRow pins the "not checked, never FAIL" rule: an install
-// relevo cannot find is a fact relevo could not establish, not a broken one.
+// TestDoctorPluginHookRow pins the "not checked, never FAIL" rule.
 func TestDoctorPluginHookRow(t *testing.T) {
 	t.Run("no installed_plugins.json", func(t *testing.T) {
 		checks := PlannerChecks(PlannerCheckInput{Claude: true, Home: t.TempDir(), Repo: t.TempDir()})
@@ -213,9 +202,9 @@ func TestDoctorPluginHookRow(t *testing.T) {
 	})
 }
 
-// TestDoctorPlannerRowNoClaimIsInfo pins D6's revision: a Claude Code planner
-// with no live channel claim is INFO, never FAIL -- tools mode gets reports by
-// background wait -- and the row carries the spec's push-upgrade text.
+// TestDoctorPlannerRowNoClaimIsInfo pins that a Claude Code planner with no
+// live channel claim is INFO, never FAIL: tools mode gets reports by
+// background wait.
 func TestDoctorPlannerRowNoClaimIsInfo(t *testing.T) {
 	rec := &planner.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
 	checks := PlannerChecks(PlannerCheckInput{Detected: true, Resolved: rec, MCPChild: true})
@@ -234,9 +223,6 @@ func TestDoctorPlannerRowNoClaimIsInfo(t *testing.T) {
 	}
 }
 
-// TestDoctorPlannerRowNoMCPChildFails pins §4.8: from a Claude Code session,
-// no relevo mcp process among the planner host's children is a FAIL, because
-// nothing would ever reach the planner.
 func TestDoctorPlannerRowNoMCPChildFails(t *testing.T) {
 	rec := &planner.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
 	checks := PlannerChecks(PlannerCheckInput{Detected: true, Resolved: rec, ClaimLive: true})
@@ -253,8 +239,6 @@ func TestDoctorPlannerRowNoMCPChildFails(t *testing.T) {
 	}
 }
 
-// TestHasMCPChild is the pure rule's own test: the process table is injected,
-// so no live process tree is needed.
 func TestHasMCPChild(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -274,11 +258,8 @@ func TestHasMCPChild(t *testing.T) {
 	}
 }
 
-// TestDoctorPluginVersionRow is the plan's required case for the third plugin
-// row: the installed plugin's version is compared with the running binary's,
-// advisory only. Every situation relevo cannot prove -- no running version, no
-// readable file, no relevo entry, an unparseable version -- reads "not checked"
-// (OK), never a warning.
+// TestDoctorPluginVersionRow pins the plugin-version row: advisory only,
+// and every situation relevo cannot prove reads "not checked" (OK).
 func TestDoctorPluginVersionRow(t *testing.T) {
 	state := func(version string) string {
 		return `{"version":2,"plugins":{"relevo@relevo":[{"version":"` + version + `","installPath":"/tmp/relevo/0.8.0"}]}}`
