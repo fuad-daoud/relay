@@ -23,6 +23,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -34,7 +35,7 @@ type Config struct {
 	DB             *db.DB
 	Candidates     *candidate.Set
 	Policy         policy.Policy
-	Runner         relevo.Runner
+	Runner         spawn.Runner
 	Git            *git.Client // concrete: the transport needs it too
 	Now            func() time.Time
 	Interval       time.Duration // daemon tick, floored by relevo.NewDaemon
@@ -52,7 +53,7 @@ type Config struct {
 	// Hooks dispatches lifecycle events; nil means none.
 	Hooks hooks.Dispatcher
 	// Scope is the systemd scope template served rounds launch under; nil means none.
-	Scope *relevo.ScopeSpec
+	Scope *spawn.ScopeSpec
 }
 
 type Server struct {

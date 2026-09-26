@@ -179,8 +179,6 @@ internal/relevo/roles_list.go
 internal/relevo/roles_list_test.go
 internal/relevo/roles_runtime_test.go
 internal/relevo/roles_views_test.go
-internal/relevo/runner.go
-internal/relevo/runner_test.go
 internal/relevo/runningprocs.go
 internal/relevo/runningprocs_test.go
 internal/relevo/runtime.go

@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
@@ -43,8 +44,8 @@ var ErrScopeActive = errors.New("this round's builder scope is still running")
 
 // handleOf is the endpoint's stored process fields as the Runner's handle.
 // StartedAt is Unix seconds on the endpoint (store spec §3.1, amended).
-func handleOf(e store.Endpoint) ProcHandle {
-	return ProcHandle{PID: e.PID, StartedAt: time.Unix(e.StartedAt, 0)}
+func handleOf(e store.Endpoint) spawn.ProcHandle {
+	return spawn.ProcHandle{PID: e.PID, StartedAt: time.Unix(e.StartedAt, 0)}
 }
 
 // scopeKind is what a scoped spawn is: the word between "relevo-" and the
@@ -98,7 +99,7 @@ func scopeUnitName(b store.Binding) string {
 // non-empty. When kind is scopeGate and the template sets GateCPUQuota, the
 // gate's spec uses it as CPUQuota; every other kind keeps the template's
 // CPUQuota. It never mutates rt.Scope.
-func scopeFor(rt Runtime, kind scopeKind, unit, cpus string) *ScopeSpec {
+func scopeFor(rt Runtime, kind scopeKind, unit, cpus string) *spawn.ScopeSpec {
 	if rt.Scope == nil {
 		return nil
 	}
@@ -202,7 +203,7 @@ func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, tier harness.T
 // candidate could not be launched. The caller decides the binding's state.
 func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, prompt string) (store.Binding, error) {
 	if rt.Runner == nil {
-		return b, ErrRunnerUnavailable
+		return b, spawn.ErrRunnerUnavailable
 	}
 	b = assignRoundCPU(rt, tx, b)
 	ref, err := candidate.ParseRef(b.BuilderCandidate)
@@ -300,7 +301,7 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	if legacyLog(rt, b.Name, b.Round) {
 		logPath = rt.Store.BuilderLogPath(b.Name, b.Round)
 	}
-	spec := ProcSpec{
+	spec := spawn.ProcSpec{
 		Dir: b.CWD, Argv: argv,
 		Env:        builderEnv(b),
 		LogPath:    logPath,
@@ -333,7 +334,7 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 // relaunch.
 func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, sessionID, prompt string) (store.Binding, error) {
 	if rt.Runner == nil {
-		return b, ErrRunnerUnavailable
+		return b, spawn.ErrRunnerUnavailable
 	}
 	ref, err := candidate.ParseRef(b.BuilderCandidate)
 	if err != nil {
@@ -1046,7 +1047,7 @@ func stopProcess(ctx context.Context, rt Runtime, e store.Endpoint, why string) 
 		return 0, nil
 	}
 	if rt.Runner == nil {
-		return e.PID, ErrRunnerUnavailable
+		return e.PID, spawn.ErrRunnerUnavailable
 	}
 	if err := rt.Runner.Kill(ctx, handleOf(e)); err != nil {
 		return e.PID, err

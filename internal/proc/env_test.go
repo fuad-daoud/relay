@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 // childEnvCases is TestChildEnv's table; it lives here to keep the test itself
@@ -110,30 +110,30 @@ func TestChildEnv(t *testing.T) {
 // TestGoMaxProcsEnv pins the one entry to add, or nil: a scope that limits
 // nothing and an extra that already sets GOMAXPROCS both add nothing.
 func TestGoMaxProcsEnv(t *testing.T) {
-	pinned := &relevo.ScopeSpec{AllowedCPUs: "2"}
-	quota := &relevo.ScopeSpec{CPUQuota: "200%"}
+	pinned := &spawn.ScopeSpec{AllowedCPUs: "2"}
+	quota := &spawn.ScopeSpec{CPUQuota: "200%"}
 	cases := []struct {
 		name   string
 		parent []string
 		extra  []string
-		scope  *relevo.ScopeSpec
+		scope  *spawn.ScopeSpec
 		want   []string
 	}{
 		{"nil scope", nil, nil, nil, nil},
-		{"no limits", nil, nil, &relevo.ScopeSpec{}, nil},
+		{"no limits", nil, nil, &spawn.ScopeSpec{}, nil},
 		{"single core", nil, nil, pinned, []string{"GOMAXPROCS=1"}},
 		{"quota only", nil, nil, quota, []string{"GOMAXPROCS=2"}},
 		{"parent GOMAXPROCS is overridden", []string{"GOMAXPROCS=8"}, nil, pinned, []string{"GOMAXPROCS=1"}},
 		{"extra GOMAXPROCS wins", nil, []string{"GOMAXPROCS=4"}, pinned, nil},
 		{"bare parent name is overridden", []string{"GOMAXPROCS"}, nil, pinned, []string{"GOMAXPROCS=1"}},
-		{"parent GOMAXPROCS, no limits", []string{"GOMAXPROCS=8"}, nil, &relevo.ScopeSpec{}, nil},
+		{"parent GOMAXPROCS, no limits", []string{"GOMAXPROCS=8"}, nil, &spawn.ScopeSpec{}, nil},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			parentCopy := slices.Clone(tc.parent)
 			extraCopy := slices.Clone(tc.extra)
-			var scopeCopy, hadScope = relevo.ScopeSpec{}, false
+			var scopeCopy, hadScope = spawn.ScopeSpec{}, false
 			if tc.scope != nil {
 				scopeCopy, hadScope = *tc.scope, true
 			}

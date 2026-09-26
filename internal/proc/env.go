@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 // DeniedEnv names the variables relevo never passes to a builder. They are
@@ -37,11 +37,11 @@ func ChildEnv(parent, deny, extra []string) []string {
 // nil scope, a scope that limits no CPUs, or an extra that already sets it. An
 // inherited parent GOMAXPROCS does not stop it -- the scope's limit is the
 // operator's explicit choice -- and Start denies the parent's entry.
-func goMaxProcsEnv(parent, extra []string, scope *relevo.ScopeSpec) []string {
+func goMaxProcsEnv(parent, extra []string, scope *spawn.ScopeSpec) []string {
 	if scope == nil {
 		return nil
 	}
-	n, ok := relevo.GoMaxProcsFor(*scope)
+	n, ok := spawn.GoMaxProcsFor(*scope)
 	if !ok {
 		return nil
 	}

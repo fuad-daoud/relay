@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -147,7 +148,7 @@ func TestGateStepScopesTheGate(t *testing.T) {
 		fr := newFakeRunner()
 		rt, b := sentBinding(t)
 		rt.Runner = fr
-		rt.Scope = &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%"}
+		rt.Scope = &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%"}
 		b.Gate = "make check"
 		if err := rt.Store.Save(b); err != nil {
 			t.Fatal(err)
@@ -198,7 +199,7 @@ func TestGateStepScopesTheGate(t *testing.T) {
 		fr := newFakeRunner()
 		rt, b := sentBinding(t)
 		rt.Runner = fr
-		rt.Scope = &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", AllowedCPUs: "0-3"}
+		rt.Scope = &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "150%", AllowedCPUs: "0-3"}
 		two := 2
 		b.RoundCPU = &two
 		b.Gate = "make check"

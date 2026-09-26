@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/legacy"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 // TestSealableTable pins the pure predicate: a closed, quiet round is
@@ -89,7 +90,7 @@ func TestSealableTable(t *testing.T) {
 func TestStreamDrained(t *testing.T) {
 	const drained = 2
 	payload := `{"type":"step","part":{"time":{"end":1}}}`
-	relevoOnly := payload + "\n\n" + ExitTrailer + "0\n"
+	relevoOnly := payload + "\n\n" + spawn.ExitTrailer + "0\n"
 	legacyTrailer := payload + "\n\n" +
 		legacy.RusageTrailer + "cpu_usec=1 mem_peak=2\n\n" +
 		legacy.ExitTrailer + "0\n"

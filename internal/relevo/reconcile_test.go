@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -428,7 +429,7 @@ func TestQueueReportRecordsRusage(t *testing.T) {
 
 	t.Run("ok true", func(t *testing.T) {
 		rt, b, fr := setup(t)
-		fr.setRusage(b.Builder.PID, ProcRusage{CPUMS: 12300, PeakMemBytes: 850 << 20})
+		fr.setRusage(b.Builder.PID, spawn.ProcRusage{CPUMS: 12300, PeakMemBytes: 850 << 20})
 		entry := closeRound(t, rt, b)
 		if entry.Rusage == nil || entry.Rusage.CPUMS != 12300 || entry.Rusage.PeakMemBytes != 850<<20 {
 			t.Errorf("report entry Rusage = %+v, want {12300 %d}", entry.Rusage, int64(850<<20))

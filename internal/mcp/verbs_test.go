@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -30,20 +31,20 @@ const (
 	mcpTestPlannerB = "pl_ccccccccdddd"
 )
 
-// stubRunner implements relevo.Runner with no-op stubs: a headless binding's
+// stubRunner implements spawn.Runner with no-op stubs: a headless binding's
 // PID is 0, but Runtime.Runner must still be non-nil or sendPreflight refuses first.
 type stubRunner struct{}
 
-func (stubRunner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHandle, error) {
-	return relevo.ProcHandle{}, nil
+func (stubRunner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHandle, error) {
+	return spawn.ProcHandle{}, nil
 }
-func (stubRunner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) { return false, nil }
-func (stubRunner) ExitCode(ctx context.Context, h relevo.ProcHandle, logPath string) (int, bool) {
+func (stubRunner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, error) { return false, nil }
+func (stubRunner) ExitCode(ctx context.Context, h spawn.ProcHandle, logPath string) (int, bool) {
 	return 0, false
 }
-func (stubRunner) Kill(ctx context.Context, h relevo.ProcHandle) error { return nil }
-func (stubRunner) Rusage(context.Context, relevo.ProcHandle, string) (relevo.ProcRusage, bool) {
-	return relevo.ProcRusage{}, false
+func (stubRunner) Kill(ctx context.Context, h spawn.ProcHandle) error { return nil }
+func (stubRunner) Rusage(context.Context, spawn.ProcHandle, string) (spawn.ProcRusage, bool) {
+	return spawn.ProcRusage{}, false
 }
 
 func writeCandidates(t *testing.T, body string) *candidate.Set {

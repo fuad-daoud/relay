@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -328,7 +329,7 @@ func startVerifyConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 
 	// The consult's Dir is the throwaway worktree, not b.CWD: the reviewer
 	// reads the builder's tree without writing in it.
-	handle, err := rt.Runner.Start(ctx, ProcSpec{
+	handle, err := rt.Runner.Start(ctx, spawn.ProcSpec{
 		Dir:  wt,
 		Argv: argv,
 		// stderr shares the stream, as the gate's does: FinalText and usage skip non-JSON lines, and nothing read consult.log (R2).

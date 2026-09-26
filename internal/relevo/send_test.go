@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -567,7 +568,7 @@ func TestSendRefusesWhileTheRoundsScopeIsActive(t *testing.T) {
 
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
-	rt.Scope = &ScopeSpec{}
+	rt.Scope = &spawn.ScopeSpec{}
 
 	b, err := rt.Store.Load("webshop")
 	if err != nil {

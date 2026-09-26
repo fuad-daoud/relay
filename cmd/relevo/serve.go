@@ -25,6 +25,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/serve"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -238,11 +239,11 @@ func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, root string,
 // or one present but silent on Enabled) scopes are on by default, with
 // CPUWeight defaulting to 100 and every other field passed through as
 // given (its own zero value means "omit" to ScopeArgv).
-func scopeFromPolicy(sc *policy.ScopePolicy) *relevo.ScopeSpec {
+func scopeFromPolicy(sc *policy.ScopePolicy) *spawn.ScopeSpec {
 	if sc != nil && sc.Enabled != nil && !*sc.Enabled {
 		return nil
 	}
-	spec := &relevo.ScopeSpec{CPUWeight: 100}
+	spec := &spawn.ScopeSpec{CPUWeight: 100}
 	if sc != nil {
 		spec.Slice = sc.Slice
 		if sc.CPUWeight != 0 {
@@ -263,7 +264,7 @@ func scopeFromPolicy(sc *policy.ScopePolicy) *relevo.ScopeSpec {
 // gains ", gate <quota>" inside the parentheses: "on (slice relevo.slice,
 // 200%, gate 300%)". A spec carrying an allowed_cpus pool (#314) gains
 // ", cpus <pool>, one per round": "on (cpus 0-2, one per round)".
-func scopeStatusText(sc *relevo.ScopeSpec) string {
+func scopeStatusText(sc *spawn.ScopeSpec) string {
 	if sc == nil {
 		return "off"
 	}

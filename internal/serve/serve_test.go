@@ -26,6 +26,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -367,7 +368,7 @@ func TestWhoAmIScope(t *testing.T) {
 		DB:    testServeDB(t),
 		Root:  t.TempDir(),
 		Now:   time.Now,
-		Scope: &relevo.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%"},
+		Scope: &spawn.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%"},
 	})
 	if err != nil {
 		t.Fatalf("New scoped server: %v", err)

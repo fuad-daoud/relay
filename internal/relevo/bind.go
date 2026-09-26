@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -285,7 +286,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 		// process, so ask the Runner whether its PID is still alive: a PID
 		// has no "moved pane" ambiguity.
 		if rt.Runner == nil {
-			return store.Binding{}, Resolution{}, ErrRunnerUnavailable
+			return store.Binding{}, Resolution{}, spawn.ErrRunnerUnavailable
 		}
 		if b.Builder.PID != 0 {
 			alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))

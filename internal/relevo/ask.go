@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -171,7 +172,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	if rt.Runner == nil {
 		// Phase 0, next to the role check: a consult runs a process, so a
 		// runtime with no Runner refuses before anything is reserved.
-		return AskResult{}, ErrRunnerUnavailable
+		return AskResult{}, spawn.ErrRunnerUnavailable
 	}
 	res, err := resolveRole(reg, rt.Candidates, Gates(rt), opts.Candidate, opts.Role)
 	if err != nil {
@@ -239,7 +240,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		consult.State = store.ConsultSilent
 		consult.Note = "spawn failed: " + brief(err)
 		spawnErr = err
-	} else if h, err := rt.Runner.Start(ctx, ProcSpec{
+	} else if h, err := rt.Runner.Start(ctx, spawn.ProcSpec{
 		Dir:  cwd,
 		Argv: argv,
 		// stderr shares the stream, as the gate's does: FinalText and usage skip non-JSON lines, and nothing read consult.log (R2).
@@ -413,7 +414,7 @@ func askRound(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, erro
 	if rt.Runner == nil {
 		// Phase 0: a round consult runs a process, so a runtime with no
 		// Runner refuses before anything is reserved.
-		return AskResult{}, ErrRunnerUnavailable
+		return AskResult{}, spawn.ErrRunnerUnavailable
 	}
 
 	b, err := rt.Store.Load(opts.Name)
@@ -480,7 +481,7 @@ func askRound(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, erro
 	// ── phase 2: spawn ──────────────────────────────────────── no lock held
 	var spawnErr error
 	streamPath := rt.Store.ConsultStreamPath(opts.Name, consult.Round, consult.ID)
-	if handle, err := rt.Runner.Start(ctx, ProcSpec{
+	if handle, err := rt.Runner.Start(ctx, spawn.ProcSpec{
 		Dir:  cwd,
 		Argv: append([]string{h.Binary}, argv...),
 		// stderr shares the stream, as the gate's does: FinalText and usage skip non-JSON lines, and nothing read consult.log (R2).

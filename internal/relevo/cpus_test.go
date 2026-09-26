@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -184,7 +185,7 @@ func TestTwoRoundsGetDistinctCores(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 	b2 := bindSecond(t, rt)
-	rt.Scope = &ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-1"}
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-1"}
 
 	var first, second store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -230,7 +231,7 @@ func TestExhaustedPoolRunsOnWholePool(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 	b2 := bindSecond(t, rt)
-	rt.Scope = &ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0"}
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0"}
 
 	var second store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -266,7 +267,7 @@ func TestRelaunchKeepsItsCore(t *testing.T) {
 
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
-	rt.Scope = &ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-3"}
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-3"}
 	one := 1
 	b.RoundCPU = &one
 
@@ -294,7 +295,7 @@ func TestRoundCloseReleasesCore(t *testing.T) {
 
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
-	rt.Scope = &ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-1"}
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-1"}
 
 	var first store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -362,7 +363,7 @@ func TestNoPoolWritesNoField(t *testing.T) {
 
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
-	rt.Scope = &ScopeSpec{Slice: "relevo.slice", CPUWeight: 100}
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100}
 
 	var got store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {

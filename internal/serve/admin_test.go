@@ -16,25 +16,26 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 type aliveRunner struct{}
 
-func (aliveRunner) Start(context.Context, relevo.ProcSpec) (relevo.ProcHandle, error) {
-	return relevo.ProcHandle{}, nil
+func (aliveRunner) Start(context.Context, spawn.ProcSpec) (spawn.ProcHandle, error) {
+	return spawn.ProcHandle{}, nil
 }
 
-func (aliveRunner) Alive(context.Context, relevo.ProcHandle) (bool, error) { return true, nil }
+func (aliveRunner) Alive(context.Context, spawn.ProcHandle) (bool, error) { return true, nil }
 
-func (aliveRunner) ExitCode(context.Context, relevo.ProcHandle, string) (int, bool) {
+func (aliveRunner) ExitCode(context.Context, spawn.ProcHandle, string) (int, bool) {
 	return 0, false
 }
 
-func (aliveRunner) Kill(context.Context, relevo.ProcHandle) error { return nil }
+func (aliveRunner) Kill(context.Context, spawn.ProcHandle) error { return nil }
 
-func (aliveRunner) Rusage(context.Context, relevo.ProcHandle, string) (relevo.ProcRusage, bool) {
-	return relevo.ProcRusage{}, false
+func (aliveRunner) Rusage(context.Context, spawn.ProcHandle, string) (spawn.ProcRusage, bool) {
+	return spawn.ProcRusage{}, false
 }
 
 func newAdminServer(t *testing.T, now time.Time, opts ...func(*Config)) *Server {
@@ -140,7 +141,7 @@ func TestAdminStatusReportsHeadlessLivenessThroughRunner(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()
 	d := testServeDB(t)
-	newServer := func(r relevo.Runner) *Server {
+	newServer := func(r spawn.Runner) *Server {
 		t.Helper()
 		s, err := New(Config{DB: d, Root: root, Now: func() time.Time { return now }, Runner: r})
 		if err != nil {

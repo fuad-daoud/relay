@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/legacy"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 // ScopeUnitFileName returns the systemd unit file name for a scope unit, built
@@ -25,7 +25,7 @@ func ScopeUnitFileName(unit string) string {
 // ScopeArgv wraps inner (the argv Start would otherwise exec) so it runs as a
 // transient systemd --scope unit; systemd-run execs inner in place, so the pid
 // Start records is inner's own. The quota precedes the pin, the pin memory.
-func ScopeArgv(s relevo.ScopeSpec, inner []string) []string {
+func ScopeArgv(s spawn.ScopeSpec, inner []string) []string {
 	argv := []string{"systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit=" + ScopeUnitFileName(s.Unit)}
 	if s.Slice != "" {
 		argv = append(argv, "--slice="+s.Slice)
@@ -55,7 +55,7 @@ func ProbeScopes(ctx context.Context, slice string) error {
 	if err != nil {
 		return fmt.Errorf("systemd-run: %s", err.Error())
 	}
-	spec := relevo.ScopeSpec{Unit: unit, Slice: slice, CPUWeight: 100}
+	spec := spawn.ScopeSpec{Unit: unit, Slice: slice, CPUWeight: 100}
 	return runScopeProbe(ctx, spec, "systemd-run")
 }
 
@@ -68,13 +68,13 @@ func ProbeAllowedCPUs(ctx context.Context, slice, cpus string) error {
 	if err != nil {
 		return fmt.Errorf("systemd-run AllowedCPUs=%s: %s", cpus, err.Error())
 	}
-	spec := relevo.ScopeSpec{Unit: unit, Slice: slice, CPUWeight: 100, AllowedCPUs: cpus}
+	spec := spawn.ScopeSpec{Unit: unit, Slice: slice, CPUWeight: 100, AllowedCPUs: cpus}
 	return runScopeProbe(ctx, spec, "systemd-run AllowedCPUs="+cpus)
 }
 
 // runScopeProbe runs spec's throwaway scope, returning systemd-run's first
 // stderr line, or its exit status when it printed nothing, prefixed with prefix.
-func runScopeProbe(ctx context.Context, spec relevo.ScopeSpec, prefix string) error {
+func runScopeProbe(ctx context.Context, spec spawn.ScopeSpec, prefix string) error {
 	argv := ScopeArgv(spec, []string{"true"})
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -132,22 +132,18 @@ func firstNonEmptyLine(s string) string {
 	return ""
 }
 
-// RusageTrailer prefixes the supervisor's "relevo-rusage:cpu_usec=<n>
-// mem_peak=<n>" line, printed inside its own scope only.
-const RusageTrailer = "relevo-rusage:"
-
 // ParseRusageTrailer parses a RusageTrailer line, or the legacy line a
 // pre-rename stream carries. Missing fields stay zero, unknown keys and
 // malformed numbers are ignored, and a line matching neither prefix is not ok.
-func ParseRusageTrailer(line string) (relevo.ProcRusage, bool) {
-	prefix := RusageTrailer
+func ParseRusageTrailer(line string) (spawn.ProcRusage, bool) {
+	prefix := spawn.RusageTrailerPrefix
 	if !strings.HasPrefix(line, prefix) {
 		prefix = legacy.RusageTrailer
 		if !strings.HasPrefix(line, prefix) {
-			return relevo.ProcRusage{}, false
+			return spawn.ProcRusage{}, false
 		}
 	}
-	var r relevo.ProcRusage
+	var r spawn.ProcRusage
 	rest := strings.TrimPrefix(line, prefix)
 	for _, field := range strings.Fields(rest) {
 		key, value, ok := strings.Cut(field, "=")

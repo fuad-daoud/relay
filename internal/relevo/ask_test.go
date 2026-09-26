@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -907,7 +908,7 @@ func TestAskHeadlessWithoutRunnerIsRefused(t *testing.T) {
 	_, err := Ask(context.Background(), rt, AskOptions{
 		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
-	if !errors.Is(err, ErrRunnerUnavailable) {
+	if !errors.Is(err, spawn.ErrRunnerUnavailable) {
 		t.Fatalf("err = %v, want ErrRunnerUnavailable", err)
 	}
 	b, err := rt.Store.Load("webshop")
@@ -1272,11 +1273,11 @@ func TestAskRoundFinalMessageBecomesFindings(t *testing.T) {
 func TestAskScopesBothConsultPaths(t *testing.T) {
 	t.Parallel()
 
-	template := func() *ScopeSpec {
-		return &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%", AllowedCPUs: "0-3"}
+	template := func() *spawn.ScopeSpec {
+		return &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%", AllowedCPUs: "0-3"}
 	}
 
-	assertConsultScope := func(t *testing.T, spec ProcSpec, c store.Consult) {
+	assertConsultScope := func(t *testing.T, spec spawn.ProcSpec, c store.Consult) {
 		t.Helper()
 		if spec.Scope == nil {
 			t.Fatal("consult spec.Scope = nil, want a scope from the template")

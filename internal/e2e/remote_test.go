@@ -20,6 +20,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/serve"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -285,7 +286,7 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 	// client binding Builder.LastShipped == repo HEAD.
 	runner.mu.Lock()
 	specsLen := len(runner.specs)
-	var spec relevo.ProcSpec
+	var spec spawn.ProcSpec
 	if specsLen > 0 {
 		spec = runner.specs[0]
 	}
