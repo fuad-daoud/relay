@@ -38,45 +38,12 @@ func FinalText(kind string, stream []byte) string {
 		if err := json.Unmarshal(trimmed, &obj); err != nil || obj == nil {
 			continue
 		}
-
-		switch kind {
-		case "claude":
-			switch str(obj["type"]) {
-			case "assistant":
-				if t := strings.Join(claudeTextBlocks(obj), ""); t != "" {
-					last = t
-				}
-			case "result":
-				if r := str(obj["result"]); r != "" {
-					fallback = r
-				}
-			}
-		case "opencode":
-			if str(obj["type"]) == "text" {
-				if t := str(asMap(obj["part"])["text"]); t != "" {
-					last = t
-				}
-			}
-		case "agy":
-			switch str(obj["event"]) {
-			case "result":
-				if r := str(asMap(obj["result"])["response"]); r != "" {
-					last = r
-				}
-			case "step_update":
-				if t := str(asMap(obj["step_update"])["text"]); t != "" {
-					fallback = t
-				}
-			}
-		case "codex":
-			if str(obj["type"]) == "item.completed" {
-				item := asMap(obj["item"])
-				if str(item["type"]) == "agent_message" {
-					if t := str(item["text"]); t != "" {
-						last = t
-					}
-				}
-			}
+		l, f := finalCandidates(kind, obj)
+		if l != "" {
+			last = l
+		}
+		if f != "" {
+			fallback = f
 		}
 	}
 
@@ -84,6 +51,40 @@ func FinalText(kind string, stream []byte) string {
 		last = fallback
 	}
 	return strings.TrimSpace(last)
+}
+
+// finalCandidates is one event's candidate last message and the fallback its
+// kind keeps for when no last message appears; both are "" when the event
+// carries neither.
+func finalCandidates(kind string, obj map[string]any) (last, fallback string) {
+	switch kind {
+	case "claude":
+		switch str(obj["type"]) {
+		case "assistant":
+			return strings.Join(claudeTextBlocks(obj), ""), ""
+		case "result":
+			return "", str(obj["result"])
+		}
+	case "opencode":
+		if str(obj["type"]) == "text" {
+			return str(asMap(obj["part"])["text"]), ""
+		}
+	case "agy":
+		switch str(obj["event"]) {
+		case "result":
+			return str(asMap(obj["result"])["response"]), ""
+		case "step_update":
+			return "", str(asMap(obj["step_update"])["text"])
+		}
+	case "codex":
+		if str(obj["type"]) == "item.completed" {
+			item := asMap(obj["item"])
+			if str(item["type"]) == "agent_message" {
+				return str(item["text"]), ""
+			}
+		}
+	}
+	return "", ""
 }
 
 // claudeTextBlocks is an assistant event's message.content text blocks, in

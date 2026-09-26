@@ -21,19 +21,14 @@ func IsFence(line string) bool {
 		return false
 	}
 	rest := trimmed[n:]
-	if strings.Contains(rest, "`") {
-		return false
-	}
-	return true
+	return !strings.Contains(rest, "`")
 }
 
 // Split turns text into paragraphs. CR is stripped from every line. Outside a
-// fence, a paragraph is a maximal run of lines with non-whitespace content;
-// blank or whitespace-only lines separate paragraphs and belong to none. A
-// fence line opens a fenced paragraph that runs to the next fence line
-// (exclusive) or end of text (an unterminated fence); fence lines are in no
-// paragraph. An empty fenced body yields no paragraph. Index is the position
-// in the returned slice. Empty input -> nil.
+// fence, a paragraph is a maximal run of lines with non-whitespace content,
+// separated by blank or whitespace-only lines; a fence line opens a fenced
+// paragraph that runs to the next fence line or to end of text, and is itself
+// in no paragraph. An empty fenced body yields no paragraph. Empty input -> nil.
 func Split(text []byte) []Paragraph {
 	if len(text) == 0 {
 		return nil

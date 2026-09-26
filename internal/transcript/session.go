@@ -6,7 +6,7 @@ import (
 )
 
 // SessionID is the harness's own session id as one line of its stream
-// announces it (#147), or "" when the line announces none. It is pure and
+// announces it, or "" when the line announces none. It is pure and
 // never errors: the stream is read for one string, nothing else.
 //
 // Each harness names the id differently, and it is not always on the first
@@ -43,7 +43,7 @@ func SessionID(kind string, line []byte) string {
 		}
 		// The id also rides nested in the event's own object: agy's init
 		// line carries init.conversation_id, and a step_update line carries
-		// step_update.conversation_id (#147).
+		// step_update.conversation_id.
 		if ev := str(obj["event"]); ev != "" {
 			return str(asMap(obj[ev])["conversation_id"])
 		}

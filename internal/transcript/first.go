@@ -3,7 +3,7 @@ package transcript
 import "encoding/json"
 
 // FirstOutput reports whether one raw line of a harness's stream is the
-// first kind of event that means the model produced output (#324 part 1).
+// first kind of event that means the model produced output.
 //
 // It is pure and never errors: it decodes the line and inspects its shape
 // only, so a caller measuring time to first output needs no rendering and no

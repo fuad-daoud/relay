@@ -5,10 +5,9 @@ import "bytes"
 // relevo's supervisor appends two bookkeeping lines to a builder's stream
 // once the builder exits: the exit trailer, "relevo-exit:<code>", and the
 // rusage trailer, "relevo-rusage:<...>". A stream written before the rename
-// carries the pre-rename spellings instead (legacy.ExitTrailer /
-// legacy.RusageTrailer, #292 §1). Neither is the builder's words, so Render
-// drops them rather than passing them through as text. They are not removed
-// from the stream file itself, which is the record proc.ExitCode and
+// carries the pre-rename spellings instead. Neither is the builder's words, so
+// Render drops them rather than passing them through as text. They are not
+// removed from the stream file itself, which is the record proc.ExitCode and
 // proc.Rusage read.
 //
 // The two current prefixes are proc.ExitTrailer and proc.RusageTrailer.

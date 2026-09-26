@@ -1,8 +1,6 @@
-// Package transcript renders a headless builder's streamed output -- one
-// JSON event per line, in each harness's own shape -- into the lines a
-// human reads in NNN-builder.log (#168). It knows harness kinds and
-// nothing else: no rounds, no files, no bindings. It is presentation only:
-// nothing in relevo decides anything on what it returns.
+// Package transcript renders a headless builder's streamed output -- one JSON
+// event per line, in each harness's own shape -- into the lines a human reads
+// in the builder log. It is presentation only: nothing decides anything on it.
 package transcript
 
 import (
@@ -65,8 +63,8 @@ func unknown(obj map[string]any) string {
 }
 
 // toolLine is "● <name> <main argument>", or "● <name>" when no parameter
-// is a non-empty string. The marker is what lets a reader tell a call from
-// assistant prose (spec §4.3, amended for #180).
+// is a non-empty string. The marker lets a reader tell a call from assistant
+// prose.
 func toolLine(name string, params map[string]any) string {
 	if arg, ok := mainArg(params); ok {
 		return "● " + name + " " + oneLine(arg)

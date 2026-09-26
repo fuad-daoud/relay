@@ -1,8 +1,8 @@
 package transcript
 
 // renderClaude is the table for `claude -p --output-format stream-json
-// --verbose` (spec §4.1). One assistant event carries one message whose
-// content blocks render in order; tool results arrive as user events.
+// --verbose`. One assistant event carries one message whose content blocks
+// render in order; tool results arrive as user events.
 func renderClaude(obj map[string]any) []string {
 	switch str(obj["type"]) {
 	case "assistant":

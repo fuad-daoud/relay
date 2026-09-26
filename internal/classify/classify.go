@@ -1,3 +1,6 @@
+// Package classify splits an agent's report into paragraphs and asks a model
+// whether each one is an instruction addressed to the reader rather than a
+// status report.
 package classify
 
 import (

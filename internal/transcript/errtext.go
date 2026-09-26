@@ -21,63 +21,75 @@ func ErrorText(kind string, line []byte) (string, bool) {
 		return "", false
 	}
 
-	var msg string
+	msg := strings.TrimSpace(errorText(kind, obj))
+	if msg == "" {
+		return "", false
+	}
+	return msg, true
+}
+
+// errorText is the harness's own fatal-error message in one event, or "" when
+// the event is not a fatal error for its kind.
+func errorText(kind string, obj map[string]any) string {
 	switch kind {
 	case "codex":
 		// item.completed of an item type "error" is a warning the model
 		// sees (e.g. "Exceeded skills context budget"), not a fatal error.
 		switch str(obj["type"]) {
 		case "error":
-			msg = str(obj["message"])
+			return str(obj["message"])
 		case "turn.failed":
-			msg = str(asMap(obj["error"])["message"])
+			return str(asMap(obj["error"])["message"])
 		}
 
 	case "opencode":
 		// A tool_use part in an error state is a tool failure the model
 		// sees, not a run failure.
 		if str(obj["type"]) == "error" {
-			msg = str(asMap(obj["error"])["message"])
+			return str(asMap(obj["error"])["message"])
 		}
 
 	case "claude":
 		switch str(obj["type"]) {
 		case "result":
 			if isErr, _ := obj["is_error"].(bool); isErr {
-				msg = str(obj["result"])
-				if msg == "" {
-					msg = "error result"
+				if msg := str(obj["result"]); msg != "" {
+					return msg
 				}
+				return "error result"
 			}
 		case "error":
-			msg = str(obj["message"])
-			if msg == "" {
-				msg = str(asMap(obj["error"])["message"])
+			if msg := str(obj["message"]); msg != "" {
+				return msg
 			}
+			return str(asMap(obj["error"])["message"])
 		}
 
 	case "agy":
-		if str(obj["event"]) == "result" {
-			r := asMap(obj["result"])
-			if st := str(r["status"]); st != "" && st != "SUCCESS" {
-				if e, ok := r["error"].(string); ok {
-					msg = e
-				} else {
-					msg = str(asMap(r["error"])["message"])
-				}
-				if msg == "" {
-					msg = "result status " + st
-				}
-			}
-		}
-
-	default:
-		return "", false
+		return agyErrorText(obj)
 	}
+	return ""
+}
 
-	msg = strings.TrimSpace(msg)
+// agyErrorText reads agy's result event: a status other than SUCCESS is
+// fatal, and its error is a string or an object.
+func agyErrorText(obj map[string]any) string {
+	if str(obj["event"]) != "result" {
+		return ""
+	}
+	r := asMap(obj["result"])
+	st := str(r["status"])
+	if st == "" || st == "SUCCESS" {
+		return ""
+	}
+	var msg string
+	if e, ok := r["error"].(string); ok {
+		msg = e
+	} else {
+		msg = str(asMap(r["error"])["message"])
+	}
 	if msg == "" {
-		return "", false
+		msg = "result status " + st
 	}
-	return msg, true
+	return msg
 }

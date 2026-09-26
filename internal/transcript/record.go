@@ -7,11 +7,10 @@ import (
 )
 
 // RenderRecord turns one line of a harness's own session record into the
-// lines to append to the log (#184). It differs from Render in what
-// "unknown" means: a record file is a superset of the stream with
-// housekeeping records the stream never has, so an unknown record type,
-// a non-JSON line, or a kind with no record table renders as nothing.
-// Never errors, never panics.
+// lines to append to the log. It differs from Render in what "unknown" means:
+// a record file is a superset of the stream with housekeeping records the
+// stream never has, so an unknown record type, a non-JSON line, or a kind with
+// no record table renders as nothing. Never errors, never panics.
 func RenderRecord(kind string, line []byte) []string {
 	trimmed := bytes.TrimSpace(line)
 	if len(trimmed) == 0 {
