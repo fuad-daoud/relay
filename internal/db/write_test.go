@@ -2,70 +2,44 @@ package db
 
 import (
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 )
 
-func openTestDB(t *testing.T) *DB {
-	t.Helper()
-	d, err := Open(filepath.Join(t.TempDir(), "relevo.db"))
-	if err != nil {
-		t.Fatalf("Open: %v", err)
+func TestUpsertRepoByNaturalKey(t *testing.T) {
+	cases := []struct {
+		name string
+		repo Repo
+	}{
+		{"origin url", Repo{OriginURL: ptr("https://example.test/a.git")}},
+		{"common dir", Repo{CommonDir: ptr("/home/x/repo/.git")}},
 	}
-	t.Cleanup(func() { d.Close() })
-	return d
-}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := openTestDB(t)
+			r := c.repo
+			r.FirstSeen = time.Now()
 
-func ptr[T any](v T) *T { return &v }
+			id1, err := d.UpsertRepo(r)
+			if err != nil {
+				t.Fatalf("UpsertRepo (1st): %v", err)
+			}
+			id2, err := d.UpsertRepo(r)
+			if err != nil {
+				t.Fatalf("UpsertRepo (2nd): %v", err)
+			}
+			if id1 != id2 {
+				t.Errorf("ids differ: %q != %q", id1, id2)
+			}
 
-func TestUpsertRepoByOrigin(t *testing.T) {
-	d := openTestDB(t)
-	r := Repo{OriginURL: ptr("https://example.test/a.git"), FirstSeen: time.Now()}
-
-	id1, err := d.UpsertRepo(r)
-	if err != nil {
-		t.Fatalf("UpsertRepo (1st): %v", err)
-	}
-	id2, err := d.UpsertRepo(r)
-	if err != nil {
-		t.Fatalf("UpsertRepo (2nd): %v", err)
-	}
-	if id1 != id2 {
-		t.Errorf("ids differ: %q != %q", id1, id2)
-	}
-
-	var count int
-	if err := d.sqlDB.QueryRow(`SELECT COUNT(*) FROM repo`).Scan(&count); err != nil {
-		t.Fatalf("count repo: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("repo has %d rows, want 1", count)
-	}
-}
-
-func TestUpsertRepoByCommonDirFallback(t *testing.T) {
-	d := openTestDB(t)
-	r := Repo{CommonDir: ptr("/home/x/repo/.git"), FirstSeen: time.Now()}
-
-	id1, err := d.UpsertRepo(r)
-	if err != nil {
-		t.Fatalf("UpsertRepo (1st): %v", err)
-	}
-	id2, err := d.UpsertRepo(r)
-	if err != nil {
-		t.Fatalf("UpsertRepo (2nd): %v", err)
-	}
-	if id1 != id2 {
-		t.Errorf("ids differ: %q != %q", id1, id2)
-	}
-
-	var count int
-	if err := d.sqlDB.QueryRow(`SELECT COUNT(*) FROM repo`).Scan(&count); err != nil {
-		t.Fatalf("count repo: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("repo has %d rows, want 1", count)
+			var count int
+			if err := d.sqlDB.QueryRow(`SELECT COUNT(*) FROM repo`).Scan(&count); err != nil {
+				t.Fatalf("count repo: %v", err)
+			}
+			if count != 1 {
+				t.Errorf("repo has %d rows, want 1", count)
+			}
+		})
 	}
 }
 
@@ -130,16 +104,6 @@ func TestUpsertPlannerUpdatesLastSeen(t *testing.T) {
 	}
 }
 
-func newTestBinding(name string, createdAt time.Time) Binding {
-	return Binding{
-		Name:         name,
-		CWD:          "/home/x/" + name,
-		BuilderMode:  "headless",
-		CreatedAt:    createdAt,
-		IngestSource: IngestLive,
-	}
-}
-
 func TestUpsertBindingNaturalKey(t *testing.T) {
 	d := openTestDB(t)
 	t1 := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
@@ -171,15 +135,6 @@ func TestUpsertBindingNaturalKey(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("binding has %d rows, want 2", count)
-	}
-}
-
-func newTestRound(bindingID string, number int, outcome string) Round {
-	return Round{
-		BindingID: bindingID,
-		Number:    number,
-		StartedAt: time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC),
-		Outcome:   outcome,
 	}
 }
 
@@ -284,8 +239,7 @@ func TestLinkEventsSetsRoundID(t *testing.T) {
 		}
 	}
 
-	// seq 3 was never linked, so it must not appear under round 1 and its
-	// round_id must still be null.
+	// seq 3 was never linked, so its round_id must still be null.
 	all, err := d.Events(bindingID, 0)
 	if err != nil {
 		t.Fatalf("Events(all): %v", err)
@@ -296,8 +250,7 @@ func TestLinkEventsSetsRoundID(t *testing.T) {
 		}
 	}
 
-	// Calling LinkEvents again for a different round must not clobber an
-	// already-linked event (WHERE round_id IS NULL keeps it idempotent).
+	// A re-link for another round must not clobber an already-linked event.
 	otherRoundID, err := d.UpsertRound(newTestRound(bindingID, 2, OutcomeReported))
 	if err != nil {
 		t.Fatalf("UpsertRound (2): %v", err)
@@ -419,26 +372,8 @@ func TestSaveCursorReplaces(t *testing.T) {
 	}
 }
 
-// seedMirrorRow inserts one mirror binding and one round of it -- the minimum
-// an artifact or a round transcript hangs off -- and returns the round id.
-func seedMirrorRow(t *testing.T, d *DB, name string, at time.Time, number int) string {
-	t.Helper()
-	bindingID, err := d.UpsertBinding(newTestBinding(name, at))
-	if err != nil {
-		t.Fatalf("UpsertBinding: %v", err)
-	}
-	roundID, err := d.UpsertRound(Round{BindingID: bindingID, Number: number, StartedAt: at, Outcome: OutcomeOpen})
-	if err != nil {
-		t.Fatalf("UpsertRound: %v", err)
-	}
-	return roundID
-}
-
-// TestDeleteArtifactRemovesOnlyTheNamedRow pins DeleteArtifact's contract: it
-// removes exactly the row whose id it is given, leaves the round's other
-// artifacts alone, and treats a missing id as a no-op rather than an error.
-// Mutation that breaks it: drop the WHERE clause, and the sibling artifact
-// below disappears with the named one.
+// TestDeleteArtifactRemovesOnlyTheNamedRow pins that only the named row goes,
+// and a missing id is a no-op.
 func TestDeleteArtifactRemovesOnlyTheNamedRow(t *testing.T) {
 	d := openTestDB(t)
 	roundID := seedMirrorRow(t, d, "webshop", time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC), 3)
@@ -473,12 +408,9 @@ func TestDeleteArtifactRemovesOnlyTheNamedRow(t *testing.T) {
 	}
 }
 
-// TestDeleteRoundTranscriptLeavesPlannerRows pins DeleteRoundTranscript's
-// contract: it removes the round-owned rows of one owner id and returns how
-// many, while a planner-owned row carrying the same owner id survives --
-// because the owner kind is hard-coded to 'round', never taken from the
-// caller. Mutation that breaks it: pass the caller's owner kind through, and
-// the planner rows are deleted too.
+// TestDeleteRoundTranscriptLeavesPlannerRows pins that only round-owned rows
+// go: a planner-owned row with the same owner id survives because the owner
+// kind is hard-coded, never taken from the caller.
 func TestDeleteRoundTranscriptLeavesPlannerRows(t *testing.T) {
 	d := openTestDB(t)
 	const ownerID = "owner-shared-by-both-kinds"

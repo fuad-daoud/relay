@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// TestUpsertPlannerByID pins §3.5's id-first write: relevo's planner records
-// carry their own id, so ingest upserts by that id -- inserting it first, then
+// TestUpsertPlannerByID pins the id-first write: relevo's planner records carry
+// their own id, so ingest upserts by that id -- inserting it first, then
 // updating the columns a move can change.
 func TestUpsertPlannerByID(t *testing.T) {
 	d := openTestDB(t)
@@ -74,9 +74,9 @@ func TestUpsertPlannerByID(t *testing.T) {
 	}
 }
 
-// TestUpsertPlannerByIDConflictingNaturalKey pins the guard §3.5 relies on: the
-// natural-key unique index stays, so one (harness_kind, session_id) can never
-// belong to two ids.
+// TestUpsertPlannerByIDConflictingNaturalKey pins the guard the natural-key
+// unique index gives: one (harness_kind, session_id) can never belong to two
+// ids.
 func TestUpsertPlannerByIDConflictingNaturalKey(t *testing.T) {
 	d := openTestDB(t)
 	t1 := time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)
@@ -147,11 +147,10 @@ func TestPlannerBySession(t *testing.T) {
 		t.Errorf("times = %v..%v, want %v..%v", p.FirstSeen, p.LastSeen, t1, t2)
 	}
 
-	// The kind is part of the key.
+	// The kind is part of the key, and a miss is not an error.
 	if _, ok, err := d.PlannerBySession("opencode", "sess-1"); err != nil || ok {
 		t.Errorf("PlannerBySession(other kind) = ok %v, err %v; want no row", ok, err)
 	}
-	// A miss is not an error.
 	if _, ok, err := d.PlannerBySession("claude", "nope"); err != nil || ok {
 		t.Errorf("PlannerBySession(unknown) = ok %v, err %v; want no row and no error", ok, err)
 	}

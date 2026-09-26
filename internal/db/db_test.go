@@ -13,46 +13,6 @@ import (
 	"time"
 )
 
-// errFake is a sentinel Tx callers return to force a rollback in tests.
-var errFake = errors.New("fake failure")
-
-// embeddedVersion is the highest migration this binary embeds. The tests below
-// use it rather than a literal so adding a migration (schema v2, §3.1) does not
-// mean editing every version count.
-func embeddedVersion(t *testing.T) int {
-	t.Helper()
-	v, err := maxEmbedded(migrationFiles)
-	if err != nil {
-		t.Fatalf("maxEmbedded: %v", err)
-	}
-	return v
-}
-
-// seedNewerSchema creates path with a schema_version row above every embedded
-// migration, as a newer relevo would have left it, and returns the table count
-// before this binary opens it.
-func seedNewerSchema(t *testing.T, path string) int {
-	t.Helper()
-	sqlDB, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	defer sqlDB.Close()
-
-	if _, err := sqlDB.Exec(`CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT)`); err != nil {
-		t.Fatalf("create schema_version: %v", err)
-	}
-	if _, err := sqlDB.Exec(`INSERT INTO schema_version (version, applied_at) VALUES (99, '2026-01-01T00:00:00.000Z')`); err != nil {
-		t.Fatalf("insert version 99: %v", err)
-	}
-
-	var tables int
-	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table'`).Scan(&tables); err != nil {
-		t.Fatalf("count tables: %v", err)
-	}
-	return tables
-}
-
 func TestOpenCreatesAndMigrates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 
@@ -60,13 +20,13 @@ func TestOpenCreatesAndMigrates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 
 	v, err := d.Version()
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
-	if want := embeddedVersion(t); v != int(want) {
+	if want := embeddedVersion(t); v != want {
 		t.Errorf("Version() = %d, want %d", v, want)
 	}
 
@@ -86,19 +46,19 @@ func TestOpenIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open (1st): %v", err)
 	}
-	d1.Close()
+	_ = d1.Close()
 
 	d2, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open (2nd): %v", err)
 	}
-	defer d2.Close()
+	t.Cleanup(func() { _ = d2.Close() })
 
 	v, err := d2.Version()
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
-	if want := embeddedVersion(t); v != int(want) {
+	if want := embeddedVersion(t); v != want {
 		t.Errorf("Version() = %d, want %d", v, want)
 	}
 
@@ -160,9 +120,7 @@ func TestOpenCurrentSchemaWhileAnotherProcessWrites(t *testing.T) {
 	}
 }
 
-// TestOpenLeavesANewerSchemaAlone pins #372 §4.5: a schema above this relevo's
-// highest embedded migration is returned with Newer() == true and is not
-// migrated (the table count does not change).
+// TestOpenLeavesANewerSchemaAlone pins that a newer schema is not migrated.
 func TestOpenLeavesANewerSchemaAlone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	before := seedNewerSchema(t, path)
@@ -171,7 +129,7 @@ func TestOpenLeavesANewerSchemaAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 
 	if !d.Newer() {
 		t.Fatal("Newer() = false, want true for a schema above this relevo's migrations")
@@ -190,9 +148,6 @@ func TestOpenLeavesANewerSchemaAlone(t *testing.T) {
 	}
 }
 
-// TestCheckMigrateRefusesANewerSchema pins the function `relevo db migrate`
-// calls: it errors on a newer schema (wrapping ErrNewerSchema) and returns nil
-// on one this relevo may migrate (#372 §4.5).
 func TestCheckMigrateRefusesANewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	seedNewerSchema(t, path)
@@ -201,7 +156,7 @@ func TestCheckMigrateRefusesANewerSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 
 	if err := d.CheckMigrate(); err == nil {
 		t.Fatal("CheckMigrate() = nil, want an error on a newer schema")
@@ -213,16 +168,14 @@ func TestCheckMigrateRefusesANewerSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open fresh: %v", err)
 	}
-	defer fresh.Close()
+	t.Cleanup(func() { _ = fresh.Close() })
 	if err := fresh.CheckMigrate(); err != nil {
 		t.Errorf("CheckMigrate() on a fresh schema = %v, want nil", err)
 	}
 }
 
-// TestConcurrentOpenAppliesEachMigrationOnce pins #372 §4.5's migration guard:
-// two processes opening the same fresh database concurrently both succeed, and
-// schema_version holds exactly one row per migration. The in-transaction
-// re-check is what makes this hold; remove it and this fails.
+// TestConcurrentOpenAppliesEachMigrationOnce pins the migration guard: the
+// in-transaction re-check is what makes one row per migration hold.
 func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		path := filepath.Join(t.TempDir(), "relevo.db")
@@ -255,21 +208,21 @@ func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 		}
 		rows, err := sqlDB.Query(`SELECT version FROM schema_version`)
 		if err != nil {
-			sqlDB.Close()
+			_ = sqlDB.Close()
 			t.Fatalf("iteration %d: query schema_version: %v", i, err)
 		}
 		versions := map[int]int{}
 		for rows.Next() {
 			var v int
 			if err := rows.Scan(&v); err != nil {
-				rows.Close()
-				sqlDB.Close()
+				_ = rows.Close()
+				_ = sqlDB.Close()
 				t.Fatalf("iteration %d: scan version: %v", i, err)
 			}
 			versions[v]++
 		}
-		rows.Close()
-		sqlDB.Close()
+		_ = rows.Close()
+		_ = sqlDB.Close()
 
 		if want := embeddedVersion(t); len(versions) != want {
 			t.Fatalf("iteration %d: schema_version rows = %v, want one row per migration (%d)", i, versions, want)
@@ -282,9 +235,8 @@ func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 	}
 }
 
-// TestOpenSetsJournalSizeLimit pins the WAL cap: every connection Open makes
-// carries journal_size_limit, so sqlite truncates the -wal file back to it
-// after a checkpoint instead of leaving it at a write burst's high-water size.
+// TestOpenSetsJournalSizeLimit pins that sqlite truncates the -wal file after a
+// checkpoint instead of leaving it at a write burst's high-water size.
 func TestOpenSetsJournalSizeLimit(t *testing.T) {
 	d := openTestDB(t)
 
@@ -297,8 +249,6 @@ func TestOpenSetsJournalSizeLimit(t *testing.T) {
 	}
 }
 
-// TestTxRefusesANewerSchema pins §6: a writer on a schema a newer relevo wrote
-// refuses with ErrNewerSchema instead of downgrading it.
 func TestTxRefusesANewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	seedNewerSchema(t, path)
@@ -307,7 +257,7 @@ func TestTxRefusesANewerSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 
 	err = d.Tx(func(tx *Tx) error { return nil })
 	if !errors.Is(err, ErrNewerSchema) {
@@ -322,7 +272,7 @@ func TestTxRollsBackOnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 
 	origin := "https://example.test/repo.git"
 	wantErr := errFake
@@ -333,7 +283,7 @@ func TestTxRollsBackOnError(t *testing.T) {
 		}
 		return wantErr
 	})
-	if err != wantErr {
+	if !errors.Is(err, wantErr) {
 		t.Fatalf("Tx returned %v, want %v", err, wantErr)
 	}
 
@@ -346,8 +296,7 @@ func TestTxRollsBackOnError(t *testing.T) {
 	}
 }
 
-// TestTxRetriesABusyBegin pins §5A: a BEGIN IMMEDIATE that fails busy while
-// another writer holds the lock is retried until that writer lets go, and fn
+// TestTxRetriesABusyBegin pins that a busy BEGIN IMMEDIATE is retried, and fn
 // still runs exactly once.
 func TestTxRetriesABusyBegin(t *testing.T) {
 	oldTimeout, oldRetry := busyTimeoutMS, beginRetryFor
@@ -359,12 +308,12 @@ func TestTxRetriesABusyBegin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open d1: %v", err)
 	}
-	defer d1.Close()
+	t.Cleanup(func() { _ = d1.Close() })
 	d2, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open d2: %v", err)
 	}
-	defer d2.Close()
+	t.Cleanup(func() { _ = d2.Close() })
 
 	holding := make(chan struct{})
 	var once sync.Once
@@ -397,9 +346,7 @@ func TestTxRetriesABusyBegin(t *testing.T) {
 	}
 }
 
-// TestTxGivesUpOnABusyBeginAfterTheDeadline pins §5A's bound: once
-// beginRetryFor has elapsed the busy error comes back exactly as it always
-// did, and fn never ran.
+// TestTxGivesUpOnABusyBeginAfterTheDeadline pins the beginRetryFor bound.
 func TestTxGivesUpOnABusyBeginAfterTheDeadline(t *testing.T) {
 	oldTimeout, oldRetry := busyTimeoutMS, beginRetryFor
 	busyTimeoutMS, beginRetryFor = 20, 200*time.Millisecond
@@ -410,12 +357,12 @@ func TestTxGivesUpOnABusyBeginAfterTheDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open d1: %v", err)
 	}
-	defer d1.Close()
+	t.Cleanup(func() { _ = d1.Close() })
 	d2, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open d2: %v", err)
 	}
-	defer d2.Close()
+	t.Cleanup(func() { _ = d2.Close() })
 
 	holding := make(chan struct{})
 	release := make(chan struct{})
@@ -451,11 +398,7 @@ func TestTxGivesUpOnABusyBeginAfterTheDeadline(t *testing.T) {
 	}
 }
 
-// TestBackupToCopiesEveryRowAndRefusesAnExistingPath pins BackupTo's contract:
-// the copy opens with Open and holds the same row counts as the source, the
-// file is owner-only, and a path that already exists is refused with an error
-// naming it. Mutation that breaks it: delete the os.Stat guard, and the second
-// BackupTo silently overwrites the copy instead of failing.
+// TestBackupToCopiesEveryRowAndRefusesAnExistingPath pins the copy and the guard.
 func TestBackupToCopiesEveryRowAndRefusesAnExistingPath(t *testing.T) {
 	d := openTestDB(t)
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
@@ -493,7 +436,7 @@ func TestBackupToCopiesEveryRowAndRefusesAnExistingPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(backup): %v", err)
 	}
-	defer copyDB.Close()
+	t.Cleanup(func() { _ = copyDB.Close() })
 
 	got, err := copyDB.Stats()
 	if err != nil {
@@ -514,9 +457,7 @@ func TestBackupToCopiesEveryRowAndRefusesAnExistingPath(t *testing.T) {
 	}
 }
 
-// TestVacuumKeepsRows pins Vacuum's contract: it completes on a database with
-// rows and leaves them readable. Mutation that breaks it: run VACUUM inside a
-// transaction -- sqlite refuses it there, and the error surfaces here.
+// TestVacuumKeepsRows pins that Vacuum leaves the rows readable.
 func TestVacuumKeepsRows(t *testing.T) {
 	d := openTestDB(t)
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)

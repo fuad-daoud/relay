@@ -1,14 +1,13 @@
 // Package db is relevo's system of record: a pure-Go sqlite file at
-// <state root>/relevo.db, behind this package alone -- it is the only place
-// a driver is imported, so the move to Turso later is a driver swap here,
-// not a migration anywhere else (docs/specs/2026-09-20-persistence-design.md).
+// <state root>/relevo.db, behind this package alone -- it is the only place a
+// driver is imported, so the move to Turso later is a driver swap here.
 package db
 
 import "time"
 
-// Every id is a text ULID (26 chars, Crockford base32), minted by NewID.
-// Every time is time.Time in Go and RFC3339 UTC with millisecond precision
-// in the db. Nullable columns are pointers on the Go side.
+// Every id is a text ULID minted by NewID, and every time is time.Time in Go
+// but RFC3339 UTC with millisecond precision in the db. Nullable columns are
+// pointers on the Go side.
 
 // Repo is a git repository relevo has seen, identified by its normalised
 // origin URL, its git common dir, or both.
@@ -19,7 +18,6 @@ type Repo struct {
 	FirstSeen time.Time
 }
 
-// Planner is one (harness kind, session id) relevo has observed at bind.
 type Planner struct {
 	ID                string
 	HarnessKind       string
@@ -29,7 +27,6 @@ type Planner struct {
 	LastSeen          time.Time
 }
 
-// Binding is one relevo binding, live or archived.
 type Binding struct {
 	ID                  string
 	Name                string
@@ -53,7 +50,6 @@ type Binding struct {
 	IngestSource        string
 }
 
-// Round is one round of one binding.
 type Round struct {
 	ID               string
 	BindingID        string
@@ -82,7 +78,6 @@ type Round struct {
 	Switches         int
 }
 
-// Event is one binding-scoped log entry, projected from EntryJSON.
 type Event struct {
 	ID          string
 	BindingID   string
@@ -101,8 +96,7 @@ type Event struct {
 	EntryJSON   string
 }
 
-// EventLogRow is one event projected with its binding name and round summary
-// for the cockpit's persistent event log (:log).
+// EventLogRow is one event projected with its binding name and round summary.
 type EventLogRow struct {
 	TS          time.Time
 	Seq         int
@@ -141,7 +135,6 @@ type TranscriptRecord struct {
 	Rendered   string
 }
 
-// Cursor tracks how far an append-only or whole-file source has been read.
 type Cursor struct {
 	Source     string
 	ByteOffset int64
@@ -163,7 +156,6 @@ type Filter struct {
 	Newest                                               bool
 }
 
-// RoundRow is the denormalised line `relevo history` prints.
 type RoundRow struct {
 	BindingID, BindingName                                          string
 	Repo, Feature                                                   *string
@@ -187,8 +179,7 @@ type RoundRow struct {
 	ArchivedAt *time.Time
 }
 
-// BindingRow is one binding plus its repo's identity and round summary, for
-// listing bindings newest activity first.
+// BindingRow is one binding plus its repo's identity and round summary.
 type BindingRow struct {
 	Binding
 	RepoOrigin, RepoCommonDir *string
@@ -196,7 +187,6 @@ type BindingRow struct {
 	LastActivity              time.Time
 }
 
-// Stats summarises the database for `relevo db stats`.
 type Stats struct {
 	Version     int
 	SizeBytes   int64
@@ -204,7 +194,6 @@ type Stats struct {
 	NewestRound *time.Time
 }
 
-// Round.Outcome values (spec §3 decision 8).
 const (
 	OutcomeReported     = "reported"
 	OutcomeHalted       = "halted"
@@ -214,7 +203,6 @@ const (
 	OutcomeOpen         = "open"
 )
 
-// ValidOutcome reports whether s is one of the Round.Outcome values.
 func ValidOutcome(s string) bool {
 	switch s {
 	case OutcomeReported, OutcomeHalted, OutcomeExited, OutcomeSwitched, OutcomeDoneNoReport, OutcomeOpen:
@@ -223,7 +211,6 @@ func ValidOutcome(s string) bool {
 	return false
 }
 
-// Artifact.Kind values.
 const (
 	ArtifactPlan     = "plan"
 	ArtifactReport   = "report"
@@ -236,7 +223,6 @@ const (
 	ArtifactFindings = "findings"
 )
 
-// ValidArtifactKind reports whether s is one of the Artifact.Kind values.
 func ValidArtifactKind(s string) bool {
 	switch s {
 	case ArtifactPlan, ArtifactReport, ArtifactDiff, ArtifactDrift, ArtifactGateLog,
@@ -246,13 +232,11 @@ func ValidArtifactKind(s string) bool {
 	return false
 }
 
-// TranscriptRecord.OwnerKind values.
 const (
 	OwnerRound   = "round"
 	OwnerPlanner = "planner"
 )
 
-// ValidOwnerKind reports whether s is one of the TranscriptRecord.OwnerKind values.
 func ValidOwnerKind(s string) bool {
 	switch s {
 	case OwnerRound, OwnerPlanner:
@@ -261,13 +245,11 @@ func ValidOwnerKind(s string) bool {
 	return false
 }
 
-// Binding.IngestSource values.
 const (
 	IngestLive    = "live"
 	IngestArchive = "archive"
 )
 
-// ValidIngestSource reports whether s is one of the Binding.IngestSource values.
 func ValidIngestSource(s string) bool {
 	switch s {
 	case IngestLive, IngestArchive:
