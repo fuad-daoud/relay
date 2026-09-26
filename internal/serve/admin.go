@@ -130,7 +130,7 @@ func FlatStatus(ctx context.Context, s *Server) (view.Report, error) {
 // StatusJSON is the document `relevo serve status --json` prints; the field
 // names are a contract, and Owners is never null.
 type StatusJSON struct {
-	Builders    remote.BuildersView `json:"builders"`
+	Builders    remote.BuildersView `json:"runners"`
 	LastContact *time.Time          `json:"last_contact"`
 	Owners      []OwnerJSON         `json:"owners"`
 }

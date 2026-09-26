@@ -151,6 +151,10 @@ func pickServedTier(w http.ResponseWriter, rt relevo.Runtime, roleName, candidat
 // picks the role's candidate and tier. It writes the failure itself and returns
 // ok=false, so a refused create leaves no bare repo behind.
 func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, rt relevo.Runtime, caller remote.ClientID, req remote.CreateBindingRequest) (store.Binding, bool) {
+	if req.Role == "" {
+		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "actor is required")
+		return store.Binding{}, false
+	}
 	role := relevo.NormRole(req.Role)
 	if role != "" {
 		if err := relevo.CheckWriterRole(rt, role); err != nil {

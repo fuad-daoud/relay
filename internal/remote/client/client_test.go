@@ -80,7 +80,7 @@ func TestCreateStartFilesBundleAck(t *testing.T) {
 	ctx := context.Background()
 	clientDir, headSHA, repoID := initClientRepo(t, fix.gitClient)
 
-	view, err := cl.CreateBinding(ctx, "zen", remote.CreateBindingRequest{Name: "api", RepoID: repoID, BaseCommit: headSHA})
+	view, err := cl.CreateBinding(ctx, "zen", remote.CreateBindingRequest{Name: "api", RepoID: repoID, BaseCommit: headSHA, Role: "builder"})
 	if err != nil {
 		t.Fatalf("CreateBinding: %v", err)
 	}

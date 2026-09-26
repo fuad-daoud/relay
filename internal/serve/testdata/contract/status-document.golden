@@ -1,5 +1,5 @@
 {
-  "builders": {
+  "runners": {
     "running": 1,
     "queued": 2,
     "cap": 4,

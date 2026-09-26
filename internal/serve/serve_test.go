@@ -363,6 +363,74 @@ func TestWhoAmI(t *testing.T) {
 	}
 }
 
+// TestServerRefusesACreateWithoutAnActor pins A4: a client of this release
+// always names the actor, so an empty one is a 400 naming the field and stores
+// nothing.
+func TestServerRefusesACreateWithoutAnActor(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	if _, err := s.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := createBindingRequest(t, s, kp, remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     "repo123",
+		BaseCommit: strings.Repeat("a", 40),
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	var errBody remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if !strings.Contains(errBody.Message, "actor") {
+		t.Fatalf("message = %q, want it to name actor", errBody.Message)
+	}
+	if _, err := testRuntime(t, s, id).Store.Load("api"); err == nil {
+		t.Fatal("binding was stored despite the missing actor")
+	}
+}
+
+// TestWhoAmIAdvertisesCandidateAndActors pins the A4 feature token values: the
+// per-round candidate token is "candidate" and the actor token is "actors", and
+// the old "builder"/"roles" tokens are gone.
+func TestWhoAmIAdvertisesCandidateAndActors(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/whoami", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var who remote.WhoAmI
+	if err := json.NewDecoder(rec.Body).Decode(&who); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	for _, want := range []string{"candidate", "actors"} {
+		if !slices.Contains(who.Features, want) {
+			t.Errorf("Features = %v, want %q", who.Features, want)
+		}
+	}
+	for _, gone := range []string{"builder", "roles"} {
+		if slices.Contains(who.Features, gone) {
+			t.Errorf("Features = %v, must not carry %q", who.Features, gone)
+		}
+	}
+}
+
 func TestWhoAmIScope(t *testing.T) {
 	scoped, err := New(Config{
 		DB:    testServeDB(t),
@@ -446,6 +514,7 @@ func TestCreateBinding(t *testing.T) {
 		Name:       "api",
 		RepoID:     "repo123",
 		BaseCommit: strings.Repeat("a", 40),
+		Role:       "builder",
 	})
 	req := signedRequest(t, kp, "POST", "/v1/bindings", createBody)
 	rec := httptest.NewRecorder()
@@ -495,6 +564,7 @@ func TestOwnerDirIsFlatHex(t *testing.T) {
 		Name:       "api",
 		RepoID:     "repo123",
 		BaseCommit: strings.Repeat("a", 40),
+		Role:       "builder",
 	})
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, signedRequest(t, kp, "POST", "/v1/bindings", createBody))
@@ -629,6 +699,7 @@ func TestCreateBindingTier(t *testing.T) {
 				Name:       "api",
 				RepoID:     "repo123",
 				BaseCommit: strings.Repeat("a", 40),
+				Role:       "builder",
 				Tier:       tc.tier,
 			})
 			if rec.Code != tc.wantStatus {
@@ -782,6 +853,7 @@ func TestCreateDuplicate(t *testing.T) {
 		Name:       "api",
 		RepoID:     "repo1",
 		BaseCommit: strings.Repeat("b", 40),
+		Role:       "builder",
 	})
 	rec1 := httptest.NewRecorder()
 	handler.ServeHTTP(rec1, signedRequest(t, kp, "POST", "/v1/bindings", body))
@@ -818,6 +890,7 @@ func TestListIsOwnerScoped(t *testing.T) {
 		Name:       "api",
 		RepoID:     "repo1",
 		BaseCommit: strings.Repeat("1", 40),
+		Role:       "builder",
 	})
 	recCreate := httptest.NewRecorder()
 	handler.ServeHTTP(recCreate, signedRequest(t, kpA, "POST", "/v1/bindings", bodyA))
@@ -861,6 +934,7 @@ func TestGetTouchesLastSeen(t *testing.T) {
 		Name:       "api",
 		RepoID:     "repo1",
 		BaseCommit: strings.Repeat("2", 40),
+		Role:       "builder",
 	})
 	recCreate := httptest.NewRecorder()
 	handler.ServeHTTP(recCreate, signedRequest(t, kp, "POST", "/v1/bindings", createBody))
@@ -1891,7 +1965,7 @@ func seedRunningOwner(t *testing.T, srv *Server, ts *httptest.Server, gitClient 
 	_, _ = srv.clients.Add(label, remote.MarshalPublic(kp.Public, label), time.Now())
 
 	name := "binding-" + label
-	createBody, _ := json.Marshal(remote.CreateBindingRequest{Name: name, RepoID: repoID, BaseCommit: head})
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{Name: name, RepoID: repoID, BaseCommit: head, Role: "builder"})
 	doSigned(t, ts, kp, "POST", "/v1/bindings", createBody, "application/json")
 	_ = gitClient.UpdateRef(ctx, clientDir, "refs/relevo/"+name+"/out", head, "")
 	trans := remote.NewBundleTransport(gitClient, t.TempDir())
@@ -2112,6 +2186,7 @@ func TestRoundStartWithCandidateChangesTheBuilder(t *testing.T) {
 		Name:       "api",
 		RepoID:     env.repoID,
 		BaseCommit: env.headSHA,
+		Role:       "builder",
 		Candidate:  "claude/anthropic/haiku",
 	})
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
@@ -2164,6 +2239,7 @@ func TestRoundStartUnknownCandidateRefusesBeforeAbsorb(t *testing.T) {
 		Name:       "api",
 		RepoID:     env.repoID,
 		BaseCommit: env.headSHA,
+		Role:       "builder",
 		Candidate:  "claude/anthropic/haiku",
 	})
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")

@@ -6,7 +6,7 @@
   "round_cap": 10,
   "round_timeout_ms": 60000,
   "tier": "edit",
-  "role": "builder",
+  "actor": "builder",
   "author": {
     "name": "Test Builder",
     "email": "builder@example.com"

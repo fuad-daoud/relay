@@ -82,6 +82,7 @@ func TestAckRoundSettlesPending(t *testing.T) {
 		Name:       "api",
 		RepoID:     env.repoID,
 		BaseCommit: env.headSHA,
+		Role:       "builder",
 	})
 	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 

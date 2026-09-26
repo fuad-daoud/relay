@@ -440,7 +440,7 @@ func TestRenderServersShowsTierAndWarning(t *testing.T) {
 		{Name: "old", URL: "https://old:7777", State: "enrolled", Label: "laptop", TierAware: false},
 	}
 	out := RenderServers(probes)
-	if !strings.Contains(out, "builder tier: harness (max edit)") {
+	if !strings.Contains(out, "default tier: harness (max edit)") {
 		t.Fatalf("output missing builder tier line; got:\n%s", out)
 	}
 	if !strings.Contains(out, "!! headless builders at tier harness") {
@@ -486,11 +486,11 @@ func TestRenderServersBuilders(t *testing.T) {
 	}
 	out := RenderServers(probes)
 	for _, want := range []string{
-		"builders 2/3, 1 queued, scopes off",
-		"builders 2/3, 1 queued, scopes on (relevo.slice, 200%)",
-		"builders 1/3, 0 queued, scopes on (150%)",
-		"builders 1/3, 0 queued, scopes on (relevo.slice)",
-		"builders 1/3, 0 queued, scopes on\n",
+		"runners 2/3, 1 queued, scopes off",
+		"runners 2/3, 1 queued, scopes on (relevo.slice, 200%)",
+		"runners 1/3, 0 queued, scopes on (150%)",
+		"runners 1/3, 0 queued, scopes on (relevo.slice)",
+		"runners 1/3, 0 queued, scopes on\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q; got:\n%s", want, out)
@@ -506,7 +506,7 @@ func TestRenderServersBuilders(t *testing.T) {
 	if oldLine == "" {
 		t.Fatalf("output missing the old server's row; got:\n%s", out)
 	}
-	if strings.Contains(oldLine, "builders ") {
+	if strings.Contains(oldLine, "runners ") {
 		t.Errorf("non-queue-aware server row must not carry builders text; got:\n%s", oldLine)
 	}
 }
@@ -920,9 +920,49 @@ func TestAddRemoteRoleWiresRequest(t *testing.T) {
 	}
 }
 
-// TestAddRemoteBuilderUnchanged pins #382 §5.3: a builder add to a server that
-// lacks remote.FeatureRoles still succeeds and sends Role "", so an old server
-// keeps working for builder bindings.
+// TestCreateBindingRequestCarriesTheActor pins the A4 wire contract: the
+// client always names the actor on create, "builder" for a default binding and
+// the custom actor otherwise.
+func TestCreateBindingRequestCarriesTheActor(t *testing.T) {
+	cases := []struct {
+		name string
+		role string
+		want string
+	}{
+		{"default binding sends builder", "", "builder"},
+		{"custom binding sends its actor", "designer", "designer"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := store.New(t.TempDir())
+			fg := &fakeGit{
+				headCommitID:  "1111111111111111111111111111111111111111",
+				rootCommitSHA: "2222222222222222222222222222222222222222",
+			}
+			fr := &fakeRemote{
+				whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureRoles}},
+				createBindingResp: remote.BindingView{
+					Name:      "api",
+					Candidate: "claude/anthropic/haiku",
+				},
+			}
+			rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, Planners: addRemotePlanner(t)}
+
+			if _, err := Add(ctx, rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo", Role: tc.role}); err != nil {
+				t.Fatalf("Add: %v", err)
+			}
+			if fr.createBindingReq.Role != tc.want {
+				t.Fatalf("CreateBindingRequest.Role = %q, want %q", fr.createBindingReq.Role, tc.want)
+			}
+		})
+	}
+}
+
+// TestAddRemoteBuilderUnchanged pins that a default add to a server that lacks
+// remote.FeatureRoles still succeeds: the client names the default actor
+// "builder" on the wire (an old server ignores the field), and the local mirror
+// keeps "" as the default.
 func TestAddRemoteBuilderUnchanged(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(t.TempDir())
@@ -943,8 +983,8 @@ func TestAddRemoteBuilderUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add --server (builder) failed: %v", err)
 	}
-	if fr.createBindingReq.Role != "" {
-		t.Fatalf("CreateBindingRequest.Role = %q, want empty", fr.createBindingReq.Role)
+	if fr.createBindingReq.Role != "builder" {
+		t.Fatalf("CreateBindingRequest.Role = %q, want builder", fr.createBindingReq.Role)
 	}
 	if res.Binding.Role != "" {
 		t.Fatalf("res.Binding.Role = %q, want empty", res.Binding.Role)

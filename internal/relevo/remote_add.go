@@ -190,6 +190,11 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		wireTier = string(t)
 	}
 	wireRole := normRole(opts.Role)
+	// The wire always names the actor; a default binding sends "builder".
+	actor := wireRole
+	if actor == "" {
+		actor = "builder"
+	}
 	if opts.Tier != "" || wireRole != "" {
 		who, err := rt.Remote.WhoAmI(ctx, opts.Server)
 		if err != nil {
@@ -198,9 +203,9 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		if opts.Tier != "" && !slices.Contains(who.Features, remote.FeatureTier) {
 			return AddResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, opts.Server)
 		}
-		// The client's roles.json never travels (§5.3): the server resolves
-		// the role against its own. A server too old to do that would ignore
-		// the field and run its builder, so it is refused here -- before any
+		// The client's actors never travel (§5.3): the server resolves the
+		// actor against its own. A server too old to do that would ignore the
+		// field and run the default actor, so it is refused here -- before any
 		// branch, worktree or create call.
 		if wireRole != "" && !slices.Contains(who.Features, remote.FeatureRoles) {
 			return AddResult{}, fmt.Errorf("server %s does not run custom actors (actor %q); upgrade it", opts.Server, opts.Role)
@@ -217,7 +222,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		BaseCommit: base,
 		Candidate:  candidateStr,
 		Tier:       wireTier,
-		Role:       wireRole,
+		Role:       actor,
 		Author:     &remote.GitIdentity{Name: authorName, Email: authorEmail},
 	}
 	view, err := rt.Remote.CreateBinding(ctx, opts.Server, createReq)
@@ -308,8 +313,8 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		Round:            1,
 		State:            store.StateActive,
 		Tier:             view.Tier,
-		// The role travels as the client asked it: the server resolved it
-		// against its own roles.json, and the mirror records it so
+		// The actor travels as the client asked it: the server resolved it
+		// against its own actors, and the mirror records it so
 		// `relevo status` shows it (#382 §5.3).
 		Role: wireRole,
 		// rt.Git is guaranteed non-nil here (checked at the top of

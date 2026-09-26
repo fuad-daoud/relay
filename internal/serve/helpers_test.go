@@ -491,6 +491,7 @@ func sendRoundAs(t *testing.T, env *testEnv, kp remote.Keypair, clientDir, repoI
 		Name:       name,
 		RepoID:     repoID,
 		BaseCommit: headSHA,
+		Role:       "builder",
 		Author:     author,
 	})
 	resp, body := doSigned(t, env.ts, kp, "POST", "/v1/bindings", createBody, "application/json")
@@ -552,6 +553,7 @@ func createAndAbsorb(t *testing.T, env *testEnv, name string) []byte {
 		Name:       name,
 		RepoID:     env.repoID,
 		BaseCommit: env.headSHA,
+		Role:       "builder",
 	})
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
 	if resp.StatusCode != http.StatusCreated {

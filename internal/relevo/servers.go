@@ -142,7 +142,7 @@ func RenderServers(probes []ServerProbe) string {
 		row := fmt.Sprintf("%-*s  %-40s  %s", width, p.Name, p.URL, probeStatusText(p))
 		if p.State == "enrolled" {
 			if p.TierAware {
-				row += fmt.Sprintf("  builder tier: %s (max %s)", p.BuilderTier, p.MaxTier)
+				row += fmt.Sprintf("  default tier: %s (max %s)", p.BuilderTier, p.MaxTier)
 			} else {
 				row += "  builder tier: unknown (pre-tier server)"
 			}
@@ -158,7 +158,7 @@ func RenderServers(probes []ServerProbe) string {
 				case p.Builders.Scopes:
 					scopes = "on"
 				}
-				row += fmt.Sprintf("  builders %d/%d, %d queued, scopes %s",
+				row += fmt.Sprintf("  runners %d/%d, %d queued, scopes %s",
 					p.Builders.Running, p.Builders.Cap, p.Builders.Queued, scopes)
 			}
 		}

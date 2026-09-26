@@ -661,7 +661,7 @@ func TestStatusDocumentEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	want := `{"builders":{"running":0,"queued":0,"cap":0,"scopes":false},"last_contact":null,"owners":[]}`
+	want := `{"runners":{"running":0,"queued":0,"cap":0,"scopes":false},"last_contact":null,"owners":[]}`
 	if string(blob) != want {
 		t.Errorf("StatusDocument(nil) JSON = %s, want %s", blob, want)
 	}
