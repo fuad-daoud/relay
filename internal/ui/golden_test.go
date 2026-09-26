@@ -1243,6 +1243,19 @@ func TestGoldenViews(t *testing.T) {
 			},
 		},
 		{
+			name: "agent-edited-newer-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				files := agentFileFixtures(t)
+				for i := range files["researcher"] {
+					if files["researcher"][i].Kind == "claude" {
+						files["researcher"][i].State = harness.FileEditedNewer
+					}
+				}
+				fa := &fakeActions{doc: candFixtureDoc(t), files: files}
+				return candDown(t, goldenAgentResearcherModel(t, 132, 34, fa), 1) // claude, edit + newer
+			},
+		},
+		{
 			name: "settings-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})

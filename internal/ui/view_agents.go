@@ -237,7 +237,7 @@ func agentStateCell(r agentRow, kind string) (string, lipgloss.Style) {
 			return "ok", greenStyle
 		case harness.FileStale:
 			return "stale", warnStyle
-		case harness.FileEdited:
+		case harness.FileEdited, harness.FileEditedNewer:
 			return "edited", warnStyle
 		}
 		break
