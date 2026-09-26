@@ -3,6 +3,8 @@ package relevo
 import (
 	"fmt"
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // The result lines of the three pick-able verbs live here, not in cmd/relevo,
@@ -72,22 +74,6 @@ func StopText(name string, res StopResult) string {
 	}
 }
 
-// HumanBytes renders n as a binary (1024-based) human-readable size, e.g.
-// "512 B", "1.5 KiB", "3.0 MiB". It is the one implementation the CLI and the
-// dry run share, so `relevo db stats` and `relevo send --dry-run` never disagree.
-func HumanBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
-}
-
 // RenderDryRun is what `relevo send --dry-run` prints: the round it would open,
 // the builder and where it would go, the paths, and the head of the prompt. It
 // names only what the preflight read; nothing here was sent (#149).
@@ -97,7 +83,7 @@ func RenderDryRun(d DryRun) string {
 		fmt.Sprintf("  %-8s  %s", "builder", dryRunBuilderLine(d)),
 		fmt.Sprintf("  %-8s  %s", "where", d.Where),
 		fmt.Sprintf("  %-8s  %s", "tier", d.Tier),
-		fmt.Sprintf("  %-8s  %s  (staged from %s, %s)", "plan", d.PlanPath, d.PlanFrom, HumanBytes(d.PlanBytes)),
+		fmt.Sprintf("  %-8s  %s  (staged from %s, %s)", "plan", d.PlanPath, d.PlanFrom, view.HumanBytes(d.PlanBytes)),
 		fmt.Sprintf("  %-8s  %s", "report", d.ReportPath),
 		fmt.Sprintf("  %-8s  %s", "marker", d.DonePath),
 	}

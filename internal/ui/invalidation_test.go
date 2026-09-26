@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 func TestStatusMsgUnchangedTSNoFetch(t *testing.T) {
@@ -20,8 +21,8 @@ func TestStatusMsgUnchangedTSNoFetch(t *testing.T) {
 	name := "webshop"
 	ts := time.Now().Truncate(time.Second)
 
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{
-		{Name: name, Round: 2, Display: "ACTIVE", Last: &relevo.LastEvent{TS: ts, Round: 2}},
+	rep := view.Report{Bindings: []view.BindingStatus{
+		{Name: name, Round: 2, Display: "ACTIVE", Last: &view.LastEvent{TS: ts, Round: 2}},
 	}}
 	rv := newTestRound(t, rt, rep, name, 0)
 	rv.pane.detail.active = tabReport
@@ -49,8 +50,8 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 	}
 
 	ts := time.Now().Truncate(time.Second)
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{
-		{Name: name, Round: 2, Display: "ACTIVE", Last: &relevo.LastEvent{TS: ts, Round: 2}},
+	rep := view.Report{Bindings: []view.BindingStatus{
+		{Name: name, Round: 2, Display: "ACTIVE", Last: &view.LastEvent{TS: ts, Round: 2}},
 	}}
 	rv := newTestRound(t, rt, rep, name, 0)
 	rv.pane.detail.active = tabReport
@@ -63,8 +64,8 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 	rv.pane.tabInFlight = false
 
 	newTS := ts.Add(10 * time.Second)
-	newRep := relevo.Report{Bindings: []relevo.BindingStatus{
-		{Name: name, Round: 4, Display: "ACTIVE", Last: &relevo.LastEvent{TS: newTS, Round: 4}},
+	newRep := view.Report{Bindings: []view.BindingStatus{
+		{Name: name, Round: 4, Display: "ACTIVE", Last: &view.LastEvent{TS: newTS, Round: 4}},
 	}}
 	next, cmd := rv.Update(statusMsg{report: newRep}, testEnv(plannerSource{rt}, newRep, 140, 40))
 	got := next.(roundView)
@@ -94,8 +95,8 @@ func TestStatusMsgNewerTSClearsFileCachesPreservesTerminal(t *testing.T) {
 		t.Fatalf("expected refetch of active tab (tabReport), got %v", tMsg.t)
 	}
 
-	rep2 := relevo.Report{Bindings: []relevo.BindingStatus{
-		{Name: name, Round: 4, PlanRound: 4, Display: "ACTIVE", Last: &relevo.LastEvent{TS: newTS.Add(10 * time.Second), Round: 4}},
+	rep2 := view.Report{Bindings: []view.BindingStatus{
+		{Name: name, Round: 4, PlanRound: 4, Display: "ACTIVE", Last: &view.LastEvent{TS: newTS.Add(10 * time.Second), Round: 4}},
 	}}
 	next2, _ := got.Update(statusMsg{report: rep2}, testEnv(plannerSource{rt}, rep2, 140, 40))
 	got2 := next2.(roundView)
@@ -113,8 +114,8 @@ func TestScrollPreservedAcrossStatusMsgWithoutInvalidation(t *testing.T) {
 	name := "webshop"
 	ts := time.Now().Truncate(time.Second)
 
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{
-		{Name: name, Round: 2, Display: "ACTIVE", Last: &relevo.LastEvent{TS: ts, Round: 2}},
+	rep := view.Report{Bindings: []view.BindingStatus{
+		{Name: name, Round: 2, Display: "ACTIVE", Last: &view.LastEvent{TS: ts, Round: 2}},
 	}}
 	rv := newTestRound(t, rt, rep, name, 0)
 	rv.pane.detail.active = tabReport
@@ -139,7 +140,7 @@ func TestTerminalTabPollsOnEveryTickWhenVisible(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{{Name: name, Round: 2, Display: "ACTIVE"}}}
+	rep := view.Report{Bindings: []view.BindingStatus{{Name: name, Round: 2, Display: "ACTIVE"}}}
 	rv := newTestRound(t, rt, rep, name, 0)
 	rv.pane.detail.active = tabTerminal
 	rv.pane.detail.vp = viewport.New(80, 20)
@@ -167,11 +168,11 @@ func TestTerminalTabPollsOnEveryTickWhenVisible(t *testing.T) {
 }
 
 func TestStatusMsgBindingVanishesPopsToListWithNote(t *testing.T) {
-	m := splitModel(t, 140, 40, relevo.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
+	m := splitModel(t, 140, 40, view.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
 	v, _ := newRoundView(m.env(), "webshop", 0)
 	m.stack = append(m.stack, v)
 
-	emptyRep := relevo.Report{Bindings: []relevo.BindingStatus{{Name: "other-binding", Display: "ACTIVE"}}}
+	emptyRep := view.Report{Bindings: []view.BindingStatus{{Name: "other-binding", Display: "ACTIVE"}}}
 	res, cmd := m.Update(statusMsg{report: emptyRep})
 	m = res.(Model)
 	m = drain(t, m, cmd)

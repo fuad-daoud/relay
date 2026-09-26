@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // unusedCols is the unused-provider table's cell widths at width:
@@ -42,7 +42,7 @@ func unusedHeaderLine(nameW, reasonW, setByW, cw int) string {
 // unusedDataLine is one unused provider's table row. The name is bold on
 // the cursor row, the reason is the gate note's readable lead, SET BY names
 // the recorder, and STATUS is the time left in red.
-func unusedDataLine(g relevo.ProviderGate, sel bool, nameW, reasonW, setByW, cw int, now time.Time) string {
+func unusedDataLine(g view.ProviderGate, sel bool, nameW, reasonW, setByW, cw int, now time.Time) string {
 	nameStyle := textStyle
 	if sel {
 		nameStyle = nameStyle.Bold(true)
@@ -64,7 +64,7 @@ func unusedDataLine(g relevo.ProviderGate, sel bool, nameW, reasonW, setByW, cw 
 
 // asGate presents a ProviderGate as the ledger.Gate the candidate detail's
 // gate helpers already take, so the two tables never word a gate differently.
-func asGate(g relevo.ProviderGate) availability.Gate {
+func asGate(g view.ProviderGate) availability.Gate {
 	return availability.Gate{
 		Kind:    availability.RateLimited,
 		Since:   g.Since,
@@ -77,7 +77,7 @@ func asGate(g relevo.ProviderGate) availability.Gate {
 
 // unusedDetailLines is the unused row's detail block: whose gate it is,
 // the gate itself, and how to clear it.
-func unusedDetailLines(g relevo.ProviderGate, now time.Time, width int) []string {
+func unusedDetailLines(g view.ProviderGate, now time.Time, width int) []string {
 	p := g.Provider
 	first := "   " + faintStyle.Bold(true).Render(p) + "   " + mutedStyle.Render("a provider no candidate uses")
 

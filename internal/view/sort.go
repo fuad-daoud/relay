@@ -1,4 +1,4 @@
-package relevo
+package view
 
 import "sort"
 
@@ -27,8 +27,7 @@ func rankOf(display string) int {
 // nil Last last), name as the tiebreak; name is the order Status has
 // always returned. With every label empty (a planner) the output is
 // exactly what the pre-owner implementation returned. Stable; never
-// mutates its input. Only `relevo ui` calls it today; #143 moves `status`
-// onto it.
+// mutates its input.
 func SortRows(rows []BindingStatus, attention bool) []BindingStatus {
 	out := make([]BindingStatus, len(rows))
 	copy(out, rows)
@@ -41,7 +40,7 @@ func SortRows(rows []BindingStatus, attention bool) []BindingStatus {
 			if ra, rb := rankOf(a.Display), rankOf(b.Display); ra != rb {
 				return ra < rb
 			}
-			// #135: inside one attention group the rows a human has left the
+			// Inside one attention group the rows a human has left the
 			// longest come first, so an unacted NEEDS YOU or HELD row does not
 			// drift down the list behind fresher ones.
 			if sa, sb := a.Stale != "", b.Stale != ""; sa != sb {

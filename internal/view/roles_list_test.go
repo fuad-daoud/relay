@@ -1,6 +1,6 @@
-package relevo
+package view
 
-// The tests for #374 §3.2: FormatRoles lists each role's shape, candidates,
+// The FormatRoles tests: FormatRoles lists each role's shape, candidates,
 // tier and definitions from the registry, in reg.Names() order.
 
 import (
@@ -13,7 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// TestFormatRolesFileMode pins §3.2's file-mode block: the first line carries
+// TestFormatRolesFileMode pins the file-mode block: the first line carries
 // the shape, the gate, the stored tier and roles.json as the source, and a kind
 // line carries the definition's agent, its requires and the custom marker.
 func TestFormatRolesFileMode(t *testing.T) {
@@ -46,7 +46,7 @@ func TestFormatRolesFileMode(t *testing.T) {
 	}
 }
 
-// TestFormatRolesLegacy pins §3.2's legacy block: the source reads (legacy),
+// TestFormatRolesLegacy pins the legacy block: the source reads (legacy),
 // the candidates line is the role's order as written, and a role with none says
 // so.
 func TestFormatRolesLegacy(t *testing.T) {
@@ -73,7 +73,7 @@ func TestFormatRolesLegacy(t *testing.T) {
 	}
 }
 
-// TestFormatRolesLegacyCandidatesFromRanked pins #374 §2.3's fix over the
+// TestFormatRolesLegacyCandidatesFromRanked pins the fix over the
 // round-1 fixtures: researcher is served by claude/anthropic/haiku and no order
 // names it, so the legacy candidates line lists it, marked (unlisted), rather
 // than wrongly saying (none).

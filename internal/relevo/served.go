@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // RoundStateOf returns the execution state of an owned binding (remote-builders spec §3.1).
@@ -140,7 +141,7 @@ func ServedView(b store.Binding, entries []store.LogEntry) remote.BindingView {
 		ackedRound = b.Serve.AckedRound
 		closedRound = b.Serve.ClosedRound
 		if closedRound > 0 {
-			pt := priorTokensOf(entries, closedRound)
+			pt := view.PriorTokensOf(entries, closedRound)
 			if pt.Total() > 0 {
 				priorTokens = &pt
 			}
@@ -250,7 +251,7 @@ func PickServedCandidate(rt Runtime, token string) (string, string) {
 	return PickServedCandidateFor(rt, "builder", token)
 }
 
-func liveViewOf(row BindingStatus, b store.Binding, at time.Time) *remote.LiveView {
+func liveViewOf(row view.BindingStatus, b store.Binding, at time.Time) *remote.LiveView {
 	v := &remote.LiveView{
 		At:             at,
 		Usage:          row.LiveUsage,

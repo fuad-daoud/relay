@@ -12,17 +12,18 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/muesli/termenv"
 )
 
 func TestFleetGroupsOrderAndOmission(t *testing.T) {
-	rows := []relevo.BindingStatus{
+	rows := []view.BindingStatus{
 		{Name: "b-idle", Display: "ACTIVE", BuilderStatus: "idle"},
 		{Name: "b-need", Display: "NEEDS YOU"},
 		{Name: "b-work", Display: "ACTIVE", BuilderStatus: "working"},
 		{Name: "b-held", Display: "HELD"},
 	}
-	env := Env{Loaded: true, Report: relevo.Report{Bindings: rows}, Now: railNow, Width: 140, Height: 40}
+	env := Env{Loaded: true, Report: view.Report{Bindings: rows}, Now: railNow, Width: 140, Height: 40}
 	f := newFleetView(true)
 	body := f.Body(env, 140, 40)
 	plainBody := stripANSI(body)
@@ -46,13 +47,13 @@ func TestFleetGroupsOrderAndOmission(t *testing.T) {
 }
 
 func TestFleetDoneFold(t *testing.T) {
-	rows := []relevo.BindingStatus{
+	rows := []view.BindingStatus{
 		{Name: "live-1", Display: "ACTIVE", BuilderStatus: "working"},
-		{Name: "done-1", Display: "DONE", Last: &relevo.LastEvent{TS: railNow.Add(-1 * time.Hour)}},
-		{Name: "done-2", Display: "DONE", Last: &relevo.LastEvent{TS: railNow.Add(-2 * time.Hour)}},
-		{Name: "done-3", Display: "DONE", Last: &relevo.LastEvent{TS: railNow.Add(-3 * time.Hour)}},
+		{Name: "done-1", Display: "DONE", Last: &view.LastEvent{TS: railNow.Add(-1 * time.Hour)}},
+		{Name: "done-2", Display: "DONE", Last: &view.LastEvent{TS: railNow.Add(-2 * time.Hour)}},
+		{Name: "done-3", Display: "DONE", Last: &view.LastEvent{TS: railNow.Add(-3 * time.Hour)}},
 	}
-	env := Env{Loaded: true, Report: relevo.Report{Bindings: rows}, Now: railNow, Width: 140, Height: 40}
+	env := Env{Loaded: true, Report: view.Report{Bindings: rows}, Now: railNow, Width: 140, Height: 40}
 	f := newFleetView(true)
 
 	// Folded: rows() excludes done rows
@@ -93,7 +94,7 @@ func TestFleetDoneFold(t *testing.T) {
 }
 
 func TestFleetCardKeysByGroup(t *testing.T) {
-	rows := []relevo.BindingStatus{
+	rows := []view.BindingStatus{
 		{Name: "b-need", Display: "NEEDS YOU"},
 		{Name: "b-work", Display: "ACTIVE", BuilderStatus: "working"},
 		{Name: "b-idle", Display: "ACTIVE", BuilderStatus: "idle"},
@@ -102,7 +103,7 @@ func TestFleetCardKeysByGroup(t *testing.T) {
 	}
 	env := Env{
 		Loaded:  true,
-		Report:  relevo.Report{Bindings: rows},
+		Report:  view.Report{Bindings: rows},
 		Now:     railNow,
 		Width:   140,
 		Height:  40,
@@ -171,7 +172,7 @@ func TestFleetRowDropOrder(t *testing.T) {
 	}
 
 	// Verify name and now always present in rendered row
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name:             "webshop",
 		Round:            2,
 		Display:          "ACTIVE",
@@ -201,8 +202,8 @@ func TestHeaderShowsVersionNotGates(t *testing.T) {
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
 	m.statusInFlight = false
-	rep := relevo.Report{
-		Bindings: []relevo.BindingStatus{{Name: "web", Display: "ACTIVE"}},
+	rep := view.Report{
+		Bindings: []view.BindingStatus{{Name: "web", Display: "ACTIVE"}},
 		Gated: []availability.Gate{
 			{Token: "agy/antigravity/claude-sonnet-4-6", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(time.Hour)},
 		},
@@ -228,7 +229,7 @@ func TestGatedLineOneProviderLatestUntil(t *testing.T) {
 	env := Env{
 		Now:   railNow,
 		Width: 140,
-		Report: relevo.Report{
+		Report: view.Report{
 			Gated: []availability.Gate{
 				{Token: "codex/openai/gpt-4o", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(10 * time.Minute)},
 				{Token: "codex/openai/gpt-5", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(25 * 24 * time.Hour)},
@@ -254,7 +255,7 @@ func TestHelpListsHelpKeys(t *testing.T) {
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{{Name: "web", Display: "ACTIVE"}}}})
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: []view.BindingStatus{{Name: "web", Display: "ACTIVE"}}}})
 	m = res.(Model)
 
 	footer := stripANSI(m.keysView(m.env()))
@@ -314,10 +315,10 @@ func TestFleetCardCommitPlural(t *testing.T) {
 	env := Env{Now: railNow, Width: 132, Height: 34}
 	f := newFleetView(true)
 
-	b1 := relevo.BindingStatus{
+	b1 := view.BindingStatus{
 		Name:      "b1",
 		Display:   "ACTIVE",
-		LastClose: &relevo.CloseInfo{Commits: 1},
+		LastClose: &view.CloseInfo{Commits: 1},
 	}
 	card1 := strings.Join(f.cardLines(env, b1, 132), "\n")
 	plain1 := stripANSI(card1)
@@ -328,10 +329,10 @@ func TestFleetCardCommitPlural(t *testing.T) {
 		t.Errorf("Commits=1 must NOT render '+1 commits', got:\n%s", plain1)
 	}
 
-	b2 := relevo.BindingStatus{
+	b2 := view.BindingStatus{
 		Name:      "b2",
 		Display:   "ACTIVE",
-		LastClose: &relevo.CloseInfo{Commits: 2},
+		LastClose: &view.CloseInfo{Commits: 2},
 	}
 	card2 := strings.Join(f.cardLines(env, b2, 132), "\n")
 	plain2 := stripANSI(card2)
@@ -345,13 +346,13 @@ func TestFleetUnreadTintOnlyOnIdle(t *testing.T) {
 	defer lipgloss.SetColorProfile(orig)
 	lipgloss.SetColorProfile(termenv.TrueColor)
 
-	bIdle := relevo.BindingStatus{
+	bIdle := view.BindingStatus{
 		Name:          "b-idle",
 		Display:       "ACTIVE",
 		BuilderStatus: "idle",
 		Unread:        true,
 	}
-	bDone := relevo.BindingStatus{
+	bDone := view.BindingStatus{
 		Name:    "b-done",
 		Display: "DONE",
 		Unread:  true,
@@ -373,7 +374,7 @@ func TestFleetUnreadTintOnlyOnIdle(t *testing.T) {
 }
 
 func TestFleetCardNoEmptyPart(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name:    "bare-row",
 		Display: "ACTIVE",
 	}
@@ -388,12 +389,12 @@ func TestFleetCardNoEmptyPart(t *testing.T) {
 
 func TestFleetReportedRowShowsTheRoundThatReported(t *testing.T) {
 	now := railNow
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name:          "b-idle",
 		Round:         3,
 		Display:       "ACTIVE",
 		BuilderStatus: "idle",
-		LastPayload: &relevo.LastEvent{
+		LastPayload: &view.LastEvent{
 			Round:     2,
 			Direction: store.DirToPlanner,
 			Kind:      store.KindReport,
@@ -417,12 +418,12 @@ func TestFleetReportedRowShowsTheRoundThatReported(t *testing.T) {
 }
 
 func TestFleetWorkingRowShowsTheRoundInFlight(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name:          "b-work",
 		Round:         3,
 		Display:       "ACTIVE",
 		BuilderStatus: "working",
-		LastPayload: &relevo.LastEvent{
+		LastPayload: &view.LastEvent{
 			Round:     3,
 			Direction: store.DirToBuilder,
 			Kind:      store.KindPlan,
@@ -436,7 +437,7 @@ func TestFleetWorkingRowShowsTheRoundInFlight(t *testing.T) {
 func TestGatedLineEndsInEllipsisWhenCut(t *testing.T) {
 	env := Env{
 		Now: railNow,
-		Report: relevo.Report{Gated: []availability.Gate{
+		Report: view.Report{Gated: []availability.Gate{
 			{Token: "agy/antigravity-community-build/claude", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(10 * time.Minute)},
 			{Token: "codex/openrouter-free-tier/gpt-5", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(20 * time.Minute)},
 			{Token: "claude/anthropic-claude-enterprise/sonnet", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(30 * time.Minute)},

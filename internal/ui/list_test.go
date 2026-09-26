@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/muesli/termenv"
 )
 
@@ -87,15 +88,15 @@ func tenBindings(t *testing.T, height, count int) Model {
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: height})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: bindingStatuses(count)}})
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: bindingStatuses(count)}})
 	return res.(Model)
 }
 
 // bindingStatuses builds Display:"ACTIVE" bindings named b00..b{count-1}.
-func bindingStatuses(count int) []relevo.BindingStatus {
-	bs := make([]relevo.BindingStatus, count)
+func bindingStatuses(count int) []view.BindingStatus {
+	bs := make([]view.BindingStatus, count)
 	for i := range bs {
-		bs[i] = relevo.BindingStatus{Name: fmt.Sprintf("b%02d", i), Display: "ACTIVE"}
+		bs[i] = view.BindingStatus{Name: fmt.Sprintf("b%02d", i), Display: "ACTIVE"}
 	}
 	return bs
 }
@@ -177,7 +178,7 @@ func TestFleetRewindowsWhenBindingRemoved(t *testing.T) {
 	for i := 0; i < 9; i++ {
 		m = press(t, m, 'j')
 	}
-	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: bindingStatuses(5)}})
+	res, _ := m.Update(statusMsg{report: view.Report{Bindings: bindingStatuses(5)}})
 	m = res.(Model)
 	if got := fleet(m).cursor; got != 4 {
 		t.Errorf("cursor must clamp to 4 (b04) when bindings are removed, got %d", got)
@@ -191,7 +192,7 @@ func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
 
-	initial := relevo.Report{Bindings: []relevo.BindingStatus{
+	initial := view.Report{Bindings: []view.BindingStatus{
 		{Name: "bravo", Display: "ACTIVE"},
 		{Name: "charlie", Display: "ACTIVE"},
 	}}
@@ -202,7 +203,7 @@ func TestCursorFollowsBindingByNameAcrossInsert(t *testing.T) {
 		t.Fatalf("expected cursor at 0 (bravo), got %d (%s)", fv.cursor, fv.sticky)
 	}
 
-	updated := relevo.Report{Bindings: []relevo.BindingStatus{
+	updated := view.Report{Bindings: []view.BindingStatus{
 		{Name: "alpha", Display: "ACTIVE"},
 		{Name: "bravo", Display: "ACTIVE"},
 		{Name: "charlie", Display: "ACTIVE"},
@@ -224,7 +225,7 @@ func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 	m := newModel(context.Background(), plannerSource{rt}, Options{Interval: time.Millisecond})
 	m.now = func() time.Time { return railNow }
 
-	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{
+	res, _ := m.Update(statusMsg{report: view.Report{Bindings: []view.BindingStatus{
 		{Name: "alpha", Display: "ACTIVE"},
 		{Name: "bravo", Display: "ACTIVE"},
 	}}})
@@ -236,7 +237,7 @@ func TestCursorClampsWhenBindingRemoved(t *testing.T) {
 		t.Fatalf("expected cursor on bravo (1), got %d (%s)", fv.cursor, fv.sticky)
 	}
 
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: []view.BindingStatus{
 		{Name: "alpha", Display: "ACTIVE"},
 	}}})
 	m = res.(Model)
@@ -257,7 +258,7 @@ func TestEmptyBindingsList(t *testing.T) {
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = res.(Model)
 
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: nil}})
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: nil}})
 	m = res.(Model)
 
 	if !strings.Contains(m.View(), "no bindings") {
@@ -337,14 +338,14 @@ func TestFleetThreeStates(t *testing.T) {
 		t.Errorf("a failing statusMsg before any success must NOT render 'no bindings', got:\n%s", m.View())
 	}
 
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: nil}})
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: nil}})
 	m = res.(Model)
 	if !strings.Contains(m.View(), "no bindings") {
 		t.Errorf("successful empty report must render 'no bindings', got:\n%s", m.View())
 	}
 
-	b := relevo.BindingStatus{Name: "webshop", Round: 1, Display: "ACTIVE"}
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{b}}})
+	b := view.BindingStatus{Name: "webshop", Round: 1, Display: "ACTIVE"}
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: []view.BindingStatus{b}}})
 	m = res.(Model)
 	if !strings.Contains(m.View(), "webshop") {
 		t.Fatalf("expected 'webshop' in the fleet, got:\n%s", m.View())
@@ -374,7 +375,7 @@ func TestRenderErrorAndErrorBlock(t *testing.T) {
 	m = res.(Model)
 	res, _ = m.Update(statusMsg{err: threeLineErr})
 	m = res.(Model)
-	view := m.View()
+	rendered := m.View()
 
 	errRendered := renderError(threeLineErr, 60)
 	errLines := strings.Split(errRendered, "\n")
@@ -385,7 +386,7 @@ func TestRenderErrorAndErrorBlock(t *testing.T) {
 		if w := lipgloss.Width(l); w > 60 {
 			t.Errorf("error line %d width %d > 60: %q", i, w, l)
 		}
-		if !strings.Contains(view, l) {
+		if !strings.Contains(rendered, l) {
 			t.Errorf("expected view to contain error line %q", l)
 		}
 	}
@@ -422,7 +423,7 @@ func TestRenderErrorAndErrorBlock(t *testing.T) {
 	}
 
 	// 5. A nil error adds no error block and no marker.
-	res, _ = m.Update(statusMsg{report: relevo.Report{}})
+	res, _ = m.Update(statusMsg{report: view.Report{}})
 	m = res.(Model)
 	if strings.Contains(m.View(), "refresh failed") || strings.Contains(m.View(), "client protocol") {
 		t.Errorf("nil err must not add an error block or marker, got:\n%s", m.View())

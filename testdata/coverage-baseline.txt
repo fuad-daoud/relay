@@ -26,7 +26,7 @@ github.com/fuad-daoud/relevo/internal/planner 83.6
 github.com/fuad-daoud/relevo/internal/policy 96.7
 github.com/fuad-daoud/relevo/internal/proc 86.6
 github.com/fuad-daoud/relevo/internal/release 88.4
-github.com/fuad-daoud/relevo/internal/relevo 86.6
+github.com/fuad-daoud/relevo/internal/relevo 86.2
 github.com/fuad-daoud/relevo/internal/remote 86.7
 github.com/fuad-daoud/relevo/internal/remote/client 68.3
 github.com/fuad-daoud/relevo/internal/reporttail 96.7
@@ -41,3 +41,4 @@ github.com/fuad-daoud/relevo/internal/ui 82.0
 github.com/fuad-daoud/relevo/internal/ui/dash 86.6
 github.com/fuad-daoud/relevo/internal/upgrade 66.7
 github.com/fuad-daoud/relevo/internal/usage 93.8
+github.com/fuad-daoud/relevo/internal/view 86.5

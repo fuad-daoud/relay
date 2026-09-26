@@ -9,8 +9,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // fit pads or truncates s to width cells. Truncation is by cell, no
@@ -47,13 +47,13 @@ func ago(since, now time.Time) string {
 // reportReady is the fleet's rule for a report waiting on the human at this
 // cockpit (§4.5): the binding's planner is `you`, and a payload is pending for
 // it. Such a row's NOW cell says so, and opening it pulls the report.
-func reportReady(b relevo.BindingStatus) bool {
+func reportReady(b view.BindingStatus) bool {
 	return b.PlannerName == "you" && b.Pending != nil
 }
 
 // whatAge is a row's NOW cell: what the binding is on, and for how long,
 // from the fields Status has today.
-func whatAge(b relevo.BindingStatus, now time.Time) (what, age string) {
+func whatAge(b view.BindingStatus, now time.Time) (what, age string) {
 	if reportReady(b) {
 		what = "report ready"
 		if b.Last != nil {
@@ -146,10 +146,10 @@ func newFilterInput() textinput.Model {
 }
 
 // rows returns visible rows in GROUP order with fold and filter applied (§4, §5.1).
-func (f fleetView) rows(env Env) []relevo.BindingStatus {
-	sorted := relevo.SortRows(env.Report.Bindings, f.attention)
+func (f fleetView) rows(env Env) []view.BindingStatus {
+	sorted := view.SortRows(env.Report.Bindings, f.attention)
 	q := f.activeFilter()
-	var needsYou, working, idle, held, other, done []relevo.BindingStatus
+	var needsYou, working, idle, held, other, done []view.BindingStatus
 	for _, b := range sorted {
 		if q != "" && !fleetRowMatches(b, q) {
 			continue
@@ -169,7 +169,7 @@ func (f fleetView) rows(env Env) []relevo.BindingStatus {
 			done = append(done, b)
 		}
 	}
-	out := make([]relevo.BindingStatus, 0, len(sorted))
+	out := make([]view.BindingStatus, 0, len(sorted))
 	out = append(out, needsYou...)
 	out = append(out, working...)
 	out = append(out, idle...)
@@ -193,7 +193,7 @@ func (f fleetView) activeFilter() string {
 // fleetRowMatches reports whether text is a case-insensitive substring of any
 // of the row's shown fields: its key, actor, candidate, planner, repo or
 // state (A4).
-func fleetRowMatches(b relevo.BindingStatus, text string) bool {
+func fleetRowMatches(b view.BindingStatus, text string) bool {
 	q := strings.ToLower(text)
 	for _, s := range []string{b.Key(), actorCell(b), candidateText(b), b.PlannerName, b.CWD, b.Display} {
 		if strings.Contains(strings.ToLower(s), q) {
@@ -320,7 +320,7 @@ func (f fleetView) Context(env Env) (string, string) {
 
 // resolveSticky re-points cursor at the row keyed by sticky after the rows
 // have changed, clamping and re-pointing sticky at what it lands on.
-func (f *fleetView) resolveSticky(rows []relevo.BindingStatus) {
+func (f *fleetView) resolveSticky(rows []view.BindingStatus) {
 	if len(rows) == 0 {
 		f.cursor = 0
 		f.sticky = ""
@@ -343,7 +343,7 @@ func (f *fleetView) resolveSticky(rows []relevo.BindingStatus) {
 	f.sticky = rows[f.cursor].Key()
 }
 
-func (f *fleetView) moveCursor(rows []relevo.BindingStatus, delta int) {
+func (f *fleetView) moveCursor(rows []view.BindingStatus, delta int) {
 	if len(rows) == 0 {
 		return
 	}
@@ -371,7 +371,7 @@ func (f fleetView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 			return f.updateFilter(msg, env)
 		}
 		rows := f.rows(env)
-		sel := relevo.BindingStatus{}
+		sel := view.BindingStatus{}
 		if len(rows) > 0 {
 			sel = rows[clampCursor(f.cursor, len(rows))]
 		}
@@ -470,7 +470,7 @@ func clampCursor(c, n int) int {
 
 // candidateText is the ON cell: the model part of the binding's candidate
 // token, everything after the second '/'.
-func candidateText(b relevo.BindingStatus) string {
+func candidateText(b view.BindingStatus) string {
 	if b.BuilderName != "" {
 		return b.BuilderName
 	}
@@ -484,7 +484,7 @@ func candidateText(b relevo.BindingStatus) string {
 	return s
 }
 
-func actorCell(b relevo.BindingStatus) string {
+func actorCell(b view.BindingStatus) string {
 	if b.Role == "" {
 		return "builder"
 	}
@@ -502,7 +502,7 @@ func secondSegment(s string) string {
 	return s
 }
 
-func nowCell(b relevo.BindingStatus, now time.Time) string {
+func nowCell(b view.BindingStatus, now time.Time) string {
 	what, age := whatAge(b, now)
 	if age == "" {
 		return what
@@ -529,21 +529,21 @@ func spendText(s usage.Spend) string {
 	return ""
 }
 
-func spendCell(b relevo.BindingStatus) string {
+func spendCell(b view.BindingStatus) string {
 	if b.Spend == nil {
 		return ""
 	}
 	return spendText(*b.Spend)
 }
 
-func plannerCell(b relevo.BindingStatus) string {
+func plannerCell(b view.BindingStatus) string {
 	if b.PlannerName == "" {
 		return "-"
 	}
 	return b.PlannerName
 }
 
-func repoCell(b relevo.BindingStatus) string {
+func repoCell(b view.BindingStatus) string {
 	s := b.CWD
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		s = strings.Replace(s, home, "~", 1)
@@ -577,7 +577,7 @@ func fleetRowPlan(width int) (candidate, spend, planner bool) {
 }
 
 // fleetRowLine renders one binding row according to §2.3.
-func fleetRowLine(b relevo.BindingStatus, g fleetGroup, selected bool, now time.Time, width int) string {
+func fleetRowLine(b view.BindingStatus, g fleetGroup, selected bool, now time.Time, width int) string {
 	gutter := "   "
 	if selected {
 		gutter = " " + accentStyle.Render("▍") + " "
@@ -634,11 +634,11 @@ func fleetRowLine(b relevo.BindingStatus, g fleetGroup, selected bool, now time.
 }
 
 // doneFoldLine renders the single summary line replacing folded DONE rows (§2.3).
-func doneFoldLine(rows []relevo.BindingStatus, now time.Time, width int) string {
+func doneFoldLine(rows []view.BindingStatus, now time.Time, width int) string {
 	line := "   " + faintStyle.Render("✓") + "  " + mutedStyle.Render(fmt.Sprintf("%d done", len(rows)))
 
 	todayCount := 0
-	var newestRow *relevo.BindingStatus
+	var newestRow *view.BindingStatus
 	var newestTS time.Time
 	yNow, mNow, dNow := now.Local().Date()
 
@@ -665,7 +665,7 @@ func doneFoldLine(rows []relevo.BindingStatus, now time.Time, width int) string 
 }
 
 // cardLines renders the 5-line detail card at the top of the body (§2.3).
-func (f fleetView) cardLines(env Env, b relevo.BindingStatus, width int) []string {
+func (f fleetView) cardLines(env Env, b view.BindingStatus, width int) []string {
 	g := groupOf(b)
 
 	// Top line
@@ -805,7 +805,7 @@ func (f fleetView) fleetListLines(env Env, width int) []fleetLine {
 	}
 
 	type groupEntry struct {
-		b        relevo.BindingStatus
+		b        view.BindingStatus
 		rowIndex int
 	}
 	grouped := map[fleetGroup][]groupEntry{}
@@ -849,7 +849,7 @@ func (f fleetView) fleetListLines(env Env, width int) []fleetLine {
 	}
 
 	if !f.showDone && f.activeFilter() == "" {
-		var doneRows []relevo.BindingStatus
+		var doneRows []view.BindingStatus
 		for _, b := range env.Report.Bindings {
 			if b.Display == "DONE" {
 				doneRows = append(doneRows, b)
@@ -931,7 +931,7 @@ func (f fleetView) windowTopLines(lines []fleetLine, height int) int {
 	return top
 }
 
-func (f fleetView) windowTop(rows []relevo.BindingStatus, env Env) int {
+func (f fleetView) windowTop(rows []view.BindingStatus, env Env) int {
 	lines := f.fleetListLines(env, env.Width)
 	return f.windowTopLines(lines, f.tableHeight(env))
 }

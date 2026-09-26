@@ -1,4 +1,4 @@
-package relevo
+package view
 
 import (
 	"testing"
@@ -180,7 +180,7 @@ func TestSortRowsNameOrder(t *testing.T) {
 	}
 }
 
-// TestSortStaleFirst pins #135's ordering rule: inside one attention group a
+// TestSortStaleFirst pins the ordering rule: inside one attention group a
 // stale row sorts before a fresh one, even when the fresh row has a newer
 // Last.TS. attention=false still ignores the flag and orders by name.
 func TestSortStaleFirst(t *testing.T) {

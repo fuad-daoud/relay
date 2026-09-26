@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 func TestDoneKeepsRemoteWorktreeWhileRoundOpen(t *testing.T) {
@@ -46,243 +47,6 @@ func TestDoneKeepsRemoteWorktreeWhileRoundOpen(t *testing.T) {
 	}
 	if len(fg.removeWorktreeCalls) != 0 {
 		t.Errorf("RemoveWorktree calls = %d, want 0", len(fg.removeWorktreeCalls))
-	}
-}
-
-func TestRenderStatusShowsDetailLine(t *testing.T) {
-	t.Parallel()
-
-	out := RenderStatus(Report{Bindings: []BindingStatus{{
-		Name: "doctor", CWD: "/repo", Round: 3,
-		Display:          "NEEDS YOU",
-		BuilderCandidate: testAgyRef,
-		PlannerKind:      "claude", BuilderKind: "agy", BuilderStatus: "gone",
-		Detail: "round 2 report delivered; nothing outstanding -- unless you want another round",
-	}}})
-
-	if !strings.Contains(out, "  detail   round 2 report delivered") {
-		t.Errorf("detail line missing from:\n%s", out)
-	}
-	// It must sit between the builder line and pending, where a human about to
-	// rebind is already looking.
-	builderAt := strings.Index(out, "  builder ")
-	detailAt := strings.Index(out, "  detail ")
-	pendingAt := strings.Index(out, "  pending ")
-	if !(builderAt < detailAt && detailAt < pendingAt) {
-		t.Errorf("detail must follow builder and precede pending, got:\n%s", out)
-	}
-}
-
-// TestRenderStatusPlannerChat is #386's status surface: a row whose planner
-// carries a chat label and a link shows them after its route, and a row that
-// carries neither is byte-identical to the line before these fields existed.
-func TestRenderStatusPlannerChat(t *testing.T) {
-	t.Parallel()
-
-	out := RenderStatus(Report{Bindings: []BindingStatus{
-		{
-			Name: "one", CWD: "/a", Round: 1, Display: "ACTIVE",
-			PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "pull",
-			PlannerChatLabel: `"fix the flake"`, PlannerChatLink: "https://claude.ai/code/session_01TEST",
-		},
-		{
-			Name: "two", CWD: "/b", Round: 1, Display: "ACTIVE",
-			PlannerName: "architect-2", PlannerKind: "claude", PlannerRoute: "pull",
-		},
-	}})
-
-	var plannerLines []string
-	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(line, "  planner  ") {
-			plannerLines = append(plannerLines, line)
-		}
-	}
-	if len(plannerLines) != 2 {
-		t.Fatalf("got %d planner lines, want 2:\n%s", len(plannerLines), out)
-	}
-
-	wantFirst := `route pull · "fix the flake" · https://claude.ai/code/session_01TEST`
-	if !strings.HasSuffix(plannerLines[0], wantFirst) {
-		t.Errorf("planner line %q does not end with %q", plannerLines[0], wantFirst)
-	}
-	// Row two has neither field set, so nothing follows its route.
-	if !strings.HasSuffix(plannerLines[1], "route pull") {
-		t.Errorf("planner line %q does not end with %q", plannerLines[1], "route pull")
-	}
-}
-
-func TestRenderStatusOmitsEmptyDetail(t *testing.T) {
-	t.Parallel()
-
-	out := RenderStatus(Report{Bindings: []BindingStatus{{
-		Name: "ok", CWD: "/repo", Round: 1, Display: "ACTIVE",
-		PlannerKind: "claude", BuilderKind: "agy", BuilderStatus: "working",
-		BuilderCandidate: testAgyRef,
-	}}})
-
-	if strings.Contains(out, "detail") {
-		t.Errorf("no detail line may appear for a healthy binding:\n%s", out)
-	}
-}
-
-func TestRenderStatusOmitsTheConsultCountWhenZero(t *testing.T) {
-	t.Parallel()
-
-	r := Report{Bindings: []BindingStatus{{
-		Name: "webshop", State: "active", Round: 3, Consults: 0,
-	}}}
-
-	if out := RenderStatus(r); strings.Contains(out, "+0c") {
-		t.Errorf("rendered a zero consult count:\n%s", out)
-	}
-}
-
-func TestRenderStatusShowsSwitches(t *testing.T) {
-	t.Parallel()
-
-	r := Report{Bindings: []BindingStatus{{
-		Name: "webshop", State: "active", Round: 3, Switches: 1,
-	}}}
-
-	if out := RenderStatus(r); !strings.Contains(out, "switched 1x") {
-		t.Errorf("RenderStatus output missing switched 1x:\n%s", out)
-	}
-}
-
-func TestRenderStatusOmitsSwitchedWhenZero(t *testing.T) {
-	t.Parallel()
-
-	r := Report{Bindings: []BindingStatus{{
-		Name: "webshop", State: "active", Round: 3, Switches: 0,
-	}}}
-
-	if out := RenderStatus(r); strings.Contains(out, "switched") {
-		t.Errorf("rendered a zero switch count:\n%s", out)
-	}
-}
-
-func TestHideDoneRemovesOnlyDoneRows(t *testing.T) {
-	t.Parallel()
-
-	in := Report{
-		Bindings: []BindingStatus{
-			{Name: "first", State: string(store.StateActive)},
-			{Name: "second", State: string(store.StateDone)},
-			{Name: "third", State: string(store.StateBroken)},
-		},
-	}
-
-	got := HideDone(in)
-
-	if len(in.Bindings) != 3 {
-		t.Fatalf("HideDone modified input report: len = %d, want 3", len(in.Bindings))
-	}
-	if got.DoneHidden != 1 {
-		t.Errorf("DoneHidden = %d, want 1", got.DoneHidden)
-	}
-	if len(got.Bindings) != 2 {
-		t.Fatalf("got %d bindings, want 2", len(got.Bindings))
-	}
-	if got.Bindings[0].Name != "first" || got.Bindings[1].Name != "third" {
-		t.Errorf("bindings = %+v, want first and third in original order", got.Bindings)
-	}
-}
-
-func TestRenderStatusFooterCountsHidden(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		hidden    int
-		wantSub   string
-		wantNoSub string
-	}{
-		{hidden: 3, wantSub: "3 done · relevo unbind --done to clear"},
-		{hidden: 1, wantSub: "1 done · relevo unbind --done to clear"},
-		{hidden: 0, wantNoSub: "done ·"},
-	}
-
-	for _, tc := range cases {
-		r := Report{
-			Bindings: []BindingStatus{
-				{Name: "live", CWD: "/repo", Round: 1, Display: "ACTIVE"},
-			},
-			DoneHidden: tc.hidden,
-		}
-		out := RenderStatus(r)
-		if tc.wantSub != "" && !strings.Contains(out, tc.wantSub) {
-			t.Errorf("hidden=%d: RenderStatus output missing %q:\n%s", tc.hidden, tc.wantSub, out)
-		}
-		if tc.wantNoSub != "" && strings.Contains(out, tc.wantNoSub) {
-			t.Errorf("hidden=%d: RenderStatus output should not contain %q:\n%s", tc.hidden, tc.wantNoSub, out)
-		}
-	}
-}
-
-func TestRenderStatusFooterOnlyWhenEverythingIsDone(t *testing.T) {
-	t.Parallel()
-
-	r := Report{
-		Bindings:   nil,
-		DoneHidden: 2,
-	}
-	out := RenderStatus(r)
-	if !strings.Contains(out, "2 done · relevo unbind --done to clear") {
-		t.Errorf("RenderStatus output missing footer:\n%s", out)
-	}
-	if strings.Contains(out, "no bindings") {
-		t.Errorf("RenderStatus output should not contain 'no bindings':\n%s", out)
-	}
-}
-
-func TestRenderStatusGatedBlock(t *testing.T) {
-	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
-	t.Cleanup(availability.SetGateClock(func() time.Time { return now }))
-	r := Report{
-		Bindings: []BindingStatus{{
-			Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
-			PlannerKind: "claude", BuilderKind: "agy", BuilderStatus: "working",
-			BuilderCandidate: testAgyRef,
-		}},
-		Gated: []availability.Gate{
-			{Token: testAgyRef, Name: "agy-m", Kind: availability.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
-			{Token: testClaudeRef, Name: "claude-m", Kind: availability.RateLimited, Since: now, Until: time.Time{}},
-		},
-	}
-
-	out := RenderStatus(r)
-	if !strings.Contains(out, "candidates\n") {
-		t.Fatalf("missing candidates block:\n%s", out)
-	}
-	rest := out[strings.Index(out, "candidates\n")+len("candidates\n"):]
-	lines := strings.SplitN(rest, "\n", 3)
-	if len(lines) < 2 {
-		t.Fatalf("expected two gate rows, got:\n%s", rest)
-	}
-	wantUntil := "until " + now.Add(10*time.Minute).Local().Format("15:04")
-	if !strings.Contains(lines[0], "agy-m") || !strings.Contains(lines[0], "spawn failed") || !strings.Contains(lines[0], wantUntil) {
-		t.Errorf("row 0 = %q", lines[0])
-	}
-	if strings.Contains(lines[0], testAgyRef) {
-		t.Errorf("row 0 must print the gate's name, not its token: %q", lines[0])
-	}
-	if !strings.Contains(lines[1], "claude-m") || !strings.Contains(lines[1], "rate-limited") || !strings.Contains(lines[1], "until cleared") {
-		t.Errorf("row 1 = %q", lines[1])
-	}
-}
-
-// TestRenderStatusGatedBlockFallsBackToToken pins the other half of A1 §4.4:
-// a gate with no name -- one built without a candidate set -- prints its
-// token.
-func TestRenderStatusGatedBlockFallsBackToToken(t *testing.T) {
-	t.Parallel()
-
-	r := Report{
-		Gated: []availability.Gate{{Token: testAgyRef, Kind: availability.RateLimited, Until: time.Time{}}},
-	}
-
-	out := RenderStatus(r)
-	if !strings.Contains(out, testAgyRef) {
-		t.Errorf("RenderStatus =\n%s\nwant it naming %q", out, testAgyRef)
 	}
 }
 
@@ -328,8 +92,8 @@ func TestStatusJSONHasBuilderName(t *testing.T) {
 	if strings.Contains(string(raw), "builder_name") {
 		t.Errorf("JSON = %s, want no builder_name key for a retired token", raw)
 	}
-	if out := RenderStatus(Report{Bindings: []BindingStatus{gone}}); !strings.Contains(out, "`agy/test/gone`") {
-		t.Errorf("RenderStatus =\n%s\nwant it printing the retired token", out)
+	if out := view.RenderStatus(view.Report{Bindings: []view.BindingStatus{gone}}); !strings.Contains(out, "`agy/test/gone`") {
+		t.Errorf("view.RenderStatus =\n%s\nwant it printing the retired token", out)
 	}
 
 	none := statusRowForTest(t, rt, store.Binding{
@@ -345,114 +109,6 @@ func TestStatusJSONHasBuilderName(t *testing.T) {
 		t.Errorf("JSON = %s, want no builder_name key with no candidate", raw)
 	}
 }
-
-func TestRenderStatusNoGatesIsUnchanged(t *testing.T) {
-	t.Parallel()
-
-	r := Report{
-		Bindings: []BindingStatus{{
-			Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
-			PlannerKind: "claude", BuilderKind: "agy", BuilderStatus: "working",
-			BuilderCandidate: testAgyRef,
-		}},
-		Gated: nil,
-	}
-
-	out := RenderStatus(r)
-	if strings.Contains(out, "candidates") {
-		t.Errorf("no gates must render no candidates block:\n%s", out)
-	}
-}
-
-func TestRenderStatusGatesWithNoBindings(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
-	r := Report{
-		Gated: []availability.Gate{
-			{Token: testAgyRef, Kind: availability.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
-		},
-	}
-
-	out := RenderStatus(r)
-	if !strings.HasPrefix(out, "no bindings\ncandidates\n") {
-		t.Errorf("out = %q, want it to start with %q", out, "no bindings\ncandidates\n")
-	}
-}
-
-func TestBindingStatusKey(t *testing.T) {
-	t.Parallel()
-
-	if got := (BindingStatus{Name: "api"}).Key(); got != "api" {
-		t.Errorf("planner key = %q, want api", got)
-	}
-	if got := (BindingStatus{Name: "api", Owner: "SHA256:abc"}).Key(); got != "SHA256:abc/api" {
-		t.Errorf("server key = %q, want SHA256:abc/api", got)
-	}
-}
-
-// TestShortOwner pins the truncation: a fingerprint id keeps "SHA256:" and
-// the first twelve characters, then an ellipsis; a short id, or one without
-// the prefix, is unchanged.
-
-func TestShortOwner(t *testing.T) {
-	t.Parallel()
-
-	if got := ShortOwner("SHA256:VLERFMZnvN5HSw/GCBr6FXPEgs4QeAfdU95BUhMMqI0"); got != "SHA256:VLERFMZnvN5H…" {
-		t.Errorf("ShortOwner(fingerprint) = %q", got)
-	}
-	if got := ShortOwner("SHA256:short"); got != "SHA256:short" {
-		t.Errorf("ShortOwner(short) = %q", got)
-	}
-	if got := ShortOwner("notanid"); got != "notanid" {
-		t.Errorf("ShortOwner(prefix-less) = %q", got)
-	}
-}
-
-// TestHideDoneKeepsGated pins that hiding DONE bindings does not drop the
-// machine-wide gated block: cmdStatus applies HideDone between Status and
-// RenderStatus, so a gate lost here never reaches the terminal.
-
-func TestHideDoneKeepsGated(t *testing.T) {
-	t.Parallel()
-
-	in := Report{
-		Bindings: []BindingStatus{{Name: "old", State: string(store.StateDone)}},
-		Gated:    []availability.Gate{{Token: "agy/test/m", Kind: availability.RateLimited}},
-	}
-	out := HideDone(in)
-	if out.DoneHidden != 1 || len(out.Bindings) != 0 {
-		t.Fatalf("HideDone = %+v, want one hidden and no rows", out)
-	}
-	if len(out.Gated) != 1 || out.Gated[0].Token != "agy/test/m" {
-		t.Fatalf("Gated = %+v, want the gate carried through", out.Gated)
-	}
-}
-
-func TestRenderStatusShowsDirty(t *testing.T) {
-	t.Parallel()
-
-	r := Report{Bindings: []BindingStatus{{
-		Name: "webshop", State: "active", Display: "ACTIVE", Round: 2, Dirty: true, Consults: 1,
-	}}}
-	out := RenderStatus(r)
-	if !strings.Contains(out, "round 2   ACTIVE dirty +1c") {
-		t.Errorf("RenderStatus output missing 'dirty' after the display word:\n%s", out)
-	}
-}
-
-func TestRenderStatusOmitsDirtyWhenClean(t *testing.T) {
-	t.Parallel()
-
-	r := Report{Bindings: []BindingStatus{{
-		Name: "webshop", State: "active", Display: "ACTIVE", Round: 2,
-		LastClose: &CloseInfo{Round: 1, Tree: "dirty"}, // the raw fact, without the rule applied
-	}}}
-	if out := RenderStatus(r); strings.Contains(out, "dirty") {
-		t.Errorf("rendered dirty from LastClose instead of Dirty:\n%s", out)
-	}
-}
-
 func seedUsageLog(t *testing.T) (Runtime, store.Binding) {
 	t.Helper()
 	rt, b := seedClosedRound(t, "clean", 1)
@@ -472,7 +128,6 @@ func seedUsageLog(t *testing.T) (Runtime, store.Binding) {
 	}
 	return rt, b
 }
-
 func TestStatusLastUsageAndSpend(t *testing.T) {
 	rt, _ := seedUsageLog(t)
 	rep, err := Status(context.Background(), rt)
@@ -492,7 +147,7 @@ func TestStatusLastUsageAndSpend(t *testing.T) {
 	if got.Spend.Measured < 0.399 || got.Spend.Measured > 0.401 || got.Spend.Estimated != 0.02 {
 		t.Errorf("measured/estimated = %v/%v, want 0.40/0.02", got.Spend.Measured, got.Spend.Estimated)
 	}
-	text := RenderStatus(rep)
+	text := view.RenderStatus(rep)
 	if !strings.Contains(text, "  usage    "+usage.Line(*got.LastUsage)) {
 		t.Errorf("text lacks the usage row:\n%s", text)
 	}
@@ -500,7 +155,6 @@ func TestStatusLastUsageAndSpend(t *testing.T) {
 		t.Errorf("text lacks the spend row:\n%s", text)
 	}
 }
-
 func TestStatusNoUsageNoRows(t *testing.T) {
 	rt, _ := seedClosedRound(t, "clean", 1)
 	rep, err := Status(context.Background(), rt)
@@ -510,7 +164,7 @@ func TestStatusNoUsageNoRows(t *testing.T) {
 	if rep.Bindings[0].LastUsage != nil || rep.Bindings[0].Spend != nil {
 		t.Errorf("no usage entries: both must be nil, got %+v / %+v", rep.Bindings[0].LastUsage, rep.Bindings[0].Spend)
 	}
-	text := RenderStatus(rep)
+	text := view.RenderStatus(rep)
 	if strings.Contains(text, "  usage ") || strings.Contains(text, "  spend ") {
 		t.Errorf("no rows without usage:\n%s", text)
 	}
@@ -519,11 +173,6 @@ func TestStatusNoUsageNoRows(t *testing.T) {
 		t.Errorf("json must omit both when nil: %s", raw)
 	}
 }
-
-// statusLiveFixture is a headless binding with an open round (round 1
-// sent) and a live reader wired, with now moved past the round's start so
-// the live figure has a duration.
-
 func TestStatusLiveUsageOnOpenRound(t *testing.T) {
 	rt, b := statusLiveFixture(t, &fakeUsage{peekSamples: []usage.Sample{
 		{Provider: "cline-pass", Model: "glm-5.3-flash", Tokens: usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 3_100, Out: 8_200}, USD: 0.04, HasCost: true},
@@ -560,11 +209,7 @@ func TestStatusLiveUsageOnOpenRound(t *testing.T) {
 		t.Errorf("peek mode = %q, want headless for a headless builder", fuFrom(rt).peeks[0].Mode)
 	}
 }
-
-// fuFrom digs the fakeUsage back out of the runtime the tests wired.
-
 func fuFrom(rt Runtime) *fakeUsage { return rt.Usage.(*fakeUsage) }
-
 func TestStatusNoLiveUsageWhenRoundClosed(t *testing.T) {
 	rt, _ := seedClosedRound(t, "clean", 1)
 	fu := &fakeUsage{peekSamples: []usage.Sample{{Provider: "p", Tokens: usage.Tokens{In: 1}, USD: 0.01, HasCost: true}}}
@@ -580,7 +225,6 @@ func TestStatusNoLiveUsageWhenRoundClosed(t *testing.T) {
 		t.Errorf("the reader was peeked %d times with no round open, want 0", len(fu.peeks))
 	}
 }
-
 func TestStatusNoLiveUsageWhenPeekEmpty(t *testing.T) {
 	rt, _ := statusLiveFixture(t, &fakeUsage{peekNote: "no usage events"})
 	rep, err := Status(context.Background(), rt)
@@ -590,97 +234,6 @@ func TestStatusNoLiveUsageWhenPeekEmpty(t *testing.T) {
 	if rep.Bindings[0].LiveUsage != nil {
 		t.Errorf("LiveUsage = %+v when Peek found nothing, want nil", rep.Bindings[0].LiveUsage)
 	}
-}
-
-func TestStatusTextUsageRowPrefersLive(t *testing.T) {
-	t.Parallel()
-
-	rep := Report{Bindings: []BindingStatus{{
-		Name: "webshop", State: "active", Display: "ACTIVE", Round: 2,
-		LastUsage: &usage.Usage{Harness: "agy", Provider: "google", Model: "gemini-3-pro", DurationMS: 6 * 60_000,
-			Cost: usage.Cost{Basis: usage.Unknown}, Note: "agy keeps no usage record"},
-		LiveUsage: &usage.Usage{Harness: "opencode", Provider: "cline-pass", Model: "glm-5.3-flash", DurationMS: 4 * 60_000,
-			Tokens: usage.Tokens{In: 1_800, CacheRead: 91_000, CacheWrite: 3_100, Out: 8_200},
-			Cost:   usage.Cost{USD: 0.04, Basis: usage.Measured}, Samples: 3},
-	}}}
-	text := RenderStatus(rep)
-	lines := strings.Split(text, "\n")
-	n := 0
-	for _, l := range lines {
-		if strings.HasPrefix(l, "  usage") {
-			n++
-			if !strings.HasPrefix(l, "  usage    live  ") {
-				t.Errorf("usage row must be the live figure:\n%s", l)
-			}
-		}
-	}
-	if n != 1 {
-		t.Errorf("%d usage rows, want exactly one (the live one):\n%s", n, text)
-	}
-}
-
-func TestStatusLiveUsageJSON(t *testing.T) {
-	t.Parallel()
-
-	with := BindingStatus{LiveUsage: &usage.Usage{Harness: "agy", Cost: usage.Cost{USD: 0.04, Basis: usage.Measured}}}
-	raw, err := json.Marshal(with)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), `"live_usage"`) {
-		t.Errorf("json = %s, want the live_usage key", raw)
-	}
-	raw, _ = json.Marshal(BindingStatus{})
-	if strings.Contains(string(raw), "live_usage") {
-		t.Errorf("json = %s, live_usage must be absent when nil", raw)
-	}
-}
-
-func TestRenderStatusOutcome(t *testing.T) {
-	t.Parallel()
-
-	t.Run("prints outcome when halted", func(t *testing.T) {
-		ts := time.Date(2026, 9, 18, 15, 4, 5, 0, time.UTC)
-		rep := Report{
-			Bindings: []BindingStatus{
-				{
-					Name: "b1", Round: 1, State: "active", Display: "ACTIVE",
-					Last: &LastEvent{
-						TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
-						Note: "noreport", Outcome: "halted",
-					},
-				},
-			},
-		}
-		text := RenderStatus(rep)
-		want := "last     " + ts.Local().Format("15:04:05") + " report to_planner round 1 (noreport) halted\n"
-		if !strings.Contains(text, want) {
-			t.Errorf("expected %q in status text:\n%s", want, text)
-		}
-	})
-
-	t.Run("prints nothing for done outcome", func(t *testing.T) {
-		ts := time.Date(2026, 9, 18, 15, 4, 5, 0, time.UTC)
-		rep := Report{
-			Bindings: []BindingStatus{
-				{
-					Name: "b1", Round: 1, State: "active", Display: "ACTIVE",
-					Last: &LastEvent{
-						TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
-						Outcome: "done",
-					},
-				},
-			},
-		}
-		text := RenderStatus(rep)
-		want := "last     " + ts.Local().Format("15:04:05") + " report to_planner round 1\n"
-		if !strings.Contains(text, want) {
-			t.Errorf("expected %q in status text:\n%s", want, text)
-		}
-		if strings.Contains(text, "done") {
-			t.Errorf("status text should not print 'done' outcome:\n%s", text)
-		}
-	})
 }
 
 // seedClosedRound is a binding past round 1 whose diff entry records how the
@@ -730,14 +283,6 @@ func TestDoneStopsRelaying(t *testing.T) {
 		t.Errorf("state = %s, want done", got.State)
 	}
 }
-
-// TestDoneRefusesQueued pins #285: a served binding still queued (Owner set,
-// QueuedAt non-zero) has no process to stop and nothing to hand back, so
-// Done refuses it the same way the wire does, and state does not change.
-//
-// Mutation check: drop the `b.Owner != "" && !b.QueuedAt.IsZero()` guard
-// from Done and this fails.
-
 func TestDoneRefusesQueued(t *testing.T) {
 	t.Parallel()
 
@@ -762,7 +307,6 @@ func TestDoneRefusesQueued(t *testing.T) {
 		t.Error("state must not become done")
 	}
 }
-
 func TestDoneReleasesCleanWorktree(t *testing.T) {
 	t.Parallel()
 
@@ -802,7 +346,6 @@ func TestDoneReleasesCleanWorktree(t *testing.T) {
 		t.Errorf("state = %s, want done", got.State)
 	}
 }
-
 func TestDoneKeepsDirtyWorktree(t *testing.T) {
 	t.Parallel()
 
@@ -831,13 +374,6 @@ func TestDoneKeepsDirtyWorktree(t *testing.T) {
 		t.Errorf("RemoveWorktree calls = %d, want 0", len(fg.removeWorktreeCalls))
 	}
 }
-
-// TestDoneKeepsRemoteWorktreeWhileRoundOpen pins the remote half of Done's
-// worktree rule (#303 §3 trap): a remote binding has no local builder pane,
-// so `!Headless() && round open` keeps the worktree exactly as a pane
-// binding's open round did -- remote behaviour is unchanged by the deletion
-// of pane builders.
-
 func TestDoneNoWorktreeIsZeroResult(t *testing.T) {
 	t.Parallel()
 
@@ -862,7 +398,6 @@ func TestDoneNoWorktreeIsZeroResult(t *testing.T) {
 		t.Errorf("dirtyCalls = %d, want 0", fg.dirtyCalls)
 	}
 }
-
 func TestDoneReportsGoneWorktree(t *testing.T) {
 	t.Parallel()
 
@@ -884,7 +419,6 @@ func TestDoneReportsGoneWorktree(t *testing.T) {
 		t.Errorf("WorktreeGone = %q, want %q", res.WorktreeGone, b.Worktree)
 	}
 }
-
 func TestStatusRowBranch(t *testing.T) {
 	rt, b := sentBinding(t)
 	b.Branch = "relevo/webshop"
@@ -901,11 +435,6 @@ func TestStatusRowBranch(t *testing.T) {
 		t.Errorf("--cwd binding Branch = %q, want empty", row.Branch)
 	}
 }
-
-// TestStatusRowWaiting: a needs_you binding whose round has a captured
-// question carries Waiting{Cause: "blocked", Hint: "relevo status ..."};
-// an active binding carries nil.
-
 func TestStatusRowWaiting(t *testing.T) {
 	rt, b := sentBinding(t)
 	b.State = store.StateNeedsYou
@@ -929,7 +458,7 @@ func TestStatusRowWaiting(t *testing.T) {
 		t.Fatal(err)
 	}
 	if row.Waiting == nil || row.Waiting.Cause != "blocked" {
-		t.Fatalf("Waiting = %+v, want cause blocked", row.Waiting)
+		t.Fatalf("view.Waiting = %+v, want cause blocked", row.Waiting)
 	}
 	if row.Waiting.Hint != "relevo status --name "+b.Name {
 		t.Errorf("Hint = %q", row.Waiting.Hint)
@@ -937,14 +466,9 @@ func TestStatusRowWaiting(t *testing.T) {
 	b.State = store.StateActive
 	row, _ = statusRow(context.Background(), rt, b)
 	if row.Waiting != nil {
-		t.Errorf("active row Waiting = %+v, want nil", row.Waiting)
+		t.Errorf("active row view.Waiting = %+v, want nil", row.Waiting)
 	}
 }
-
-// TestStatusRowGatingShowsAge pins #132: a binding with GateRun set shows
-// "gating <age>" as its BuilderStatus, overriding whatever the builder
-// itself reports.
-
 func TestStatusRowGatingShowsAge(t *testing.T) {
 	rt, b := sentBinding(t)
 	clock := &fakeClock{now: baseTime}
@@ -962,10 +486,9 @@ func TestStatusRowGatingShowsAge(t *testing.T) {
 		t.Errorf("BuilderStatus = %q, want %q", row.BuilderStatus, "gating 1m12s")
 	}
 }
-
 func TestDisplayStatePaused(t *testing.T) {
-	if got := displayState(store.StatePaused); got != "PAUSED" {
-		t.Errorf("displayState(paused) = %q, want PAUSED", got)
+	if got := view.DisplayState(store.StatePaused); got != "PAUSED" {
+		t.Errorf("view.DisplayState(paused) = %q, want PAUSED", got)
 	}
 	rt := newRuntime(t)
 	if err := rt.Store.Save(store.Binding{
@@ -994,11 +517,6 @@ func TestDisplayStatePaused(t *testing.T) {
 		t.Fatal("paused binding missing from status")
 	}
 }
-
-// TestStatusLabelsStalledExploringStale pins #135's three labels on the status
-// row: a stalled headless builder, an exploring headless one, and a stale
-// NEEDS YOU one, plus the four structured JSON fields.
-
 func TestStatusLabelsStalledExploringStale(t *testing.T) {
 	rt := newRuntime(t)
 	rt.Runner = newFakeRunner()
@@ -1048,12 +566,12 @@ func TestStatusLabelsStalledExploringStale(t *testing.T) {
 	if len(rep.Bindings) != 3 {
 		t.Fatalf("got %d rows, want 3: %+v", len(rep.Bindings), rep.Bindings)
 	}
-	rows := map[string]BindingStatus{}
+	rows := map[string]view.BindingStatus{}
 	for _, r := range rep.Bindings {
 		rows[r.Name] = r
 	}
 
-	wantStall := "stalled " + AgeText(now.Sub(paneAt))
+	wantStall := "stalled " + view.AgeText(now.Sub(paneAt))
 	if got := rows["pane"].BuilderStatus; got != wantStall {
 		t.Errorf("pane BuilderStatus = %q, want %q", got, wantStall)
 	}
@@ -1064,7 +582,7 @@ func TestStatusLabelsStalledExploringStale(t *testing.T) {
 		t.Errorf("pane LastProgressAt = %s, want %s", rows["pane"].LastProgressAt, paneAt)
 	}
 
-	wantExplore := "exploring " + AgeText(now.Sub(exploreAt))
+	wantExplore := "exploring " + view.AgeText(now.Sub(exploreAt))
 	if got := rows["headless"].BuilderStatus; got != wantExplore {
 		t.Errorf("headless BuilderStatus = %q, want %q", got, wantExplore)
 	}
@@ -1075,7 +593,7 @@ func TestStatusLabelsStalledExploringStale(t *testing.T) {
 		t.Errorf("headless Stall = %q, want empty", got)
 	}
 
-	wantStale := "stale " + AgeText(now.Sub(staleAt))
+	wantStale := "stale " + view.AgeText(now.Sub(staleAt))
 	if got := rows["stale"].Stale; got != wantStale {
 		t.Errorf("stale Stale = %q, want %q", got, wantStale)
 	}
@@ -1105,12 +623,6 @@ func TestStatusLabelsStalledExploringStale(t *testing.T) {
 	assertHasKey("stale", "stale")
 	assertHasKey("stale", "last_progress_at")
 }
-
-// TestStatusShowsLandedPR pins #136's status rule: a binding landed since
-// its last send reads "landed" -- "landed pr <url>" when a PR was created --
-// on the round line, and carries the same fact as landed_at/landed_pr for a
-// statusline consumer.
-
 func TestStatusShowsLandedPR(t *testing.T) {
 	rt, _ := seedBound(t)
 	b, err := rt.Store.Load("webshop")
@@ -1141,8 +653,8 @@ func TestStatusShowsLandedPR(t *testing.T) {
 
 	// The rendered round line carries it, so the terminal never disagrees
 	// with the JSON.
-	if text := RenderStatus(rep); !strings.Contains(text, "landed pr https://github.com/o/r/pull/7") {
-		t.Errorf("RenderStatus did not print the land state:\n%s", text)
+	if text := view.RenderStatus(rep); !strings.Contains(text, "landed pr https://github.com/o/r/pull/7") {
+		t.Errorf("view.RenderStatus did not print the land state:\n%s", text)
 	}
 
 	raw, err := json.Marshal(row)
@@ -1155,10 +667,6 @@ func TestStatusShowsLandedPR(t *testing.T) {
 		}
 	}
 }
-
-// TestStatusUnlandedRowSaysNothing: a binding that was never landed has an
-// empty "landed" word, so the round line is exactly what it always was.
-
 func TestStatusUnlandedRowSaysNothing(t *testing.T) {
 	rt, _ := seedBound(t)
 
@@ -1169,14 +677,10 @@ func TestStatusUnlandedRowSaysNothing(t *testing.T) {
 	if got := rep.Bindings[0].Landed; got != "" {
 		t.Errorf("Landed = %q, want \"\" on a binding that was never landed", got)
 	}
-	if text := RenderStatus(rep); strings.Contains(text, "landed") {
-		t.Errorf("RenderStatus must not mention landing:\n%s", text)
+	if text := view.RenderStatus(rep); strings.Contains(text, "landed") {
+		t.Errorf("view.RenderStatus must not mention landing:\n%s", text)
 	}
 }
-
-// TestSendClearsLanded pins #136's clearing rule: a new round moves the
-// branch again, so the last land stops describing it.
-
 func TestSendClearsLanded(t *testing.T) {
 	rt, _ := seedBound(t)
 	rt.Git = &fakeGit{snapshotTreeID: "tree-1"}
@@ -1214,16 +718,6 @@ func TestSendClearsLanded(t *testing.T) {
 		t.Errorf("status still says %q after a new round", rep.Bindings[0].Landed)
 	}
 }
-
-// TestStatusRowsAreAttentionOrdered pins #143: Status (and its JSON) now
-// return rows in the same attention-first order ui has always used --
-// NEEDS YOU, HELD, ACTIVE, PAUSED, DONE -- instead of plain name order.
-//
-// Mutation check: restore `sort.Slice(rows, func(i, j int) bool { return
-// rows[i].Name < rows[j].Name })` in buildReport in place of `SortRows(rows,
-// true)` and this fails, because "a" (ACTIVE) would then sort before "b"
-// (NEEDS YOU).
-
 func TestStatusRowsAreAttentionOrdered(t *testing.T) {
 	rt := newRuntime(t)
 	a := store.Binding{Name: "a", CWD: "/repo-a", State: store.StateActive, Round: 1}
@@ -1262,11 +756,6 @@ func TestStatusRowsAreAttentionOrdered(t *testing.T) {
 		t.Errorf("status --json order wrong: b@%d a@%d c@%d", ib, ia, ic)
 	}
 }
-
-// TestStatusLiveDiffWhileRoundOpen pins #143's live diff figure: a --cwd
-// binding (no worktree of its own) is marked Shared, a binding whose round
-// is not open gets no Live at all, and RenderStatus prints the figure.
-
 func TestStatusLiveDiffWhileRoundOpen(t *testing.T) {
 	rt := newRuntime(t)
 	fg := &fakeGit{worktreeStat: git.Stat{FilesChanged: 6, Insertions: 120, Deletions: 30}}
@@ -1300,12 +789,12 @@ func TestStatusLiveDiffWhileRoundOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	rows := map[string]BindingStatus{}
+	rows := map[string]view.BindingStatus{}
 	for _, r := range rep.Bindings {
 		rows[r.Name] = r
 	}
 
-	want := LiveDiff{Files: 6, Added: 120, Removed: 30}
+	want := view.LiveDiff{Files: 6, Added: 120, Removed: 30}
 	if got := rows["open"].Live; got == nil || *got != want {
 		t.Errorf("open Live = %+v, want %+v", got, want)
 	}
@@ -1316,16 +805,11 @@ func TestStatusLiveDiffWhileRoundOpen(t *testing.T) {
 		t.Errorf("closed Live = %+v, want nil (round not open)", got)
 	}
 
-	text := RenderStatus(rep)
+	text := view.RenderStatus(rep)
 	if !strings.Contains(text, "+120/-30 in 6") {
-		t.Errorf("RenderStatus missing live diff line:\n%s", text)
+		t.Errorf("view.RenderStatus missing live diff line:\n%s", text)
 	}
 }
-
-// TestStatusLiveDiffCached pins #143's 5s per-binding cache: two Status
-// calls within the window make one DiffWorktreeStat call; once the fake
-// clock has moved past the window, a third call makes a second.
-
 func TestStatusLiveDiffCached(t *testing.T) {
 	rt := newRuntime(t)
 	now := baseTime
@@ -1361,11 +845,6 @@ func TestStatusLiveDiffCached(t *testing.T) {
 		t.Fatalf("worktreeStatCalls after 6s = %d, want 2", fg.worktreeStatCalls)
 	}
 }
-
-// TestStatusQuietForOnActive pins #143's quiet age: only an ACTIVE row with
-// an open, sampled round gets one; a NEEDS YOU row with the same progress
-// data gets none.
-
 func TestStatusQuietForOnActive(t *testing.T) {
 	rt := newRuntime(t)
 	now := baseTime
@@ -1397,12 +876,12 @@ func TestStatusQuietForOnActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	rows := map[string]BindingStatus{}
+	rows := map[string]view.BindingStatus{}
 	for _, r := range rep.Bindings {
 		rows[r.Name] = r
 	}
 
-	want := AgeText(now.Sub(progressAt))
+	want := view.AgeText(now.Sub(progressAt))
 	if got := rows["quiet-active"].QuietFor; got != want {
 		t.Errorf("QuietFor = %q, want %q", got, want)
 	}
@@ -1410,11 +889,6 @@ func TestStatusQuietForOnActive(t *testing.T) {
 		t.Errorf("NEEDS YOU QuietFor = %q, want empty", got)
 	}
 }
-
-// TestStatusUnreadUntilViewed pins #143's unread marker: a report entry
-// with no .viewed stamp reads Unread; MarkViewed clears it; a newer report
-// sets it again.
-
 func TestStatusUnreadUntilViewed(t *testing.T) {
 	rt := newRuntime(t)
 	b := store.Binding{Name: "unread", CWD: "/repo-unread", State: store.StateNeedsYou, Round: 2}
@@ -1427,7 +901,7 @@ func TestStatusUnreadUntilViewed(t *testing.T) {
 		t.Fatalf("AppendLog 1: %v", err)
 	}
 
-	unreadOf := func(rep Report) bool {
+	unreadOf := func(rep view.Report) bool {
 		for _, r := range rep.Bindings {
 			if r.Name == "unread" {
 				return r.Unread
@@ -1469,7 +943,6 @@ func TestStatusUnreadUntilViewed(t *testing.T) {
 		t.Fatal("Unread = false after a newer report, want true")
 	}
 }
-
 func TestStatusDetailsBrokenBinding(t *testing.T) {
 	rt, b := sentBinding(t)
 	b.State = store.StateBroken
@@ -1487,7 +960,7 @@ func TestStatusDetailsBrokenBinding(t *testing.T) {
 	if got.Display != "NEEDS YOU" {
 		t.Errorf("display = %q, want NEEDS YOU (the collapse must not change)", got.Display)
 	}
-	want := DiagnoseBuilder(b).Detail(b.Round)
+	want := view.DiagnoseBuilder(b).Detail(b.Round)
 	if got.Detail != want {
 		t.Errorf("detail =\n  %q\nwant\n  %q", got.Detail, want)
 	}
@@ -1507,7 +980,7 @@ func TestStatusDetailsBrokenBinding(t *testing.T) {
 		t.Fatalf("Status: %v", err)
 	}
 	gotAdopted := repAdopted.Bindings[0]
-	wantAdopted := DiagnoseBuilder(b).Detail(b.Round)
+	wantAdopted := view.DiagnoseBuilder(b).Detail(b.Round)
 	if gotAdopted.Detail != wantAdopted {
 		t.Errorf("adopted detail =\n  %q\nwant\n  %q", gotAdopted.Detail, wantAdopted)
 	}
@@ -1518,7 +991,6 @@ func TestStatusDetailsBrokenBinding(t *testing.T) {
 		t.Errorf("adopted detail must warn that the work is unaccounted for, got %q", gotAdopted.Detail)
 	}
 }
-
 func TestStatusOmitsDetailForHealthyBinding(t *testing.T) {
 	rt, _ := sentBinding(t)
 
@@ -1539,10 +1011,6 @@ func TestStatusOmitsDetailForHealthyBinding(t *testing.T) {
 		t.Errorf("detail must be omitempty, got %s", raw)
 	}
 }
-
-// orphaned also collapses into NEEDS YOU but is not overloaded, so it gets no
-// detail. This pins the scope decision.
-
 func TestStatusCountsOnlyRunningConsults(t *testing.T) {
 	rt, _ := seedBound(t)
 
@@ -1570,7 +1038,6 @@ func TestStatusCountsOnlyRunningConsults(t *testing.T) {
 		t.Errorf("Consults = %d, want 2 running (the done one awaits reap)", rep.Bindings[0].Consults)
 	}
 }
-
 func TestStatusPopulatesGated(t *testing.T) {
 	rt, _ := seedBound(t)
 
@@ -1594,7 +1061,7 @@ func TestStatusPopulatesGated(t *testing.T) {
 		t.Errorf("expected \"gated\" key present, got %s", raw)
 	}
 
-	rawEmpty, err := json.Marshal(Report{})
+	rawEmpty, err := json.Marshal(view.Report{})
 	if err != nil {
 		t.Fatalf("Marshal empty: %v", err)
 	}
@@ -1602,10 +1069,6 @@ func TestStatusPopulatesGated(t *testing.T) {
 		t.Errorf("empty report must omit gated, got %s", rawEmpty)
 	}
 }
-
-// TestBindingStatusKey: a planner row keys by Name; a server row keys by
-// owner/name, so two clients' same-named bindings never collide.
-
 func TestStatusLastPayloadSkipsBookkeepingKinds(t *testing.T) {
 	rt, b := sentBinding(t)
 
@@ -1678,7 +1141,6 @@ func TestStatusLastPayloadSkipsBookkeepingKinds(t *testing.T) {
 		t.Errorf("LastPayload = %+v, want nil", got2.LastPayload)
 	}
 }
-
 func TestStatusRemoteRow(t *testing.T) {
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
@@ -1697,22 +1159,18 @@ func TestStatusRemoteRow(t *testing.T) {
 	}
 	got := rep.Bindings[0]
 	// #303 deleted BuilderPane: the server a remote binding is served by is
-	// what the row shows now, and RenderStatus prints it below.
+	// what the row shows now, and view.RenderStatus prints it below.
 	if got.BuilderStatus != "running" {
 		t.Fatalf("BuilderStatus = %q, want the recorded RemoteStatus", got.BuilderStatus)
 	}
 
 	// The row shows the remote builder and its status; the server name is no
 	// longer part of the row (#303 deleted the pane/server column data).
-	text := RenderStatus(rep)
+	text := view.RenderStatus(rep)
 	if !strings.Contains(text, "remote") || !strings.Contains(text, "running") {
 		t.Errorf("rendered status must show the remote builder and its status, got %q", text)
 	}
 }
-
-// TestStatusRemoteRowUnknownStatus checks the "" -> "unknown" fallback for a
-// remote binding the daemon has never ticked.
-
 func TestStatusRemoteRowUnknownStatus(t *testing.T) {
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
@@ -1734,7 +1192,7 @@ func TestStatusRemoteRowUnknownStatus(t *testing.T) {
 // "queued (3/3 busy on contabo, 2 ahead, 4m)", and a queued row with no
 // facts yet (part 1's tolerance) falls back to the bare "queued".
 //
-// Mutation check: drop queueText's format string (or the RemoteQueue
+// Mutation check: drop view.QueueText's format string (or the RemoteQueue
 // branch in statusRow) and this test fails.
 func TestStatusJSONForkProvenance(t *testing.T) {
 	rt, b := sentBinding(t)
@@ -1744,7 +1202,7 @@ func TestStatusJSONForkProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	humanBefore := RenderStatus(rep)
+	humanBefore := view.RenderStatus(rep)
 
 	raw, err := json.Marshal(rep)
 	if err != nil {
@@ -1773,11 +1231,11 @@ func TestStatusJSONForkProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status fork: %v", err)
 	}
-	humanAfter := RenderStatus(repFork)
+	humanAfter := view.RenderStatus(repFork)
 
-	// RenderStatus human output must be byte-identical
+	// view.RenderStatus human output must be byte-identical
 	if humanBefore != humanAfter {
-		t.Errorf("RenderStatus human output changed for fork:\nbefore:\n%s\nafter:\n%s", humanBefore, humanAfter)
+		t.Errorf("view.RenderStatus human output changed for fork:\nbefore:\n%s\nafter:\n%s", humanBefore, humanAfter)
 	}
 
 	rawFork, err := json.Marshal(repFork)
@@ -1796,7 +1254,6 @@ func TestStatusJSONForkProvenance(t *testing.T) {
 		t.Errorf("forked_at_round = %v, want 2", rowFork["forked_at_round"])
 	}
 }
-
 func TestStatusLastCloseAndDirty(t *testing.T) {
 	t.Run("dirty close, next round not sent", func(t *testing.T) {
 		rt, _ := seedClosedRound(t, "dirty", 0)
@@ -1873,7 +1330,6 @@ func TestStatusLastCloseAndDirty(t *testing.T) {
 		}
 	})
 }
-
 func TestStatusReportsLastSeq(t *testing.T) {
 	rt := newRuntime(t)
 	withLog := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive}
@@ -1896,7 +1352,7 @@ func TestStatusReportsLastSeq(t *testing.T) {
 		t.Fatalf("Status: %v", err)
 	}
 
-	byName := map[string]BindingStatus{}
+	byName := map[string]view.BindingStatus{}
 	for _, row := range rep.Bindings {
 		byName[row.Name] = row
 	}
@@ -1915,10 +1371,6 @@ func TestStatusReportsLastSeq(t *testing.T) {
 		t.Errorf("status JSON does not carry last_seq 3: %s", data)
 	}
 }
-
-// TestDisplayStatePaused: a paused binding shows as PAUSED, after ACTIVE and
-// before DONE.
-
 func TestStatusRowQueuedText(t *testing.T) {
 	st := store.New(t.TempDir())
 	b := remoteBinding("contabo")
@@ -2021,141 +1473,6 @@ func TestStatusJSONCarriesStructuredFields(t *testing.T) {
 		t.Errorf("last.direction missing or not a string: %#v", last)
 	}
 }
-
-// TestStatusRowBranch: the worktree branch reaches the row; a --cwd
-// binding (no branch) leaves it empty.
-
-func TestRoundFacts(t *testing.T) {
-	t.Parallel()
-
-	t0 := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
-	t1 := t0.Add(1 * time.Minute)
-	t2 := t0.Add(2 * time.Minute)
-	t3 := t0.Add(3 * time.Minute)
-	u1 := &usage.Usage{Tokens: usage.Tokens{In: 1000}}
-
-	tests := []struct {
-		name      string
-		entries   []store.LogEntry
-		wantStart time.Time
-		wantEnd   time.Time
-		wantUsage *usage.Usage
-	}{
-		{
-			name:      "empty log",
-			entries:   nil,
-			wantStart: time.Time{},
-			wantEnd:   time.Time{},
-			wantUsage: nil,
-		},
-		{
-			name: "plan r1",
-			entries: []store.LogEntry{
-				{TS: t0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
-			},
-			wantStart: t0,
-			wantEnd:   time.Time{},
-			wantUsage: nil,
-		},
-		{
-			name: "plan r1, report r1 with usage",
-			entries: []store.LogEntry{
-				{TS: t0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
-				{TS: t1, Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: u1},
-			},
-			wantStart: t0,
-			wantEnd:   t1,
-			wantUsage: u1,
-		},
-		{
-			name: "plan r1, report r1 (usage U1), plan r2",
-			entries: []store.LogEntry{
-				{TS: t0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
-				{TS: t1, Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: u1},
-				{TS: t2, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
-			},
-			wantStart: t2,
-			wantEnd:   time.Time{},
-			wantUsage: nil,
-		},
-		{
-			name: "plan r2, later plan r2 (nudge or switch), report r2",
-			entries: []store.LogEntry{
-				{TS: t0, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
-				{TS: t1, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
-				{TS: t2, Round: 2, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: u1},
-			},
-			wantStart: t0,
-			wantEnd:   t2,
-			wantUsage: u1,
-		},
-		{
-			name: "plan r1, report r1 (U1), plan r2, report r2 with nil usage",
-			entries: []store.LogEntry{
-				{TS: t0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
-				{TS: t1, Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: u1},
-				{TS: t2, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
-				{TS: t3, Round: 2, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: nil},
-			},
-			wantStart: t2,
-			wantEnd:   t3,
-			wantUsage: nil,
-		},
-		{
-			name: "plan r1, findings entry with usage, question and answer entries",
-			entries: []store.LogEntry{
-				{TS: t0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
-				{TS: t1, Round: 1, Kind: store.KindFindings, Direction: store.DirToPlanner, Usage: u1},
-				{TS: t2, Round: 1, Kind: store.KindQuestion, Direction: store.DirToPlanner},
-				{TS: t3, Round: 1, Kind: store.KindAnswer, Direction: store.DirToBuilder},
-			},
-			wantStart: t0,
-			wantEnd:   time.Time{},
-			wantUsage: nil,
-		},
-		{
-			name: "plan r1, plan r2, late report r1 with usage",
-			entries: []store.LogEntry{
-				{TS: t0, Round: 1, Kind: store.KindPlan, Direction: store.DirToBuilder},
-				{TS: t1, Round: 2, Kind: store.KindPlan, Direction: store.DirToBuilder},
-				{TS: t2, Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner, Usage: u1},
-			},
-			wantStart: t1,
-			wantEnd:   time.Time{},
-			wantUsage: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotStart, gotEnd, gotUsage := roundFacts(tt.entries)
-			if !gotStart.Equal(tt.wantStart) {
-				t.Errorf("start = %v, want %v", gotStart, tt.wantStart)
-			}
-			if !gotEnd.Equal(tt.wantEnd) {
-				t.Errorf("end = %v, want %v", gotEnd, tt.wantEnd)
-			}
-			if tt.wantUsage == nil {
-				if gotUsage != nil {
-					t.Errorf("usage = %+v, want nil", gotUsage)
-				}
-			} else {
-				if gotUsage == nil {
-					t.Fatalf("usage is nil, want %+v", tt.wantUsage)
-				}
-				if *gotUsage != *tt.wantUsage {
-					t.Errorf("usage = %+v, want %+v", gotUsage, tt.wantUsage)
-				}
-				for _, e := range tt.entries {
-					if e.Usage != nil && gotUsage == e.Usage {
-						t.Errorf("gotUsage must be a fresh copy, but shares pointer with log entry")
-					}
-				}
-			}
-		})
-	}
-}
-
 func TestStatusPlanRound(t *testing.T) {
 	// round 1 sent, in flight; Send logs a plan entry for round 1
 	rt1, _ := sentBinding(t)
@@ -2202,120 +1519,6 @@ func TestStatusPlanRound(t *testing.T) {
 		t.Errorf("seedBound PlanRound = %d, want %d", got, want)
 	}
 }
-
-func TestApplyRemoteLive(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
-	logPath := "/tmp/test.log"
-
-	tests := []struct {
-		name          string
-		lf            *store.LiveFacts
-		stalled       bool
-		wantWord      string
-		wantExploring string
-	}{
-		{
-			name: "working",
-			lf: &store.LiveFacts{
-				PID:   1001,
-				Usage: &usage.Usage{Tokens: usage.Tokens{In: 1000, Out: 500}},
-				Diff:  &store.DiffFacts{Files: 1, Added: 5, Removed: 2},
-			},
-			stalled:       false,
-			wantWord:      "working",
-			wantExploring: "",
-		},
-		{
-			name: "exploring",
-			lf: &store.LiveFacts{
-				PID:            1002,
-				Usage:          &usage.Usage{Tokens: usage.Tokens{In: 2000, Out: 600}},
-				Diff:           &store.DiffFacts{Files: 2, Added: 10, Removed: 4},
-				ExploringSince: now.Add(-30 * time.Second),
-			},
-			stalled:       false,
-			wantWord:      "exploring 30s",
-			wantExploring: "exploring 30s",
-		},
-		{
-			name: "exploring_stalled",
-			lf: &store.LiveFacts{
-				PID:            1003,
-				Usage:          &usage.Usage{Tokens: usage.Tokens{In: 3000, Out: 700}},
-				Diff:           &store.DiffFacts{Files: 3, Added: 15, Removed: 6},
-				ExploringSince: now.Add(-45 * time.Second),
-			},
-			stalled:       true,
-			wantWord:      "exploring 45s",
-			wantExploring: "",
-		},
-		{
-			name: "gating",
-			lf: &store.LiveFacts{
-				PID:         1004,
-				Usage:       &usage.Usage{Tokens: usage.Tokens{In: 4000, Out: 800}},
-				Diff:        &store.DiffFacts{Files: 4, Added: 20, Removed: 8},
-				GatingSince: now.Add(-15 * time.Second),
-			},
-			stalled:       false,
-			wantWord:      "gating 15s",
-			wantExploring: "",
-		},
-		{
-			name: "exit_3",
-			lf: &store.LiveFacts{
-				PID:      1005,
-				Usage:    &usage.Usage{Tokens: usage.Tokens{In: 5000, Out: 900}},
-				Diff:     &store.DiffFacts{Files: 5, Added: 25, Removed: 10},
-				ExitCode: "3",
-			},
-			stalled:       false,
-			wantWord:      "exited 3",
-			wantExploring: "",
-		},
-		{
-			name: "exit_unknown",
-			lf: &store.LiveFacts{
-				PID:      1006,
-				Usage:    &usage.Usage{Tokens: usage.Tokens{In: 6000, Out: 1000}},
-				Diff:     &store.DiffFacts{Files: 6, Added: 30, Removed: 12},
-				ExitCode: "unknown",
-			},
-			stalled:       false,
-			wantWord:      "exited",
-			wantExploring: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var row BindingStatus
-			applyRemoteLive(&row, tt.lf, tt.stalled, logPath, now)
-
-			if row.BuilderStatus != tt.wantWord {
-				t.Errorf("BuilderStatus = %q, want %q", row.BuilderStatus, tt.wantWord)
-			}
-			if row.Exploring != tt.wantExploring {
-				t.Errorf("Exploring = %q, want %q", row.Exploring, tt.wantExploring)
-			}
-			if row.Headless == nil || row.Headless.PID != tt.lf.PID {
-				t.Errorf("Headless.PID = %v, want %d", row.Headless, tt.lf.PID)
-			}
-			if row.Headless == nil || row.Headless.LogPath != logPath {
-				t.Errorf("Headless.LogPath = %v, want %q", row.Headless, logPath)
-			}
-			if row.LiveUsage == nil || row.LiveUsage.Tokens != tt.lf.Usage.Tokens {
-				t.Errorf("LiveUsage tokens = %v, want %v", row.LiveUsage, tt.lf.Usage.Tokens)
-			}
-			if row.Live == nil || row.Live.Files != tt.lf.Diff.Files || row.Live.Added != tt.lf.Diff.Added || row.Live.Removed != tt.lf.Diff.Removed {
-				t.Errorf("Live = %+v, want Files:%d Added:%d Removed:%d", row.Live, tt.lf.Diff.Files, tt.lf.Diff.Added, tt.lf.Diff.Removed)
-			}
-		})
-	}
-}
-
 func TestStatusRowRemoteUsesLiveNotLocalReaders(t *testing.T) {
 	st := store.New(t.TempDir())
 	b := store.Binding{
@@ -2373,82 +1576,6 @@ func TestStatusRowRemoteUsesLiveNotLocalReaders(t *testing.T) {
 		t.Errorf("fake.peeks = %d, want 0 (local reader must not be called)", len(fake.peeks))
 	}
 }
-
-func TestProcessWord(t *testing.T) {
-	t.Parallel()
-
-	rem := BindingStatus{Server: "contabo"}
-	if got := rem.ProcessWord(); got != "remote" {
-		t.Errorf("ProcessWord with server = %q, want remote", got)
-	}
-	local := BindingStatus{Server: ""}
-	if got := local.ProcessWord(); got != "headless" {
-		t.Errorf("ProcessWord without server = %q, want headless", got)
-	}
-}
-
-func TestPriorTokensOf(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name    string
-		round   int
-		entries []store.LogEntry
-		want    usage.Tokens
-	}{
-		{
-			name:    "no switches",
-			round:   1,
-			entries: []store.LogEntry{{Round: 1, Kind: store.KindPlan}},
-			want:    usage.Tokens{},
-		},
-		{
-			name:  "two switch entries in the round",
-			round: 1,
-			entries: []store.LogEntry{
-				{Round: 1, Kind: store.KindSwitch, Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}}},
-				{Round: 1, Kind: store.KindSwitch, Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}}},
-			},
-			want: usage.Tokens{In: 300, Out: 80},
-		},
-		{
-			name:  "switch entry in another round ignored",
-			round: 1,
-			entries: []store.LogEntry{
-				{Round: 1, Kind: store.KindSwitch, Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}}},
-				{Round: 2, Kind: store.KindSwitch, Usage: &usage.Usage{Tokens: usage.Tokens{In: 500, Out: 500}}},
-			},
-			want: usage.Tokens{In: 100, Out: 50},
-		},
-		{
-			name:  "report with PriorTokens added",
-			round: 1,
-			entries: []store.LogEntry{
-				{Round: 1, Kind: store.KindSwitch, Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}}},
-				{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, PriorTokens: &usage.Tokens{In: 400, Out: 150}},
-			},
-			want: usage.Tokens{In: 500, Out: 200},
-		},
-		{
-			name:  "switch entry with nil Usage skipped",
-			round: 1,
-			entries: []store.LogEntry{
-				{Round: 1, Kind: store.KindSwitch, Usage: nil},
-				{Round: 1, Kind: store.KindSwitch, Usage: &usage.Usage{Tokens: usage.Tokens{In: 150, Out: 25}}},
-			},
-			want: usage.Tokens{In: 150, Out: 25},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := priorTokensOf(tc.entries, tc.round)
-			if got != tc.want {
-				t.Errorf("priorTokensOf() = %+v, want %+v", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestSpendIncludesSwitchSegments(t *testing.T) {
 	st := store.New(t.TempDir())
 	b := store.Binding{Name: "webshop", CWD: "/repo", State: store.StateActive, Round: 1}

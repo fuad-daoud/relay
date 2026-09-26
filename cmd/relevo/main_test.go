@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // TestMain points the whole package at a fresh temp root: HOME,
@@ -925,7 +926,7 @@ func TestResolveBindingStillFallsBackToCWD(t *testing.T) {
 }
 
 func TestFilterReportNarrowsToOneBinding(t *testing.T) {
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{
+	rep := view.Report{Bindings: []view.BindingStatus{
 		{Name: "api"}, {Name: "frontend"}, {Name: "backend"},
 	}}
 
@@ -939,7 +940,7 @@ func TestFilterReportNarrowsToOneBinding(t *testing.T) {
 }
 
 func TestFilterReportKeepsEverythingWhenUnnamed(t *testing.T) {
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{
+	rep := view.Report{Bindings: []view.BindingStatus{
 		{Name: "api"}, {Name: "frontend"},
 	}}
 
@@ -954,7 +955,7 @@ func TestFilterReportKeepsEverythingWhenUnnamed(t *testing.T) {
 }
 
 func TestFilterReportRejectsAnUnknownName(t *testing.T) {
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{{Name: "api"}}}
+	rep := view.Report{Bindings: []view.BindingStatus{{Name: "api"}}}
 
 	// Silence here would look identical to "that binding is fine".
 	if _, err := filterReport(rep, "nosuch"); err == nil {
@@ -967,7 +968,7 @@ func TestFilterReportRejectsAnUnknownName(t *testing.T) {
 // CI does not have and which made the first version of this test pass only on
 // the dev machine.
 func TestScopeReportHidesDoneUnlessAllOrNamed(t *testing.T) {
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{
+	rep := view.Report{Bindings: []view.BindingStatus{
 		{Name: "live", State: string(store.StateActive)},
 		{Name: "finished", State: string(store.StateDone)},
 	}}
@@ -984,7 +985,7 @@ func TestScopeReportHidesDoneUnlessAllOrNamed(t *testing.T) {
 
 	// filterReport has already narrowed to the named binding by the time
 	// scopeReport runs; what matters is that the name switches the filter off.
-	named := scopeReport(relevo.Report{Bindings: rep.Bindings[1:]}, "finished", false)
+	named := scopeReport(view.Report{Bindings: rep.Bindings[1:]}, "finished", false)
 	if len(named.Bindings) != 1 || named.DoneHidden != 0 {
 		t.Errorf("--name: got %+v, want the DONE row with DoneHidden 0", named)
 	}
@@ -1565,7 +1566,7 @@ func TestStatusLineFlags(t *testing.T) {
 			t.Fatalf("run status --line --json failed: %v (stderr: %s)", err, stderr)
 		}
 
-		var doc relevo.StatusLineDoc
+		var doc view.StatusLineDoc
 		if err := json.Unmarshal(stdout, &doc); err != nil {
 			t.Fatalf("unmarshal json %q: %v", stdout, err)
 		}

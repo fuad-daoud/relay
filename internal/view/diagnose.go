@@ -1,4 +1,4 @@
-package relevo
+package view
 
 import (
 	"fmt"
@@ -21,9 +21,8 @@ type BuilderDiagnosis struct {
 
 // DiagnoseBuilder derives the diagnosis for a binding. Pure.
 //
-// RoundStartedAt is stamped only by Send at handoff and cleared only by
-// queueReport once the round's report is logged, so a zero value means no
-// round is in flight.
+// RoundStartedAt is stamped only by Send at handoff and cleared only once the
+// round's report is logged, so a zero value means no round is in flight.
 func DiagnoseBuilder(b store.Binding) BuilderDiagnosis {
 	return BuilderDiagnosis{
 		RoundOpen: !b.RoundStartedAt.IsZero(),

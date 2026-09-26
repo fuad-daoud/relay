@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // statsFixture builds a rich stats.Report by hand, so the view tests and the
@@ -118,7 +119,7 @@ func statsTwentyCandidates() stats.Report {
 // statsTestEnv is a view Env with a store but no database.
 func statsTestEnv(t *testing.T, width, height int) Env {
 	t.Helper()
-	return testEnv(plannerSource{relevo.Runtime{Store: store.New(t.TempDir())}}, relevo.Report{}, width, height)
+	return testEnv(plannerSource{relevo.Runtime{Store: store.New(t.TempDir())}}, view.Report{}, width, height)
 }
 
 // statsKey builds a rune key.
@@ -142,7 +143,7 @@ func statsShell(t *testing.T, width, height int, window string) Model {
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relevo.Report{}})
+	res, _ = m.Update(statusMsg{report: view.Report{}})
 	m = res.(Model)
 	m = drain(t, m, execLine("stats "+window, m.env(), m.prefs))
 	if _, ok := m.top().(statsView); !ok {
@@ -520,7 +521,7 @@ func TestStatsRefreshThrottle(t *testing.T) {
 	sv := statsTestView("30d")
 	sv.fetchedAt = railNow
 
-	soon := testEnv(plannerSource{relevo.Runtime{Store: store.New(t.TempDir())}}, relevo.Report{}, 160, 40)
+	soon := testEnv(plannerSource{relevo.Runtime{Store: store.New(t.TempDir())}}, view.Report{}, 160, 40)
 	soon.Now = railNow.Add(10 * time.Second)
 	next, cmd := sv.Update(tickMsg(soon.Now), soon)
 	if cmd != nil {
@@ -1736,7 +1737,7 @@ func statsRolesEnv(t *testing.T, set *candidate.Set, reg *roles.Registry) Env {
 	t.Helper()
 	return testEnv(plannerSource{relevo.Runtime{
 		Store: store.New(t.TempDir()), Candidates: set, Registry: reg,
-	}}, relevo.Report{}, 132, 40)
+	}}, view.Report{}, 132, 40)
 }
 
 // TestStatsCandidatesTabRoles pins §2.2: detail line 1 takes its roles from the

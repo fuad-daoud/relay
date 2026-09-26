@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 type tab int
@@ -59,7 +60,7 @@ const headlessLogLines = 5000
 type tickMsg time.Time
 
 type statusMsg struct {
-	report relevo.Report
+	report view.Report
 	err    error
 }
 

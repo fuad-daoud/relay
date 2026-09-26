@@ -2,29 +2,17 @@ package relevo
 
 import (
 	"sort"
-	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
-
-// ProviderGate is one live rate-limit gate on a provider no configured
-// candidate uses. It is the ledger entry's own facts, unprojected: with no
-// candidate token on that provider there is nothing to project them onto.
-type ProviderGate struct {
-	Provider string
-	Since    time.Time
-	Until    time.Time
-	Note     string
-	Source   string
-	Binding  string
-}
 
 // UnusedProviderGates returns the live rate limits on providers outside the
 // configured candidate set. A missing gates store or candidate set is nil:
 // with nothing to compare against there are no unused providers. A ledger load
 // failure reads as nil too, because Gates reports that error once on stderr
 // already and a bookkeeping file must not take status down.
-func UnusedProviderGates(rt Runtime) []ProviderGate {
+func UnusedProviderGates(rt Runtime) []view.ProviderGate {
 	if rt.Gates == nil || rt.Candidates == nil {
 		return nil
 	}
@@ -39,12 +27,12 @@ func UnusedProviderGates(rt Runtime) []ProviderGate {
 		used[p] = true
 	}
 
-	var out []ProviderGate
+	var out []view.ProviderGate
 	for _, e := range l.Prune(rt.Now()).Entries {
 		if e.Kind != availability.RateLimited || used[e.Subject] {
 			continue
 		}
-		out = append(out, ProviderGate{
+		out = append(out, view.ProviderGate{
 			Provider: e.Subject,
 			Since:    e.At,
 			Until:    e.Until,

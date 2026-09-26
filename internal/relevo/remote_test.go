@@ -25,6 +25,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // addRemotePlanner is the planner registry the hand-built Runtimes in this
@@ -2996,8 +2997,8 @@ func TestObserveRemoteCopiesStalledSince(t *testing.T) {
 	}
 	if status := rep.Bindings[0].BuilderStatus; !strings.HasPrefix(status, "stalled ") {
 		t.Fatalf("BuilderStatus = %q, want it to start with %q", status, "stalled ")
-	} else if !strings.Contains(status, AgeText(baseTime.Sub(stalled))) {
-		t.Errorf("BuilderStatus = %q, want it to contain the age %q", status, AgeText(baseTime.Sub(stalled)))
+	} else if !strings.Contains(status, view.AgeText(baseTime.Sub(stalled))) {
+		t.Errorf("BuilderStatus = %q, want it to contain the age %q", status, view.AgeText(baseTime.Sub(stalled)))
 	}
 
 	// A later view with a zero stamp clears it.
@@ -4898,9 +4899,9 @@ func TestCatchUpRecordsPriorTokens(t *testing.T) {
 	if *reportEntry.PriorTokens != prior {
 		t.Errorf("report entry PriorTokens = %+v, want %+v", *reportEntry.PriorTokens, prior)
 	}
-	clientPrior := priorTokensOf(entries, 1)
+	clientPrior := view.PriorTokensOf(entries, 1)
 	if clientPrior != prior {
-		t.Errorf("priorTokensOf(entries, 1) = %+v, want %+v", clientPrior, prior)
+		t.Errorf("view.PriorTokensOf(entries, 1) = %+v, want %+v", clientPrior, prior)
 	}
 }
 

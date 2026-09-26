@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 type fleetGroup int
@@ -20,7 +20,7 @@ const (
 	groupDone
 )
 
-func groupOf(b relevo.BindingStatus) fleetGroup {
+func groupOf(b view.BindingStatus) fleetGroup {
 	switch {
 	case b.Display == "NEEDS YOU" || reportReady(b):
 		return groupNeedsYou
@@ -93,7 +93,7 @@ var groupMetas = map[fleetGroup]groupMeta{
 // shownRound is the round to name on a row: a closed round's Round already
 // names the next round, so the round that reported comes from the payload,
 // the same rule as the status line.
-func shownRound(b relevo.BindingStatus) int {
+func shownRound(b view.BindingStatus) int {
 	if b.LastPayload != nil &&
 		b.LastPayload.Direction == store.DirToPlanner &&
 		(b.LastPayload.Kind == store.KindReport || b.LastPayload.Kind == store.KindQuestion) {
@@ -102,7 +102,7 @@ func shownRound(b relevo.BindingStatus) int {
 	return b.Round
 }
 
-func rowNow(b relevo.BindingStatus, now time.Time) string {
+func rowNow(b view.BindingStatus, now time.Time) string {
 	g := groupOf(b)
 	if g == groupDone {
 		return nowCell(b, now)

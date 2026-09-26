@@ -5,7 +5,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // View is one screen of the cockpit. Views are values: Update returns the
@@ -35,12 +35,12 @@ type offKeyer interface{ OffKeys(env Env) []string }
 type Env struct {
 	Ctx      context.Context
 	Src      Source
-	Report   relevo.Report // newest good status (zero before the first)
-	Loaded   bool          // a status has arrived at least once
-	StatusAt time.Time     // when it arrived
-	Now      time.Time     // the shell's clock, read once per call
-	Width    int           // terminal columns
-	Height   int           // terminal rows
+	Report   view.Report // newest good status (zero before the first)
+	Loaded   bool        // a status has arrived at least once
+	StatusAt time.Time   // when it arrived
+	Now      time.Time   // the shell's clock, read once per call
+	Width    int         // terminal columns
+	Height   int         // terminal rows
 	// ErrRows is the line count of the shell's error block this frame, so a
 	// view can compute the body height it will be given (bodyHeight).
 	ErrRows int

@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // plannerPriorIDTimeout bounds how long `relevo planner init` waits for the
@@ -393,7 +394,7 @@ func chatResolver() chatlabel.Resolver {
 // also serves relevo serve. The label is resolved at most once per planner id,
 // every lookup failure ends in the empty label, and the function never returns
 // an error and never prints.
-func annotatePlannerChat(rt relevo.Runtime, rep *relevo.Report, res chatlabel.Resolver) {
+func annotatePlannerChat(rt relevo.Runtime, rep *view.Report, res chatlabel.Resolver) {
 	if rt.Planners == nil {
 		return
 	}

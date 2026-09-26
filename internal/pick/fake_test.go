@@ -6,6 +6,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 type sentKeys struct{ Target, Keys string }
@@ -38,12 +39,12 @@ func testRuntime(t *testing.T, bindings ...store.Binding) relevo.Runtime {
 }
 
 // rowsMsg builds the statusMsg the list would receive for these rows.
-func rowsMsg(rows ...relevo.BindingStatus) statusMsg {
-	return statusMsg{report: relevo.Report{Bindings: rows}}
+func rowsMsg(rows ...view.BindingStatus) statusMsg {
+	return statusMsg{report: view.Report{Bindings: rows}}
 }
 
-func row(name, display, builderStatus string) relevo.BindingStatus {
-	return relevo.BindingStatus{Name: name, Display: display, Round: 2, BuilderCandidate: "agy", BuilderStatus: builderStatus}
+func row(name, display, builderStatus string) view.BindingStatus {
+	return view.BindingStatus{Name: name, Display: display, Round: 2, BuilderCandidate: "agy", BuilderStatus: builderStatus}
 }
 
 // update runs one message through the model and returns the Model back.

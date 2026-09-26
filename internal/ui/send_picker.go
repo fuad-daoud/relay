@@ -11,7 +11,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // planFile is one recent plan: its full path and its modification time.
@@ -55,7 +55,7 @@ func recentPlans(dir, filter string, n int) []planFile {
 // path completion, and a list of the directory's recent markdown plans.
 type sendPicker struct {
 	env   Env
-	b     relevo.BindingStatus
+	b     view.BindingStatus
 	input textinput.Model
 
 	// root is the binding's tree (b.CWD): relative typed values resolve

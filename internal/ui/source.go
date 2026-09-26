@@ -11,13 +11,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/serve"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // Source is everything the ui reads state through: one refresh of the
 // whole fleet, and a key resolver for the tabs.
 type Source interface {
 	// Status is one refresh: the whole fleet this UI shows.
-	Status(ctx context.Context) (relevo.Report, error)
+	Status(ctx context.Context) (view.Report, error)
 	// Runtime resolves a row key to the runtime that owns it and the bare
 	// binding name inside that runtime's store. ok is false when the key
 	// cannot be resolved (server: malformed key or unknown owner); a
@@ -43,7 +44,7 @@ type plannerSource struct {
 	rt relevo.Runtime
 }
 
-func (s plannerSource) Status(ctx context.Context) (relevo.Report, error) {
+func (s plannerSource) Status(ctx context.Context) (view.Report, error) {
 	return relevo.Status(ctx, s.rt)
 }
 
@@ -76,7 +77,7 @@ func ServerSource(srv *serve.Server) Source {
 	return serverSource{srv: srv}
 }
 
-func (s serverSource) Status(ctx context.Context) (relevo.Report, error) {
+func (s serverSource) Status(ctx context.Context) (view.Report, error) {
 	return serve.FlatStatus(ctx, s.srv)
 }
 

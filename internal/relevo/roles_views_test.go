@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // rolesViewsCandidatesJSON is claude a on both roles, claude b and opencode m
@@ -206,20 +207,20 @@ func TestRolesViewsFormatCandidatesLatencyForFileMode(t *testing.T) {
 		"reviewer": {Candidates: []string{testClaudeRef}},
 	})
 
-	got := FormatCandidatesLatencyFor(reg, set, nil, nil)
+	got := view.FormatCandidatesLatencyFor(reg, set, nil, nil)
 	// claude's entry takes "m" first, so opencode's becomes "opencode-m".
 	want := "m" + strings.Repeat(" ", 11) + "claude/test/m  " + "  builder, reviewer\n" +
 		"opencode-m" + strings.Repeat(" ", 2) + "opencode/test/m" + "  (no role)\n"
 	if got != want {
-		t.Errorf("FormatCandidatesLatencyFor =\n%q\nwant:\n%q", got, want)
+		t.Errorf("view.FormatCandidatesLatencyFor =\n%q\nwant:\n%q", got, want)
 	}
 	if strings.Contains(got, "tier:") {
 		t.Errorf("file mode must not print the candidate's tier:\n%s", got)
 	}
 
 	legacy, _ := roles.Build(nil, set, policy.Policy{})
-	if a, b := FormatCandidatesLatencyFor(legacy, set, nil, nil), FormatCandidatesLatency(set, nil, nil); a != b {
-		t.Errorf("FormatCandidatesLatencyFor(legacy) = %q, want FormatCandidatesLatency's %q", a, b)
+	if a, b := view.FormatCandidatesLatencyFor(legacy, set, nil, nil), view.FormatCandidatesLatency(set, nil, nil); a != b {
+		t.Errorf("view.FormatCandidatesLatencyFor(legacy) = %q, want view.FormatCandidatesLatency's %q", a, b)
 	}
 }
 
@@ -298,12 +299,12 @@ func TestRolesViewsMergedGateTexts(t *testing.T) {
 		{Token: testClaudeRef, Kind: availability.RateLimited, Until: until},
 	}
 
-	got := FormatCandidates(set, gates)
+	got := view.FormatCandidates(set, gates)
 
 	want := "   unavailable: roles missing (builder, reviewer) until cleared; " +
 		availability.GateKindText(availability.RateLimited) + " " + availability.GateUntilText(until)
 	if !strings.Contains(got, want) {
-		t.Errorf("FormatCandidates =\n%q\nwant it to contain:\n%q", got, want)
+		t.Errorf("view.FormatCandidates =\n%q\nwant it to contain:\n%q", got, want)
 	}
 	if n := strings.Count(got, "roles missing"); n != 1 {
 		t.Errorf("roles missing appears %d times, want the merged part once:\n%s", n, got)
@@ -335,7 +336,7 @@ func TestRolesViewsResolveRoleFileModeNothingServes(t *testing.T) {
 
 // statusRowForTest saves b and reads it back through statusRow, the function
 // `relevo status` builds its rows with.
-func statusRowForTest(t *testing.T, rt Runtime, b store.Binding) BindingStatus {
+func statusRowForTest(t *testing.T, rt Runtime, b store.Binding) view.BindingStatus {
 	t.Helper()
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("save binding: %v", err)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // filterReport narrows a status report to one binding. An empty name keeps
@@ -24,29 +25,29 @@ import (
 // that specific thing. Otherwise DONE rows are hidden unless --all, and the
 // same rule applies to --json so the two formats never disagree about what
 // exists. It is a pure function so the rule can be tested without a harness.
-func scopeReport(rep relevo.Report, name string, all bool) relevo.Report {
+func scopeReport(rep view.Report, name string, all bool) view.Report {
 	if name != "" || all {
 		return rep
 	}
-	return relevo.HideDone(rep)
+	return view.HideDone(rep)
 }
 
-func filterReport(rep relevo.Report, name string) (relevo.Report, error) {
+func filterReport(rep view.Report, name string) (view.Report, error) {
 	if name == "" {
 		return rep, nil
 	}
 	for _, b := range rep.Bindings {
 		if b.Name == name {
-			return relevo.Report{Bindings: []relevo.BindingStatus{b}}, nil
+			return view.Report{Bindings: []view.BindingStatus{b}}, nil
 		}
 	}
-	return relevo.Report{}, fmt.Errorf("no binding named %q", name)
+	return view.Report{}, fmt.Errorf("no binding named %q", name)
 }
 
 // filterReportPlanner narrows a status report to one planner's bindings. It
 // is a pure function so the rule is testable without a harness. An empty
 // planner id keeps every row, which is what a runtime with no registry gets.
-func filterReportPlanner(rep relevo.Report, plannerID string) relevo.Report {
+func filterReportPlanner(rep view.Report, plannerID string) view.Report {
 	if plannerID == "" {
 		return rep
 	}
@@ -153,7 +154,7 @@ func cmdStatus(args []string) error {
 		}
 	}
 
-	fmt.Print(relevo.RenderStatus(rep))
+	fmt.Print(view.RenderStatus(rep))
 	return nil
 }
 
@@ -162,7 +163,7 @@ func cmdStatus(args []string) error {
 // RELEVO_STATUSLINE_MARGIN and planner filtering. With asJSON, it prints
 // StatusLineDoc as JSON.
 func runStatusline(asJSON bool) error {
-	if fi, err := os.Stdin.Stat(); err != nil || relevo.ShouldDrainStdin(fi.Mode()) {
+	if fi, err := os.Stdin.Stat(); err != nil || view.ShouldDrainStdin(fi.Mode()) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	}
 	if !asJSON {
@@ -170,7 +171,7 @@ func runStatusline(asJSON bool) error {
 		if err != nil || columns <= 0 {
 			columns = 0
 		}
-		columns = relevo.StatusLineWidth(columns, os.Getenv("RELEVO_STATUSLINE_MARGIN"))
+		columns = view.StatusLineWidth(columns, os.Getenv("RELEVO_STATUSLINE_MARGIN"))
 		rt, err := newRuntime()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
@@ -187,31 +188,31 @@ func runStatusline(asJSON bool) error {
 		// planner it is. It is printed before PlannerStatus and survives a
 		// PlannerStatus failure: the line is the planner's identity, not a
 		// binding row.
-		fmt.Print(relevo.RenderPlannerLine(rec.Name, columns))
+		fmt.Print(view.RenderPlannerLine(rec.Name, columns))
 		rep, err := relevo.PlannerStatus(context.Background(), rt, rec.ID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
 			return nil
 		}
-		fmt.Print(relevo.RenderStatusLine(rep, rt.Now(), columns))
+		fmt.Print(view.RenderStatusLine(rep, rt.Now(), columns))
 		return nil
 	}
 
 	rt, err := newRuntime()
 	if err != nil {
-		doc := relevo.StatusLineDoc{Now: time.Now().UTC(), Rows: []relevo.StatusLineRow{}}
+		doc := view.StatusLineDoc{Now: time.Now().UTC(), Rows: []view.StatusLineRow{}}
 		data, _ := json.Marshal(doc)
 		fmt.Println(string(data))
 		return nil
 	}
 	rec, ok := plannerFilter(rt)
 	now := rt.Now().UTC()
-	doc := relevo.StatusLineDoc{Now: now, Rows: []relevo.StatusLineRow{}}
+	doc := view.StatusLineDoc{Now: now, Rows: []view.StatusLineRow{}}
 	if ok {
-		doc.Planner = &relevo.StatusLinePlanner{ID: rec.ID, Name: rec.Name}
+		doc.Planner = &view.StatusLinePlanner{ID: rec.ID, Name: rec.Name}
 		rep, err := relevo.PlannerStatus(context.Background(), rt, rec.ID)
 		if err == nil {
-			doc.Rows = relevo.StatusLineRows(rep, rt.Now())
+			doc.Rows = view.StatusLineRows(rep, rt.Now())
 		} else {
 			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
 		}

@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // rolesGateCandidatesJSON is a claude candidate that can serve both roles and
@@ -212,7 +213,7 @@ func TestRolesGateLegacyChecksEachRole(t *testing.T) {
 func TestGateRoleJSON(t *testing.T) {
 	t.Parallel()
 
-	rep := Report{Gated: []availability.Gate{{Token: testClaudeRef, Kind: availability.RolesMissing}}}
+	rep := view.Report{Gated: []availability.Gate{{Token: testClaudeRef, Kind: availability.RolesMissing}}}
 	raw, err := json.Marshal(rep)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 const maxErrorLines = 8
@@ -433,14 +433,14 @@ func (m Model) cmdModal(env Env) (string, []string, int, bool) {
 }
 
 // bindingFor finds the report row a `round <key>` completion opens.
-func (m Model) bindingFor(env Env, c command) (relevo.BindingStatus, bool) {
+func (m Model) bindingFor(env Env, c command) (view.BindingStatus, bool) {
 	key := strings.TrimPrefix(c.name, "round ")
 	for _, b := range env.Report.Bindings {
 		if b.Key() == key {
 			return b, true
 		}
 	}
-	return relevo.BindingStatus{}, false
+	return view.BindingStatus{}, false
 }
 
 // rightAligned pads text so it ends at innerW.

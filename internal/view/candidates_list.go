@@ -1,4 +1,4 @@
-package relevo
+package view
 
 import (
 	"fmt"
@@ -31,11 +31,10 @@ func FormatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 }
 
 // FormatCandidatesLatencyFor is FormatCandidatesLatency with the roles column
-// read from reg (#374 §3.2). Legacy mode delegates, so the output stays
-// byte-identical to today's; in file mode the column lists the registry roles
-// that serve the candidate -- "(no role)" when none does -- and the tier
-// segment is omitted, because in file mode the tier belongs to the role, not
-// the candidate.
+// read from reg. Legacy mode delegates, so the output stays byte-identical to
+// today's; in file mode the column lists the registry roles that serve the
+// candidate -- "(no role)" when none does -- and the tier segment is omitted,
+// because in file mode the tier belongs to the role, not the candidate.
 func FormatCandidatesLatencyFor(reg *roles.Registry, set *candidate.Set, gates []availability.Gate, lat map[string]availability.Summary) string {
 	if !reg.FileMode() {
 		return FormatCandidatesLatency(set, gates, lat)
@@ -55,18 +54,17 @@ func FormatCandidatesLatencyFor(reg *roles.Registry, set *candidate.Set, gates [
 }
 
 // CandidateRoles returns the role names that serve the candidate token, in
-// reg.Names() order, where reg is rt.RoleRegistry(): the registry the actors
-// config builds, which is where a machine's roles live now. When no registry
-// role serves it, it falls back to the candidate's own Roles as written in
-// candidates.json. It returns nil when the token does not parse, the set is
-// nil, or neither source has any role, so a caller can drop the segment whole
-// rather than print an empty one.
-func CandidateRoles(rt Runtime, token string) []string {
+// reg.Names() order, where reg is the registry the actors config builds, which
+// is where a machine's roles live now. When no registry role serves it, it
+// falls back to the candidate's own Roles as written in candidates.json. It
+// returns nil when the token does not parse, the set is nil, or neither source
+// has any role, so a caller can drop the segment whole rather than print an
+// empty one.
+func CandidateRoles(reg *roles.Registry, set *candidate.Set, token string) []string {
 	ref, err := candidate.ParseRef(token)
 	if err != nil {
 		return nil
 	}
-	reg := rt.RoleRegistry()
 	var served []string
 	for _, name := range reg.Names() {
 		if reg.Serves(name, ref) {
@@ -76,10 +74,10 @@ func CandidateRoles(rt Runtime, token string) []string {
 	if len(served) > 0 {
 		return served
 	}
-	if rt.Candidates == nil {
+	if set == nil {
 		return nil
 	}
-	c, err := rt.Candidates.Lookup(ref)
+	c, err := set.Lookup(ref)
 	if err != nil || len(c.Roles) == 0 {
 		return nil
 	}
@@ -88,7 +86,7 @@ func CandidateRoles(rt Runtime, token string) []string {
 
 // formatCandidatesLatency is the one line renderer behind both forms: rolesFor
 // renders the roles column, and withTier prints the candidate's own tier
-// segment, which only legacy mode does (#374 §3.2).
+// segment, which only legacy mode does.
 func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat map[string]availability.Summary, rolesFor func(candidate.Candidate) string, withTier bool) string {
 	if set == nil || set.Len() == 0 {
 		return "no candidates configured; set one with relevo config set candidates (see README \"Candidates\")\n"
@@ -116,13 +114,13 @@ func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 		if err != nil {
 			continue
 		}
-		// A1 §4.4, round 3 F1: the candidate's short name leads the row and
-		// the token follows it as plain text in its own column, two spaces
-		// apart like the other columns. `relevo config` is read through a
-		// pipe, so the block must carry no SGR escapes. The name and the
-		// token size their columns separately.
-		sb.WriteString(fmt.Sprintf("%-*s  %-*s  %s",
-			nameWidth, set.NameOf(ref), tokWidth, ref, rolesFor(c)))
+		// The candidate's short name leads the row and the token follows it
+		// as plain text in its own column, two spaces apart like the other
+		// columns. `relevo config` is read through a pipe, so the block must
+		// carry no SGR escapes. The name and the token size their columns
+		// separately.
+		fmt.Fprintf(&sb, "%-*s  %-*s  %s",
+			nameWidth, set.NameOf(ref), tokWidth, ref, rolesFor(c))
 		if withTier && c.Tier != "" {
 			sb.WriteString("   tier: " + c.Tier)
 		}
@@ -130,11 +128,11 @@ func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 			sb.WriteString("   [" + strings.Join(c.ExtraArgs, " ") + "]")
 		}
 		if s, ok := lat[ref]; ok && s.N > 0 {
-			sb.WriteString(fmt.Sprintf("   ttft p50 %s (n=%d, 30d)", availability.ProbeMS(s.TTFTP50MS), s.N))
+			fmt.Fprintf(&sb, "   ttft p50 %s (n=%d, 30d)", availability.ProbeMS(s.TTFTP50MS), s.N)
 		}
 		h, _ := harness.Lookup(c.Harness)
 		if flag := h.ExtraArgsPermissionFlag(c.ExtraArgs); flag != "" {
-			sb.WriteString(fmt.Sprintf(`   note: extra_args carries %s; launches at tier harness only -- move it to "tier"`, flag))
+			fmt.Fprintf(&sb, `   note: extra_args carries %s; launches at tier harness only -- move it to "tier"`, flag)
 		}
 		if rowGates := byToken[ref]; len(rowGates) > 0 {
 			sb.WriteString("   unavailable: " + strings.Join(mergeGateTexts(rowGates), "; "))
@@ -145,11 +143,11 @@ func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 }
 
 // mergeGateTexts renders one token's gates as the parts of the unavailable:
-// note (#374 §3.3): gates are grouped by their kind and until time, in
-// first-seen order, so a candidate gated for three roles prints one part, not
-// three. A group whose gates all apply to every role renders exactly as it did
-// before -- `<kind text> <until text>`; a group any role scopes names the roles
-// it covers, sorted and de-duplicated:
+// note: gates are grouped by their kind and until time, in first-seen order,
+// so a candidate gated for three roles prints one part, not three. A group
+// whose gates all apply to every role renders exactly as it did before --
+// `<kind text> <until text>`; a group any role scopes names the roles it
+// covers, sorted and de-duplicated:
 //
 //	roles missing (builder, reviewer) until cleared
 func mergeGateTexts(gates []availability.Gate) []string {

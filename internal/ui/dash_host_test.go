@@ -13,12 +13,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // dashHostModel is splitModel with a database behind the source, so the
 // `:rounds` command line can open the rounds view. The db is empty: what
 // these tests read is the host's wiring, not the rows.
-func dashHostModel(t *testing.T, width, height int, opts Options, rows ...relevo.BindingStatus) Model {
+func dashHostModel(t *testing.T, width, height int, opts Options, rows ...view.BindingStatus) Model {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
@@ -33,7 +34,7 @@ func dashHostModel(t *testing.T, width, height int, opts Options, rows ...relevo
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: rows}})
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: rows}})
 	return res.(Model)
 }
 
@@ -83,7 +84,7 @@ func TestCmdRoundsWithoutDBNotices(t *testing.T) {
 // TestJumpFromDashPushesLiveRound: a JumpMsg naming a live row resolves to
 // a roundOpenMsg and a pushed round view.
 func TestJumpFromDashPushesLiveRound(t *testing.T) {
-	rows := []relevo.BindingStatus{{Name: "persist", Round: 3, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working"}}
+	rows := []view.BindingStatus{{Name: "persist", Round: 3, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working"}}
 	m := dashHostModel(t, 140, 40, Options{}, rows...)
 	rv, _, err := newRoundsView(m.env(), "", "")
 	if err != nil {
@@ -150,7 +151,7 @@ func TestOptionsStartRounds(t *testing.T) {
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, cmd := m.Update(statusMsg{report: relevo.Report{Bindings: rows}})
+	res, cmd := m.Update(statusMsg{report: view.Report{Bindings: rows}})
 	m = res.(Model)
 	m = drain(t, m, cmd)
 
@@ -171,7 +172,7 @@ func TestOptionsStartRoundsWithoutDBNotices(t *testing.T) {
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, cmd := m.Update(statusMsg{report: relevo.Report{Bindings: threeRows()}})
+	res, cmd := m.Update(statusMsg{report: view.Report{Bindings: threeRows()}})
 	m = res.(Model)
 	m = drain(t, m, cmd)
 
@@ -274,13 +275,13 @@ func TestRoundsRunningFromReport(t *testing.T) {
 	res, _ := m.Update(dash.RowsMsg{Rows: rows, At: railNow})
 	m = res.(Model)
 
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name:          "persist",
 		Round:         5,
 		Display:       "ACTIVE",
 		BuilderStatus: "working",
 	}
-	res, cmd := m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{b}}})
+	res, cmd := m.Update(statusMsg{report: view.Report{Bindings: []view.BindingStatus{b}}})
 	m = drain(t, res.(Model), cmd)
 
 	body := m.View()

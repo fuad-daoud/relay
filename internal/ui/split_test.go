@@ -13,11 +13,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // splitModel builds the shell at width x height with the given live rows
 // (R2.10: the split is gone (X1); this is now just "a loaded shell").
-func splitModel(t *testing.T, width, height int, rows ...relevo.BindingStatus) Model {
+func splitModel(t *testing.T, width, height int, rows ...view.BindingStatus) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
 	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second})
@@ -25,7 +26,7 @@ func splitModel(t *testing.T, width, height int, rows ...relevo.BindingStatus) M
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: rows}})
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: rows}})
 	return res.(Model)
 }
 
@@ -33,13 +34,13 @@ func splitModel(t *testing.T, width, height int, rows ...relevo.BindingStatus) M
 func fleet(m Model) fleetView { return m.stack[0].(fleetView) }
 
 // testEnv is a view's Env for a test at width x height, clock railNow.
-func testEnv(src Source, rep relevo.Report, width, height int) Env {
+func testEnv(src Source, rep view.Report, width, height int) Env {
 	return Env{Ctx: context.Background(), Src: src, Report: rep, Loaded: true,
 		StatusAt: railNow, Now: railNow, Width: width, Height: height}
 }
 
 // newTestRound builds a round view over key with no live rows beyond ret.
-func newTestRound(t *testing.T, rt relevo.Runtime, rep relevo.Report, key string, round int) roundView {
+func newTestRound(t *testing.T, rt relevo.Runtime, rep view.Report, key string, round int) roundView {
 	t.Helper()
 	v, _ := newRoundView(testEnv(plannerSource{rt}, rep, 140, 40), key, round)
 	return v.(roundView)
@@ -48,7 +49,7 @@ func newTestRound(t *testing.T, rt relevo.Runtime, rep relevo.Report, key string
 // newTestHistRound builds a hist round view over h.
 func newTestHistRound(t *testing.T, rt relevo.Runtime, h relevo.HistoryBinding, round int) roundView {
 	t.Helper()
-	v, _ := newHistRoundView(testEnv(plannerSource{rt}, relevo.Report{}, 140, 40), h, round)
+	v, _ := newHistRoundView(testEnv(plannerSource{rt}, view.Report{}, 140, 40), h, round)
 	return v.(roundView)
 }
 
@@ -90,11 +91,11 @@ func roundMsg(rv roundView, msg tea.Msg) roundView {
 	return next.(roundView)
 }
 
-func threeRows() []relevo.BindingStatus {
-	return []relevo.BindingStatus{
-		{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &relevo.LastEvent{TS: railNow.Add(-6 * time.Minute)}},
-		{Name: "docs", Round: 1, Display: "DONE", BuilderKind: "agy", Last: &relevo.LastEvent{TS: railNow.Add(-time.Hour)}},
-		{Name: "webshop", Round: 4, Display: "NEEDS YOU", BuilderKind: "agy", BuilderStatus: "blocked", Last: &relevo.LastEvent{TS: railNow.Add(-2 * time.Minute)}},
+func threeRows() []view.BindingStatus {
+	return []view.BindingStatus{
+		{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &view.LastEvent{TS: railNow.Add(-6 * time.Minute)}},
+		{Name: "docs", Round: 1, Display: "DONE", BuilderKind: "agy", Last: &view.LastEvent{TS: railNow.Add(-time.Hour)}},
+		{Name: "webshop", Round: 4, Display: "NEEDS YOU", BuilderKind: "agy", BuilderStatus: "blocked", Last: &view.LastEvent{TS: railNow.Add(-2 * time.Minute)}},
 	}
 }
 
@@ -102,14 +103,14 @@ func threeRows() []relevo.BindingStatus {
 // second client's same-named binding appearing above must not steal the
 // cursor -- it stays on the key it was on.
 func TestStickyFollowsKeyAcrossOwners(t *testing.T) {
-	m := splitModel(t, 140, 40, relevo.BindingStatus{
+	m := splitModel(t, 140, 40, view.BindingStatus{
 		Name: "persist", Owner: "b", OwnerLabel: "b", Round: 1, Display: "ACTIVE", BuilderKind: "agy",
 	})
 	fv := fleet(m)
 	if got := fv.rows(m.env())[fv.cursor].Key(); got != "b/persist" {
 		t.Fatalf("cursor on %q", got)
 	}
-	res, _ := m.Update(statusMsg{report: relevo.Report{Bindings: []relevo.BindingStatus{
+	res, _ := m.Update(statusMsg{report: view.Report{Bindings: []view.BindingStatus{
 		{Name: "persist", Owner: "a", OwnerLabel: "a", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
 		{Name: "persist", Owner: "b", OwnerLabel: "b", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
 	}}})
@@ -125,8 +126,8 @@ func TestStickyFollowsKeyAcrossOwners(t *testing.T) {
 // bindings read apart.
 func TestFleetNameColumnShowsOwnerName(t *testing.T) {
 	m := splitModel(t, 140, 40,
-		relevo.BindingStatus{Name: "api", Owner: "a", OwnerLabel: "a", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
-		relevo.BindingStatus{Name: "api", Owner: "b", OwnerLabel: "b", Round: 2, Display: "ACTIVE", BuilderKind: "agy"},
+		view.BindingStatus{Name: "api", Owner: "a", OwnerLabel: "a", Round: 1, Display: "ACTIVE", BuilderKind: "agy"},
+		view.BindingStatus{Name: "api", Owner: "b", OwnerLabel: "b", Round: 2, Display: "ACTIVE", BuilderKind: "agy"},
 	)
 	view := plain(m.View())
 	if !strings.Contains(view, "a/api") || !strings.Contains(view, "b/api") {
@@ -137,9 +138,9 @@ func TestFleetNameColumnShowsOwnerName(t *testing.T) {
 // TestSortToggleKeepsSelection pins §5.4's `a`: it flips the order, keeps
 // the selection, and returns the sort pref.
 func TestSortToggleKeepsSelection(t *testing.T) {
-	b1 := relevo.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &relevo.LastEvent{TS: railNow.Add(-6 * time.Minute)}}
-	b2 := relevo.BindingStatus{Name: "docs", Round: 1, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &relevo.LastEvent{TS: railNow.Add(-time.Hour)}}
-	b3 := relevo.BindingStatus{Name: "webshop", Round: 4, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &relevo.LastEvent{TS: railNow.Add(-2 * time.Minute)}}
+	b1 := view.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &view.LastEvent{TS: railNow.Add(-6 * time.Minute)}}
+	b2 := view.BindingStatus{Name: "docs", Round: 1, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &view.LastEvent{TS: railNow.Add(-time.Hour)}}
+	b3 := view.BindingStatus{Name: "webshop", Round: 4, Display: "ACTIVE", BuilderKind: "agy", BuilderStatus: "working", Last: &view.LastEvent{TS: railNow.Add(-2 * time.Minute)}}
 	m := splitModel(t, 140, 40, b1, b2, b3)
 	res, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = res.(Model)
@@ -268,9 +269,9 @@ func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 	}
 	rt := relevo.Runtime{Store: st}
 	rows := threeRows()
-	rows[0].Headless = &relevo.HeadlessInfo{PID: 1, LogPath: "/x/002-builder.log"}
+	rows[0].Headless = &view.HeadlessInfo{PID: 1, LogPath: "/x/002-builder.log"}
 
-	rv := newTestRound(t, rt, relevo.Report{Bindings: rows}, "api", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: rows}, "api", 0)
 	rv = roundKey(rv, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	rv.pane.tabInFlight = false
 	if !rv.pane.detail.follow {
@@ -312,13 +313,13 @@ func TestTerminalFollowsTailUntilScrolledUp(t *testing.T) {
 func TestContextShowsClientLine(t *testing.T) {
 	id := "SHA256:VLERFMZnvN5HSw/GCBr6FXPEgs4QeAfdU95BUhMMqI0"
 
-	client := relevo.BindingStatus{
+	client := view.BindingStatus{
 		Name: "webshop", Owner: id, OwnerLabel: "zen", Round: 4, Display: "NEEDS YOU",
 		BuilderKind: "agy", BuilderStatus: "blocked",
 	}
 	p := paneModel(t, client, tabReport)
 	rv := roundView{pane: p}
-	env := testEnv(p.src, relevo.Report{Bindings: []relevo.BindingStatus{client}}, p.width, p.rows)
+	env := testEnv(p.src, view.Report{Bindings: []view.BindingStatus{client}}, p.width, p.rows)
 	ctxLeft, _ := rv.Context(env)
 	ctx := stripANSI(ctxLeft)
 	if !strings.Contains(ctx, "client zen") {
@@ -328,14 +329,14 @@ func TestContextShowsClientLine(t *testing.T) {
 		t.Errorf("the planner line must be replaced:\n%s", ctx)
 	}
 
-	planner := relevo.BindingStatus{
+	planner := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
 		BuilderKind: "agy", BuilderStatus: "blocked",
 		PlannerID: "planner-9f2", PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel",
 	}
 	p = paneModel(t, planner, tabReport)
 	rv = roundView{pane: p}
-	env = testEnv(p.src, relevo.Report{Bindings: []relevo.BindingStatus{planner}}, p.width, p.rows)
+	env = testEnv(p.src, view.Report{Bindings: []view.BindingStatus{planner}}, p.width, p.rows)
 	ctxLeft, _ = rv.Context(env)
 	ctx = stripANSI(ctxLeft)
 	if !strings.Contains(ctx, "architect-1") {
@@ -347,7 +348,7 @@ func TestContextShowsClientLine(t *testing.T) {
 }
 
 func TestPaneHeadUsageAndSpendRows(t *testing.T) {
-	var b relevo.BindingStatus
+	var b view.BindingStatus
 	for _, r := range threeRows() {
 		if r.Name == "webshop" {
 			b = r
@@ -370,7 +371,7 @@ func TestPaneHeadUsageAndSpendRows(t *testing.T) {
 // (#234): a running round's `tokens` row is the live one, exactly one, and
 // the closed round's row does not appear beside it; spend keeps its place.
 func TestPaneHeadLiveUsageRow(t *testing.T) {
-	var b relevo.BindingStatus
+	var b view.BindingStatus
 	for _, r := range threeRows() {
 		if r.Name == "webshop" {
 			b = r

@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // webhooksFixtureJSON is settingsFixtureJSON plus two stored webhooks: the
@@ -109,7 +110,7 @@ func webhookFormType(f webhookForm, s string) webhookForm {
 // the hook.
 func TestWebhooksAddWritesHook(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	wv := webhooksViewFrom(t, fa, env)
 
 	f := openWebhookForm(t, wv, key('a'), env)
@@ -144,7 +145,7 @@ func TestWebhooksAddWritesHook(t *testing.T) {
 // there and leaves the first as it was.
 func TestWebhooksEditChangesSecondFormat(t *testing.T) {
 	fa := &fakeActions{doc: webhooksDocFrom(t, webhooksFixtureJSON)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	wv := webhooksViewFrom(t, fa, env)
 	next, _ := wv.Update(tea.KeyMsg{Type: tea.KeyDown}, env)
 	wv = next.(webhooksView)
@@ -185,7 +186,7 @@ func TestWebhooksEditChangesSecondFormat(t *testing.T) {
 // c. d, then y, on the only hook: the body has no notify key.
 func TestWebhooksDeleteRemovesNotify(t *testing.T) {
 	fa := &fakeActions{doc: webhooksDocFrom(t, webhookSingleJSON)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	wv := webhooksViewFrom(t, fa, env)
 
 	_, cmd := wv.Update(key('d'), env)
@@ -223,7 +224,7 @@ func TestWebhooksDeleteRemovesNotify(t *testing.T) {
 // records no edit.
 func TestWebhookFormUnknownEventStaysOpen(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	wv := webhooksViewFrom(t, fa, env)
 
 	f := openWebhookForm(t, wv, key('a'), env)
@@ -252,7 +253,7 @@ func TestWebhookFormUnknownEventStaysOpen(t *testing.T) {
 // events.
 func TestWebhookFormStoresStateSuffixAndEvent(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	wv := webhooksViewFrom(t, fa, env)
 
 	f := openWebhookForm(t, wv, key('a'), env)
@@ -282,7 +283,7 @@ func TestWebhookFormStoresStateSuffixAndEvent(t *testing.T) {
 // f. enter on scan_patterns shows the reworded notice.
 func TestSettingsScanPatternsEditorNotice(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 14 // scan_patterns
 

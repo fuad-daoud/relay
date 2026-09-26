@@ -1,4 +1,4 @@
-package relevo
+package view
 
 import (
 	"strings"
@@ -105,8 +105,9 @@ func TestFormatCandidatesLatencySuffix(t *testing.T) {
 }
 
 // TestCandidateRoles pins the registry lookup the candidates detail block
-// reads: the roles come from the runtime's registry, in reg.Names() order, and
-// a zero Runtime -- no registry, no set -- answers nil instead of panicking.
+// reads: the roles come from the registry, in reg.Names() order, and an empty
+// registry with no set -- nothing to compare against -- answers nil instead of
+// panicking.
 func TestCandidateRoles(t *testing.T) {
 	t.Parallel()
 
@@ -115,15 +116,18 @@ func TestCandidateRoles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("roles.Build: %v", err)
 	}
-	rt := Runtime{Candidates: set, Registry: reg}
 
-	got := CandidateRoles(rt, testOpencodeRef)
+	got := CandidateRoles(reg, set, testOpencodeRef)
 	if strings.Join(got, ", ") != "builder" {
 		t.Errorf("CandidateRoles(%s) = %v, want [builder]", testOpencodeRef, got)
 	}
 
-	if got := CandidateRoles(Runtime{}, testOpencodeRef); got != nil {
-		t.Errorf("CandidateRoles(zero Runtime) = %v, want nil", got)
+	empty, err := roles.Build(nil, candidateSet(t, "[]"), policy.Policy{})
+	if err != nil {
+		t.Fatalf("roles.Build(empty): %v", err)
+	}
+	if got := CandidateRoles(empty, nil, testOpencodeRef); got != nil {
+		t.Errorf("CandidateRoles(empty registry, nil set) = %v, want nil", got)
 	}
 }
 

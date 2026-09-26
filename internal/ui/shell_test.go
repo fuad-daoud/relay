@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // fakeView is a minimal View the routing tests can push and interrogate.
@@ -50,8 +51,8 @@ func (f fakeView) Body(env Env, w, h int) string {
 func TestKeyRoutingRules(t *testing.T) {
 	newShell := func() Model {
 		return splitModel(t, 140, 40,
-			relevo.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"},
-			relevo.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE"},
+			view.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"},
+			view.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE"},
 		)
 	}
 	key := func(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
@@ -194,8 +195,8 @@ func (fakeOverlay) view(width int) []string                    { return nil }
 func TestWheelRouting(t *testing.T) {
 	newShell := func() Model {
 		return splitModel(t, 140, 40,
-			relevo.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"},
-			relevo.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE"},
+			view.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"},
+			view.BindingStatus{Name: "api", Round: 2, Display: "ACTIVE"},
 		)
 	}
 	key := func(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
@@ -340,7 +341,7 @@ func TestSnapshotRoutingForwardsToEveryView(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	m := splitModel(t, 140, 40, relevo.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
+	m := splitModel(t, 140, 40, view.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
 	v, _ := newRoundView(m.env(), "webshop", 0)
 	rv := v.(roundView)
 	m.stack = []View{rv, fakeView{}}
@@ -359,7 +360,7 @@ func TestSnapshotRoutingForwardsToEveryView(t *testing.T) {
 // labels and the chip-padded entries replaced the old "global"/"view"
 // sections.
 func TestHelpListsGlobalAndViewKeys(t *testing.T) {
-	m := splitModel(t, 140, 40, relevo.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
+	m := splitModel(t, 140, 40, view.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
 	rv, _ := newRoundView(m.env(), "webshop", 0)
 	m.stack = append(m.stack, rv)
 
@@ -394,7 +395,7 @@ func TestPushDeliversInitAfterPush(t *testing.T) {
 		t.Fatalf("push(v, init) must not return tea.BatchMsg")
 	}
 
-	m := splitModel(t, 140, 40, relevo.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
+	m := splitModel(t, 140, 40, view.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
 	origDepth := len(m.stack)
 	res, returnedCmd := m.Update(pushM)
 	m = res.(Model)
@@ -425,7 +426,7 @@ func TestRootThenDeliversInitAfterRoot(t *testing.T) {
 		t.Fatalf("rootThen(init, v) must not return tea.BatchMsg")
 	}
 
-	m := splitModel(t, 140, 40, relevo.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
+	m := splitModel(t, 140, 40, view.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
 	m.stack = append(m.stack, fakeView{}, fakeView{})
 	res, returnedCmd := m.Update(rootM)
 	m = res.(Model)
@@ -461,8 +462,8 @@ func TestOpenRoundReplyNeverBeatsPush(t *testing.T) {
 	if err := os.WriteFile(planPath, []byte("# Round 1 plan\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	rep := relevo.Report{
-		Bindings: []relevo.BindingStatus{
+	rep := view.Report{
+		Bindings: []view.BindingStatus{
 			{Name: name, Round: 1, Display: "ACTIVE", BuilderStatus: "working"},
 		},
 	}
@@ -520,7 +521,7 @@ func TestOpenRoundReplyNeverBeatsPush(t *testing.T) {
 
 func TestFrameBlankRowUnderHeader(t *testing.T) {
 	m := splitModel(t, 132, 34,
-		relevo.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"},
+		view.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"},
 	)
 	view := m.View()
 	lines := strings.Split(view, "\n")
