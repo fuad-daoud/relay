@@ -636,8 +636,7 @@ What this means in practice:
   never kills anything: it flags `NEEDS YOU` and leaves the process alone.
 - **`relevo gate`** on the provider mid-round kills the running process
   and starts the next candidate on the same round.
-- **opencode 2.x** headless builders launch `run` with `--standalone` (#256) and
-  pass `--thinking` too, so the model's reasoning reaches the transcript:
+- **opencode 2.x** headless builders launch `run` with `--standalone` (#256):
   each headless round gets its own private server instead of the one
   `opencode serve --service` shared by every `opencode run` on that machine,
   so a kill, `relevo done`/`unbind`, a `relevo stop`, or a mid-round switch
@@ -645,7 +644,8 @@ What this means in practice:
   agent session kept running inside the shared service, still editing the
   worktree relevo had already switched away from. `relevo doctor` notes the shared
   service (and, when readable, its session count from opencode.db) whenever
-  `~/.config/opencode/service.json` exists.
+  `~/.config/opencode/service.json` exists. They also pass `--thinking`, so
+  the model's reasoning reaches the transcript.
 
 **Scopes.** A local headless round runs in its own transient systemd scope
 named `relevo-round-local-<binding>-<round>` (an owned remote binding uses its
