@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -94,10 +95,11 @@ type Binding struct {
 	// remote binding carries the client planner's id too, even though the
 	// planner never goes over the wire.
 	PlannerID        string   `json:"planner_id,omitempty"`
-	Builder          Endpoint `json:"builder"`
-	BuilderCandidate string   `json:"builder_candidate,omitempty"`
-	// Role "" means builder, and stores as "".
-	Role string `json:"role,omitempty"`
+	Builder          Endpoint `json:"runner"`
+	BuilderCandidate string   `json:"candidate,omitempty"`
+	// Role names the actor the runner plays. It is always written; the empty
+	// value means builder and is stored as the literal "builder".
+	Role string `json:"actor"`
 	// Tier "" means harness.
 	Tier      string `json:"tier,omitempty"`
 	RoundTier string `json:"round_tier,omitempty"`
@@ -167,7 +169,7 @@ type Binding struct {
 
 	// BuilderMissingSince is stamped on the first miss and cleared on any hit,
 	// so a detection flicker never accumulates toward a switch.
-	BuilderMissingSince time.Time `json:"builder_missing_since,omitempty"`
+	BuilderMissingSince time.Time `json:"runner_missing_since,omitempty"`
 
 	// StalledSince: relevo never acts on it -- killing stays the human's
 	// decision.
@@ -197,8 +199,8 @@ type Binding struct {
 	RoundClosedTree   string `json:"round_closed_tree,omitempty"`
 	RoundBaselineHead string `json:"round_baseline_head,omitempty"`
 	// legacy: bind.json from before pane builders were removed.
-	BuilderScreen   string        `json:"builder_screen,omitempty"`
-	BuilderScreenAt time.Time     `json:"builder_screen_at,omitempty"`
+	BuilderScreen   string        `json:"runner_screen,omitempty"`
+	BuilderScreenAt time.Time     `json:"runner_screen_at,omitempty"`
 	PlannerScreen   string        `json:"planner_screen,omitempty"`
 	PlannerScreenAt time.Time     `json:"planner_screen_at,omitempty"`
 	HeldGrace       time.Duration `json:"held_grace,omitempty"`
@@ -248,4 +250,73 @@ type Binding struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// bindingAlias is Binding without its methods, so UnmarshalJSON decodes the
+// new keys with the ordinary field rules.
+type bindingAlias Binding
+
+// bindingNewKeys records which A4 keys a record carried, so a legacy key is
+// only consulted when its replacement is absent: when both are present the new
+// key wins.
+type bindingNewKeys struct {
+	Runner             *Endpoint  `json:"runner"`
+	Candidate          *string    `json:"candidate"`
+	Actor              *string    `json:"actor"`
+	RunnerMissingSince *time.Time `json:"runner_missing_since"`
+	RunnerScreen       *string    `json:"runner_screen"`
+	RunnerScreenAt     *time.Time `json:"runner_screen_at"`
+}
+
+// bindingLegacyKeys are the pre-A4 spellings of Binding's renamed fields.
+type bindingLegacyKeys struct {
+	Builder             *Endpoint  `json:"builder"`
+	BuilderCandidate    *string    `json:"builder_candidate"`
+	Role                *string    `json:"role"`
+	BuilderMissingSince *time.Time `json:"builder_missing_since"`
+	BuilderScreen       *string    `json:"builder_screen"`
+	BuilderScreenAt     *time.Time `json:"builder_screen_at"`
+}
+
+// UnmarshalJSON reads a binding record written by this relevo or by one before
+// the A4 rename, mapping the old keys onto the same fields. A record with no
+// actor decodes to the "builder" actor, so readers never see an empty one.
+func (b *Binding) UnmarshalJSON(raw []byte) error {
+	var alias bindingAlias
+	if err := json.Unmarshal(raw, &alias); err != nil {
+		return err
+	}
+	var newKeys bindingNewKeys
+	if err := json.Unmarshal(raw, &newKeys); err != nil {
+		return err
+	}
+	var old bindingLegacyKeys
+	if err := json.Unmarshal(raw, &old); err != nil {
+		return err
+	}
+
+	out := Binding(alias)
+	if newKeys.Runner == nil && old.Builder != nil {
+		out.Builder = *old.Builder
+	}
+	if newKeys.Candidate == nil && old.BuilderCandidate != nil {
+		out.BuilderCandidate = *old.BuilderCandidate
+	}
+	if newKeys.Actor == nil && old.Role != nil {
+		out.Role = *old.Role
+	}
+	if newKeys.RunnerMissingSince == nil && old.BuilderMissingSince != nil {
+		out.BuilderMissingSince = *old.BuilderMissingSince
+	}
+	if newKeys.RunnerScreen == nil && old.BuilderScreen != nil {
+		out.BuilderScreen = *old.BuilderScreen
+	}
+	if newKeys.RunnerScreenAt == nil && old.BuilderScreenAt != nil {
+		out.BuilderScreenAt = *old.BuilderScreenAt
+	}
+	if out.Role == "" {
+		out.Role = "builder"
+	}
+	*b = out
+	return nil
 }

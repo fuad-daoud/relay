@@ -189,17 +189,16 @@ func TestStoredFormat(t *testing.T) {
 	}
 }
 
-// TestSaveOmitsTheFormatKeyForFormat1 pins that format 1 is stored as an absent
-// field, so a binding saved today is byte-identical to one saved before the
-// field existed.
-func TestSaveOmitsTheFormatKeyForFormat1(t *testing.T) {
+// TestSaveWritesFormat8 pins that every record carries the A4 format, so an
+// older relevo refuses it rather than erasing the renamed keys.
+func TestSaveWritesFormat8(t *testing.T) {
 	s := New(t.TempDir())
 	if err := s.Save(newBinding("webshop", "/home/dev/projects/webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	raw := bindingRecordJSON(t, s, "webshop")
-	if bytes.Contains(raw, []byte(`"format"`)) {
-		t.Errorf("a format-1 binding must carry no format key:\n%s", raw)
+	if !bytes.Contains(raw, []byte(`"format":8`)) {
+		t.Errorf("a binding must carry format 8:\n%s", raw)
 	}
 }
 

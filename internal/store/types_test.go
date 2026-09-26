@@ -100,6 +100,12 @@ func TestBindingFieldGroupsRoundTrip(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			in := tc.build()
+			if in.Role == "" {
+				// A builder binding's actor is stored as the literal
+				// "builder"; the decoder normalises it there, so the round
+				// trip starts from the canonical value.
+				in.Role = "builder"
+			}
 			raw, err := json.Marshal(in)
 			if err != nil {
 				t.Fatalf("Marshal: %v", err)

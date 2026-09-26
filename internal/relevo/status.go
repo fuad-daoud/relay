@@ -81,7 +81,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (view.BindingSt
 		Name: b.Name, CWD: b.CWD, Round: b.Round,
 		State: string(b.State), Display: view.DisplayState(b.State),
 		BuilderCandidate: b.BuilderCandidate,
-		Role:             b.Role,
+		Role:             bindingRole(b),
 		ForkedFrom:       b.ForkedFrom,
 		ForkedAtRound:    b.ForkedAtRound,
 		Consults:         consult.Running(b),

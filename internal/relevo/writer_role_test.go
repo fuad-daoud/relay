@@ -374,23 +374,23 @@ func TestAddCustomRoleOnServerRefused(t *testing.T) {
 	}
 }
 
-// TestStatusShowsRole pins #382 §4 and §5: a non-builder role is on the status
-// row and printed on the builder line, while a builder row's JSON has no role
-// key and its builder line has no role suffix.
+// TestStatusShowsRole pins #382 §4 and §5: a non-builder actor is on the
+// status row and printed on the runner line, while a builder row's runner line
+// has no actor suffix and its JSON names the actor "builder".
 func TestStatusShowsRole(t *testing.T) {
 	rt := newRuntime(t)
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
-		"builder":    {Candidates: []string{testClaudeRef}},
-		"ui-builder": uiBuilderRow(testClaudeRef),
+		"builder":  {Candidates: []string{testClaudeRef}},
+		"designer": uiBuilderRow(testClaudeRef),
 	})
 
 	if err := rt.Store.Save(store.Binding{
-		Name: "ui-status", CWD: "/ui-status-repo",
+		Name: "designer-status", CWD: "/designer-status-repo",
 		Builder:          store.Endpoint{Kind: "claude", Mode: store.ModeHeadless},
-		BuilderCandidate: testClaudeRef, Role: "ui-builder",
+		BuilderCandidate: testClaudeRef, Role: "designer",
 		Round: 1, State: store.StateActive,
 	}); err != nil {
-		t.Fatalf("Save(ui): %v", err)
+		t.Fatalf("Save(designer): %v", err)
 	}
 	if err := rt.Store.Save(store.Binding{
 		Name: "plain-status", CWD: "/plain-status-repo",
@@ -409,20 +409,20 @@ func TestStatusShowsRole(t *testing.T) {
 	for _, row := range rep.Bindings {
 		rows[row.Name] = row
 	}
-	if rows["ui-status"].Role != "ui-builder" {
-		t.Errorf("ui-status row Role = %q, want ui-builder", rows["ui-status"].Role)
+	if rows["designer-status"].Role != "designer" {
+		t.Errorf("designer-status row Role = %q, want designer", rows["designer-status"].Role)
 	}
-	if rows["plain-status"].Role != "" {
-		t.Errorf("plain-status row Role = %q, want empty", rows["plain-status"].Role)
+	if rows["plain-status"].Role != "builder" {
+		t.Errorf("plain-status row Role = %q, want builder", rows["plain-status"].Role)
 	}
 
-	uiOnly := view.RenderStatus(view.Report{Bindings: []view.BindingStatus{rows["ui-status"]}})
-	if !strings.Contains(uiOnly, "actor ui-builder") {
-		t.Errorf("ui builder line = %q, want `actor ui-builder`", uiOnly)
+	designerOnly := view.RenderStatus(view.Report{Bindings: []view.BindingStatus{rows["designer-status"]}})
+	if !strings.Contains(designerOnly, "actor designer") {
+		t.Errorf("designer row line = %q, want `actor designer`", designerOnly)
 	}
 	plainOnly := view.RenderStatus(view.Report{Bindings: []view.BindingStatus{rows["plain-status"]}})
-	if strings.Contains(plainOnly, "actor ui-builder") {
-		t.Errorf("builder builder line = %q, want no actor suffix", plainOnly)
+	if strings.Contains(plainOnly, "actor ") {
+		t.Errorf("builder row line = %q, want no actor suffix", plainOnly)
 	}
 
 	plainJSON, err := json.Marshal(rows["plain-status"])
@@ -432,11 +432,14 @@ func TestStatusShowsRole(t *testing.T) {
 	if strings.Contains(string(plainJSON), `"role"`) {
 		t.Errorf("builder row JSON = %s, want no role key", plainJSON)
 	}
-	uiJSON, err := json.Marshal(rows["ui-status"])
+	if !strings.Contains(string(plainJSON), `"actor":"builder"`) {
+		t.Errorf("builder row JSON = %s, want an actor key of builder", plainJSON)
+	}
+	designerJSON, err := json.Marshal(rows["designer-status"])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(uiJSON), `"role":"ui-builder"`) {
-		t.Errorf("ui row JSON = %s, want a role key", uiJSON)
+	if !strings.Contains(string(designerJSON), `"actor":"designer"`) {
+		t.Errorf("designer row JSON = %s, want an actor key", designerJSON)
 	}
 }

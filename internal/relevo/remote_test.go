@@ -986,8 +986,8 @@ func TestAddRemoteBuilderUnchanged(t *testing.T) {
 	if fr.createBindingReq.Role != "builder" {
 		t.Fatalf("CreateBindingRequest.Role = %q, want builder", fr.createBindingReq.Role)
 	}
-	if res.Binding.Role != "" {
-		t.Fatalf("res.Binding.Role = %q, want empty", res.Binding.Role)
+	if res.Binding.Role != "builder" {
+		t.Fatalf("res.Binding.Role = %q, want builder", res.Binding.Role)
 	}
 }
 

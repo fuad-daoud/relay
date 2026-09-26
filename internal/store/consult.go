@@ -1,6 +1,9 @@
 package store
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // DefaultConsultCap bounds how many consults may be RUNNING on one binding at
 // once. An idle harness process holds roughly 800 MB, so an unbounded fan-out
@@ -33,10 +36,10 @@ type Consult struct {
 	// ID is 8 lowercase hex characters, unique within one binding.
 	ID string `json:"id"`
 
-	// Role is the role-table name that was asked, not the candidate that ran
+	// Role is the actor-table name that was asked, not the candidate that ran
 	// it: the candidate is the planner's choice at the time, the role is what
 	// was intended.
-	Role string `json:"role"`
+	Role string `json:"actor"`
 
 	Endpoint Endpoint `json:"endpoint"`
 
@@ -59,4 +62,37 @@ type Consult struct {
 
 	// Note is why a silent consult gave up; empty for running and done.
 	Note string `json:"note,omitempty"`
+}
+
+// consultAlias is Consult without its methods, for the ordinary decode.
+type consultAlias Consult
+
+// UnmarshalJSON reads a consult written by this relevo or by one before the
+// A4 rename, mapping a legacy "role" key onto Actor. The new "actor" key wins
+// when both are present.
+func (c *Consult) UnmarshalJSON(raw []byte) error {
+	var alias consultAlias
+	if err := json.Unmarshal(raw, &alias); err != nil {
+		return err
+	}
+	var newKeys struct {
+		Actor *string `json:"actor"`
+	}
+	if err := json.Unmarshal(raw, &newKeys); err != nil {
+		return err
+	}
+	out := Consult(alias)
+	if newKeys.Actor == nil {
+		var old struct {
+			Role *string `json:"role"`
+		}
+		if err := json.Unmarshal(raw, &old); err != nil {
+			return err
+		}
+		if old.Role != nil {
+			out.Role = *old.Role
+		}
+	}
+	*c = out
+	return nil
 }

@@ -123,10 +123,10 @@ are the ones designed here.
 | `planner.pane_id` | string | e.g. `w2:p3` |
 | `planner.session_id` | string | from the harness integration; survives pane id changes |
 | `planner.kind` | enum | `claude` \| `opencode` \| `agy` |
-| `builder.agent_name` | string | herdr agent name, e.g. `upjo-builder` |
-| `builder.pane_id` | string | |
-| `builder.kind` | enum | |
-| `builder_candidate` | string | harness/provider/model the builder was started from; empty when adopted |
+| `runner.agent_name` | string | herdr agent name, e.g. `upjo-builder` |
+| `runner.pane_id` | string | |
+| `runner.kind` | enum | |
+| `candidate` | string | harness/provider/model the builder was started from; empty when adopted |
 | `round` | int | current round, starts at 1 |
 | `state` | enum | `active` \| `held` \| `needs_you` \| `broken` \| `orphaned` \| `done` |
 | `round_cap` | int | default 20 |
@@ -185,7 +185,7 @@ round log. See `docs/specs/2026-09-11-policy-order-design.md`.
 
 Today each entry is an `event` row in `relevo.db`, not a line of `log.jsonl`.
 
-`{ ts, round, direction: "to_builder"|"to_planner", kind: "plan"|"report"|"question"|"answer"|"pick"|"switch",
+`{ ts, round, direction: "to_runner"|"to_planner", kind: "plan"|"report"|"question"|"answer"|"pick"|"switch",
    path, delivered_at, confirmed: bool, note }`
 
 A `pick` entry is relevo -> log only: which candidate a spawn resolved to and why.

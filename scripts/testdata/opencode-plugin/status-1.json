@@ -52,7 +52,6 @@
       "report_in": false,
       "harness": "opencode",
       "candidate": "opencode/anthropic/claude-3-5-sonnet",
-      "role": "designer",
       "waiting": "plan sent",
       "clock": "30s",
       "tokens": "2k tok",

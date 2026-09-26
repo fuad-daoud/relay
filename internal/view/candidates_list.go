@@ -33,7 +33,7 @@ func FormatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 // FormatCandidatesLatencyFor is FormatCandidatesLatency with the roles column
 // read from reg. Legacy mode delegates, so the output stays byte-identical to
 // today's; in file mode the column lists the registry roles that serve the
-// candidate -- "(no role)" when none does -- and the tier segment is omitted,
+// candidate -- "(no actor)" when none does -- and the tier segment is omitted,
 // because in file mode the tier belongs to the role, not the candidate.
 func FormatCandidatesLatencyFor(reg *roles.Registry, set *candidate.Set, gates []availability.Gate, lat map[string]availability.Summary) string {
 	if !reg.FileMode() {
@@ -149,7 +149,7 @@ func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 // `<kind text> <until text>`; a group any role scopes names the roles it
 // covers, sorted and de-duplicated:
 //
-//	roles missing (builder, reviewer) until cleared
+//	agents missing (builder, reviewer) until cleared
 func mergeGateTexts(gates []availability.Gate) []string {
 	type group struct {
 		kind     string
