@@ -104,6 +104,12 @@ func Open(path string) (*DB, error) {
 		return &DB{sqlDB: sqlDB, newer: true, have: have, know: know}, nil
 	}
 
+	// A current schema needs no write: taking BEGIN IMMEDIATE here made every
+	// command take the write lock before doing anything, and fail under load.
+	if have == know {
+		return &DB{sqlDB: sqlDB, have: have, know: know}, nil
+	}
+
 	if err := applyMigrations(sqlDB, migrationFiles); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("db: open %s: migrate: %w: %w", path, ErrOpen, err)
