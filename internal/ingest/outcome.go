@@ -61,11 +61,13 @@ func switchesForRound(events []store.LogEntry, n int) int {
 	return count
 }
 
-// builderForRound resolves round n's builder: the token from the last pick or
-// switch entry's note, falling back to b.BuilderCandidate. A consult's pick names
-// a role other than "builder" and is skipped. candidateTok is verbatim; ref has a
-// trailing "#..." stripped, since a ":effort" suffix belongs to the model.
-func builderForRound(events []store.LogEntry, n int, b store.Binding) (candidateTok string, ref candidate.Ref, ok bool) {
+// candidateForRound resolves round n's candidate: the token from the last pick or
+// switch entry's note, falling back to b.BuilderCandidate. A pick naming an actor
+// other than the binding's own is a consult's pick (or another runner's) and is
+// skipped. candidateTok is verbatim; ref has a trailing "#..." stripped, since a
+// ":effort" suffix belongs to the model.
+func candidateForRound(events []store.LogEntry, n int, b store.Binding) (candidateTok string, ref candidate.Ref, ok bool) {
+	actor := actorOf(b)
 	var lastKind store.Kind
 	var lastNote string
 	var found bool
@@ -73,7 +75,7 @@ func builderForRound(events []store.LogEntry, n int, b store.Binding) (candidate
 		if e.Round != n {
 			continue
 		}
-		if e.Kind == store.KindPick && isRolePick(e.Note) {
+		if e.Kind == store.KindPick && isOtherActorPick(e.Note, actor) {
 			continue
 		}
 		if e.Kind == store.KindPick || e.Kind == store.KindSwitch {
@@ -98,9 +100,9 @@ func builderForRound(events []store.LogEntry, n int, b store.Binding) (candidate
 	return tok, ref, true
 }
 
-// isRolePick reports whether note is the pick `ask` writes for a consult:
-// "picked <tok> for <role>: ..." with a role other than "builder".
-func isRolePick(note string) bool {
+// isOtherActorPick reports whether note is the pick `ask` writes for a consult:
+// "picked <tok> for <role>: ..." with a role other than actor.
+func isOtherActorPick(note, actor string) bool {
 	const prefix = "picked "
 	if !strings.HasPrefix(note, prefix) {
 		return false
@@ -120,7 +122,16 @@ func isRolePick(note string) bool {
 		return false
 	}
 	role := rolePart[:ci]
-	return role != "" && role != "builder" && strings.IndexByte(role, ' ') < 0
+	return role != "" && role != actor && strings.IndexByte(role, ' ') < 0
+}
+
+// actorOf is the actor a binding's runner plays: b.Role, or "builder" when it is
+// empty (records from before the actor split, and the seeded writer actor).
+func actorOf(b store.Binding) string {
+	if b.Role == "" {
+		return "builder"
+	}
+	return b.Role
 }
 
 func parseBuilderNote(kind store.Kind, note string) string {

@@ -42,7 +42,7 @@ func (q Query) keep(r db.RoundRow) bool {
 	if q.Server != "" && !strEquals(r.Server, q.Server) {
 		return false
 	}
-	if q.Mode != "" && !strEquals(r.BuilderMode, q.Mode) {
+	if q.Mode != "" && !strEquals(r.Mode, q.Mode) {
 		return false
 	}
 	return true

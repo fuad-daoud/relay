@@ -132,7 +132,7 @@ func TestHistoryJSONHasBuilderName(t *testing.T) {
 	}
 
 	token := "agy/antigravity/opus"
-	rows := []db.RoundRow{{BindingName: "api-auth", Number: 3, BuilderCandidate: &token}}
+	rows := []db.RoundRow{{BindingName: "api-auth", Number: 3, Candidate: &token}}
 
 	raw, err := json.Marshal(historyJSONRows(rows, set))
 	if err != nil {
@@ -149,7 +149,7 @@ func TestHistoryJSONHasBuilderName(t *testing.T) {
 	if got := decoded[0]["BindingName"]; got != "api-auth" {
 		t.Errorf("BindingName = %v, want the embedded row's field", got)
 	}
-	if got := decoded[0]["BuilderCandidate"]; got != token {
-		t.Errorf("BuilderCandidate = %v, want the token", got)
+	if got := decoded[0]["Candidate"]; got != token {
+		t.Errorf("Candidate = %v, want the token", got)
 	}
 }

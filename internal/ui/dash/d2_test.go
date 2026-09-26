@@ -161,12 +161,12 @@ func TestNoDollars(t *testing.T) {
 		t.Errorf("flat view contains $:\n%s", flat)
 	}
 
-	grouped := feed(t, newTestModel(t, "by:builder")).View()
+	grouped := feed(t, newTestModel(t, "by:candidate")).View()
 	if strings.Contains(grouped, "$") {
 		t.Errorf("grouped view contains $:\n%s", grouped)
 	}
 
-	m := feed(t, newTestModel(t, "by:builder"))
+	m := feed(t, newTestModel(t, "by:candidate"))
 	res, _ := m.Update(special(tea.KeyEnter))
 	expanded := res.View()
 	if strings.Contains(expanded, "$") {
@@ -176,7 +176,7 @@ func TestNoDollars(t *testing.T) {
 
 func TestMarginsAndWidth(t *testing.T) {
 	sizes := [][2]int{{132, 34}, {100, 30}}
-	queries := []string{"", "by:builder"}
+	queries := []string{"", "by:candidate"}
 	for _, sz := range sizes {
 		w, h := sz[0], sz[1]
 		for _, q := range queries {

@@ -16,7 +16,7 @@ type GroupRow struct {
 	CostUSD                float64
 	Tokens                 int64 // in+cache+write+out over the group's rows
 	RoundsPerLand          float64
-	ByCandidate            map[string]int // round count per BuilderCandidate, nil skipped
+	ByCandidate            map[string]int // round count per Candidate, nil skipped
 }
 
 type Outcomes struct {
@@ -55,8 +55,8 @@ func (a *groupAcc) add(in Inputs, r db.RoundRow) {
 	if r.Commits != nil {
 		a.commits += *r.Commits
 	}
-	if r.BuilderCandidate != nil {
-		a.byCandidate[*r.BuilderCandidate]++
+	if r.Candidate != nil {
+		a.byCandidate[*r.Candidate]++
 	}
 	addTokens(&a.tokens, r)
 	if r.Outcome == db.OutcomeHalted {

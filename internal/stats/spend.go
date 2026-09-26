@@ -17,7 +17,7 @@ type DayCost struct {
 	USD        float64
 	Tokens     int64              // summed over every row of the day, like Tokens
 	Kinds      TokenCounts        // the day's tokens by kind; Tokens = Kinds.Total()
-	ByProvider map[string]float64 // BuilderProvider, "(none)" when nil
+	ByProvider map[string]float64 // Provider, "(none)" when nil
 	// ByCandidate keys "(none)" for a nil candidate, and only rows with a
 	// non-zero total.
 	ByCandidate      map[string]int64
@@ -90,15 +90,15 @@ func addSpendDay(sp *Spend, idx map[string]int, kinds []TokenCounts, in Inputs, 
 }
 
 func candKey(r db.RoundRow) string {
-	if r.BuilderCandidate == nil {
+	if r.Candidate == nil {
 		return "(none)"
 	}
-	return *r.BuilderCandidate
+	return *r.Candidate
 }
 
 func provKey(r db.RoundRow) string {
-	if r.BuilderProvider == nil {
+	if r.Provider == nil {
 		return "(none)"
 	}
-	return *r.BuilderProvider
+	return *r.Provider
 }

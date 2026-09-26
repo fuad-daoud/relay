@@ -257,37 +257,37 @@ func seedRounds(webshopID, apiID, docsID string, day1, day2 time.Time) []Round {
 	return []Round{
 		{
 			BindingID: webshopID, Number: 1, StartedAt: day1, Outcome: OutcomeReported,
-			BuilderCandidate: ptr("claude/anthropic/sonnet"), BuilderHarness: ptr("agy"),
-			BuilderProvider: ptr("anthropic"), BuilderModel: ptr("sonnet"),
+			Candidate: ptr("claude/anthropic/sonnet"), Harness: ptr("agy"),
+			Provider: ptr("anthropic"), Model: ptr("sonnet"),
 			CostBasis: ptr("exact"), CostUSD: ptr(1.5),
 			Switches: 2,
 		},
 		{
 			BindingID: webshopID, Number: 2, StartedAt: day2, Outcome: OutcomeOpen,
-			BuilderCandidate: ptr("claude/anthropic/sonnet"), BuilderHarness: ptr("agy"),
-			BuilderProvider: ptr("anthropic"), BuilderModel: ptr("sonnet"),
+			Candidate: ptr("claude/anthropic/sonnet"), Harness: ptr("agy"),
+			Provider: ptr("anthropic"), Model: ptr("sonnet"),
 		},
 		{
 			BindingID: apiID, Number: 1, StartedAt: day1, Outcome: OutcomeHalted,
-			BuilderCandidate: ptr("opencode/openrouter/glm"), BuilderHarness: ptr("opencode"),
-			BuilderProvider: ptr("openrouter"), BuilderModel: ptr("glm"),
+			Candidate: ptr("opencode/openrouter/glm"), Harness: ptr("opencode"),
+			Provider: ptr("openrouter"), Model: ptr("glm"),
 			GateResult: ptr("fail"), CostBasis: ptr("estimated"), CostUSD: ptr(0.2),
 		},
 		{
 			BindingID: apiID, Number: 2, StartedAt: day2, Outcome: OutcomeReported,
-			BuilderCandidate: ptr("opencode/openrouter/glm"), BuilderHarness: ptr("opencode"),
-			BuilderProvider: ptr("openrouter"), BuilderModel: ptr("glm"),
+			Candidate: ptr("opencode/openrouter/glm"), Harness: ptr("opencode"),
+			Provider: ptr("openrouter"), Model: ptr("glm"),
 			GateResult: ptr("pass"),
 		},
 		{
 			BindingID: docsID, Number: 1, StartedAt: day1, Outcome: OutcomeReported,
-			BuilderCandidate: ptr("claude/anthropic/sonnet"), BuilderHarness: ptr("agy"),
-			BuilderProvider: ptr("anthropic"), BuilderModel: ptr("sonnet"), ReportOutcome: ptr("done"),
+			Candidate: ptr("claude/anthropic/sonnet"), Harness: ptr("agy"),
+			Provider: ptr("anthropic"), Model: ptr("sonnet"), ReportOutcome: ptr("done"),
 		},
 		{
 			BindingID: docsID, Number: 2, StartedAt: day2, Outcome: OutcomeHalted,
-			BuilderCandidate: ptr("claude/anthropic/sonnet"), BuilderHarness: ptr("agy"),
-			BuilderProvider: ptr("anthropic"), BuilderModel: ptr("sonnet"), ReportOutcome: ptr("halted"),
+			Candidate: ptr("claude/anthropic/sonnet"), Harness: ptr("agy"),
+			Provider: ptr("anthropic"), Model: ptr("sonnet"), ReportOutcome: ptr("halted"),
 		},
 	}
 }

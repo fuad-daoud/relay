@@ -37,7 +37,7 @@ func TestStatsInputsAssemblesFromDB(t *testing.T) {
 	tok := "opencode/test/model"
 	if _, err := d.UpsertRound(db.Round{
 		BindingID: doneID, Number: 1, StartedAt: now.Add(-time.Hour),
-		Outcome: db.OutcomeReported, BuilderCandidate: ptr(tok),
+		Outcome: db.OutcomeReported, Candidate: ptr(tok),
 	}); err != nil {
 		t.Fatalf("UpsertRound in-window: %v", err)
 	}

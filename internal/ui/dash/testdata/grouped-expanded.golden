@@ -1,4 +1,4 @@
-    relevo · dashboard   (all rounds)   by:builder                                                            / filter  b regroup  s sort  d fleet  r refresh   
+    relevo · dashboard   (all rounds)   by:candidate                                                          / filter  b regroup  s sort  d fleet  r refresh   
    3 rounds   3.7M tokens   2 done   1 halted   19m median                                                                                                      
    CANDIDATE                                                                      RNDS  BINDINGS   DONE  HALTED  COMMITS   TOKENS         % TOKENS       LAST   
    agy/antigravity/claude-sonnet-4-6                                                 1         1      1       0        3       2M  ▇▇▇▇▇       54%     sep 18   

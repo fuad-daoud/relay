@@ -40,57 +40,57 @@ func TestScorecard(t *testing.T) {
 		{
 			name: "rates and medians over closed rounds",
 			in: Inputs{Until: stNow, Loc: time.UTC, Rows: []db.RoundRow{
-				{BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, DurationMS: stI64(600_000)},
-				{BuilderCandidate: stStr("a"), Outcome: db.OutcomeOpen},
-				{BuilderCandidate: stStr("a"), Outcome: db.OutcomeHalted, DurationMS: stI64(1_200_000)},
-				{BuilderCandidate: stStr("b"), Outcome: db.OutcomeReported, DurationMS: stI64(100_000)},
-				{BuilderCandidate: stStr("b"), Outcome: db.OutcomeReported, DurationMS: stI64(300_000)},
-				{BuilderCandidate: stStr("b"), Outcome: db.OutcomeReported, DurationMS: stI64(500_000)},
+				{Candidate: stStr("a"), Outcome: db.OutcomeReported, DurationMS: stI64(600_000)},
+				{Candidate: stStr("a"), Outcome: db.OutcomeOpen},
+				{Candidate: stStr("a"), Outcome: db.OutcomeHalted, DurationMS: stI64(1_200_000)},
+				{Candidate: stStr("b"), Outcome: db.OutcomeReported, DurationMS: stI64(100_000)},
+				{Candidate: stStr("b"), Outcome: db.OutcomeReported, DurationMS: stI64(300_000)},
+				{Candidate: stStr("b"), Outcome: db.OutcomeReported, DurationMS: stI64(500_000)},
 			}},
 			check: checkScorecardRates,
 		},
 		{
 			name: "unrecorded rows and Keep",
 			in: Inputs{Until: stNow, Loc: time.UTC, Rows: []db.RoundRow{
-				{BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported},
-				{BuilderCandidate: nil, Outcome: db.OutcomeReported},
-				{BuilderCandidate: stStr("b"), Outcome: db.OutcomeReported},
+				{Candidate: stStr("a"), Outcome: db.OutcomeReported},
+				{Candidate: nil, Outcome: db.OutcomeReported},
+				{Candidate: stStr("b"), Outcome: db.OutcomeReported},
 			}, Keep: func(r db.RoundRow) bool {
-				return r.BuilderCandidate != nil && *r.BuilderCandidate != "b"
+				return r.Candidate != nil && *r.Candidate != "b"
 			}},
 			check: checkScorecardUnrecorded,
 		},
 		{
 			name: "plan rows report no cost",
 			in: Inputs{Until: stNow, Loc: time.UTC, IsPlan: func(tok string) bool { return tok == "plan/x" }, Rows: []db.RoundRow{
-				{BuilderCandidate: stStr("plan/x"), Outcome: db.OutcomeReported, CostUSD: stF64(9), CostBasis: stStr("measured")},
-				{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(1), CostBasis: stStr("measured")},
-				{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(3), CostBasis: stStr("measured")},
-				{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(2), CostBasis: stStr("unknown")},
+				{Candidate: stStr("plan/x"), Outcome: db.OutcomeReported, CostUSD: stF64(9), CostBasis: stStr("measured")},
+				{Candidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(1), CostBasis: stStr("measured")},
+				{Candidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(3), CostBasis: stStr("measured")},
+				{Candidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(2), CostBasis: stStr("unknown")},
 				// A cost with no basis at all: costKnown counts it.
-				{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(5)},
-				{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported},
-				{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported},
+				{Candidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(5)},
+				{Candidate: stStr("paid/y"), Outcome: db.OutcomeReported},
+				{Candidate: stStr("paid/y"), Outcome: db.OutcomeReported},
 			}},
 			check: checkScorecardPlanCost,
 		},
 		{
 			name: "bindings, report halts and switches",
 			in: Inputs{Until: stNow, Loc: time.UTC, Rows: []db.RoundRow{
-				{BindingID: "b1", BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 0},
-				{BindingID: "b2", BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 2, ReportOutcome: stStr("halted")},
-				{BindingID: "b2", BuilderCandidate: stStr("a"), Outcome: db.OutcomeHalted, Switches: 1, ReportOutcome: stStr("done")},
-				{BindingID: "b3", BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 0},
+				{BindingID: "b1", Candidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 0},
+				{BindingID: "b2", Candidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 2, ReportOutcome: stStr("halted")},
+				{BindingID: "b2", Candidate: stStr("a"), Outcome: db.OutcomeHalted, Switches: 1, ReportOutcome: stStr("done")},
+				{BindingID: "b3", Candidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 0},
 			}},
 			check: checkScorecardBindings,
 		},
 		{
 			name: "per-candidate token kinds leave the unrecorded bucket out",
 			in: Inputs{Until: stNow, Loc: time.UTC, Rows: []db.RoundRow{
-				{BuilderCandidate: stStr("a"), InTokens: stI64(100), CacheTokens: stI64(900), OutTokens: stI64(10)},
-				{BuilderCandidate: stStr("a"), OutTokens: stI64(90)},
-				{BuilderCandidate: stStr("b"), InTokens: stI64(7)},
-				{BuilderCandidate: nil, InTokens: stI64(1000)},
+				{Candidate: stStr("a"), InTokens: stI64(100), CacheTokens: stI64(900), OutTokens: stI64(10)},
+				{Candidate: stStr("a"), OutTokens: stI64(90)},
+				{Candidate: stStr("b"), InTokens: stI64(7)},
+				{Candidate: nil, InTokens: stI64(1000)},
 			}},
 			check: checkScorecardTokens,
 		},
@@ -212,7 +212,7 @@ func TestSpend(t *testing.T) {
 				// One millisecond earlier: neither week.
 				{StartedAt: stNow.Add(-14*24*time.Hour - time.Millisecond), CostUSD: stF64(8), CostBasis: stStr("measured")},
 				// Inside the day window, with a provider.
-				{StartedAt: stAt(2026, time.September, 23, 5, 0), BuilderProvider: stStr("p1"), CostUSD: stF64(16), CostBasis: stStr("measured")},
+				{StartedAt: stAt(2026, time.September, 23, 5, 0), Provider: stStr("p1"), CostUSD: stF64(16), CostBasis: stStr("measured")},
 				// Inside the day window, with no provider.
 				{StartedAt: stAt(2026, time.September, 24, 6, 0), CostUSD: stF64(32), CostBasis: stStr("measured")},
 			}},
@@ -221,11 +221,11 @@ func TestSpend(t *testing.T) {
 		{
 			name: "day token breakdowns",
 			in: Inputs{Since: stAt(2026, time.September, 23, 0, 0), Until: stAt(2026, time.September, 24, 12, 0), Loc: time.UTC, Rows: []db.RoundRow{
-				{StartedAt: stAt(2026, time.September, 23, 9, 0), BuilderCandidate: stStr("A"), BuilderProvider: stStr("p1"),
+				{StartedAt: stAt(2026, time.September, 23, 9, 0), Candidate: stStr("A"), Provider: stStr("p1"),
 					InTokens: stI64(10), CacheTokens: stI64(100), OutTokens: stI64(5)},
-				{StartedAt: stAt(2026, time.September, 23, 10, 0), BuilderCandidate: stStr("B"), BuilderProvider: stStr("p2"),
+				{StartedAt: stAt(2026, time.September, 23, 10, 0), Candidate: stStr("B"), Provider: stStr("p2"),
 					OutTokens: stI64(7)},
-				{StartedAt: stAt(2026, time.September, 24, 9, 0), BuilderCandidate: stStr("A"), InTokens: stI64(1)},
+				{StartedAt: stAt(2026, time.September, 24, 9, 0), Candidate: stStr("A"), InTokens: stI64(1)},
 			}},
 			check: checkSpendBreakdowns,
 		},
@@ -358,9 +358,9 @@ func TestGroupRows(t *testing.T) {
 		{
 			name: "bindings, reports, commits and candidates",
 			rows: []db.RoundRow{
-				{BindingID: "b1", Repo: stStr("A"), ReportOutcome: stStr("done"), Commits: stInt(2), BuilderCandidate: stStr("A")},
-				{BindingID: "b2", Repo: stStr("A"), ReportOutcome: stStr("done"), BuilderCandidate: stStr("A")},
-				{BindingID: "b3", Repo: stStr("A"), ReportOutcome: stStr("halted"), Commits: stInt(1), BuilderCandidate: stStr("B")},
+				{BindingID: "b1", Repo: stStr("A"), ReportOutcome: stStr("done"), Commits: stInt(2), Candidate: stStr("A")},
+				{BindingID: "b2", Repo: stStr("A"), ReportOutcome: stStr("done"), Candidate: stStr("A")},
+				{BindingID: "b3", Repo: stStr("A"), ReportOutcome: stStr("halted"), Commits: stInt(1), Candidate: stStr("B")},
 				{BindingID: "b1", Repo: stStr("A"), Commits: stInt(0)},
 			},
 			check: checkGroupBreakdowns,
@@ -472,8 +472,8 @@ func TestReliabilityWindowAndHours(t *testing.T) {
 
 	loc := time.FixedZone("X", 2*3600)
 	rows := []db.RoundRow{
-		{BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 2},
-		{BuilderCandidate: stStr("b"), Outcome: db.OutcomeReported},
+		{Candidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 2},
+		{Candidate: stStr("b"), Outcome: db.OutcomeReported},
 	}
 	gates := []availability.Gate{{Token: "a"}}
 	hist := availability.History{Events: []availability.Event{
@@ -599,7 +599,7 @@ func TestTokenKindsSumAndCache(t *testing.T) {
 		{InTokens: stI64(100), CacheTokens: stI64(900), WriteTokens: stI64(50), OutTokens: stI64(10)},
 		{InTokens: stI64(100), CacheTokens: stI64(900)},
 		// No token field at all: not measured.
-		{BuilderCandidate: stStr("a")},
+		{Candidate: stStr("a")},
 	}
 	rep := Build(Inputs{Rows: rows, Until: stNow, Loc: time.UTC})
 

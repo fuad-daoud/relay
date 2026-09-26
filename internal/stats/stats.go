@@ -71,7 +71,7 @@ func (c TokenCounts) PerRound(n int64) (int64, bool) {
 
 type Totals struct {
 	Rounds, Bindings int
-	// Candidates is the number of distinct non-nil BuilderCandidate tokens.
+	// Candidates is the number of distinct non-nil Candidate tokens.
 	Candidates int
 	// The Unrecorded bucket never gets a scorecard row.
 	Unrecorded  int
@@ -141,11 +141,11 @@ func buildTotals(in Inputs, rows []db.RoundRow) Totals {
 		if closedOutcomes[r.Outcome] && r.DurationMS != nil {
 			durations = append(durations, *r.DurationMS)
 		}
-		if r.BuilderCandidate == nil {
+		if r.Candidate == nil {
 			t.Unrecorded++
 			continue
 		}
-		candidates[*r.BuilderCandidate] = true
+		candidates[*r.Candidate] = true
 		if isPlan(in, r) {
 			t.PlanRounds++
 			continue
@@ -165,7 +165,7 @@ func buildTotals(in Inputs, rows []db.RoundRow) Totals {
 
 // isPlan is false for a nil candidate.
 func isPlan(in Inputs, r db.RoundRow) bool {
-	return r.BuilderCandidate != nil && in.IsPlan != nil && in.IsPlan(*r.BuilderCandidate)
+	return r.Candidate != nil && in.IsPlan != nil && in.IsPlan(*r.Candidate)
 }
 
 // costKnown is histq's rule plus the plan exclusion, so the totals agree.

@@ -291,15 +291,15 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 	var id string
 	err := t.queryRow(`SELECT id FROM round WHERE binding_id = ? AND number = ?`, r.BindingID, r.Number).Scan(&id)
 	if err == nil {
-		if _, uerr := t.exec(`UPDATE round SET started_at=?, closed_at=?, outcome=?, builder_candidate=?,
-				builder_harness=?, builder_provider=?, builder_model=?, builder_mode=?, tier=?,
+		if _, uerr := t.exec(`UPDATE round SET started_at=?, closed_at=?, outcome=?, candidate=?,
+				harness=?, provider=?, model=?, mode=?, actor=?, tier=?,
 				commits=?, tree=?, gate_result=?, gate_exit=?, gate_duration_ms=?,
 				in_tokens=?, cache_tokens=?, write_tokens=?, out_tokens=?, cost_usd=?, cost_basis=?,
 				report_outcome=?, switches=?
 			WHERE id=?`,
-			formatTime(r.StartedAt), nullableTime(r.ClosedAt), r.Outcome, nullableString(r.BuilderCandidate),
-			nullableString(r.BuilderHarness), nullableString(r.BuilderProvider), nullableString(r.BuilderModel),
-			nullableString(r.BuilderMode), nullableString(r.Tier),
+			formatTime(r.StartedAt), nullableTime(r.ClosedAt), r.Outcome, nullableString(r.Candidate),
+			nullableString(r.Harness), nullableString(r.Provider), nullableString(r.Model),
+			nullableString(r.Mode), r.Actor, nullableString(r.Tier),
 			nullableInt(r.Commits), nullableString(r.Tree), nullableString(r.GateResult), nullableInt(r.GateExit),
 			nullableInt64(r.GateDurationMS),
 			nullableInt64(r.InTokens), nullableInt64(r.CacheTokens), nullableInt64(r.WriteTokens), nullableInt64(r.OutTokens),
@@ -320,14 +320,14 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 		startedAt = time.Now()
 	}
 	if _, err := t.exec(`INSERT INTO round (id, binding_id, number, started_at, closed_at, outcome,
-			builder_candidate, builder_harness, builder_provider, builder_model, builder_mode, tier,
+			candidate, harness, provider, model, mode, actor, tier,
 			commits, tree, gate_result, gate_exit, gate_duration_ms,
 			in_tokens, cache_tokens, write_tokens, out_tokens, cost_usd, cost_basis,
 			report_outcome, switches)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, r.BindingID, r.Number, formatTime(startedAt), nullableTime(r.ClosedAt), r.Outcome,
-		nullableString(r.BuilderCandidate), nullableString(r.BuilderHarness), nullableString(r.BuilderProvider),
-		nullableString(r.BuilderModel), nullableString(r.BuilderMode), nullableString(r.Tier),
+		nullableString(r.Candidate), nullableString(r.Harness), nullableString(r.Provider),
+		nullableString(r.Model), nullableString(r.Mode), r.Actor, nullableString(r.Tier),
 		nullableInt(r.Commits), nullableString(r.Tree), nullableString(r.GateResult), nullableInt(r.GateExit),
 		nullableInt64(r.GateDurationMS),
 		nullableInt64(r.InTokens), nullableInt64(r.CacheTokens), nullableInt64(r.WriteTokens), nullableInt64(r.OutTokens),

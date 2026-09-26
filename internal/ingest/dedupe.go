@@ -366,7 +366,7 @@ func deriveTranscripts(d *db.DB, record db.Record, rd db.Round) ([][]db.Transcri
 }
 
 // transcriptKinds is the harness kind each stream candidate is rendered under: the
-// mirror round's own BuilderHarness, then the record's decoded Builder.Kind, each
+// mirror round's own Harness, then the record's decoded Builder.Kind, each
 // once.
 func transcriptKinds(record db.Record, rd db.Round) []string {
 	kinds := make([]string, 0, 2)
@@ -379,8 +379,8 @@ func transcriptKinds(record db.Record, rd db.Round) []string {
 		kinds = append(kinds, kind)
 	}
 
-	if rd.BuilderHarness != nil {
-		add(*rd.BuilderHarness)
+	if rd.Harness != nil {
+		add(*rd.Harness)
 	}
 	var b store.Binding
 	if err := json.Unmarshal([]byte(record.JSON), &b); err == nil {
