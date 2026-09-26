@@ -320,8 +320,8 @@ assert 14 "03-fleet webshop NEEDS YOU and ledger REPORT IN share the STATE colum
 check_assertion_15() {
   grep -q "webshop" "$OUT/01-session.txt" && \
   grep -q "NEEDS YOU" "$OUT/01-session.txt" && \
-  grep -q "r3 · opencode · question in" "$OUT/01-session.txt" && \
-  ! grep -q "r4 · opencode" "$OUT/01-session.txt"
+  grep -q "r3 · builder on opencode" "$OUT/01-session.txt" && \
+  ! grep -q "r4 · builder on opencode" "$OUT/01-session.txt"
 }
 assert 15 "01-session shows webshop NEEDS YOU and r3, not r4" check_assertion_15
 

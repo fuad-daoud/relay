@@ -54,8 +54,10 @@ func AgeText(d time.Duration) string {
 // for Claude Code's statusLine setting per spec §4.3 and §5, amended
 // by docs/specs/2026-09-24-statusline-redesign-design.md. It renders the same
 // row rule the OpenCode sidebar shows (#393): the shown round (report_round
-// when > 0, else round) and the row's word (NEEDS YOU, the display word,
-// REPORT IN, or nothing for ACTIVE) come from StatusLineRows.
+// when > 0, else round) and the row's status and tone come from
+// StatusLineRows. The middle names the actor; the status column is padded to
+// the widest status and the clock is right-aligned last, so neither moves when
+// another row's status or clock changes length.
 func RenderStatusLine(r Report, now time.Time, columns int) string {
 	if len(r.Bindings) == 0 {
 		return ""
@@ -66,10 +68,16 @@ func RenderStatusLine(r Report, now time.Time, columns int) string {
 
 	rows := StatusLineRows(r, now)
 
-	nameW := 0
+	nameW, statusW, clockW := 0, 0, 0
 	for _, row := range rows {
 		if w := utf8.RuneCountInString(row.Name); w > nameW {
 			nameW = w
+		}
+		if w := utf8.RuneCountInString(row.Status); w > statusW {
+			statusW = w
+		}
+		if w := utf8.RuneCountInString(row.Clock); w > clockW {
+			clockW = w
 		}
 	}
 
@@ -85,48 +93,48 @@ func RenderStatusLine(r Report, now time.Time, columns int) string {
 			round = row.ReportRound
 		}
 
-		mid := "r" + strconv.Itoa(round)
+		mid := "r" + strconv.Itoa(round) + " · " + row.Actor
 		if row.Candidate != "" {
-			mid += " · " + row.Harness
+			mid += " on " + row.Harness
 		}
-		mid += " · " + row.Waiting
+		if row.Reason != "" {
+			mid += " · " + row.Reason
+		}
 		if row.Tokens != "" {
 			mid += " · " + row.Tokens
 		}
 
-		// §2: NEEDS YOU wins; then a relevo state word (PAUSED, DONE) outranks
-		// a delivered report's REPORT IN; ACTIVE and empty show no word at all.
-		word := ""
-		colouredWord := ""
-		switch {
-		case row.NeedsYou:
-			word = "NEEDS YOU"
-			colouredWord = ansiNeedsYou + word + ansiReset
-		case row.Display != "" && row.Display != "ACTIVE":
-			word = row.Display
-			colouredWord = word
-		case row.ReportIn:
-			word = "REPORT IN"
-			colouredWord = ansiReportIn + word + ansiReset
-		}
-
-		var rawRight, colouredRight string
-		if word == "" {
-			rawRight = row.Clock
-			colouredRight = row.Clock
-		} else {
-			rawRight = row.Clock + " · " + word
-			colouredRight = row.Clock + " · " + colouredWord
+		// The tone colours only the visible status text; the padding counts the
+		// uncoloured runes, so the colour never widens the column.
+		colour := ""
+		switch row.Tone {
+		case "needs":
+			colour = ansiNeedsYou
+		case "report":
+			colour = ansiReportIn
+		case "phase":
+			colour = ansiDim
 		}
 
 		leftW := 2 + nameW + 2
-		midW := columns - leftW - 1 - utf8.RuneCountInString(rawRight)
+		midW := columns - leftW - 1 - statusW - 2 - clockW
 
 		var line string
 		if midW < 8 {
-			line = dotColoured + " " + row.Name + "  " + mid + " · " + colouredRight
+			// Unpadded fallback: a row this narrow cannot afford three aligned
+			// columns, so the status and the clock follow the middle cell.
+			status := row.Status
+			if colour != "" {
+				status = colour + status + ansiReset
+			}
+			line = dotColoured + " " + row.Name + "  " + mid + " · " + status + " · " + row.Clock
 		} else {
-			line = dotColoured + " " + pad(row.Name, nameW) + "  " + pad(truncate(mid, midW), midW) + " " + colouredRight
+			status := pad(row.Status, statusW)
+			if colour != "" {
+				status = colour + status + ansiReset
+			}
+			right := status + "  " + padLeft(row.Clock, clockW)
+			line = dotColoured + " " + pad(row.Name, nameW) + "  " + pad(truncate(mid, midW), midW) + " " + right
 		}
 		sb.WriteString(line)
 		sb.WriteByte('\n')
@@ -151,10 +159,10 @@ func RenderPlannerLine(name string, columns int) string {
 	return ansiDim + text + ansiReset + "\n"
 }
 
-func waiting(b BindingStatus) string {
-	if b.Detail != "" {
-		return b.Detail
-	}
+// phase is the bare phase of a binding's last payload: the wording the middle
+// segment uses when it has to carry one. It ignores the note and the outcome,
+// because a delivered report states those in its status column instead.
+func phase(b BindingStatus) string {
 	if b.LastPayload == nil {
 		return "no plan yet"
 	}
@@ -162,20 +170,65 @@ func waiting(b BindingStatus) string {
 	case store.KindPlan:
 		return "plan sent"
 	case store.KindReport:
-		base := "report in"
-		if b.LastPayload.Note != "" {
-			base = fmt.Sprintf("report in (%s)", b.LastPayload.Note)
-		}
-		if b.LastPayload.Outcome != "" && b.LastPayload.Outcome != OutcomeDone {
-			base += " · " + b.LastPayload.Outcome
-		}
-		return base
+		return "report in"
 	case store.KindQuestion:
 		return "question in"
 	case store.KindAnswer:
 		return "answered"
 	}
 	return ""
+}
+
+func waiting(b BindingStatus) string {
+	if b.Detail != "" {
+		return b.Detail
+	}
+	base := phase(b)
+	if b.LastPayload != nil && b.LastPayload.Kind == store.KindReport {
+		if b.LastPayload.Note != "" {
+			base = fmt.Sprintf("report in (%s)", b.LastPayload.Note)
+		}
+		if b.LastPayload.Outcome != "" && b.LastPayload.Outcome != OutcomeDone {
+			base += " · " + b.LastPayload.Outcome
+		}
+	}
+	return base
+}
+
+// rowStatus is a row's one status text and the tone that colours it. The status
+// column is the only place a row says where it is; the middle keeps identity
+// and, when there is a reason, that reason. The first rule that matches wins,
+// so a stalled report reads NEEDS YOU rather than REPORT IN.
+func rowStatus(b BindingStatus, needsYou, reportIn bool) (status, tone string) {
+	if needsYou {
+		return "NEEDS YOU", "needs"
+	}
+	if b.Display != "" && b.Display != "ACTIVE" {
+		if b.Display == "HELD" {
+			return b.Display, "held"
+		}
+		return b.Display, "quiet"
+	}
+	if reportIn && b.LastPayload != nil {
+		switch b.LastPayload.Kind {
+		case store.KindReport:
+			status = "REPORT IN"
+			if b.LastPayload.Note != "" {
+				status += " · " + b.LastPayload.Note
+			}
+			if b.LastPayload.Outcome != "" && b.LastPayload.Outcome != OutcomeDone {
+				status += " · " + b.LastPayload.Outcome
+			}
+			return status, "report"
+		case store.KindQuestion:
+			return "QUESTION IN", "report"
+		}
+	}
+	status = phase(b)
+	if status == "" {
+		status = "--"
+	}
+	return status, "phase"
 }
 
 func roundClock(b BindingStatus, now time.Time) string {
@@ -239,6 +292,16 @@ func pad(s string, w int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", w-n)
+}
+
+// padLeft pads s on the left to w runes, so the clock column is right-aligned
+// and its last rune sits at the same cell on every row.
+func padLeft(s string, w int) string {
+	n := utf8.RuneCountInString(s)
+	if n >= w {
+		return s
+	}
+	return strings.Repeat(" ", w-n) + s
 }
 
 // StatusLineWidth is the row width the verb lays out to: columns, Claude
@@ -315,6 +378,16 @@ type StatusLineRow struct {
 	LastKind    string `json:"last_kind"`
 	LastTS      string `json:"last_ts"`
 	Route       string `json:"route"`
+	// Actor is who runs the binding: b.Role when it is set, else "builder",
+	// because a builder binding stores an empty role (normRole).
+	Actor string `json:"actor"`
+	// Status is the row's one status text (rowStatus), so no surface derives
+	// it again; Tone is the colour it takes.
+	Status string `json:"status"`
+	Tone   string `json:"tone"`
+	// Reason explains the status in the middle segment; empty unless there is
+	// something to explain.
+	Reason string `json:"reason"`
 }
 
 // StatusLineDoc is the top-level document emitted by relevo status --line --json (§3).
@@ -356,6 +429,17 @@ func StatusLineRows(r Report, now time.Time) []StatusLineRow {
 			reportRound = b.LastPayload.Round
 		}
 		reportIn := toPlannerPayload && !pending
+		actor := b.Role
+		if actor == "" {
+			actor = "builder"
+		}
+		status, tone := rowStatus(b, needsYou, reportIn)
+		reason := ""
+		if needsYou {
+			reason = waiting(b)
+		} else if b.Detail != "" {
+			reason = b.Detail
+		}
 		rows = append(rows, StatusLineRow{
 			Name:        b.Name,
 			Round:       b.Round,
@@ -372,6 +456,10 @@ func StatusLineRows(r Report, now time.Time) []StatusLineRow {
 			LastKind:    lastKind,
 			LastTS:      lastTS,
 			Route:       b.PlannerRoute,
+			Actor:       actor,
+			Status:      status,
+			Tone:        tone,
+			Reason:      reason,
 		})
 	}
 	return rows

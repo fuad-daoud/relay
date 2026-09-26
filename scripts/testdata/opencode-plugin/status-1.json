@@ -19,7 +19,11 @@
       "tokens": "12k tok",
       "last_kind": "question",
       "last_ts": "2026-09-24T20:10:00Z",
-      "route": "deliverer"
+      "route": "deliverer",
+      "actor": "builder",
+      "status": "NEEDS YOU",
+      "tone": "needs",
+      "reason": "question in"
     },
     {
       "name": "ledger",
@@ -34,7 +38,11 @@
       "tokens": "5k tok",
       "last_kind": "plan",
       "last_ts": "2026-09-24T20:12:00Z",
-      "route": "deliverer"
+      "route": "deliverer",
+      "actor": "builder",
+      "status": "plan sent",
+      "tone": "phase",
+      "reason": ""
     },
     {
       "name": "landing",
@@ -50,7 +58,11 @@
       "tokens": "2k tok",
       "last_kind": "plan",
       "last_ts": "2026-09-24T20:13:00Z",
-      "route": "channel"
+      "route": "channel",
+      "actor": "designer",
+      "status": "plan sent",
+      "tone": "phase",
+      "reason": ""
     },
     {
       "name": "parked",
@@ -66,7 +78,11 @@
       "tokens": "2k tok",
       "last_kind": "report",
       "last_ts": "2026-09-24T19:00:00Z",
-      "route": "deliverer"
+      "route": "deliverer",
+      "actor": "builder",
+      "status": "PAUSED",
+      "tone": "quiet",
+      "reason": ""
     }
   ]
 }
