@@ -1,8 +1,7 @@
 package planner
 
-// The tests for #374 round 6 step 1: one embedded "Handing off" source,
-// handoff.md, and the planner hook that carries it. The shipped architect
-// definitions stay untouched -- this file pins them to handoffRules instead.
+// Pins handoff.md against every shipped architect copy's "Handing off"
+// section, without touching those copies.
 
 import (
 	"bytes"
@@ -13,10 +12,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
-// handingOffSection returns doc from the line "## Handing off" to the end, or
-// to the first line that is exactly delim when delim is non-empty. The result
-// keeps each line's trailing newline, so a section that ends the file compares
-// byte-for-byte with handoffRules.
+// handingOffSection returns doc from "## Handing off" to the end, or to the
+// first line exactly delim when delim is non-empty.
 func handingOffSection(t *testing.T, doc []byte, delim string) []byte {
 	t.Helper()
 	i := bytes.Index(doc, []byte("## Handing off"))
@@ -38,10 +35,8 @@ func handingOffSection(t *testing.T, doc []byte, delim string) []byte {
 	return out
 }
 
-// TestHandoffRulesMatchShippedArchitectCopies pins #374 step 1: handoff.md is
-// byte-identical to the "Handing off" section of every shipped architect
-// copy. A change to any copy without handoff.md -- or the reverse -- fails
-// here.
+// TestHandoffRulesMatchShippedArchitectCopies pins handoff.md byte-identical
+// to the "Handing off" section of every shipped architect copy.
 func TestHandoffRulesMatchShippedArchitectCopies(t *testing.T) {
 	for _, kind := range []string{"claude", "opencode", "agy"} {
 		doc, err := harness.AgentDoc("architect", kind)
@@ -54,8 +49,7 @@ func TestHandoffRulesMatchShippedArchitectCopies(t *testing.T) {
 		}
 	}
 
-	// codex wraps its definition in a TOML literal string: the section runs to
-	// the line that is exactly ''' and stops there.
+	// codex wraps its definition in a TOML literal string ending in '''.
 	doc, err := harness.AgentDoc("architect", "codex")
 	if err != nil {
 		t.Fatalf("AgentDoc(architect, codex): %v", err)
@@ -66,9 +60,8 @@ func TestHandoffRulesMatchShippedArchitectCopies(t *testing.T) {
 	}
 }
 
-// TestHookOutputCarriesHandoffRules pins #374 step 1's hook half: decoded, the
-// hook's additionalContext starts with the planner sentence and ends with the
-// handoff rules.
+// TestHookOutputCarriesHandoffRules pins that additionalContext starts with
+// the planner sentence and ends with the handoff rules.
 func TestHookOutputCarriesHandoffRules(t *testing.T) {
 	rec := Record{ID: "pl_aaaaaaaaaaaa", Name: "architect-1"}
 

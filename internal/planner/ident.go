@@ -5,46 +5,33 @@ import (
 	"strconv"
 )
 
-// Ident is which harness process is calling, as far as relevo can tell without
-// shelling out or reading a file (§4.2).
+// Ident is which harness process is calling, as far as relevo can tell
+// without shelling out or reading a file.
 type Ident struct {
 	Kind      string
 	SessionID string
-	// HostPID is the harness process: for Claude, $CLAUDE_PID in a Bash tool,
-	// else the caller's parent pid (inside `relevo mcp` and the SessionStart
-	// hook, whose parent IS the Claude process).
+	// HostPID is the harness process: $CLAUDE_PID in a Bash tool, else the
+	// caller's parent pid.
 	HostPID int
 }
 
-// claudeEnvMarker is the variable that says "this process is inside Claude
-// Code" (§1.1, verified).
 const claudeEnvMarker = "CLAUDECODE"
 
-// agyConversationEnv is the variable agy injects into every command it runs:
-// the id of the conversation whose agentapi inbox that command may push to
-// (#349). Unlike CLAUDECODE it is present inside agy whether or not a session
-// hook ran, and it is what names the planner record.
+// agyConversationEnv names the agy conversation a command runs in.
 const agyConversationEnv = "ANTIGRAVITY_CONVERSATION_ID"
 
-// conversationIDRe is the shape of an agy conversation id: a lower-case
-// 8-4-4-4-12 hex UUID. internal/relevo carries its own copy of this pattern
-// (agy_creds.go): the rule is two lines, and relevo's deliverer must not depend
-// on planner's internals for it.
+// conversationIDRe is a lower-case 8-4-4-4-12 hex UUID.
 var conversationIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// validConversationID reports whether id is an agy conversation id.
 func validConversationID(id string) bool { return conversationIDRe.MatchString(id) }
 
-// Detect reports which harness process is calling. `claude` is detected from
-// CLAUDECODE, `agy` from a valid ANTIGRAVITY_CONVERSATION_ID, and `opencode`
-// from RELEVO_HARNESS=opencode. Claude is checked
-// first, so CLAUDECODE=1 wins even when agy's variables are in the same
-// environment. It never shells out and never reads a file -- the host's start
-// time is the caller's business (ProcStart) -- so it is a pure function of its
-// arguments and is table-tested.
+// Detect reports which harness process is calling: `claude` from CLAUDECODE,
+// `agy` from a valid ANTIGRAVITY_CONVERSATION_ID, `opencode` from
+// RELEVO_HARNESS=opencode. Claude is checked first, so CLAUDECODE=1 wins
+// when both are set. Pure: it never shells out or reads a file.
 //
-// ppid is the caller's parent pid (os.Getppid()), used as HostPID when
-// CLAUDE_PID is unset or unparseable.
+// ppid (os.Getppid()) is HostPID's fallback when CLAUDE_PID is unset or
+// unparseable.
 func Detect(env func(string) string, ppid int) (Ident, bool) {
 	if env == nil {
 		return Ident{}, false
@@ -55,10 +42,6 @@ func Detect(env func(string) string, ppid int) (Ident, bool) {
 			Kind:      "claude",
 			SessionID: env("CLAUDE_CODE_SESSION_ID"),
 		}
-		// CLAUDE_PID is set in the Bash tool and names the Claude process;
-		// inside `relevo mcp` and the hook it is unset, and there the parent
-		// pid is that same process. Both spellings land on one pid for one
-		// session (§1.1).
 		if pid, err := strconv.Atoi(env("CLAUDE_PID")); err == nil && pid > 0 {
 			ident.HostPID = pid
 		} else {
@@ -67,10 +50,7 @@ func Detect(env func(string) string, ppid int) (Ident, bool) {
 		return ident, true
 	}
 
-	// agy names no process relevo can follow: the pid a command runs under is
-	// not a stable host for the session, so HostPID stays 0. That is exactly
-	// what Record.Validate allows -- host_started_at must be 0 whenever
-	// host_pid is 0 -- and plannerHostStart(0) returns 0 for it.
+	// agy names no stable host process, so HostPID stays 0.
 	if conv := env(agyConversationEnv); validConversationID(conv) {
 		return Ident{Kind: "agy", SessionID: conv, HostPID: 0}, true
 	}

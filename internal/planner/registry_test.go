@@ -17,7 +17,6 @@ func TestRegistryCreateRejectsSessionTaken(t *testing.T) {
 	reg := testRegistry(t)
 	mustCreate(t, reg, record("pl_aaaaaaaaaaaa", "alpha", "claude", "sess-1", 0))
 
-	// A different id, name and host: only the (kind, session) pair collides.
 	clash := record("pl_bbbbbbbbbbbb", "beta", "claude", "sess-1", 0)
 
 	_, err := reg.Create(clash)
@@ -25,13 +24,11 @@ func TestRegistryCreateRejectsSessionTaken(t *testing.T) {
 		t.Fatalf("Create with a taken session = %v, want ErrSessionTaken", err)
 	}
 
-	// The same session on another harness kind is a different planner.
 	other := record("pl_bbbbbbbbbbbb", "beta", "opencode", "ses_other", 0)
 	if _, err := reg.Create(other); err != nil {
 		t.Fatalf("Create other kind: %v", err)
 	}
 
-	// And a second claude planner cannot also claim sess-1.
 	third := record("pl_cccccccccccc", "gamma", "claude", "sess-1", 0)
 	if _, err := reg.Create(third); !errors.Is(err, ErrSessionTaken) {
 		t.Errorf("Create claude/sess-1 again = %v, want ErrSessionTaken", err)
@@ -53,7 +50,6 @@ func TestRegistryCreateRejectsHostTaken(t *testing.T) {
 		t.Fatalf("Create with a taken host = %v, want ErrHostTaken", err)
 	}
 
-	// A record with no host (explicit registration) never collides with one.
 	noHost := record("pl_bbbbbbbbbbbb", "beta", "claude", "sess-2", 0)
 	if _, err := reg.Create(noHost); err != nil {
 		t.Fatalf("Create without a host: %v", err)
@@ -91,7 +87,6 @@ func TestMoveSessionAppendsHistoryAndCapsAt20(t *testing.T) {
 	if len(rec.Sessions) != MaxSessions {
 		t.Fatalf("history holds %d sessions, want %d", len(rec.Sessions), MaxSessions)
 	}
-	// 21 moves: s0..s20 accumulate, then the oldest (s0) is dropped.
 	if rec.Sessions[0].SessionID != "s1" {
 		t.Errorf("oldest kept session = %q, want s1", rec.Sessions[0].SessionID)
 	}
@@ -101,18 +96,15 @@ func TestMoveSessionAppendsHistoryAndCapsAt20(t *testing.T) {
 	if got, want := rec.Sessions[len(rec.Sessions)-1].To, testNow.Add(21*time.Minute); !got.Equal(want) {
 		t.Errorf("newest history To = %v, want %v", got, want)
 	}
-	// The chain is contiguous: each move's From is the previous move's To.
 	if got, want := rec.Sessions[1].From, rec.Sessions[0].To; !got.Equal(want) {
 		t.Errorf("history From = %v, want the previous To %v", got, want)
 	}
 
-	// A session another record holds is refused.
 	mustCreate(t, reg, record("pl_bbbbbbbbbbbb", "beta", "claude", "held", 0))
 	if _, err := reg.MoveSession("pl_aaaaaaaaaaaa", "held", "", testNow); !errors.Is(err, ErrSessionTaken) {
 		t.Errorf("MoveSession onto a held session = %v, want ErrSessionTaken", err)
 	}
 
-	// The transcript locator is replaced only when the move carries one.
 	before, err := reg.Get("pl_aaaaaaaaaaaa")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -136,7 +128,6 @@ func TestByHostRequiresStartTimeMatch(t *testing.T) {
 	reg := testRegistry(t)
 	mustCreate(t, reg, record("pl_aaaaaaaaaaaa", "alpha", "claude", "sess-1", 4242))
 
-	// record() sets HostStartedAt to host*10, so 4242@42420 is the live one.
 	rec, err := reg.ByHost(4242, 42420)
 	if err != nil {
 		t.Fatalf("ByHost: %v", err)
@@ -145,14 +136,12 @@ func TestByHostRequiresStartTimeMatch(t *testing.T) {
 		t.Errorf("ByHost returned %s, want pl_aaaaaaaaaaaa", rec.ID)
 	}
 
-	// Same pid, different start time: a reused pid is not the same host.
 	if _, err := reg.ByHost(4242, 1); !errors.Is(err, ErrNotFound) {
 		t.Errorf("ByHost with a different start time = %v, want ErrNotFound", err)
 	}
 	if _, err := reg.ByHost(4242, 0); !errors.Is(err, ErrNotFound) {
 		t.Errorf("ByHost with start 0 = %v, want ErrNotFound", err)
 	}
-	// pid 0 is "unknown" and never matches, whatever the start time.
 	if _, err := reg.ByHost(0, 0); !errors.Is(err, ErrNotFound) {
 		t.Errorf("ByHost(0, 0) = %v, want ErrNotFound", err)
 	}
@@ -205,7 +194,6 @@ func TestRegistrySetHostAndRename(t *testing.T) {
 	if !touched.SeenAt.Equal(testNow.Add(10 * time.Minute)) {
 		t.Errorf("SeenAt = %v, want the touched time", touched.SeenAt)
 	}
-	// Within the minute, a touch is a no-op rather than a write.
 	if err := reg.Touch("pl_aaaaaaaaaaaa", testNow.Add(10*time.Minute+time.Second)); err != nil {
 		t.Fatalf("Touch: %v", err)
 	}
@@ -240,8 +228,6 @@ func TestGetRejectsAMalformedID(t *testing.T) {
 	reg := testRegistry(t)
 	mustCreate(t, reg, record("pl_aaaaaaaaaaaa", "alpha", "claude", "sess-1", 0))
 
-	// A malformed id cannot name a record, so it is ErrNotFound -- and it can
-	// never be read as a path.
 	if _, err := reg.Get("../../etc/passwd"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Get(traversal) = %v, want ErrNotFound", err)
 	}
@@ -252,15 +238,13 @@ func TestGetRejectsAMalformedID(t *testing.T) {
 
 func sessionName(i int) string { return "s" + strconv.Itoa(i) }
 
-// failPutKV is a DBRegistry's kv whose every put fails, so the import's order
-// can be observed: a file may only disappear after its row was written.
+// failPutKV is a DBRegistry's kv whose every put fails.
 type failPutKV struct{ db.DBTxKV }
 
 func (failPutKV) KVPut(string, []byte) error { return errors.New("put failed") }
 
-// TestRegistryImportAdoptsRecordFiles is §4.1's import: a present
-// planners/<id>.json is put to planner/<id> and removed, and the lock file and
-// the now-empty directory go with it.
+// TestRegistryImportAdoptsRecordFiles pins the import: a present
+// planners/<id>.json is put to planner/<id> and removed, with it.
 func TestRegistryImportAdoptsRecordFiles(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "planners")
 	if err := os.MkdirAll(root, 0o700); err != nil {
@@ -309,8 +293,7 @@ func TestRegistryImportAdoptsRecordFiles(t *testing.T) {
 }
 
 // TestRegistryImportMalformedFileFailsLoudly pins the corrupt-file rule: a
-// record file that is not valid JSON fails the import and stays where it is,
-// exactly as a corrupt file failed list before.
+// record file that is not valid JSON fails the import and stays put.
 func TestRegistryImportMalformedFileFailsLoudly(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "planners")
 	if err := os.MkdirAll(root, 0o700); err != nil {
@@ -335,10 +318,8 @@ func TestRegistryImportMalformedFileFailsLoudly(t *testing.T) {
 	}
 }
 
-// TestRegistryImportFailedPutKeepsFile is the mutation guard for the import's
-// order (P3b round 2 step 1): moving the file removal before the put loses the
-// record, and this test notices -- the file must still be there when the put
-// fails.
+// TestRegistryImportFailedPutKeepsFile pins the import's order: the file
+// must still be there when the put fails.
 func TestRegistryImportFailedPutKeepsFile(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "planners")
 	if err := os.MkdirAll(root, 0o700); err != nil {

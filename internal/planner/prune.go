@@ -2,15 +2,14 @@ package planner
 
 import "time"
 
-// Prune forgets every record that is gone and that no binding still names
-// (§4.7): the pile-up the plugin's SessionStart hook leaves behind on a machine
-// that runs many Claude Code sessions, minus anything still in use.
+// Prune forgets every record that is gone and that no binding still names:
+// the pile-up a plugin's SessionStart hook leaves behind, minus anything
+// still in use.
 //
 // procStart is RecordState's injected process read. bindings reports how many
-// non-DONE bindings name a planner id -- the same store walk Forget's in-use
-// guard uses (cmd/relevo's plannerBindingCounts); nil counts nothing. A record
-// that is live, an explicit registration, and a record any non-DONE binding
-// names are all left alone.
+// non-DONE bindings name a planner id; nil counts nothing. A record that is
+// live, an explicit registration, or named by a non-DONE binding is left
+// alone.
 //
 // It returns the records it forgot, in List's name order; with dryRun it
 // returns what it would forget and forgets nothing. An error from List or
@@ -32,8 +31,6 @@ func Prune(reg Registry, procStart func(pid int) (int64, error), bindings func(i
 		if dryRun {
 			continue
 		}
-		// The count above already proved no binding names this record, so
-		// Forget needs no guard of its own.
 		if err := reg.Forget(rec.ID, nil); err != nil {
 			return forgotten, err
 		}
@@ -45,6 +42,8 @@ func Prune(reg Registry, procStart func(pid int) (int64, error), bindings func(i
 // unseen before the daemon forgets it (no binding may name it).
 const OpencodeIdleTTL = 7 * 24 * time.Hour
 
+// PruneIdle forgets every explicit opencode record unseen for longer than
+// OpencodeIdleTTL that no binding still names. dryRun works as in Prune.
 func PruneIdle(reg Registry, bindings func(id string) int, now time.Time, dryRun bool) ([]Record, error) {
 	records, err := reg.List()
 	if err != nil {

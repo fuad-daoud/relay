@@ -20,9 +20,8 @@ func initAt(host int, session string, now time.Time) InitInput {
 	}
 }
 
-// TestInitCreatesThenReattachesSameHost is the /clear case: the same Claude
-// process comes back with a new session id, and it must keep its planner id
-// and record the old session in history.
+// TestInitCreatesThenReattachesSameHost is the /clear case: the same host
+// process keeps its planner id across a new session id.
 func TestInitCreatesThenReattachesSameHost(t *testing.T) {
 	reg := testRegistry(t)
 
@@ -53,7 +52,6 @@ func TestInitCreatesThenReattachesSameHost(t *testing.T) {
 	if got, want := second.Sessions[0].To, testNow.Add(time.Minute); !got.Equal(want) {
 		t.Errorf("history To = %v, want %v", got, want)
 	}
-	// init's postcondition (§4.4): seen_at is now.
 	if !second.SeenAt.Equal(testNow.Add(time.Minute)) {
 		t.Errorf("SeenAt = %v, want the init time", second.SeenAt)
 	}
@@ -67,8 +65,7 @@ func TestInitCreatesThenReattachesSameHost(t *testing.T) {
 	}
 }
 
-// TestInitReattachesBySessionInNewProcess is --resume in a fresh process: the
-// session id is the identity and the host pid is what moves.
+// TestInitReattachesBySessionInNewProcess is --resume in a fresh process.
 func TestInitReattachesBySessionInNewProcess(t *testing.T) {
 	reg := testRegistry(t)
 
@@ -95,11 +92,8 @@ func TestInitReattachesBySessionInNewProcess(t *testing.T) {
 	}
 }
 
-// TestInitReusesPriorDBID pins §3.5's upgrade path: when the database already
-// has a row for (kind, session), the new record takes that row's id rather
-// than minting one, so history stays joined across the upgrade. Every id in a
-// real relevo.db is a 26-character ULID, so that is the shape the path must
-// carry; NewID's `pl_` shape keeps working too.
+// TestInitReusesPriorDBID pins the upgrade path: a database row already
+// present for (kind, session) donates its id rather than a fresh one.
 func TestInitReusesPriorDBID(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -132,15 +126,11 @@ func TestInitReusesPriorDBID(t *testing.T) {
 				t.Errorf("id = %q, want the prior db id %q", rec.ID, tc.priorID)
 			}
 
-			// The record is stored under its own id, so a ULID-named record
-			// resolved by Get reads the same row a `pl_` id does.
 			if stored, err := reg.Get(tc.priorID); err != nil || stored.ID != tc.priorID {
 				t.Errorf("Get(%q) = %+v, %v", tc.priorID, stored, err)
 			}
 
-			// A prior id for another session is not consulted, and a second
-			// init for the same host and session still re-attaches rather
-			// than registering.
+			// A prior id for another session is not consulted.
 			in.SessionID = "sess-2"
 			if _, ok := in.PriorID("claude", "sess-2"); ok {
 				t.Fatal("test fixtures disagree")
@@ -156,9 +146,8 @@ func TestInitReusesPriorDBID(t *testing.T) {
 	}
 }
 
-// TestInitExplicitRegistrationHasNoHost pins the `--kind/--session` shape: a
-// record registered by hand has host_pid 0, re-attaches by session, and gives
-// up nothing.
+// TestInitExplicitRegistrationHasNoHost pins `--kind/--session`: a record
+// registered by hand has host_pid 0 and re-attaches by session.
 func TestInitExplicitRegistrationHasNoHost(t *testing.T) {
 	reg := testRegistry(t)
 
@@ -182,8 +171,7 @@ func TestInitExplicitRegistrationHasNoHost(t *testing.T) {
 		t.Errorf("Name = %q, want opencode-1", first.Name)
 	}
 
-	// Re-registering the same session by hand re-attaches, and does not clear
-	// a host a hook later gave the record.
+	// Re-registering by hand re-attaches without clearing the host a hook gave.
 	if _, err := reg.SetHost(first.ID, 777, 7770); err != nil {
 		t.Fatalf("SetHost: %v", err)
 	}
@@ -200,8 +188,8 @@ func TestInitExplicitRegistrationHasNoHost(t *testing.T) {
 	}
 }
 
-// TestInitRenamesWhenNameGiven pins "Name non-empty on an existing record
-// renames it".
+// TestInitRenamesWhenNameGiven pins that a non-empty Name renames an
+// existing record.
 func TestInitRenamesWhenNameGiven(t *testing.T) {
 	reg := testRegistry(t)
 
@@ -220,7 +208,6 @@ func TestInitRenamesWhenNameGiven(t *testing.T) {
 		t.Errorf("second Init = %q/%s/%q, want reattached/%s/reviewer-2", res, second.ID, second.Name, first.ID)
 	}
 
-	// A conflicting name is refused rather than silently overwriting.
 	other, _, err := Init(reg, initAt(200, "sess-2", testNow))
 	if err != nil {
 		t.Fatalf("third Init: %v", err)
@@ -232,9 +219,8 @@ func TestInitRenamesWhenNameGiven(t *testing.T) {
 	}
 }
 
-// TestConcurrentInitSerialises is §4.1's transaction rule made observable: two
-// registries racing on one database -- the hook and `relevo mcp` starting
-// together -- must end with exactly one record, not two.
+// TestConcurrentInitSerialises pins the transaction rule: two registries
+// racing on one database must end with exactly one record.
 func TestConcurrentInitSerialises(t *testing.T) {
 	d := testDB(t)
 
