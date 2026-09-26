@@ -660,6 +660,14 @@ check_assertion_48() {
 }
 assert 48 "05k-after-dialog-tab selected tab differs from 05j-sent" check_assertion_48
 
+# 49. (F9) 06-dialog.txt contains builder on opencode · question in and does
+#     not contain webshop · r3 · question in.
+check_assertion_49() {
+  grep -q "builder on opencode · question in" "$OUT/06-dialog.txt" && \
+  ! grep -q "webshop · r3 · question in" "$OUT/06-dialog.txt"
+}
+assert 49 "06-dialog hint names the actor and reason, not the name and round again" check_assertion_49
+
 # Mouse is not driven here: tmux send-keys cannot deliver SGR mouse events
 # reliably, so the clickable-row behaviour (onMouseDown on the sidebar and
 # fleet rows) is verified by inspection of tui.tsx, not by this smoke.
@@ -670,5 +678,5 @@ if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
 
-echo "Smoke test PASSED (all 48 assertions passed)"
+echo "Smoke test PASSED (all 49 assertions passed)"
 exit 0
