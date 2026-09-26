@@ -37,97 +37,97 @@ func (aliveRunner) Rusage(context.Context, relevo.ProcHandle, string) (relevo.Pr
 	return relevo.ProcRusage{}, false
 }
 
-// TestFlatStatusStampsOwnersAndDedupsGates: FlatStatus is the whole fleet
-// as one report -- Owner/OwnerLabel stamped on every row, owners by label,
-// Key() distinct across two owners that share a binding name, and the
-// server-wide ledger gate appearing once, not once per owner.
-func TestOwnerRuntimeMalformedID(t *testing.T) {
-	s, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now})
+func newAdminServer(t *testing.T, now time.Time, opts ...func(*Config)) *Server {
+	t.Helper()
+	cfg := Config{DB: testServeDB(t), Root: t.TempDir(), Now: func() time.Time { return now }}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	s, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	return s
+}
+
+func enrol(t *testing.T, s *Server, label string) remote.ClientID {
+	t.Helper()
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	if _, err := s.clients.Add(label, remote.MarshalPublic(kp.Public, label), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// saveOwnerBinding saves one active claude binding for id, after mutate.
+func saveOwnerBinding(t *testing.T, s *Server, id remote.ClientID, name string, mutate ...func(*store.Binding)) store.Binding {
+	t.Helper()
+	rt := ownerRuntime(t, s, id)
+	b := store.Binding{
+		Name: name, Owner: string(id), CWD: rt.Store.WorktreePath(name),
+		State: store.StateActive, Round: 1, Builder: store.Endpoint{Kind: "claude"},
+	}
+	for _, m := range mutate {
+		m(&b)
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save binding %s: %v", name, err)
+	}
+	return b
+}
+
+func ownerRuntime(t *testing.T, s *Server, id remote.ClientID) relevo.Runtime {
+	t.Helper()
+	rt, err := s.runtime(id)
+	if err != nil {
+		t.Fatalf("runtime(%s): %v", id, err)
+	}
+	return rt
+}
+
+// gateCandidateSet writes a one-row candidates.json under root and loads it, so
+// the server can project its ledger onto a candidate.
+func gateCandidateSet(t *testing.T, root string) *candidate.Set {
+	t.Helper()
+	path := filepath.Join(root, "candidates.json")
+	if err := os.WriteFile(path, []byte(`[{"harness":"claude","provider":"t","model":"m","roles":["builder"]}]`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	set, err := candidate.Load(path)
+	if err != nil {
+		t.Fatalf("candidate.Load: %v", err)
+	}
+	return set
+}
+
+func TestOwnerRuntimeMalformedID(t *testing.T) {
+	s := newAdminServer(t, time.Now())
 	if _, err := s.OwnerRuntime(remote.ClientID("nope")); err == nil {
 		t.Fatal("OwnerRuntime(\"nope\") error = nil, want a malformed-id error")
 	}
 }
 
 func TestAdminStatusAllOwners(t *testing.T) {
-	root := t.TempDir()
-	now := time.Now()
+	s := newAdminServer(t, time.Now())
+	idA := enrol(t, s, "alice")
+	idB := enrol(t, s, "bob")
+	saveOwnerBinding(t, s, idA, "app-a")
+	saveOwnerBinding(t, s, idB, "app-b")
 
-	s, err := New(Config{
-		DB:   testServeDB(t),
-		Root: root,
-		Now:  func() time.Time { return now },
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	kpA, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	idA := remote.IDOf(kpA.Public)
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), now); err != nil {
-		t.Fatal(err)
-	}
-
-	kpB, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	idB := remote.IDOf(kpB.Public)
-	if _, err := s.clients.Add("bob", remote.MarshalPublic(kpB.Public, "bob"), now); err != nil {
-		t.Fatal(err)
-	}
-
-	rtA, err := s.runtime(idA)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bA := store.Binding{
-		Name:    "app-a",
-		Owner:   string(idA),
-		CWD:     rtA.Store.WorktreePath("app-a"),
-		State:   store.StateActive,
-		Round:   1,
-		Builder: store.Endpoint{Kind: "claude"},
-	}
-	if err := rtA.Store.Save(bA); err != nil {
-		t.Fatal(err)
-	}
-
-	rtB, err := s.runtime(idB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bB := store.Binding{
-		Name:    "app-b",
-		Owner:   string(idB),
-		CWD:     rtB.Store.WorktreePath("app-b"),
-		State:   store.StateActive,
-		Round:   1,
-		Builder: store.Endpoint{Kind: "claude"},
-	}
-	if err := rtB.Store.Save(bB); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx := context.Background()
-	statuses, _, err := AdminStatus(ctx, s)
+	statuses, _, err := AdminStatus(context.Background(), s)
 	if err != nil {
 		t.Fatalf("AdminStatus: %v", err)
 	}
-
 	if len(statuses) != 2 {
 		t.Fatalf("got %d owner statuses, want 2", len(statuses))
 	}
-
 	if statuses[0].Label != "alice" || statuses[1].Label != "bob" {
 		t.Errorf("owners not sorted by label: got [%s, %s], want [alice, bob]", statuses[0].Label, statuses[1].Label)
 	}
-
 	if len(statuses[0].Report.Bindings) != 1 || statuses[0].Report.Bindings[0].Name != "app-a" {
 		t.Errorf("alice bindings = %+v, want [app-a]", statuses[0].Report.Bindings)
 	}
@@ -139,7 +139,6 @@ func TestAdminStatusAllOwners(t *testing.T) {
 func TestAdminStatusReportsHeadlessLivenessThroughRunner(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()
-
 	d := testServeDB(t)
 	newServer := func(r relevo.Runner) *Server {
 		t.Helper()
@@ -151,18 +150,8 @@ func TestAdminStatusReportsHeadlessLivenessThroughRunner(t *testing.T) {
 	}
 
 	s := newServer(aliveRunner{})
-	kp, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := remote.IDOf(kp.Public)
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), now); err != nil {
-		t.Fatal(err)
-	}
-	rt, err := s.runtime(id)
-	if err != nil {
-		t.Fatal(err)
-	}
+	id := enrol(t, s, "alice")
+	rt := ownerRuntime(t, s, id)
 	if err := rt.Store.Save(store.Binding{
 		Name:  "app",
 		Owner: string(id),
@@ -193,14 +182,6 @@ func TestAdminStatusReportsHeadlessLivenessThroughRunner(t *testing.T) {
 	}
 }
 
-// TestAdminStatusBuildersHeader pins #285's admin rendering: with cap 1, one
-// running owner and one queued owner, AdminStatus's Builders return is
-// {Running:1 Queued:1 Cap:1}, RenderAdminStatus's first line is "builders
-// 1/1, queued 1", and the queued row's builder status reads "queued <age>
-// (<ahead> ahead)" in place of "idle".
-//
-// Mutation check: drop the Builders return (or the row.BuilderStatus
-// overwrite) in AdminStatus and this test fails.
 func TestAdminStatusBuildersHeader(t *testing.T) {
 	clock := time.Now()
 	env := setupTestEnv(t, func(cfg *Config) {
@@ -225,7 +206,6 @@ func TestAdminStatusBuildersHeader(t *testing.T) {
 	if builders.Running != 1 || builders.Queued != 1 || builders.Cap != 1 {
 		t.Errorf("Builders = %+v, want {Running:1 Queued:1 Cap:1 ...}", builders)
 	}
-
 	if len(owners) < 2 || len(owners[1].Report.Bindings) < 1 {
 		t.Fatalf("owners = %+v, want at least 2 owners with bindings", owners)
 	}
@@ -234,65 +214,25 @@ func TestAdminStatusBuildersHeader(t *testing.T) {
 	}
 }
 
-func TestGCAbandonedArchivesOnlyIdleOld(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
-
-	s, err := New(Config{
-		DB:   testServeDB(t),
-		Root: root,
-		Now:  func() time.Time { return now },
+// seedAbandonedBinding saves an active owned binding last seen at lastSeen.
+func seedAbandonedBinding(t *testing.T, s *Server, id remote.ClientID, name string, lastSeen time.Time) {
+	t.Helper()
+	saveOwnerBinding(t, s, id, name, func(b *store.Binding) {
+		b.Serve = &store.ServeFacts{LastSeen: lastSeen}
 	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+}
 
-	kp, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := remote.IDOf(kp.Public)
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), now); err != nil {
-		t.Fatal(err)
-	}
+func TestGCAbandonedArchivesOnlyIdleOld(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	s := newAdminServer(t, now)
+	id := enrol(t, s, "alice")
 
-	rt, err := s.runtime(id)
-	if err != nil {
-		t.Fatal(err)
-	}
+	seedAbandonedBinding(t, s, id, "old-idle", now.Add(-48*time.Hour))
+	seedAbandonedBinding(t, s, id, "old-running", now.Add(-48*time.Hour))
+	seedAbandonedBinding(t, s, id, "new-idle", now.Add(-1*time.Hour))
 
-	// 1. old+idle: LastSeen 48h ago, idle -> should be archived
-	bOldIdle := store.Binding{
-		Name:    "old-idle",
-		Owner:   string(id),
-		CWD:     rt.Store.WorktreePath("old-idle"),
-		State:   store.StateActive,
-		Round:   1,
-		Builder: store.Endpoint{Kind: "claude"},
-		Serve: &store.ServeFacts{
-			LastSeen: now.Add(-48 * time.Hour),
-		},
-	}
-	if err := rt.Store.Save(bOldIdle); err != nil {
-		t.Fatal(err)
-	}
-
-	// 2. old+running: LastSeen 48h ago, running -> kept
-	bOldRunning := store.Binding{
-		Name:    "old-running",
-		Owner:   string(id),
-		CWD:     rt.Store.WorktreePath("old-running"),
-		State:   store.StateActive,
-		Round:   1,
-		Builder: store.Endpoint{Kind: "claude"},
-		Serve: &store.ServeFacts{
-			LastSeen: now.Add(-48 * time.Hour),
-		},
-	}
-	if err := rt.Store.Save(bOldRunning); err != nil {
-		t.Fatal(err)
-	}
-	// Make bOldRunning's round 1 running by appending KindPlan to builder without KindReport
+	// Make old-running's round 1 running: a plan with no report.
+	rt := ownerRuntime(t, s, id)
 	if err := rt.Store.AppendLog("old-running", store.LogEntry{
 		Round:     1,
 		Kind:      store.KindPlan,
@@ -302,127 +242,44 @@ func TestGCAbandonedArchivesOnlyIdleOld(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 3. new+idle: LastSeen 1h ago -> kept
-	bNewIdle := store.Binding{
-		Name:    "new-idle",
-		Owner:   string(id),
-		CWD:     rt.Store.WorktreePath("new-idle"),
-		State:   store.StateActive,
-		Round:   1,
-		Builder: store.Endpoint{Kind: "claude"},
-		Serve: &store.ServeFacts{
-			LastSeen: now.Add(-1 * time.Hour),
-		},
-	}
-	if err := rt.Store.Save(bNewIdle); err != nil {
-		t.Fatal(err)
-	}
-
 	ctx := context.Background()
 	olderThan := 24 * time.Hour
 
-	// Dry run: should list old-idle, archive nothing
 	dryResults, err := GCAbandoned(ctx, s, olderThan, now, true)
 	if err != nil {
 		t.Fatalf("GCAbandoned dry run: %v", err)
 	}
-	if len(dryResults) != 1 {
-		t.Fatalf("dry run got %d results, want 1", len(dryResults))
+	if len(dryResults) != 1 || dryResults[0].Name != "old-idle" || dryResults[0].Archive {
+		t.Fatalf("dry run results = %+v, want one unarchived old-idle", dryResults)
 	}
-	if dryResults[0].Name != "old-idle" {
-		t.Errorf("dry run result name = %q, want old-idle", dryResults[0].Name)
-	}
-	if dryResults[0].Archive {
-		t.Errorf("dry run Archive = true, want false")
-	}
-
-	// Verify old-idle still exists in store
 	if _, err := rt.Store.Load("old-idle"); err != nil {
 		t.Fatalf("old-idle was removed during dry run: %v", err)
 	}
 
-	// Actual run: should archive old-idle
 	results, err := GCAbandoned(ctx, s, olderThan, now, false)
 	if err != nil {
 		t.Fatalf("GCAbandoned actual: %v", err)
 	}
-	if len(results) != 1 {
-		t.Fatalf("actual run got %d results, want 1", len(results))
+	if len(results) != 1 || results[0].Name != "old-idle" || !results[0].Archive {
+		t.Fatalf("actual results = %+v, want one archived old-idle", results)
 	}
-	if results[0].Name != "old-idle" {
-		t.Errorf("result name = %q, want old-idle", results[0].Name)
-	}
-	if !results[0].Archive {
-		t.Errorf("result Archive is false, want the binding archived")
-	}
-
-	// Verify old-idle is gone from active store
 	if _, err := rt.Store.Load("old-idle"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("old-idle load err = %v, want ErrNotFound", err)
 	}
-
-	// Verify old-running is kept
 	if _, err := rt.Store.Load("old-running"); err != nil {
 		t.Errorf("old-running was archived but should have been kept: %v", err)
 	}
-
-	// Verify new-idle is kept
 	if _, err := rt.Store.Load("new-idle"); err != nil {
 		t.Errorf("new-idle was archived but should have been kept: %v", err)
 	}
 }
 
 func TestAdminUnbindByLabelAndId(t *testing.T) {
-	root := t.TempDir()
-	now := time.Now()
-
-	s, err := New(Config{
-		DB:   testServeDB(t),
-		Root: root,
-		Now:  func() time.Time { return now },
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	kp, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := remote.IDOf(kp.Public)
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), now); err != nil {
-		t.Fatal(err)
-	}
-
-	rt, err := s.runtime(id)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	bByLabel := store.Binding{
-		Name:    "by-label",
-		Owner:   string(id),
-		CWD:     rt.Store.WorktreePath("by-label"),
-		State:   store.StateActive,
-		Round:   1,
-		Builder: store.Endpoint{Kind: "claude"},
-	}
-	if err := rt.Store.Save(bByLabel); err != nil {
-		t.Fatal(err)
-	}
-
-	bByID := store.Binding{
-		Name:    "by-id",
-		Owner:   string(id),
-		CWD:     rt.Store.WorktreePath("by-id"),
-		State:   store.StateActive,
-		Round:   1,
-		Builder: store.Endpoint{Kind: "claude"},
-	}
-	if err := rt.Store.Save(bByID); err != nil {
-		t.Fatal(err)
-	}
-
+	s := newAdminServer(t, time.Now())
+	id := enrol(t, s, "alice")
+	saveOwnerBinding(t, s, id, "by-label")
+	saveOwnerBinding(t, s, id, "by-id")
+	rt := ownerRuntime(t, s, id)
 	ctx := context.Background()
 
 	if _, err := AdminUnbind(ctx, s, "alice", "by-label", false); err != nil {
@@ -440,79 +297,23 @@ func TestAdminUnbindByLabelAndId(t *testing.T) {
 	}
 }
 
-// TestAdminOwnerRuntime covers the server-side read helper (#216), reusing
-// TestAdminUnbindByLabelAndId's setup shape: two enrolled owners, each with
-// one binding holding one report entry, plus the two refusal cases -- a shared
-// label, and an owner with no bindings directory at all.
+// TestAdminOwnerRuntime covers the server-side read helper: two enrolled owners,
+// each with one binding holding one report entry, plus the refusal cases -- a
+// shared label, and an owner with no bindings directory at all.
 func TestAdminOwnerRuntime(t *testing.T) {
-	root := t.TempDir()
-	now := time.Now()
-
-	s, err := New(Config{DB: testServeDB(t), Root: root, Now: func() time.Time { return now }})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	alice, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	idA := remote.IDOf(alice.Public)
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(alice.Public, "alice"), now); err != nil {
-		t.Fatal(err)
-	}
-
-	bob, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	idB := remote.IDOf(bob.Public)
-	if _, err := s.clients.Add("bob", remote.MarshalPublic(bob.Public, "bob"), now); err != nil {
-		t.Fatal(err)
-	}
-
-	// Two clients sharing one label, for the ambiguity case.
-	dup1, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	idDup1 := remote.IDOf(dup1.Public)
-	if _, err := s.clients.Add("dup", remote.MarshalPublic(dup1.Public, "dup"), now); err != nil {
-		t.Fatal(err)
-	}
-	dup2, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	idDup2 := remote.IDOf(dup2.Public)
-	if _, err := s.clients.Add("dup", remote.MarshalPublic(dup2.Public, "dup"), now); err != nil {
-		t.Fatal(err)
-	}
-
-	// Enrolled, but has never bound anything: no bindings directory.
-	carol, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	idCarol := remote.IDOf(carol.Public)
-	if _, err := s.clients.Add("carol", remote.MarshalPublic(carol.Public, "carol"), now); err != nil {
-		t.Fatal(err)
-	}
+	s := newAdminServer(t, time.Now())
+	idA := enrol(t, s, "alice")
+	idB := enrol(t, s, "bob")
+	idDup1 := enrol(t, s, "dup")
+	idDup2 := enrol(t, s, "dup")
+	idCarol := enrol(t, s, "carol")
 
 	for _, o := range []struct {
 		id   remote.ClientID
 		name string
 	}{{idA, "api"}, {idB, "web"}} {
-		rt, err := s.OwnerRuntime(o.id)
-		if err != nil {
-			t.Fatalf("OwnerRuntime: %v", err)
-		}
-		if err := rt.Store.Save(store.Binding{
-			Name: o.name, Owner: string(o.id), CWD: rt.Store.WorktreePath(o.name),
-			State: store.StateActive, Round: 1, Builder: store.Endpoint{Kind: "claude"},
-		}); err != nil {
-			t.Fatal(err)
-		}
+		saveOwnerBinding(t, s, o.id, o.name)
+		rt := ownerRuntime(t, s, o.id)
 		if err := rt.Store.AppendLog(o.name, store.LogEntry{
 			Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Confirmed: true,
 		}); err != nil {
@@ -520,7 +321,6 @@ func TestAdminOwnerRuntime(t *testing.T) {
 		}
 	}
 
-	// Resolves by label and by id to the same owner and label.
 	byLabel, label, err := AdminOwnerRuntime(s, "alice")
 	if err != nil {
 		t.Fatalf("AdminOwnerRuntime(alice): %v", err)
@@ -564,43 +364,11 @@ func TestAdminOwnerRuntime(t *testing.T) {
 }
 
 func TestAdminUnbindRefusesRunningUnlessForce(t *testing.T) {
-	root := t.TempDir()
 	now := time.Now()
-
-	s, err := New(Config{
-		DB:   testServeDB(t),
-		Root: root,
-		Now:  func() time.Time { return now },
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	kp, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := remote.IDOf(kp.Public)
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), now); err != nil {
-		t.Fatal(err)
-	}
-
-	rt, err := s.runtime(id)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	b := store.Binding{
-		Name:    "running",
-		Owner:   string(id),
-		CWD:     rt.Store.WorktreePath("running"),
-		State:   store.StateActive,
-		Round:   1,
-		Builder: store.Endpoint{Kind: "claude"},
-	}
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatal(err)
-	}
+	s := newAdminServer(t, now)
+	id := enrol(t, s, "alice")
+	saveOwnerBinding(t, s, id, "running")
+	rt := ownerRuntime(t, s, id)
 	if err := rt.Store.AppendLog("running", store.LogEntry{
 		Round:     1,
 		Kind:      store.KindPlan,
@@ -611,7 +379,6 @@ func TestAdminUnbindRefusesRunningUnlessForce(t *testing.T) {
 	}
 
 	ctx := context.Background()
-
 	if _, err := AdminUnbind(ctx, s, "alice", "running", false); err == nil || !strings.Contains(err.Error(), "running") {
 		t.Fatalf("AdminUnbind without force: got err %v, want a refusal mentioning 'running'", err)
 	}
@@ -628,33 +395,9 @@ func TestAdminUnbindRefusesRunningUnlessForce(t *testing.T) {
 }
 
 func TestAdminUnbindAmbiguousLabel(t *testing.T) {
-	root := t.TempDir()
-	now := time.Now()
-
-	s, err := New(Config{
-		DB:   testServeDB(t),
-		Root: root,
-		Now:  func() time.Time { return now },
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	kp1, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.clients.Add("dup", remote.MarshalPublic(kp1.Public, "dup"), now); err != nil {
-		t.Fatal(err)
-	}
-
-	kp2, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.clients.Add("dup", remote.MarshalPublic(kp2.Public, "dup"), now); err != nil {
-		t.Fatal(err)
-	}
+	s := newAdminServer(t, time.Now())
+	enrol(t, s, "dup")
+	enrol(t, s, "dup")
 
 	ctx := context.Background()
 	if _, err := AdminUnbind(ctx, s, "dup", "whatever", false); err == nil || !strings.Contains(err.Error(), "ambiguous") {
@@ -666,88 +409,59 @@ func TestRenderClients(t *testing.T) {
 	enrolled := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
 	revoked := time.Date(2026, 3, 20, 0, 0, 0, 0, time.UTC)
 
-	t.Run("empty input", func(t *testing.T) {
-		got := RenderClients(nil)
-		if got != "no clients\n" {
-			t.Errorf("RenderClients(nil) = %q, want %q", got, "no clients\n")
-		}
-	})
+	cases := []struct {
+		name    string
+		clients []Client
+		want    string
+	}{
+		{
+			name: "empty input",
+			want: "no clients\n",
+		},
+		{
+			name: "one enrolled client",
+			clients: []Client{
+				{ID: remote.ClientID("SHA256:abcdefgh"), Label: "alice", EnrolledAt: enrolled},
+			},
+			want: "SHA256:abcdefgh  alice  enrolled 2026-01-15\n",
+		},
+		{
+			name: "one revoked client",
+			clients: []Client{
+				{ID: remote.ClientID("SHA256:abcdefgh"), Label: "alice", EnrolledAt: enrolled, RevokedAt: revoked},
+			},
+			want: "SHA256:abcdefgh  alice  enrolled 2026-01-15  revoked 2026-03-20\n",
+		},
+		{
+			name: "two clients order preserved",
+			clients: []Client{
+				{ID: remote.ClientID("SHA256:aaaaaaaa"), Label: "bob", EnrolledAt: enrolled},
+				{ID: remote.ClientID("SHA256:bbbbbbbb"), Label: "alice", EnrolledAt: enrolled, RevokedAt: revoked},
+			},
+			want: "SHA256:aaaaaaaa  bob  enrolled 2026-01-15\nSHA256:bbbbbbbb  alice  enrolled 2026-01-15  revoked 2026-03-20\n",
+		},
+	}
 
-	t.Run("one enrolled client", func(t *testing.T) {
-		clients := []Client{
-			{
-				ID:         remote.ClientID("SHA256:abcdefgh"),
-				Label:      "alice",
-				EnrolledAt: enrolled,
-			},
-		}
-		got := RenderClients(clients)
-		want := "SHA256:abcdefgh  alice  enrolled 2026-01-15\n"
-		if got != want {
-			t.Errorf("RenderClients(one enrolled) = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("one revoked client", func(t *testing.T) {
-		clients := []Client{
-			{
-				ID:         remote.ClientID("SHA256:abcdefgh"),
-				Label:      "alice",
-				EnrolledAt: enrolled,
-				RevokedAt:  revoked,
-			},
-		}
-		got := RenderClients(clients)
-		want := "SHA256:abcdefgh  alice  enrolled 2026-01-15  revoked 2026-03-20\n"
-		if got != want {
-			t.Errorf("RenderClients(one revoked) = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("two clients order preserved", func(t *testing.T) {
-		clients := []Client{
-			{
-				ID:         remote.ClientID("SHA256:aaaaaaaa"),
-				Label:      "bob",
-				EnrolledAt: enrolled,
-			},
-			{
-				ID:         remote.ClientID("SHA256:bbbbbbbb"),
-				Label:      "alice",
-				EnrolledAt: enrolled,
-				RevokedAt:  revoked,
-			},
-		}
-		got := RenderClients(clients)
-		want := "SHA256:aaaaaaaa  bob  enrolled 2026-01-15\nSHA256:bbbbbbbb  alice  enrolled 2026-01-15  revoked 2026-03-20\n"
-		if got != want {
-			t.Errorf("RenderClients(two clients) = %q, want %q", got, want)
-		}
-	})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RenderClients(tc.clients); got != tc.want {
+				t.Errorf("RenderClients() = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
-// TestAdminGatesAvailableUnavailable: the server-side gate verbs read and
-// write the one server-wide ledger. AdminGates on an empty ledger is empty and
-// RenderGates says so; AdminUnavailable records a gate RenderGates names; and
-// AdminAvailable lifts it. The lock store the ledger mutates through must not
-// make an uninitialised root look initialised.
+// TestAdminGatesAvailableUnavailable: AdminGates on an empty ledger is empty,
+// AdminUnavailable records a gate RenderGates names, and AdminAvailable lifts
+// it. The lock store the ledger mutates through must not make an uninitialised
+// root look initialised.
 func TestAdminGatesAvailableUnavailable(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()
-
-	candPath := filepath.Join(root, "candidates.json")
-	if err := os.WriteFile(candPath, []byte(`[{"harness":"claude","provider":"t","model":"m","roles":["builder"]}]`), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	candidates, err := candidate.Load(candPath)
-	if err != nil {
-		t.Fatalf("candidate.Load: %v", err)
-	}
-
-	s, err := New(Config{DB: testServeDB(t), Root: root, Candidates: candidates, Now: func() time.Time { return now }})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s := newAdminServer(t, now, func(c *Config) {
+		c.Root = root
+		c.Candidates = gateCandidateSet(t, root)
+	})
 
 	initialisedBefore, err := Initialised(root, s.DB())
 	if err != nil {
@@ -794,7 +508,6 @@ func TestAdminGatesAvailableUnavailable(t *testing.T) {
 	if provider != "t" || removed != 1 {
 		t.Errorf("AdminAvailable = %q, %d, want t, 1", provider, removed)
 	}
-
 	if gates := AdminGates(s); len(gates) != 0 {
 		t.Errorf("AdminGates = %v, want none after AdminAvailable", gates)
 	}
@@ -808,26 +521,15 @@ func TestAdminGatesAvailableUnavailable(t *testing.T) {
 	}
 }
 
-// TestAdminAvailableRecordsServerClear: the server host's own clear is an
-// observation too (#302), and it is recorded as the server's, not a
-// planner's -- `relevo serve available` is not a forwarded client verb.
+// TestAdminAvailableRecordsServerClear: the server host's own clear is recorded
+// as the server's, not a planner's.
 func TestAdminAvailableRecordsServerClear(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()
-
-	candPath := filepath.Join(root, "candidates.json")
-	if err := os.WriteFile(candPath, []byte(`[{"harness":"claude","provider":"t","model":"m","roles":["builder"]}]`), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	candidates, err := candidate.Load(candPath)
-	if err != nil {
-		t.Fatalf("candidate.Load: %v", err)
-	}
-
-	s, err := New(Config{DB: testServeDB(t), Root: root, Candidates: candidates, Now: func() time.Time { return now }})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s := newAdminServer(t, now, func(c *Config) {
+		c.Root = root
+		c.Candidates = gateCandidateSet(t, root)
+	})
 
 	if _, err := AdminUnavailable(s, "claude/t/m", time.Time{}, "quota"); err != nil {
 		t.Fatalf("AdminUnavailable: %v", err)
@@ -857,67 +559,22 @@ func TestAdminAvailableRecordsServerClear(t *testing.T) {
 	}
 }
 
-// TestFlatStatusStampsOwnersAndDedupsGates: FlatStatus is the whole fleet
-// as one report -- Owner/OwnerLabel stamped on every row, owners by label,
-// Key() distinct across two owners that share a binding name, and the
-// server-wide ledger gate appearing once, not once per owner.
+// TestFlatStatusStampsOwnersAndDedupsGates: Owner/OwnerLabel on every row,
+// owners by label, Key() distinct across two owners sharing a binding name, and
+// the server-wide ledger gate appearing once, not once per owner.
 func TestFlatStatusStampsOwnersAndDedupsGates(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()
+	s := newAdminServer(t, now, func(c *Config) {
+		c.Root = root
+		c.Candidates = gateCandidateSet(t, root)
+	})
+	idA := enrol(t, s, "alice")
+	idB := enrol(t, s, "bob")
+	saveOwnerBinding(t, s, idA, "persist")
+	saveOwnerBinding(t, s, idB, "persist")
 
-	candPath := filepath.Join(root, "candidates.json")
-	if err := os.WriteFile(candPath, []byte(`[{"harness":"claude","provider":"t","model":"m","roles":["builder"]}]`), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	candidates, err := candidate.Load(candPath)
-	if err != nil {
-		t.Fatalf("candidate.Load: %v", err)
-	}
-
-	s, err := New(Config{DB: testServeDB(t), Root: root, Candidates: candidates, Now: func() time.Time { return now }})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	kpA, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	idA := remote.IDOf(kpA.Public)
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), now); err != nil {
-		t.Fatal(err)
-	}
-	kpB, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	idB := remote.IDOf(kpB.Public)
-	if _, err := s.clients.Add("bob", remote.MarshalPublic(kpB.Public, "bob"), now); err != nil {
-		t.Fatal(err)
-	}
-
-	rtA, err := s.runtime(idA)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := rtA.Store.Save(store.Binding{
-		Name: "persist", Owner: string(idA), CWD: rtA.Store.WorktreePath("persist"),
-		State: store.StateActive, Round: 1, Builder: store.Endpoint{Kind: "claude"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	rtB, err := s.runtime(idB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := rtB.Store.Save(store.Binding{
-		Name: "persist", Owner: string(idB), CWD: rtB.Store.WorktreePath("persist"),
-		State: store.StateActive, Round: 1, Builder: store.Endpoint{Kind: "claude"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// One ledger gate through the server's (server-wide) ledger path.
+	rtA := ownerRuntime(t, s, idA)
 	if _, err := relevo.Unavailable(rtA, "claude/t/m", now.Add(time.Hour), "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
@@ -948,10 +605,8 @@ func TestFlatStatusStampsOwnersAndDedupsGates(t *testing.T) {
 }
 
 // TestStatusDocumentLastContact: last_contact is the max LastSeen over every
-// owner; an owner that has never seen a request marshals last_seen as JSON
-// null; and the owners array keeps the label order AdminStatus hands over.
-//
-// Mutation check: take the min instead of the max and this fails.
+// owner; an owner that has never seen a request marshals last_seen as null; and
+// the owners array keeps the label order AdminStatus hands over.
 func TestStatusDocumentLastContact(t *testing.T) {
 	t1 := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
 	t2 := t1.Add(2 * time.Hour)
@@ -963,11 +618,8 @@ func TestStatusDocumentLastContact(t *testing.T) {
 	}
 
 	doc := StatusDocument(owners, remote.BuildersView{Running: 1, Cap: 2})
-	if doc.LastContact == nil {
-		t.Fatal("LastContact = nil, want the newest owner LastSeen")
-	}
-	if !doc.LastContact.Equal(t2) {
-		t.Errorf("LastContact = %v, want %v", doc.LastContact, t2)
+	if doc.LastContact == nil || !doc.LastContact.Equal(t2) {
+		t.Fatalf("LastContact = %v, want %v", doc.LastContact, t2)
 	}
 	if len(doc.Owners) != 3 {
 		t.Fatalf("got %d owners, want 3", len(doc.Owners))
@@ -1002,8 +654,8 @@ func TestStatusDocumentLastContact(t *testing.T) {
 	}
 }
 
-// TestStatusDocumentEmpty: no owners still prints the three top-level keys,
-// with last_contact null and owners an empty array -- [] and never null.
+// TestStatusDocumentEmpty: no owners still prints the three top-level keys, with
+// last_contact null and owners an empty array -- [] and never null.
 func TestStatusDocumentEmpty(t *testing.T) {
 	blob, err := json.Marshal(StatusDocument(nil, remote.BuildersView{}))
 	if err != nil {
@@ -1015,66 +667,20 @@ func TestStatusDocumentEmpty(t *testing.T) {
 	}
 }
 
-// TestAdminStatusLastSeen: an owner's LastSeen is the newest Serve.LastSeen
-// over its bindings. RoundStartedAt is no fallback -- an owner whose only
-// binding was last touched by a round start has no recorded contact at all.
+// TestAdminStatusLastSeen: an owner's LastSeen is the newest Serve.LastSeen over
+// its bindings, with no RoundStartedAt fallback.
 func TestAdminStatusLastSeen(t *testing.T) {
-	root := t.TempDir()
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
-
-	s, err := New(Config{DB: testServeDB(t), Root: root, Now: func() time.Time { return now }})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	kpA, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	idA := remote.IDOf(kpA.Public)
-	if _, err := s.clients.Add("alice", remote.MarshalPublic(kpA.Public, "alice"), now); err != nil {
-		t.Fatal(err)
-	}
-	rtA, err := s.runtime(idA)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newAdminServer(t, now)
+	idA := enrol(t, s, "alice")
 	seen := now.Add(-3 * time.Hour)
-	if err := rtA.Store.Save(store.Binding{
-		Name:    "app-a",
-		Owner:   string(idA),
-		CWD:     rtA.Store.WorktreePath("app-a"),
-		State:   store.StateActive,
-		Round:   1,
-		Builder: store.Endpoint{Kind: "claude"},
-		Serve:   &store.ServeFacts{LastSeen: seen},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	kpB, err := remote.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	idB := remote.IDOf(kpB.Public)
-	if _, err := s.clients.Add("bob", remote.MarshalPublic(kpB.Public, "bob"), now); err != nil {
-		t.Fatal(err)
-	}
-	rtB, err := s.runtime(idB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := rtB.Store.Save(store.Binding{
-		Name:           "app-b",
-		Owner:          string(idB),
-		CWD:            rtB.Store.WorktreePath("app-b"),
-		State:          store.StateActive,
-		Round:          1,
-		Builder:        store.Endpoint{Kind: "claude"},
-		RoundStartedAt: now.Add(-9 * time.Hour),
-	}); err != nil {
-		t.Fatal(err)
-	}
+	saveOwnerBinding(t, s, idA, "app-a", func(b *store.Binding) {
+		b.Serve = &store.ServeFacts{LastSeen: seen}
+	})
+	idB := enrol(t, s, "bob")
+	saveOwnerBinding(t, s, idB, "app-b", func(b *store.Binding) {
+		b.RoundStartedAt = now.Add(-9 * time.Hour)
+	})
 
 	owners, _, err := AdminStatus(context.Background(), s)
 	if err != nil {

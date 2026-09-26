@@ -15,13 +15,11 @@ import (
 
 // TestSettleServedConfirmsUpToRound pins the bound settleServed uses: every
 // unconfirmed to_planner entry with Round <= upTo is confirmed with route
-// "ack", and everything else -- a later round, a to_builder entry -- is left
-// alone. It also pins the returned count.
+// "ack"; everything else is left alone.
 func TestSettleServedConfirmsUpToRound(t *testing.T) {
 	st := store.New(t.TempDir())
 	name := "api"
-	// The log belongs to a saved binding: since P3a, AppendLog refuses a
-	// name with no record.
+	// AppendLog refuses a name with no record.
 	if err := st.Save(store.Binding{Name: name, CWD: t.TempDir()}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -74,9 +72,8 @@ func TestSettleServedConfirmsUpToRound(t *testing.T) {
 	}
 }
 
-// TestAckRoundSettlesPending drives a served binding's round to close, then
-// acks it over the wire: the report entry that showed as pending before the
-// ack must be confirmed afterwards.
+// TestAckRoundSettlesPending acks a closed round over the wire: the report entry
+// that showed as pending before must be confirmed afterwards.
 func TestAckRoundSettlesPending(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
@@ -136,11 +133,8 @@ func TestAckRoundSettlesPending(t *testing.T) {
 	}
 }
 
-// TestDoneSettlesClosedRounds drives done through the HTTP handler for a DONE
-// served binding whose last acked round trails its last closed round: done
-// must settle up to the closed round, so nothing is left pending. The fake
-// runner means no harness process is needed: the binding carries no builder
-// pid and no worktree, so relevo.Done has nothing to stop or tear down.
+// TestDoneSettlesClosedRounds: done must settle up to the closed round for a
+// DONE binding whose last acked round trails it, so nothing is left pending.
 func TestDoneSettlesClosedRounds(t *testing.T) {
 	env := setupTestEnv(t)
 
@@ -197,9 +191,8 @@ func TestDoneSettlesClosedRounds(t *testing.T) {
 	}
 }
 
-// TestSettleAllServedBackfills covers the daemon-startup backfill: two owners,
-// each holding an acked but never-confirmed report, must both read as settled
-// after one settleAllServed walk.
+// TestSettleAllServedBackfills: two owners, each holding an acked but never
+// confirmed report, both read as settled after one settleAllServed walk.
 func TestSettleAllServedBackfills(t *testing.T) {
 	srv, _ := newTestServer(t, 0)
 

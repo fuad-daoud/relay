@@ -23,13 +23,9 @@ type OwnerStatus struct {
 	Report   relevo.Report // relevo.Status over that owner's runtime
 }
 
-// AdminStatus returns the status of every owner who has a bindings
-// directory, sorted by Label, plus the server's builder census (#285):
-// running and queued counts against cap. Every queued row's BindingStatus
-// gains Queued (the same position handleGetBinding computes for the wire)
-// and its BuilderStatus is overwritten from "idle" to "queued <age> (<ahead>
-// ahead)", read from the one census() walk this call makes -- RenderAdminStatus
-// prints that text unchanged, and FlatStatus's flattened rows carry it too.
+// AdminStatus returns every owner who has a bindings directory, sorted by
+// Label, plus the builder census. Every queued row gains its Queued position
+// and a "queued <age> (<ahead> ahead)" BuilderStatus.
 func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.BuildersView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -70,10 +66,7 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 		var lastSeen time.Time
 		for ri := range rep.Bindings {
 			row := &rep.Bindings[ri]
-			// #391: LastSeen is the newest real client request about any of
-			// this owner's bindings -- the same field GCAbandoned reads
-			// (b.Serve.LastSeen), but without its fallback to RoundStartedAt:
-			// only a client request counts as contact.
+			// Only a client request counts as contact: no RoundStartedAt fallback.
 			b, err := rt.Store.Load(row.Name)
 			if err != nil {
 				return nil, remote.BuildersView{}, err
@@ -105,13 +98,8 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 	return owners, builders, nil
 }
 
-// FlatStatus is the whole fleet as one report: every owner's bindings with
-// Owner/OwnerLabel stamped on each row. Owners arrive label-sorted from
-// AdminStatus and their rows keep their Report order, so a client's cards
-// stay contiguous. Gated is the first owner's slice -- the server-wide
-// ledger projects identically into every owner's report -- and is nil when
-// there are no owners. DoneHidden is 0: nothing is filtered out of a
-// flattened fleet.
+// FlatStatus is the whole fleet as one report, Owner/OwnerLabel stamped on each
+// row. Gated is the first owner's slice: the ledger is server-wide.
 func FlatStatus(ctx context.Context, s *Server) (relevo.Report, error) {
 	owners, _, err := AdminStatus(ctx, s)
 	if err != nil {
@@ -138,17 +126,14 @@ func FlatStatus(ctx context.Context, s *Server) (relevo.Report, error) {
 	return out, nil
 }
 
-// StatusJSON is the document `relevo serve status --json` prints: the
-// machine-readable server census (servers#13). The field names are a
-// contract. Owners is never null; LastContact is null until some owner
-// binding has recorded a real client request.
+// StatusJSON is the document `relevo serve status --json` prints; the field
+// names are a contract, and Owners is never null.
 type StatusJSON struct {
 	Builders    remote.BuildersView `json:"builders"`
 	LastContact *time.Time          `json:"last_contact"`
 	Owners      []OwnerJSON         `json:"owners"`
 }
 
-// OwnerJSON is one owner's row of StatusJSON.
 type OwnerJSON struct {
 	Owner    string        `json:"owner"`
 	Label    string        `json:"label"`
@@ -156,10 +141,6 @@ type OwnerJSON struct {
 	Report   relevo.Report `json:"report"`
 }
 
-// StatusDocument projects AdminStatus's owners and builders into the --json
-// document. It is pure. Every time it writes is UTC, which encoding/json
-// marshals as RFC 3339; it never sorts, because owners arrive label-sorted
-// from AdminStatus.
 func StatusDocument(owners []OwnerStatus, builders remote.BuildersView) StatusJSON {
 	doc := StatusJSON{
 		Builders: builders,
@@ -188,12 +169,6 @@ func StatusDocument(owners []OwnerStatus, builders remote.BuildersView) StatusJS
 	return doc
 }
 
-// RenderClients formats `relevo serve clients`: one line per client,
-//
-//	"<id>  <label>  enrolled YYYY-MM-DD[  revoked YYYY-MM-DD]\n"
-//
-// in the order given. Empty input prints "no clients\n" -- the same shape
-// RenderAdminStatus gives an empty owner list.
 func RenderClients(clients []Client) string {
 	if len(clients) == 0 {
 		return "no clients\n"
@@ -217,8 +192,33 @@ type GCAbandonedResult struct {
 	Archive  bool // true when archived; false on a dry run
 }
 
-// GCAbandoned unbinds (archives) owned bindings that are older than olderThan and not running.
-// If dryRun is true, it only lists what would be archived without actually unbinding.
+func gcCandidate(b store.Binding, cutoff time.Time) (time.Time, bool) {
+	lastSeen := b.RoundStartedAt
+	if b.Serve != nil && !b.Serve.LastSeen.IsZero() {
+		lastSeen = b.Serve.LastSeen
+	}
+	return lastSeen, lastSeen.Before(cutoff)
+}
+
+func gcArchive(ctx context.Context, rt relevo.Runtime, id remote.ClientID, b store.Binding, dryRun bool) (bool, error) {
+	if dryRun {
+		return false, nil
+	}
+	res, err := relevo.Unbind(ctx, rt, b.Name, true)
+	if err != nil {
+		return false, err
+	}
+	if res.WorktreeKept == "" {
+		if err := releaseServedRefs(ctx, rt, b); err != nil {
+			slog.Warn("release served refs", "owner", id, "binding", b.Name, "err", err)
+		}
+	}
+	return res.Archived, nil
+}
+
+// GCAbandoned archives owned bindings older than olderThan that are not
+// running; dryRun only lists. It releases the served refs when unbind keeps no
+// worktree.
 func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now time.Time, dryRun bool) ([]GCAbandonedResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -250,34 +250,20 @@ func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now ti
 		}
 
 		for _, b := range bindings {
-			lastSeen := b.RoundStartedAt
-			if b.Serve != nil && !b.Serve.LastSeen.IsZero() {
-				lastSeen = b.Serve.LastSeen
-			}
-			if !lastSeen.Before(cutoff) {
+			lastSeen, old := gcCandidate(b, cutoff)
+			if !old {
 				continue
 			}
-
 			logEntries, _ := rt.Store.ReadLog(b.Name)
 			switch relevo.RoundStateOf(b, logEntries) {
 			case remote.RoundRunning, remote.RoundQueued:
 				continue
 			}
 
-			archived := false
-			if !dryRun {
-				res, err := relevo.Unbind(ctx, rt, b.Name, true)
-				if err != nil {
-					return nil, err
-				}
-				archived = res.Archived
-				if res.WorktreeKept == "" {
-					if err := releaseServedRefs(ctx, rt, b); err != nil {
-						slog.Warn("release served refs", "owner", id, "binding", b.Name, "err", err)
-					}
-				}
+			archived, err := gcArchive(ctx, rt, id, b, dryRun)
+			if err != nil {
+				return nil, err
 			}
-
 			results = append(results, GCAbandonedResult{
 				Owner:    id,
 				Label:    label,
@@ -298,15 +284,9 @@ func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now ti
 	return results, nil
 }
 
-// AdminUnbind removes a stale server binding: the admin's answer to a
-// client's `add --server` whose 409 means the server already holds a
-// binding by that name for that client, with no local counterpart to
-// resume it (#100). owner resolves by exact client label or exact id; a
-// label shared by two clients is refused rather than guessed at. A running
-// round is refused unless force is set: this is the admin's guard against
-// clearing a live client's work by mistake; the owning client's own unbind
-// (the wire verb) needs no force. Archiving (not deleting) keeps log.jsonl
-// and every round file, same as relevo unbind --archive.
+// AdminUnbind archives a stale server binding: the admin's answer to a client's
+// `add --server` whose 409 means the server already holds that name. A running
+// round is refused unless force is set.
 func AdminUnbind(ctx context.Context, s *Server, owner string, name string, force bool) (relevo.UnbindResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -345,15 +325,11 @@ func AdminUnbind(ctx context.Context, s *Server, owner string, name string, forc
 	return res, nil
 }
 
-// AdminOwnerRuntime resolves owner -- an exact client label or exact client
-// id -- and returns that owner's runtime and label for the server-side read
-// verbs (#216). It resolves through the same resolveOwner every --owner verb
-// uses, so it inherits its errors: ErrNoSuchClient for an unknown owner, and
-// an error naming both ids for a label two clients share. A resolved owner
-// whose bindings directory does not exist is store.ErrNotFound rather than a
-// fresh empty store: Store.WithLock runs MkdirAll on the root, so the check
-// has to come first (#216: the verbs are strictly read-only, and nothing may
-// be created for an owner that has never bound anything).
+// AdminOwnerRuntime resolves owner and returns its runtime and label for the
+// server-side read verbs. A resolved owner whose bindings directory does not
+// exist is store.ErrNotFound rather than a fresh store: Store.WithLock runs
+// MkdirAll on the root, so the check must come first, or a read-only verb would
+// create state for an owner that has never bound.
 func AdminOwnerRuntime(s *Server, owner string) (relevo.Runtime, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -377,10 +353,6 @@ func AdminOwnerRuntime(s *Server, owner string) (relevo.Runtime, string, error) 
 	return s.runtimeAt(root), s.clients.LabelOf(id), nil
 }
 
-// resolveOwner finds the one client owner names, by exact label or exact
-
-// client id. Two clients sharing a label is an error naming both ids rather
-// than a silent pick between them.
 func (s *Server) resolveOwner(owner string) (remote.ClientID, error) {
 	clients := s.clients.List()
 
@@ -411,15 +383,10 @@ func (s *Server) resolveOwner(owner string) (remote.ClientID, error) {
 }
 
 // ledgerRuntime is the runtime the server-side gate verbs run on: the one
-// server-wide gate record, not any owner's. Gates is the Server's
-// `serve.`-prefixed view of the machine database (P5 §4.3). Its store is over
-// the serve root only because relevo's ledger mutation takes its lock through
-// rt.Store; these verbs never list bindings from it.
-//
-// store.New creates nothing on its own -- the root and its .lock file appear
-// only once WithLock runs -- and neither is one of Initialised's markers
-// (clients.json, server.key, bindings), so locking through this store cannot
-// make an uninitialised root report as initialised.
+// server-wide gate record, not any owner's. Its store is over the serve root
+// only because relevo's ledger mutation takes its lock through rt.Store.
+// store.New creates nothing on its own, so locking through it cannot make an
+// uninitialised root report as initialised.
 func ledgerRuntime(s *Server) relevo.Runtime {
 	return relevo.Runtime{
 		Candidates: s.cfg.Candidates,
@@ -431,33 +398,20 @@ func ledgerRuntime(s *Server) relevo.Runtime {
 	}
 }
 
-// AdminGates lists the server-wide ledger's live gates, projected onto the
-// configured candidates. Nil candidates means there is nothing to project
-// onto, which relevo.Gates already answers as nil.
 func AdminGates(s *Server) []ledger.Gate {
 	return relevo.Gates(ledgerRuntime(s))
 }
 
-// AdminAvailable clears every rate-limit gate on subject's provider in the
-// server-wide ledger.
 func AdminAvailable(s *Server, subject string) (provider string, removed int, err error) {
 	return relevo.Available(ledgerRuntime(s), subject, relevo.ClearedByServer)
 }
 
-// AdminUnavailable records a rate-limit gate on token's provider in the
-// server-wide ledger.
 func AdminUnavailable(s *Server, token string, until time.Time, reason string) (provider string, err error) {
 	return relevo.Unavailable(ledgerRuntime(s), token, until, reason)
 }
 
-// RenderGates formats `relevo serve gates`: one line per gate,
-//
-//	"<name or token>  <kind>  <until>  <note>\n"
-//
-// in the order given, using the same wording status, candidates and doctor
-// use (GateKindText, GateUntilText) and printing the candidate's short name
-// when the gate carries one (A1 §4.4). Empty input prints "no gates\n", the
-// shape RenderAdminStatus and RenderClients give an empty list.
+// RenderGates formats `relevo serve gates`, printing the candidate's short name
+// when the gate carries one.
 func RenderGates(gates []ledger.Gate, now time.Time) string {
 	if len(gates) == 0 {
 		return "no gates\n"

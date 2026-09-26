@@ -12,17 +12,47 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestSettled pins the settled predicate (spec §7): DONE with Serve facts and
-// no live process, consult or gate, and either the last closed round was acked
-// or the binding has been quiet for settledGrace.
+func requireRefGone(t *testing.T, ctx context.Context, gc *git.Client, repo, ref string) {
+	t.Helper()
+	if _, ok, err := gc.RefSHA(ctx, repo, ref); err != nil || ok {
+		t.Errorf("%s = (ok %v, err %v); want it gone", ref, ok, err)
+	}
+}
+
+func requireRefPresent(t *testing.T, ctx context.Context, gc *git.Client, repo, ref string) {
+	t.Helper()
+	if _, ok, err := gc.RefSHA(ctx, repo, ref); err != nil || !ok {
+		t.Errorf("%s = (ok %v, err %v); want it present", ref, ok, err)
+	}
+}
+
+func requireArchived(t *testing.T, rt relevo.Runtime, name string) {
+	t.Helper()
+	archived, err := rt.Store.ListArchived()
+	if err != nil {
+		t.Fatalf("list archived: %v", err)
+	}
+	for _, rec := range archived {
+		if rec.Binding.Name == name {
+			return
+		}
+	}
+	t.Errorf("binding %s has no archived record", name)
+}
+
+// TestSettled pins the settled predicate's boundary: DONE with Serve facts and
+// no live process, consult or gate, and either acked and past ackedGrace or past
+// settledGrace.
 func TestSettled(t *testing.T) {
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	fresh := now.Add(-time.Minute)
+	acked := now.Add(-ackedGrace - time.Minute)
 	aged := now.Add(-settledGrace - time.Hour)
 
 	cases := []struct {
@@ -32,77 +62,42 @@ func TestSettled(t *testing.T) {
 	}{
 		{
 			name: "acked but just done",
-			b: store.Binding{
-				State:     store.StateDone,
-				Serve:     &store.ServeFacts{ClosedRound: 2, AckedRound: 2},
-				UpdatedAt: fresh,
-			},
+			b:    store.Binding{State: store.StateDone, Serve: &store.ServeFacts{ClosedRound: 2, AckedRound: 2}, UpdatedAt: fresh},
 			want: false,
 		},
 		{
 			name: "acked and past the acked grace",
-			b: store.Binding{
-				State:     store.StateDone,
-				Serve:     &store.ServeFacts{ClosedRound: 2, AckedRound: 2},
-				UpdatedAt: now.Add(-ackedGrace - time.Minute),
-			},
+			b:    store.Binding{State: store.StateDone, Serve: &store.ServeFacts{ClosedRound: 2, AckedRound: 2}, UpdatedAt: acked},
 			want: true,
 		},
 		{
 			name: "not acked but older than the grace",
-			b: store.Binding{
-				State:     store.StateDone,
-				Serve:     &store.ServeFacts{ClosedRound: 2, AckedRound: 1},
-				UpdatedAt: aged,
-			},
+			b:    store.Binding{State: store.StateDone, Serve: &store.ServeFacts{ClosedRound: 2, AckedRound: 1}, UpdatedAt: aged},
 			want: true,
 		},
 		{
 			name: "not acked and fresh",
-			b: store.Binding{
-				State:     store.StateDone,
-				Serve:     &store.ServeFacts{ClosedRound: 2, AckedRound: 1},
-				UpdatedAt: fresh,
-			},
+			b:    store.Binding{State: store.StateDone, Serve: &store.ServeFacts{ClosedRound: 2, AckedRound: 1}, UpdatedAt: fresh},
 			want: false,
 		},
 		{
 			name: "builder running",
-			b: store.Binding{
-				State:     store.StateDone,
-				Builder:   store.Endpoint{PID: 4242},
-				Serve:     &store.ServeFacts{ClosedRound: 1, AckedRound: 1},
-				UpdatedAt: fresh,
-			},
+			b:    store.Binding{State: store.StateDone, Builder: store.Endpoint{PID: 4242}, Serve: &store.ServeFacts{ClosedRound: 1, AckedRound: 1}, UpdatedAt: fresh},
 			want: false,
 		},
 		{
 			name: "consult running",
-			b: store.Binding{
-				State:     store.StateDone,
-				Consults:  []store.Consult{{State: store.ConsultRunning}},
-				Serve:     &store.ServeFacts{ClosedRound: 1, AckedRound: 1},
-				UpdatedAt: fresh,
-			},
+			b:    store.Binding{State: store.StateDone, Consults: []store.Consult{{State: store.ConsultRunning}}, Serve: &store.ServeFacts{ClosedRound: 1, AckedRound: 1}, UpdatedAt: fresh},
 			want: false,
 		},
 		{
 			name: "gate running",
-			b: store.Binding{
-				State:     store.StateDone,
-				GateRun:   &store.GateRun{PID: 7},
-				Serve:     &store.ServeFacts{ClosedRound: 1, AckedRound: 1},
-				UpdatedAt: fresh,
-			},
+			b:    store.Binding{State: store.StateDone, GateRun: &store.GateRun{PID: 7}, Serve: &store.ServeFacts{ClosedRound: 1, AckedRound: 1}, UpdatedAt: fresh},
 			want: false,
 		},
 		{
 			name: "not done",
-			b: store.Binding{
-				State:     store.StateActive,
-				Serve:     &store.ServeFacts{ClosedRound: 1, AckedRound: 1},
-				UpdatedAt: aged,
-			},
+			b:    store.Binding{State: store.StateActive, Serve: &store.ServeFacts{ClosedRound: 1, AckedRound: 1}, UpdatedAt: aged},
 			want: false,
 		},
 	}
@@ -116,62 +111,9 @@ func TestSettled(t *testing.T) {
 	}
 }
 
-// seedServedBinding creates a bare repo with a branch, a checked-out worktree
-// and two refs/relevo/<name>/* refs, then saves a DONE served binding over it.
-// It returns the bare repo path and the worktree path.
-func seedServedBinding(t *testing.T, env *testEnv, name string, facts store.ServeFacts) (bare, worktree string) {
-	t.Helper()
-	ctx := context.Background()
-
-	ownerDir, ok := env.id.Dir()
-	if !ok {
-		t.Fatal("client id has no owner dir")
-	}
-	bare = filepath.Join(env.srv.cfg.Root, "repos", ownerDir, env.repoID+".git")
-	if err := env.gitClient.InitBare(ctx, bare); err != nil {
-		t.Fatalf("init bare: %v", err)
-	}
-
-	branch := "relevo/" + name
-	// Push the client's HEAD into the bare repo on the binding's branch, so
-	// the branch and the refs below have a commit to point at.
-	runGit(t, env.clientDir, "push", bare, env.headSHA+":refs/heads/"+branch)
-
-	worktree = filepath.Join(t.TempDir(), name+"-wt")
-	if err := env.gitClient.CheckoutWorktree(ctx, bare, worktree, branch); err != nil {
-		t.Fatalf("checkout worktree: %v", err)
-	}
-	for _, ref := range []string{
-		"refs/relevo/" + name + "/out",
-		"refs/relevo/" + name + "/round-1",
-	} {
-		if err := env.gitClient.UpdateRef(ctx, bare, ref, env.headSHA, ""); err != nil {
-			t.Fatalf("update-ref %s: %v", ref, err)
-		}
-	}
-
-	facts.BareRepo = bare
-	b := store.Binding{
-		Name:     name,
-		Owner:    string(env.id),
-		CWD:      worktree,
-		Worktree: worktree,
-		Branch:   branch,
-		State:    store.StateDone,
-		Round:    2,
-		Serve:    &facts,
-	}
-	rt := env.runtime(t)
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("save binding %s: %v", name, err)
-	}
-	return bare, worktree
-}
-
-// TestCollectSettledOnTick drives one server Tick with a DONE, acked binding
-// and a DONE, un-acked, fresh one: the acked binding is collected (gone from
-// List, worktree removed, branch and refs deleted, record archived) while the
-// fresh one is untouched.
+// TestCollectSettledOnTick: the acked binding is collected (gone from List,
+// worktree removed, branch and refs deleted, record archived) while the fresh
+// un-acked one is untouched.
 func TestCollectSettledOnTick(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
@@ -215,9 +157,7 @@ func TestCollectSettledOnTick(t *testing.T) {
 	if _, err := os.Stat(ackedWT); !os.IsNotExist(err) {
 		t.Errorf("acked worktree still present (stat err = %v); want it removed", err)
 	}
-	if _, ok, err := env.gitClient.RefSHA(ctx, ackedBare, "refs/heads/relevo/api"); err != nil || ok {
-		t.Errorf("acked branch refs/heads/relevo/api = (ok %v, err %v); want it gone", ok, err)
-	}
+	requireRefGone(t, ctx, env.gitClient, ackedBare, "refs/heads/relevo/api")
 	refs, err := env.gitClient.ListRefs(ctx, ackedBare, "refs/relevo/api/")
 	if err != nil {
 		t.Fatalf("list acked refs: %v", err)
@@ -225,28 +165,13 @@ func TestCollectSettledOnTick(t *testing.T) {
 	if len(refs) != 0 {
 		t.Errorf("acked refs/relevo/api/* = %v; want none", refs)
 	}
-
-	archived, err := rt.Store.ListArchived()
-	if err != nil {
-		t.Fatalf("list archived: %v", err)
-	}
-	foundArchived := false
-	for _, rec := range archived {
-		if rec.Binding.Name == "api" {
-			foundArchived = true
-		}
-	}
-	if !foundArchived {
-		t.Error("acked binding api has no archived record")
-	}
+	requireArchived(t, rt, "api")
 
 	// The fresh binding keeps everything it had.
 	if _, err := os.Stat(freshWT); err != nil {
 		t.Errorf("fresh worktree stat = %v; want it present", err)
 	}
-	if _, ok, err := env.gitClient.RefSHA(ctx, freshBare, "refs/heads/relevo/beta"); err != nil || !ok {
-		t.Errorf("fresh branch refs/heads/relevo/beta = (ok %v, err %v); want it present", ok, err)
-	}
+	requireRefPresent(t, ctx, env.gitClient, freshBare, "refs/heads/relevo/beta")
 	freshRefs, err := env.gitClient.ListRefs(ctx, freshBare, "refs/relevo/beta/")
 	if err != nil {
 		t.Fatalf("list fresh refs: %v", err)
@@ -256,7 +181,6 @@ func TestCollectSettledOnTick(t *testing.T) {
 	}
 }
 
-// N1 TestUnusedRepos (table, pure)
 func TestUnusedRepos(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -323,7 +247,6 @@ func TestUnusedRepos(t *testing.T) {
 	}
 }
 
-// N2 TestTickPrunesAnUnusedRepo
 func TestTickPrunesAnUnusedRepo(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
@@ -333,45 +256,37 @@ func TestTickPrunesAnUnusedRepo(t *testing.T) {
 		t.Fatal("client id has no owner dir")
 	}
 
-	// Owner O has repo A with a live binding.
+	// Owner O has repo A with a live binding, and repo B with only an archived
+	// binding.
 	env.repoID = "repo-a"
-	bareA, _ := seedServedBinding(t, env, "live-binding", store.ServeFacts{
-		RepoID: env.repoID,
-	})
+	bareA, _ := seedServedBinding(t, env, "live-binding", store.ServeFacts{RepoID: env.repoID})
 
-	// Repo B has only an archived binding.
 	env.repoID = "repo-b"
-	bareB, _ := seedServedBinding(t, env, "archived-binding", store.ServeFacts{
-		RepoID: env.repoID,
-	})
+	bareB, _ := seedServedBinding(t, env, "archived-binding", store.ServeFacts{RepoID: env.repoID})
 	rt := env.runtime(t)
 	if _, err := relevo.Unbind(ctx, rt, "archived-binding", true); err != nil {
 		t.Fatalf("unbind archived-binding: %v", err)
 	}
 
-	// Create unrelated file repos/<O>/notes.txt
+	// Unrelated file repos/<O>/notes.txt and non-owner dir repos/not-an-owner/x.git.
 	ownerRepoDir := filepath.Join(env.srv.cfg.Root, "repos", ownerDir)
 	notesPath := filepath.Join(ownerRepoDir, "notes.txt")
 	if err := os.WriteFile(notesPath, []byte("some notes"), 0644); err != nil {
 		t.Fatalf("write notes.txt: %v", err)
 	}
-
-	// Create non-owner dir repos/not-an-owner/x.git
 	nonOwnerDir := filepath.Join(env.srv.cfg.Root, "repos", "not-an-owner", "x.git")
 	if err := os.MkdirAll(nonOwnerDir, 0755); err != nil {
 		t.Fatalf("mkdir non-owner dir: %v", err)
 	}
 
-	// For M2: another owner with an unreadable store (bindings path blocked as a file).
-	// On List error, pruneUnusedRepos must skip this owner and preserve its repo.
+	// Another owner with an unreadable store (its bindings path is a file): on
+	// List error pruneUnusedRepos must skip the owner and preserve its repo.
 	failOwnerHex := strings.Repeat("b", 64)
-	failOwnerRepoDir := filepath.Join(env.srv.cfg.Root, "repos", failOwnerHex)
-	failBareRepo := filepath.Join(failOwnerRepoDir, "unpruned.git")
+	failBareRepo := filepath.Join(env.srv.cfg.Root, "repos", failOwnerHex, "unpruned.git")
 	if err := env.gitClient.InitBare(ctx, failBareRepo); err != nil {
 		t.Fatalf("init bare failOwner: %v", err)
 	}
-	failOwnerBindings := filepath.Join(env.srv.cfg.Root, "bindings", failOwnerHex)
-	if err := os.WriteFile(failOwnerBindings, []byte("block-store-lock"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(env.srv.cfg.Root, "bindings", failOwnerHex), []byte("block-store-lock"), 0644); err != nil {
 		t.Fatalf("write failOwnerBindings file: %v", err)
 	}
 
@@ -379,29 +294,23 @@ func TestTickPrunesAnUnusedRepo(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	// A exists, B is gone.
 	if _, err := os.Stat(bareA); err != nil {
 		t.Errorf("repo A stat err = %v, want it to exist", err)
 	}
 	if _, err := os.Stat(bareB); !os.IsNotExist(err) {
 		t.Errorf("repo B stat err = %v, want not exist", err)
 	}
-
-	// notes.txt and not-an-owner/x.git still exist.
 	if _, err := os.Stat(notesPath); err != nil {
 		t.Errorf("notes.txt stat err = %v, want it to exist", err)
 	}
 	if _, err := os.Stat(nonOwnerDir); err != nil {
 		t.Errorf("not-an-owner/x.git stat err = %v, want it to exist", err)
 	}
-
-	// M2 check: failOwner's bare repo is still preserved because List failed.
 	if _, err := os.Stat(failBareRepo); err != nil {
 		t.Errorf("failOwner bare repo stat err = %v, want it preserved on List error", err)
 	}
 }
 
-// N3 TestTickPruneRemovesTheEmptyOwnerDir
 func TestTickPruneRemovesTheEmptyOwnerDir(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
@@ -411,9 +320,7 @@ func TestTickPruneRemovesTheEmptyOwnerDir(t *testing.T) {
 		t.Fatal("client id has no owner dir")
 	}
 
-	bare, _ := seedServedBinding(t, env, "only-binding", store.ServeFacts{
-		RepoID: env.repoID,
-	})
+	bare, _ := seedServedBinding(t, env, "only-binding", store.ServeFacts{RepoID: env.repoID})
 	rt := env.runtime(t)
 	if _, err := relevo.Unbind(ctx, rt, "only-binding", true); err != nil {
 		t.Fatalf("unbind: %v", err)
@@ -423,26 +330,20 @@ func TestTickPruneRemovesTheEmptyOwnerDir(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	// The bare repo is gone.
 	if _, err := os.Stat(bare); !os.IsNotExist(err) {
 		t.Errorf("bare repo stat err = %v, want not exist", err)
 	}
-
-	// The owner dir repos/<O> is gone.
 	ownerRepoDir := filepath.Join(env.srv.cfg.Root, "repos", ownerDir)
 	if _, err := os.Stat(ownerRepoDir); !os.IsNotExist(err) {
 		t.Errorf("owner repo dir %s stat err = %v, want not exist", ownerRepoDir, err)
 	}
 }
 
-// N4 TestCreateAfterPruneRecreatesTheRepo
 func TestCreateAfterPruneRecreatesTheRepo(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	bare, _ := seedServedBinding(t, env, "first-binding", store.ServeFacts{
-		RepoID: env.repoID,
-	})
+	bare, _ := seedServedBinding(t, env, "first-binding", store.ServeFacts{RepoID: env.repoID})
 	rt := env.runtime(t)
 	if _, err := relevo.Unbind(ctx, rt, "first-binding", true); err != nil {
 		t.Fatalf("unbind: %v", err)
@@ -452,12 +353,10 @@ func TestCreateAfterPruneRecreatesTheRepo(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	// Verify repo is pruned.
 	if _, err := os.Stat(bare); !os.IsNotExist(err) {
 		t.Fatalf("bare repo %s still exists after tick", bare)
 	}
 
-	// Now create a binding with the same RepoID through the create handler.
 	createBody, err := json.Marshal(remote.CreateBindingRequest{
 		Name:       "recreated",
 		RepoID:     env.repoID,
@@ -474,12 +373,10 @@ func TestCreateAfterPruneRecreatesTheRepo(t *testing.T) {
 		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
 	}
 
-	// The bare repo exists again.
 	if _, err := os.Stat(bare); err != nil {
 		t.Fatalf("bare repo %s stat err = %v; want it recreated", bare, err)
 	}
 
-	// And the binding records it.
 	b, err := rt.Store.Load("recreated")
 	if err != nil {
 		t.Fatalf("load binding: %v", err)

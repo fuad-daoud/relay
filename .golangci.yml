@@ -64,8 +64,6 @@ linters:
         text: '.*'
       - path: '^internal/roles/'
         text: '.*'
-      - path: '^internal/serve/'
-        text: '.*'
       - path: '^internal/setup/'
         text: '.*'
       - path: '^internal/stats/'

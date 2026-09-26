@@ -1,8 +1,6 @@
 package serve
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"os"
@@ -15,16 +13,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestRunFinishesInFlightTickWithoutCancel pins #373 §4.1 (and #371's
-// Daemon.Run pattern): a tick already in flight when ctx is cancelled runs to
-// completion on a context cancellation cannot reach, and Run returns nil only
-// after that tick returns.
-//
-// Tick cannot be made to block through the real implementation without a large
-// refactor, so this uses the unexported tickFn seam.
-//
-// Mutation check: drop context.WithoutCancel from Run's tick call and the tick
-// sees a cancelled context, failing this test.
+// TestRunFinishesInFlightTickWithoutCancel: a tick already in flight when ctx is
+// cancelled runs to completion on a context cancellation cannot reach, and Run
+// returns nil only after that tick returns. Tick cannot be held open through the
+// real implementation, so this uses the unexported tickFn seam.
 func TestRunFinishesInFlightTickWithoutCancel(t *testing.T) {
 	srv, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Now: time.Now, Interval: time.Millisecond})
 	if err != nil {
@@ -67,7 +59,6 @@ func TestRunFinishesInFlightTickWithoutCancel(t *testing.T) {
 
 	cancel()
 
-	// Run must not return while its tick is still in flight.
 	select {
 	case err := <-done:
 		t.Fatalf("Run returned %v while a tick was in flight, want it to wait", err)
@@ -92,50 +83,23 @@ func TestRunFinishesInFlightTickWithoutCancel(t *testing.T) {
 	}
 }
 
-// writeServeTarball writes a flat <name>/<member> .tar.gz, the layout a
-// pre-P3d relevo archived bindings in, so the startup import has one to
-// consume.
-func writeServeTarball(t *testing.T, dest, name string, members map[string]string) {
+// waitForRemoved polls until path is gone, up to five seconds.
+func waitForRemoved(t *testing.T, path string) bool {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	f, err := os.Create(dest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gz := gzip.NewWriter(f)
-	tw := tar.NewWriter(gz)
-	for base, body := range members {
-		hdr := &tar.Header{
-			Name:     name + "/" + base,
-			Mode:     0o644,
-			Size:     int64(len(body)),
-			Typeflag: tar.TypeReg,
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return true
 		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write([]byte(body)); err != nil {
-			t.Fatal(err)
-		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
+	return false
 }
 
-// TestRunImportsArchivedTarballsAtStartup pins §4.4: a tarball placed in an
-// owner's .archive/ before Run is imported and removed at startup, and
-// ListArchived answers with it. Store-only: Run has to reach its import step
-// and the test cancels before the first tick, so no harness and no listener
-// are touched.
+// TestRunImportsArchivedTarballsAtStartup: a tarball placed in an owner's
+// .archive/ before Run is imported and removed at startup, and ListArchived
+// answers with it. Run reaches its import step before the first tick, so no
+// harness and no listener are touched.
 func TestRunImportsArchivedTarballsAtStartup(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()
@@ -171,24 +135,15 @@ func TestRunImportsArchivedTarballsAtStartup(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- srv.Run(ctx) }()
 
-	// Run imports before its tick loop; the tarball leaving .archive/ is that
-	// step finishing.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, statErr := os.Stat(tarball); os.IsNotExist(statErr) {
-			break
-		}
-		if time.Now().After(deadline) {
-			cancel()
-			<-done
-			t.Fatal("the startup import never removed the tarball")
-		}
-		time.Sleep(10 * time.Millisecond)
+	// The tarball leaving .archive/ is the import step finishing.
+	if !waitForRemoved(t, tarball) {
+		cancel()
+		<-done
+		t.Fatal("the startup import never removed the tarball")
 	}
 
 	archived, err := func() ([]store.ArchivedBinding, error) {
-		// OwnerRuntime takes s.mu, the same lock Run holds while it imports
-		// (ownerStore's cache map is not safe to touch without it).
+		// OwnerRuntime takes s.mu, the lock Run holds while it imports.
 		rt, err := srv.OwnerRuntime(id)
 		if err != nil {
 			return nil, err

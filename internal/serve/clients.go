@@ -18,8 +18,7 @@ var (
 	ErrNoSuchClient    = errors.New("no such client")
 )
 
-// clientsKVKey is the machine database's kv row holding the enrolled clients
-// (P5 §3). The document is the same JSON array clients.json held.
+// clientsKVKey is the kv row holding the enrolled clients.
 const clientsKVKey = "serve.clients"
 
 type Client struct {
@@ -30,10 +29,9 @@ type Client struct {
 	RevokedAt  time.Time       `json:"revoked_at,omitempty"`
 }
 
-// Clients is the enrolled-client list, read from the machine database's
-// serve.clients kv row. Every public method re-reads the row, replacing the
-// file's mtime stamp (P5 §4.4): an enroll or revoke performed by another
-// process is seen live, because the row is the record.
+// Clients is the enrolled-client list, read from the serve.clients kv row.
+// Every public method re-reads the row, so another process's enroll or revoke
+// is seen live.
 type Clients struct {
 	kv         db.KV
 	mu         sync.Mutex
@@ -42,7 +40,7 @@ type Clients struct {
 }
 
 // refresh reads the whole document from the kv row. An absent row is an empty
-// list, exactly as an absent clients.json was.
+// list.
 func (c *Clients) refresh() error {
 	if c.kv == nil {
 		return nil
@@ -78,9 +76,8 @@ func (c *Clients) warnOnceLocked(err error) {
 }
 
 // LoadClients returns the client list held in kv's serve.clients row. When the
-// row is absent and legacyPath is a clients.json that exists, its document is
-// imported into the row and the file is removed (P5 §4.4). A row that already
-// exists wins and leaves any file where it is.
+// row is absent and legacyPath exists, its document is imported and the file
+// removed; a row that already exists wins.
 func LoadClients(kv db.KV, legacyPath string) (*Clients, error) {
 	c := &Clients{kv: kv}
 	if legacyPath != "" {
@@ -213,8 +210,7 @@ func (c *Clients) LabelOf(id remote.ClientID) string {
 	return s
 }
 
-// saveLocked writes the whole document to the kv row: the row is the record
-// now, so there is no temp file and no rename (P5 §4.4).
+// saveLocked writes the whole document to the kv row.
 func (c *Clients) saveLocked() error {
 	if c.kv == nil {
 		return nil
