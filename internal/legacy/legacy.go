@@ -1,9 +1,8 @@
-// Package legacy is the only home of relay-era names (#292 §1, decision 3).
-// Round 1 renamed every name to relevo; this package keeps the old spellings
-// that something still has to read, so no other package has to spell them
-// again. It is a leaf package: it imports only the standard library, so
-// whatever imports it -- proc, usage, relevo, ledger, doctor, cmd/relevo --
-// stays acyclic.
+// Package legacy is the only home of relay-era names. Every name was renamed
+// to relevo; this package keeps the old spellings that something still has to
+// read, so no other package has to spell them again. It is a leaf package: it
+// imports only the standard library, so whatever imports it -- proc, usage,
+// relevo, ledger, doctor, cmd/relevo -- stays acyclic.
 package legacy
 
 import (
@@ -22,12 +21,12 @@ import (
 const (
 	// Name is the old name of the tool, where relevo's is "relevo". `relevo
 	// migrate` reads it when it reports what it moved and when it renders the
-	// root paths (#292 §3 step 1); no log reader needs it.
+	// root paths; no log reader needs it.
 	Name = "relay"
 
 	// Binary is the old executable name, where relevo's is "relevo". `relevo
 	// migrate` looks for it beside the running executable and removes it
-	// unless --keep-old-binary is given (#292 §3 steps 1 and 8).
+	// unless --keep-old-binary is given.
 	Binary = "relay"
 
 	// ExitTrailer prefixes the last line the old supervisor wrote to a
@@ -43,32 +42,32 @@ const (
 
 	// LedgerSource is the old ledger entry source, where relevo writes
 	// "relevo". ledger.LoadKV rewrites it to "relevo" on read, so a
-	// pre-cutover rate-limit gate does not lapse into Other (#292 §1).
+	// pre-cutover rate-limit gate does not lapse into Other.
 	LedgerSource = "relay"
 
 	// DBFile is the old database file name, where relevo uses "relevo.db".
 	// `relevo migrate` renames it, with its -wal and -shm siblings, inside
-	// the moved state root (#292 §3 step 4); nothing this round reads it.
+	// the moved state root; nothing this round reads it.
 	DBFile = "relay.db"
 
 	// ClientUnit is the old user-level systemd client unit, where relevo
 	// installs "relevo.service". `relevo migrate` stops it and retires its
-	// unit file (#292 §3 steps 3 and 7).
+	// unit file.
 	ClientUnit = "relay.service"
 
 	// ServeUnit is the old user-level systemd server unit, where relevo
 	// installs "relevo-serve.service". `relevo migrate` stops it and retires
-	// its unit file; it never installs a new one (#292 §3 steps 3 and 7).
+	// its unit file; it never installs a new one.
 	ServeUnit = "relay-serve.service"
 
 	// LaunchdLabel is the old macOS LaunchAgent label, where relevo uses
 	// "com.github.fuad-daoud.relevo". `relevo migrate` unloads the old plist
-	// and deletes it (#292 §3 steps 3 and 7).
+	// and deletes it.
 	LaunchdLabel = "com.github.fuad-daoud.relay"
 
 	// Slice is the old systemd slice, where relevo uses "relevo.slice".
-	// `relevo migrate` reports it and the server's deploy owns the new one
-	// (#292 §3 step 6); nothing this round reads it.
+	// `relevo migrate` reports it and the server's deploy owns the new one;
+	// nothing this round reads it.
 	Slice = "relay.slice"
 
 	// KeyPEMType is the PEM block type of a client key written before the
@@ -139,8 +138,8 @@ func StateRoot(getenv func(string) string, home string) string {
 
 // ConfigRoot is the relay-era config root inside configHome, which is what
 // userConfigRoot() returns. relevo's own config root is composed through
-// userConfigRoot() too (CLAUDE.md, #42), spelled with "relevo" literally by
-// cmd/relevo, which owns that name.
+// userConfigRoot() too, spelled with "relevo" literally by cmd/relevo, which
+// owns that name.
 func ConfigRoot(configHome string) string {
 	return filepath.Join(configHome, Name)
 }
@@ -187,10 +186,9 @@ func pathExists(path string) (bool, error) {
 // sits there, and starting relevo beside it would create an empty new root
 // that then blocks migrate.
 //
-// From P2a on, config lives in the relevo state root's database, so a new
-// state root means config is already recorded there: a missing
-// ~/.config/relevo is no longer unmigrated (docs/specs/
-// 2026-09-24-db-as-record-design.md §4.9).
+// Config lives in the relevo state root's database, so a new state root means
+// config is already recorded there: a missing ~/.config/relevo is not by
+// itself unmigrated.
 func (s Status) Unmigrated() bool {
 	return (s.OldState && !s.NewState) || (s.OldConfig && !s.NewConfig && !s.NewState)
 }

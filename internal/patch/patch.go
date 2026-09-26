@@ -90,121 +90,153 @@ func extractGitDiffPath(line string) string {
 	return strings.TrimPrefix(line, "diff --git ")
 }
 
+// parseState is the parse in progress across the line-dispatch methods below;
+// each one advances it by one line.
+type parseState struct {
+	files         []rawFile
+	cur           *rawFile
+	curHunk       *rawHunk
+	hunkStartLine int
+	inHunk        bool
+}
+
+// consume advances the parse by one line, dispatching on the same four
+// prefixes parseRaw's caller sees: a new file, a header line, a hunk header,
+// or a hunk content line. Anything else -- text outside a "diff --git" block,
+// "\ No newline at end of file" -- is ignored.
+func (st *parseState) consume(line string, lineNum int) error {
+	if strings.HasPrefix(line, "diff --git ") {
+		return st.startFile(line)
+	}
+	if st.cur == nil {
+		return nil
+	}
+	if !st.inHunk && strings.HasPrefix(line, "--- ") {
+		st.cur.headerLines = append(st.cur.headerLines, line)
+		return nil
+	}
+	if !st.inHunk && strings.HasPrefix(line, "+++ ") {
+		st.addPlusPlus(line)
+		return nil
+	}
+	if m := hunkHeaderRE.FindStringSubmatch(line); m != nil {
+		return st.startHunk(m, line, lineNum)
+	}
+	if st.inHunk && len(line) > 0 && (line[0] == ' ' || line[0] == '+' || line[0] == '-') {
+		st.addContentLine(line)
+	}
+	return nil
+}
+
+// startFile flushes any in-progress hunk and file, then begins a new file at
+// line's "diff --git" header.
+func (st *parseState) startFile(line string) error {
+	if err := st.flushHunk(); err != nil {
+		return err
+	}
+	st.flushFile()
+	st.cur = &rawFile{path: extractGitDiffPath(line), headerLines: []string{line}}
+	st.curHunk = nil
+	st.inHunk = false
+	return nil
+}
+
+// addPlusPlus records a "+++" header line and takes its path as the file's
+// path: it overrides the "diff --git" guess, since a rename can disagree.
+func (st *parseState) addPlusPlus(line string) {
+	st.cur.headerLines = append(st.cur.headerLines, line)
+	rest := strings.TrimPrefix(line, "+++ ")
+	st.cur.path = strings.TrimPrefix(rest, "b/")
+}
+
+// startHunk flushes the previous hunk and begins a new one from a
+// "@@ ... @@" header's regex match.
+func (st *parseState) startHunk(m []string, line string, lineNum int) error {
+	if err := st.flushHunk(); err != nil {
+		return err
+	}
+	oldStart, _ := strconv.Atoi(m[1])
+	oldLines := 1
+	if m[2] != "" {
+		oldLines, _ = strconv.Atoi(m[2])
+	}
+	newStart, _ := strconv.Atoi(m[3])
+	newLines := 1
+	if m[4] != "" {
+		newLines, _ = strconv.Atoi(m[4])
+	}
+	st.cur.hunks = append(st.cur.hunks, rawHunk{
+		headerLine: line,
+		oldStart:   oldStart,
+		oldLines:   oldLines,
+		newStart:   newStart,
+		newLines:   newLines,
+		nextNew:    newStart,
+	})
+	st.curHunk = &st.cur.hunks[len(st.cur.hunks)-1]
+	st.hunkStartLine = lineNum
+	st.inHunk = true
+	return nil
+}
+
+// addContentLine appends one ' '/'+'/'-' hunk line, numbering it by the
+// hunk's running post-image line count.
+func (st *parseState) addContentLine(line string) {
+	kind := line[0]
+	text := line[1:]
+	newVal := 0
+	if kind != '-' {
+		newVal = st.curHunk.nextNew
+		st.curHunk.nextNew++
+	}
+	st.curHunk.lines = append(st.curHunk.lines, Line{Kind: kind, Text: text, New: newVal})
+}
+
+// flushHunk checks the just-finished hunk's declared new-line count against
+// what was actually collected; the hunk itself already lives in cur.hunks.
+// Called before starting the next hunk or file, and once more after the last
+// line.
+func (st *parseState) flushHunk() error {
+	if st.curHunk == nil {
+		return nil
+	}
+	found := 0
+	for _, l := range st.curHunk.lines {
+		if l.Kind == ' ' || l.Kind == '+' {
+			found++
+		}
+	}
+	if found != st.curHunk.newLines {
+		return fmt.Errorf("hunk at %s line %d: expected %d new lines, found %d", st.cur.path, st.hunkStartLine, st.curHunk.newLines, found)
+	}
+	return nil
+}
+
+// flushFile appends the in-progress file to files, if there is one.
+func (st *parseState) flushFile() {
+	if st.cur != nil {
+		st.files = append(st.files, *st.cur)
+	}
+}
+
 func parseRaw(b []byte) ([]rawFile, error) {
 	lines := strings.Split(string(b), "\n")
 	if len(lines) > 0 && lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
 	}
 
-	var files []rawFile
-	var cur *rawFile
-	var curHunk *rawHunk
-	var hunkStartLine int
-	inHunk := false
-
-	flushHunk := func() error {
-		if curHunk == nil {
-			return nil
-		}
-		found := 0
-		for _, l := range curHunk.lines {
-			if l.Kind == ' ' || l.Kind == '+' {
-				found++
-			}
-		}
-		if found != curHunk.newLines {
-			return fmt.Errorf("hunk at %s line %d: expected %d new lines, found %d", cur.path, hunkStartLine, curHunk.newLines, found)
-		}
-		return nil
-	}
-	flushFile := func() {
-		if cur != nil {
-			files = append(files, *cur)
-		}
-	}
-
+	var st parseState
 	for i, line := range lines {
-		lineNum := i + 1
-
-		if strings.HasPrefix(line, "diff --git ") {
-			if err := flushHunk(); err != nil {
-				return nil, err
-			}
-			flushFile()
-			cur = &rawFile{path: extractGitDiffPath(line), headerLines: []string{line}}
-			curHunk = nil
-			inHunk = false
-			continue
+		if err := st.consume(line, i+1); err != nil {
+			return nil, err
 		}
-
-		if cur == nil {
-			// Outside any "diff --git" block: ignored.
-			continue
-		}
-
-		if !inHunk && strings.HasPrefix(line, "--- ") {
-			cur.headerLines = append(cur.headerLines, line)
-			continue
-		}
-
-		if !inHunk && strings.HasPrefix(line, "+++ ") {
-			cur.headerLines = append(cur.headerLines, line)
-			rest := strings.TrimPrefix(line, "+++ ")
-			rest = strings.TrimPrefix(rest, "b/")
-			cur.path = rest
-			continue
-		}
-
-		if m := hunkHeaderRE.FindStringSubmatch(line); m != nil {
-			if err := flushHunk(); err != nil {
-				return nil, err
-			}
-			oldStart, _ := strconv.Atoi(m[1])
-			oldLines := 1
-			if m[2] != "" {
-				oldLines, _ = strconv.Atoi(m[2])
-			}
-			newStart, _ := strconv.Atoi(m[3])
-			newLines := 1
-			if m[4] != "" {
-				newLines, _ = strconv.Atoi(m[4])
-			}
-			cur.hunks = append(cur.hunks, rawHunk{
-				headerLine: line,
-				oldStart:   oldStart,
-				oldLines:   oldLines,
-				newStart:   newStart,
-				newLines:   newLines,
-				nextNew:    newStart,
-			})
-			curHunk = &cur.hunks[len(cur.hunks)-1]
-			hunkStartLine = lineNum
-			inHunk = true
-			continue
-		}
-
-		if inHunk && len(line) > 0 && (line[0] == ' ' || line[0] == '+' || line[0] == '-') {
-			kind := line[0]
-			text := line[1:]
-			newVal := 0
-			if kind != '-' {
-				newVal = curHunk.nextNew
-				curHunk.nextNew++
-			}
-			curHunk.lines = append(curHunk.lines, Line{Kind: kind, Text: text, New: newVal})
-			continue
-		}
-
-		// "\ No newline at end of file" and any other unrecognised line:
-		// ignored.
 	}
-
-	if err := flushHunk(); err != nil {
+	if err := st.flushHunk(); err != nil {
 		return nil, err
 	}
-	flushFile()
+	st.flushFile()
 
-	return files, nil
+	return st.files, nil
 }
 
 // Parse parses a captured unified diff.

@@ -2,8 +2,6 @@ package setup
 
 import (
 	"encoding/json"
-	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,24 +12,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
-
-// pathEnv is the InstallEnv seam Plan consults. Only LookPath answers; every
-// other method is unreachable from Plan and returns a zero value.
-type pathEnv struct{ onPath map[string]bool }
-
-func (e pathEnv) LookPath(binary string) (string, error) {
-	if e.onPath[binary] {
-		return "/bin/" + binary, nil
-	}
-	return "", fmt.Errorf("binary not found: %s", binary)
-}
-
-func (e pathEnv) HomePath(rel string) (string, error)      { return rel, nil }
-func (e pathEnv) ReadFile(string) ([]byte, error)          { return nil, fs.ErrNotExist }
-func (e pathEnv) MkdirAll(string) error                    { return nil }
-func (e pathEnv) WriteFile(string, []byte) error           { return nil }
-func (e pathEnv) LoadManifest() (map[string]string, error) { return map[string]string{}, nil }
-func (e pathEnv) SaveManifest(map[string]string) error     { return nil }
 
 func TestPlanFindsBinariesInHarnessOrder(t *testing.T) {
 	env := pathEnv{onPath: map[string]bool{"opencode": true, "claude": true}}
@@ -45,7 +25,18 @@ func TestPlanFindsBinariesInHarnessOrder(t *testing.T) {
 	}
 
 	dir := t.TempDir()
+	cands := assertCandidatesCarryNoRoles(t, dir, files)
+	assertPolicyIsBareMaxTier(t, dir, files)
+	assertBuilderActorMatchesCandidates(t, files, cands)
+}
 
+// assertCandidatesCarryNoRoles checks that candidates.json loads with
+// candidate.Load to no "builder" role and that no entry carries a role or a
+// tier: the actors section decides who serves what, not the candidate list
+// (R5). It returns the decoded candidates for the caller to derive names
+// from.
+func assertCandidatesCarryNoRoles(t *testing.T, dir string, files Files) []candidate.Candidate {
+	t.Helper()
 	candPath := filepath.Join(dir, "candidates.json")
 	if err := os.WriteFile(candPath, files.Candidates, 0o644); err != nil {
 		t.Fatalf("write candidates: %v", err)
@@ -71,7 +62,13 @@ func TestPlanFindsBinariesInHarnessOrder(t *testing.T) {
 			t.Errorf("candidate %s carries roles %v / tier %q, want neither (R5)", c.Ref(), c.Roles, c.Tier)
 		}
 	}
+	return cands
+}
 
+// assertPolicyIsBareMaxTier checks that policy.json loads with policy.Load
+// carrying only MaxTier, with no order or tier list (R5).
+func assertPolicyIsBareMaxTier(t *testing.T, dir string, files Files) {
+	t.Helper()
 	polPath := filepath.Join(dir, "policy.json")
 	if err := os.WriteFile(polPath, files.Policy, 0o644); err != nil {
 		t.Fatalf("write policy: %v", err)
@@ -86,7 +83,13 @@ func TestPlanFindsBinariesInHarnessOrder(t *testing.T) {
 	if pol.MaxTier != "yolo" {
 		t.Errorf("MaxTier = %q, want yolo", pol.MaxTier)
 	}
+}
 
+// assertBuilderActorMatchesCandidates checks that actors.json parses to a
+// "builder" actor running plan-executor at tier yolo, over exactly the
+// candidate names cands derive to.
+func assertBuilderActorMatchesCandidates(t *testing.T, files Files, cands []candidate.Candidate) {
+	t.Helper()
 	actorSet, _, err := actors.ParseActors(files.Actors)
 	if err != nil {
 		t.Fatalf("actors.ParseActors: %v", err)
