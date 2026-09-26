@@ -66,6 +66,27 @@ var parseResetCases = []struct {
 		ok:   true,
 	},
 	{
+		name: "weekly limit resets in a day and hours",
+		line: "Error 429: You have reached your weekly ExamplePass limit. The limit resets in 1d 5h, please try again later.",
+		want: parseResetNow.Add(29 * time.Hour),
+		ok:   true,
+	},
+	{
+		name: "day component past the short window",
+		line: "try again in 8d",
+		ok:   false,
+	},
+	{
+		name: "day count that would overflow the duration",
+		line: "The limit resets in 123456789012345d.",
+		ok:   false,
+	},
+	{
+		name: "hour count that would overflow the duration",
+		line: "resets in 99999999999999h",
+		ok:   false,
+	},
+	{
 		name: "try again in minutes",
 		line: "try again in 5 min",
 		want: parseResetNow.Add(5 * time.Minute),
