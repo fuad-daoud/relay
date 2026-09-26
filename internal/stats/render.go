@@ -7,9 +7,8 @@ import (
 	"time"
 )
 
-// FitKey fits s into exactly width runes. A key that fits is padded; a longer
-// key is clipped with a trailing "…", or with a leading "…" when clipLeft, so
-// the tail of a repo key stays visible. Widths are runes: "…" counts as one.
+// FitKey fits s into width runes, clipping with a leading "…" when clipLeft so
+// a repo key's tail stays visible.
 func FitKey(s string, width int, clipLeft bool) string {
 	r := []rune(s)
 	if len(r) <= width {
@@ -37,10 +36,8 @@ func TTFTText(s ScoreRow) string {
 	return fmt.Sprintf("%.1fs", float64(s.TTFTMS)/1000)
 }
 
-// ShortTokens is the report's token total: plain under 1,000, "%.1fk" under
-// 1e6, "%.1fM" under 1e9, else "%.1fB", with a trailing ".0" stripped from
-// the number, so 1.0B becomes 1B (C2a round-3 plan F2). It is local:
-// usage.ShortTokens stops at M and its other surfaces keep their goldens.
+// ShortTokens is the report's token total: plain under 1,000, else k/M/B with a
+// trailing ".0" stripped. It stays local because usage.ShortTokens stops at M.
 func ShortTokens(n int64) string {
 	if n < 1_000 {
 		return strconv.FormatInt(n, 10)
@@ -58,7 +55,6 @@ func ShortTokens(n int64) string {
 	return strings.TrimSuffix(fmt.Sprintf("%.1f", value), ".0") + unit
 }
 
-// Duration renders milliseconds as minutes, or "%dh%02dm" at an hour and over.
 func Duration(ms int64) string {
 	hour := int64(time.Hour / time.Millisecond)
 	minute := int64(time.Minute / time.Millisecond)
@@ -68,7 +64,6 @@ func Duration(ms int64) string {
 	return fmt.Sprintf("%dm", ms/minute)
 }
 
-// MonthDay trims a YYYY-MM-DD day to MM-DD.
 func MonthDay(day string) string {
 	if len(day) >= len("2006-01-02") {
 		return day[5:]
