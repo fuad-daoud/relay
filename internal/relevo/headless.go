@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -166,27 +167,6 @@ func builderEnv(b store.Binding) []string {
 	}
 }
 
-// headlessLaunch renders the argv for one headless round: the candidate's
-// binary, then its print form with the prompt, the budget, the round's
-// working tree and the binding's state directory filled in (headless spec
-// §4.2, #192, #230). Pure. An unknown kind is an error, not a panic: Load
-// validated the set, but a binding written by a future relevo could name a
-// kind this one does not know.
-func headlessLaunch(c candidate.Candidate, role harness.RoleSpec, tier harness.Tier, budget time.Duration, prompt, dir, state string) ([]string, error) {
-	h, ok := harness.Lookup(c.Harness)
-	if !ok {
-		return nil, fmt.Errorf("unknown harness kind %q", c.Harness)
-	}
-	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, tier)
-	if err != nil {
-		return nil, err
-	}
-	if l.PromptAt < 0 {
-		return nil, fmt.Errorf("harness %q has no print form", c.Harness)
-	}
-	return append([]string{h.Binary}, l.PrintArgs(prompt, budget, dir, state)...), nil
-}
-
 // startRound starts the round's process for a headless binding and records
 // its handle on the endpoint (headless spec §4.3). The caller holds the
 // state lock, has staged the plan, and saves what comes back.
@@ -218,7 +198,7 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return b, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}
-	argv, err := headlessLaunch(c, role, effectiveTier(b), roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
+	argv, err := spawn.HeadlessLaunch(c, role, effectiveTier(b), roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
 	if err != nil {
 		return b, err
 	}
@@ -310,7 +290,7 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	spec.Scope = scopeFor(rt, scopeRound, scopeUnitName(b), cpuPinText(b))
 	h, err := rt.Runner.Start(ctx, spec)
 	if err != nil {
-		recordSpawnFailureLocked(rt, c.Ref().String(), b.Name, err)
+		availability.RecordSpawnFailureLocked(AvailabilityDeps(rt), c.Ref().String(), b.Name, err)
 		return b, spawnFailure{fmt.Errorf("start headless builder for %q (%s): %w", b.Name, c.Ref().String(), err)}
 	}
 	// This daemon has now seen the process alive (#370): every successful
@@ -742,7 +722,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// omission noted (spec §4.4).
 	reportPath := rt.Store.ReportPath(b.Name, b.Round)
 	if _, err := os.Stat(reportPath); err == nil {
-		_, m, _, err := gateOnLimit(ctx, rt, tx, b, currentBuilderTail(rt, b, limitScanLines), false)
+		_, m, _, err := gateOnLimit(ctx, rt, tx, b, currentBuilderTail(rt, b, availability.LimitScanLines), false)
 		if err != nil {
 			return b, err
 		}
@@ -751,7 +731,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			"Builder exited (code %s) after writing its report but never confirmed completion (no %s). Report: %s.",
 			codeText, filepath.Base(rt.Store.DonePath(b.Name, b.Round)), showCommand(b.Name, b.Round, "report"))
 		if m.Line != "" {
-			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, GateTimeText(m.Until))
+			payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, availability.GateTimeText(m.Until))
 		}
 		note := "unmarked"
 		if escapeCheck(ctx, rt, b, true) == EscapeNote {
@@ -781,7 +761,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			c = cand
 		}
 	}
-	denialLine, isDenial := matchDenial(currentBuilderTail(rt, b, limitScanLines), denialPatterns(c, h))
+	denialLine, isDenial := matchDenial(currentBuilderTail(rt, b, availability.LimitScanLines), denialPatterns(c, h))
 	suffix := ""
 	if isDenial {
 		suffix = "; permission-blocked: " + denialLine
@@ -921,7 +901,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return haltBinding(ctx, rt, b, escapeDiagnosis(b, codeText))
 	}
 
-	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, currentBuilderTail(rt, b, limitScanLines), false)
+	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, currentBuilderTail(rt, b, availability.LimitScanLines), false)
 	if handled {
 		return next, err
 	}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -282,7 +283,7 @@ func runBind(f bindFlags) error {
 	fmt.Printf("bound %s: planner %s -> builder %s (%s), round %d\n",
 		b.Name, b.Planner.PaneID, builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate), b.Round)
 	noteRegateNoGate(b)
-	if n := relevo.GatedNote(rt, b.BuilderCandidate); n != "" {
+	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), b.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
 	notePick(rt, roleName, res)
@@ -372,7 +373,7 @@ func runAdd(f bindFlags) error {
 			res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), builderWhere(res.Binding.Builder))
 	}
 	noteRegateNoGate(res.Binding)
-	if n := relevo.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
+	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
 	notePick(rt, roleOrBuilder(f.role), res.Resolution)

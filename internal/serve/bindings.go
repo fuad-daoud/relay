@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -525,7 +526,7 @@ func (s *Server) handleUnavailable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := relevo.Unavailable(rt, req.Token, time.Time{}, req.Reason); err != nil {
+	if _, err := availability.Unavailable(relevo.AvailabilityDeps(rt), req.Token, time.Time{}, req.Reason); err != nil {
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
 		return
 	}
@@ -558,7 +559,7 @@ func (s *Server) handleAvailable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider, removed, err := relevo.Available(rt, req.Subject, relevo.ClearedByPlanner)
+	provider, removed, err := availability.Available(relevo.AvailabilityDeps(rt), req.Subject, availability.ClearedByPlanner)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
 		return

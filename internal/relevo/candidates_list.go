@@ -130,7 +130,7 @@ func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 			sb.WriteString("   [" + strings.Join(c.ExtraArgs, " ") + "]")
 		}
 		if s, ok := lat[ref]; ok && s.N > 0 {
-			sb.WriteString(fmt.Sprintf("   ttft p50 %s (n=%d, 30d)", probeMS(s.TTFTP50MS), s.N))
+			sb.WriteString(fmt.Sprintf("   ttft p50 %s (n=%d, 30d)", availability.ProbeMS(s.TTFTP50MS), s.N))
 		}
 		h, _ := harness.Lookup(c.Harness)
 		if flag := h.ExtraArgsPermissionFlag(c.ExtraArgs); flag != "" {
@@ -163,7 +163,7 @@ func mergeGateTexts(gates []availability.Gate) []string {
 	var groups []*group
 	index := make(map[[2]string]*group, len(gates))
 	for _, g := range gates {
-		kind, until := GateKindText(g.Kind), GateUntilText(g.Until)
+		kind, until := availability.GateKindText(g.Kind), availability.GateUntilText(g.Until)
 		key := [2]string{kind, until}
 		grp, ok := index[key]
 		if !ok {

@@ -1,7 +1,6 @@
 package relevo
 
 import (
-	"path/filepath"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
@@ -33,7 +32,7 @@ func StatsInputs(rt Runtime, since time.Time) (in stats.Inputs, warnings []strin
 	// and leaves the report without ttft values.
 	var lat availability.LatencyHistory
 	if rt.Latency != nil {
-		loaded, lerr := availability.LoadLatency(rt.Latency, LegacyGatesPath(rt.GatesDir, "latency.json"))
+		loaded, lerr := availability.LoadLatency(rt.Latency, availability.LegacyGatesPath(rt.GatesDir, "latency.json"))
 		if lerr != nil {
 			warnings = append(warnings, "could not read latency: "+lerr.Error())
 		} else {
@@ -49,7 +48,7 @@ func StatsInputs(rt Runtime, since time.Time) (in stats.Inputs, warnings []strin
 	}
 	lat = lat.Prune(now)
 
-	hist, herr := LoadHistory(rt)
+	hist, herr := availability.LoadHistory(AvailabilityDeps(rt))
 	if herr != nil {
 		warnings = append(warnings, "could not read history: "+herr.Error())
 	}
@@ -58,7 +57,7 @@ func StatsInputs(rt Runtime, since time.Time) (in stats.Inputs, warnings []strin
 		Rows:    rows,
 		Landed:  landed,
 		History: hist,
-		Gates:   Gates(rt),
+		Gates:   availability.Gates(AvailabilityDeps(rt)),
 		TTFT: func(token string) (int64, bool) {
 			s := lat.Summary(token)
 			return s.TTFTP50MS, s.N > 0
@@ -81,31 +80,4 @@ func StatsInputs(rt Runtime, since time.Time) (in stats.Inputs, warnings []strin
 		Until: now,
 		Loc:   time.Local,
 	}, warnings, nil
-}
-
-// LoadHistory reads the availability history for display, treating an
-// unreadable record as an error the caller reports -- the same rule Gates
-// applies to the ledger. It is the moved body of cmd/relevo's loadHistory
-// (cockpit C2b §4.1).
-func LoadHistory(rt Runtime) (availability.History, error) {
-	if rt.Gates == nil {
-		return availability.History{}, nil
-	}
-	h, err := availability.LoadHistory(rt.Gates, LegacyGatesPath(rt.GatesDir, "availability.json"))
-	if err != nil {
-		return availability.History{}, err
-	}
-	return h.Prune(rt.Now()), nil
-}
-
-// LegacyGatesPath is <dir>/<name> for the pre-kv gate documents (ledger.json,
-// availability.json, latency.json), or "" when no gates directory is
-// configured -- so an import never reads a file out of the process's working
-// directory (P3b plan §4.5). It is the moved body of cmd/relevo's
-// legacyGatesPath (cockpit C2b §4.1).
-func LegacyGatesPath(dir, name string) string {
-	if dir == "" {
-		return ""
-	}
-	return filepath.Join(dir, name)
 }

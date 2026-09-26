@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -81,7 +82,7 @@ type plannerActions struct {
 	live  *liveRuntime
 	repo  string
 	you   string
-	probe relevo.LineExec
+	probe availability.LineExec
 }
 
 // runtime is the shared holder's current snapshot, so a write and a render
@@ -162,7 +163,7 @@ func (a *plannerActions) Gate(ctx context.Context, subject string, forDur time.D
 		until = rt.Now().Add(forDur)
 	}
 
-	provider, err := relevo.Unavailable(rt, subject, until, reason)
+	provider, err := availability.Unavailable(relevo.AvailabilityDeps(rt), subject, until, reason)
 	if err != nil {
 		return Result{Err: err, Refresh: true}
 	}
@@ -177,9 +178,9 @@ func (a *plannerActions) Gate(ctx context.Context, subject string, forDur time.D
 		}
 	}
 
-	lines := []string{fmt.Sprintf("gated %s (%d candidates) %s", provider, count, relevo.GateUntilText(until))}
+	lines := []string{fmt.Sprintf("gated %s (%d candidates) %s", provider, count, availability.GateUntilText(until))}
 	if bs, lerr := rt.Store.List(); lerr == nil {
-		if names := relevo.BindingsOnProvider(bs, provider); len(names) > 0 {
+		if names := availability.BindingsOnProvider(bs, provider); len(names) > 0 {
 			lines = append(lines, "the daemon will switch: "+strings.Join(names, ", "))
 		}
 	}
@@ -197,7 +198,7 @@ func (a *plannerActions) Ungate(ctx context.Context, subject string) Result {
 		return Result{Err: errors.New("unknown binding")}
 	}
 
-	provider, removed, err := relevo.Available(rt, subject, relevo.ClearedByPlanner)
+	provider, removed, err := availability.Available(relevo.AvailabilityDeps(rt), subject, availability.ClearedByPlanner)
 	if err != nil {
 		return Result{Err: err, Refresh: true}
 	}
@@ -321,7 +322,7 @@ func (a *plannerActions) Bind(ctx context.Context, in BindInput) Result {
 	}
 	lines := []string{fmt.Sprintf("added %s: builder %s on %s",
 		res.Binding.Name, a.runtime().Candidates.NameOf(res.Binding.BuilderCandidate), tree)}
-	if n := relevo.GatedNote(a.runtime(), res.Binding.BuilderCandidate); n != "" {
+	if n := availability.GatedNote(relevo.AvailabilityDeps(a.runtime()), res.Binding.BuilderCandidate); n != "" {
 		lines = append(lines, n)
 	}
 	if n := bindPickNote(a.runtime(), res.Resolution); n != "" {
@@ -481,7 +482,7 @@ func (a *plannerActions) Probe(ctx context.Context, name string) Result {
 		return Result{Err: errors.New("probing needs relevo ui")}
 	}
 	host, _ := os.Hostname()
-	rs, err := relevo.Probe(ctx, a.runtime(), a.probe, []string{name}, host, nil)
+	rs, err := availability.Probe(ctx, relevo.AvailabilityDeps(a.runtime()), a.probe, []string{name}, host, nil)
 	if err != nil {
 		return Result{Err: err}
 	}
@@ -492,7 +493,7 @@ func (a *plannerActions) Probe(ctx context.Context, name string) Result {
 	if r.Err != "" {
 		return Result{Err: errors.New(r.Err)}
 	}
-	return Result{Text: relevo.FormatProbe(r, relevo.ProbeNameWidth([]string{name}))}
+	return Result{Text: availability.FormatProbe(r, availability.ProbeNameWidth([]string{name}))}
 }
 
 // AgentFiles is one agent's definition state on every harness kind whose

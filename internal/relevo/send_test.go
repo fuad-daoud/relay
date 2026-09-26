@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -719,7 +720,7 @@ func TestSendDryRunGateNote(t *testing.T) {
 
 	rt, _ := seedBound(t)
 
-	if _, err := Unavailable(rt, testAgyRef, time.Time{}, "quota"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), testAgyRef, time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -1367,7 +1368,7 @@ func TestSendBuilderGatedTokenProceeds(t *testing.T) {
 	t.Parallel()
 
 	rt, _ := switchSetup(t)
-	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "quota"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), testClaudeRef, time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 

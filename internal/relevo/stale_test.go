@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -75,7 +76,7 @@ func TestGatedBuilderSeesAStaleTokensProvider(t *testing.T) {
 
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, staleAgyPairJSON)
-	if _, err := Unavailable(rt, "agy/old/m", time.Time{}, "quota"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/old/m", time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 	// The candidate was deleted: the set no longer holds agy/old/m.
@@ -91,7 +92,7 @@ func TestGatedBuilderIgnoresTheEditedCandidatesNewProvider(t *testing.T) {
 
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, staleAgyPairJSON)
-	if _, err := Unavailable(rt, "agy/new/m", time.Time{}, "quota"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/new/m", time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 	rt.Candidates = candidateSet(t, staleAgyNewJSON)
@@ -108,7 +109,7 @@ func TestReconcileHeadlessStaleGatedSwitches(t *testing.T) {
 	rt, b := gateOnLimitSetup(t, fr)
 	old := handleOf(b.Builder)
 
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 	// agy/other/m was deleted from the set after the round picked it.
@@ -139,7 +140,7 @@ func TestLimitPatternsStaleTokenUsesHarnessPatterns(t *testing.T) {
 	if !ok || len(h.LimitPatterns) == 0 {
 		t.Fatal("agy has no limit patterns to fall back to")
 	}
-	got := limitPatterns(rt, "agy/old/m")
+	got := availability.LimitPatterns(AvailabilityDeps(rt), "agy/old/m")
 	if len(got) != len(h.LimitPatterns) {
 		t.Fatalf("limitPatterns on a stale token = %d patterns, want the harness's %d", len(got), len(h.LimitPatterns))
 	}
@@ -190,7 +191,7 @@ func TestSendStaleBuilderNoCandidateRefuses(t *testing.T) {
 	rt.Policy = orderOf("builder", testClaudeRef, testOpencodeRef)
 	// The stale binding's pool, every member of which is gated.
 	rt.Candidates = candidateSet(t, stalePoolJSON)
-	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), testClaudeRef, time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -380,12 +381,12 @@ func TestGatedNoteStaleToken(t *testing.T) {
 
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, staleAgyPairJSON)
-	if _, err := Unavailable(rt, "agy/old/m", time.Time{}, "quota"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/old/m", time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 	rt.Candidates = candidateSet(t, staleAgyNewJSON)
 
-	got := gatedNote(rt, "agy/old/m")
+	got := availability.GatedNote(AvailabilityDeps(rt), "agy/old/m")
 	if got == "" {
 		t.Fatal("a stale token whose provider is gated printed no note")
 	}

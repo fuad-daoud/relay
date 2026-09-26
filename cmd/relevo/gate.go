@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/serve"
@@ -75,7 +76,7 @@ func gateList() error {
 	if err != nil {
 		return err
 	}
-	fmt.Print(serve.RenderGates(relevo.Gates(rt), rt.Now()))
+	fmt.Print(serve.RenderGates(availability.Gates(relevo.AvailabilityDeps(rt)), rt.Now()))
 	return nil
 }
 
@@ -101,7 +102,7 @@ func gateUnavailable(token, forFlag, reason string) error {
 	}
 	canonical := c.Ref().String()
 
-	provider, err := relevo.Unavailable(rt, canonical, until, reason)
+	provider, err := availability.Unavailable(relevo.AvailabilityDeps(rt), canonical, until, reason)
 	if err != nil {
 		return err
 	}
@@ -117,10 +118,10 @@ func gateUnavailable(token, forFlag, reason string) error {
 		}
 	}
 
-	fmt.Printf("gated %s (%d candidates) %s\n", provider, count, relevo.GateUntilText(until))
+	fmt.Printf("gated %s (%d candidates) %s\n", provider, count, availability.GateUntilText(until))
 
 	if bs, err := rt.Store.List(); err == nil {
-		if names := relevo.BindingsOnProvider(bs, provider); len(names) > 0 {
+		if names := availability.BindingsOnProvider(bs, provider); len(names) > 0 {
 			fmt.Printf("the daemon will switch: %s\n", strings.Join(names, ", "))
 		}
 	}
@@ -140,7 +141,7 @@ func gateClear(subject string) error {
 		return err
 	}
 
-	provider, removed, err := relevo.Available(rt, subject, relevo.ClearedByPlanner)
+	provider, removed, err := availability.Available(relevo.AvailabilityDeps(rt), subject, availability.ClearedByPlanner)
 	if err != nil {
 		return err
 	}

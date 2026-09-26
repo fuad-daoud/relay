@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -46,8 +47,8 @@ func TestBindPicksFirstUngatedInOrder(t *testing.T) {
 	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
-	recordSpawnFailure(rt, testAgyRef, "earlier", errors.New("agent start: exit 1"))
-	untilText := GateUntilText(baseTime.Add(SpawnFailedCooldown))
+	availability.RecordSpawnFailure(AvailabilityDeps(rt), testAgyRef, "earlier", errors.New("agent start: exit 1"))
+	untilText := availability.GateUntilText(baseTime.Add(availability.SpawnFailedCooldown))
 
 	b, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
@@ -82,7 +83,7 @@ func TestBindResolvedReturnsTheResolution(t *testing.T) {
 	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
-	recordSpawnFailure(rt, testAgyRef, "earlier", errors.New("agent start: exit 1"))
+	availability.RecordSpawnFailure(AvailabilityDeps(rt), testAgyRef, "earlier", errors.New("agent start: exit 1"))
 
 	_, res, err := BindResolved(context.Background(), rt, BindOptions{
 		Name: "webshop", Candidate: "", PlannerID: testPlannerName, CWD: "/repo",
@@ -109,7 +110,7 @@ func TestBindRefusesWhenEveryCandidateIsGated(t *testing.T) {
 
 	// testClaudeRef's provider ("test") is shared by all three candidates in
 	// testCandidatesJSON, so this gates all three.
-	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "quota"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), testClaudeRef, time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -129,8 +130,8 @@ func TestBindExplicitGatedBypassesAndLogsIt(t *testing.T) {
 
 	rt := newRuntime(t)
 
-	recordSpawnFailure(rt, testAgyRef, "earlier", errors.New("agent start: exit 1"))
-	untilText := GateUntilText(baseTime.Add(SpawnFailedCooldown))
+	availability.RecordSpawnFailure(AvailabilityDeps(rt), testAgyRef, "earlier", errors.New("agent start: exit 1"))
+	untilText := availability.GateUntilText(baseTime.Add(availability.SpawnFailedCooldown))
 
 	_, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Candidate: testAgyRef, PlannerID: testPlannerName, CWD: "/repo",

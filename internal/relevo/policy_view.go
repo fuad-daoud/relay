@@ -219,7 +219,7 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set,
 		}
 		var gateTexts []string
 		for _, g := range byToken[tok] {
-			gateTexts = append(gateTexts, GateKindText(g.Kind)+" "+GateUntilText(g.Until))
+			gateTexts = append(gateTexts, availability.GateKindText(g.Kind)+" "+availability.GateUntilText(g.Until))
 		}
 		tailParts = append(tailParts, uniqStrings(gateTexts)...)
 		tail := strings.Join(tailParts, "; ")
@@ -535,7 +535,7 @@ func formatHistory(hist availability.History, loc *time.Location) string {
 				continue
 			}
 			counts := availability.HourCounts(hist, p, k, loc)
-			row := fmt.Sprintf("  %-10s %-13s", p, GateKindText(k))
+			row := fmt.Sprintf("  %-10s %-13s", p, availability.GateKindText(k))
 			for _, n := range counts {
 				cell := "."
 				if n != 0 {

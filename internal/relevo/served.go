@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -231,7 +232,7 @@ func PickServedCandidateFor(rt Runtime, role, token string) (string, string) {
 	if rt.Candidates == nil {
 		return token, ""
 	}
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, role)
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), token, role)
 	if err == nil {
 		return res.Candidate.Ref().String(), res.Candidate.Harness
 	}

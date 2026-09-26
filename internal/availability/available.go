@@ -1,4 +1,4 @@
-package relevo
+package availability
 
 import (
 	"errors"
@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 )
 
@@ -21,8 +20,8 @@ const (
 )
 
 // ResolveClearSubject decides what `relevo gate --clear <subject>` clears, and
-// refuses a subject relevo knows nothing about (#301). Pure: the caller
-// passes the configured set (possibly nil) and the already-pruned ledger.
+// refuses a subject relevo knows nothing about. Pure: the caller passes the
+// configured set (possibly nil) and the already-pruned ledger.
 //
 //	subject is a configured candidate name:
 //	  provider := that candidate's provider
@@ -39,11 +38,11 @@ const (
 //	  known if provider is in set.Providers(),
 //	     or if l has a RateLimited entry whose Subject == provider
 //	  otherwise: return an error wrapping ErrUnknownProvider
-func ResolveClearSubject(set *candidate.Set, l availability.Ledger, subject string) (provider string, err error) {
-	// A name is a candidate, and clears that candidate's provider (A1
-	// §4.2). A provider name is never also a candidate name (candidate
-	// names must not equal a configured provider), so this cannot shadow
-	// the bare-provider branch below.
+func ResolveClearSubject(set *candidate.Set, l Ledger, subject string) (provider string, err error) {
+	// A name is a candidate, and clears that candidate's provider. A provider
+	// name is never also a candidate name (candidate names must not equal a
+	// configured provider), so this cannot shadow the bare-provider branch
+	// below.
 	if candidate.IsName(subject) {
 		if c, rerr := set.Resolve(subject); rerr == nil {
 			return c.Ref().Provider, nil
@@ -62,8 +61,8 @@ func ResolveClearSubject(set *candidate.Set, l availability.Ledger, subject stri
 			}
 			return provider, nil
 		}
-		// A nil set has no Lookup to call -- it would dereference the set
-		// and panic -- so the no-candidates JSON that a server with no
+		// A nil set has no Lookup to call -- it would dereference the set and
+		// panic -- so the no-candidates JSON that a server with no
 		// candidates.json reads as is rendered here instead.
 		if !gatesProvider(l, provider) {
 			return "", fmt.Errorf("candidate %q not found (no candidates configured): %w", subject, candidate.ErrUnknownCandidate)
@@ -79,11 +78,11 @@ func ResolveClearSubject(set *candidate.Set, l availability.Ledger, subject stri
 }
 
 // gatesProvider reports whether l carries a rate-limit gate on provider. The
-// caller passes an already-pruned ledger, so this is exactly the set of
-// entries a clear would remove.
-func gatesProvider(l availability.Ledger, provider string) bool {
+// caller passes an already-pruned ledger, so this is exactly the set of entries
+// a clear would remove.
+func gatesProvider(l Ledger, provider string) bool {
 	for _, e := range l.Entries {
-		if e.Kind == availability.RateLimited && e.Subject == provider {
+		if e.Kind == RateLimited && e.Subject == provider {
 			return true
 		}
 	}
@@ -92,8 +91,8 @@ func gatesProvider(l availability.Ledger, provider string) bool {
 
 // unknownProviderError is ErrUnknownProvider carrying the unknown-provider
 // message verbatim. It is a type rather than fmt.Errorf("...: %w",
-// ErrUnknownProvider) because %w would append ": unknown provider" to the
-// words the refusal is specified to print; Unwrap keeps errors.Is working.
+// ErrUnknownProvider) because %w would append ": unknown provider" to the words
+// the refusal is specified to print; Unwrap keeps errors.Is working.
 type unknownProviderError struct{ msg string }
 
 func (e unknownProviderError) Error() string { return e.msg }
@@ -106,8 +105,8 @@ func (e unknownProviderError) Unwrap() error { return ErrUnknownProvider }
 //	no configured candidate uses provider "clinepass" (known: anthropic, cline-pass, openai); did you mean "cline-pass"?
 //	no configured candidate uses provider "zzz" (known: anthropic, cline-pass, openai)
 //
-// A nil or empty set reads as "(no candidates configured)", and the
-// suggestion tail appears only when suggestProvider names one.
+// A nil or empty set reads as "(no candidates configured)", and the suggestion
+// tail appears only when suggestProvider names one.
 func unknownProviderMessage(set *candidate.Set, subject string) string {
 	known := set.Providers()
 	where := "(no candidates configured)"
@@ -127,8 +126,8 @@ func unknownProviderMessage(set *candidate.Set, subject string) string {
 //	norm(x) := lower-case x with every rune outside [a-z0-9] removed
 //	a known p qualifies when norm(p) == norm(subject)          -> distance 0
 //	                    or editDistance(lower(p), lower(subject)) <= 2
-//	return the qualifier with the smallest distance, where a norm match
-//	counts as 0; on a tie, the alphabetically first. None -> "".
+//	return the qualifier with the smallest distance, where a norm match counts
+//	as 0; on a tie, the alphabetically first. None -> "".
 func suggestProvider(known []string, subject string) string {
 	ns := normProvider(subject)
 	lowerSubject := strings.ToLower(subject)

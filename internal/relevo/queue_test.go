@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -211,7 +212,7 @@ func TestAdmitGatedSwitches(t *testing.T) {
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
 		t.Fatalf("Send(Defer): %v", err)
 	}
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 

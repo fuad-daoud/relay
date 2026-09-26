@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -118,7 +119,7 @@ func TestHeadlessLaunchPerKind(t *testing.T) {
 		{testOpencodeRef, []string{"opencode", "run", "PROMPT", "-m", "test/m", "--agent", "plan-executor", "--format", "json", "--thinking", "--standalone"}},
 	}
 	for _, c := range cases {
-		got, err := headlessLaunch(lookup(c.token), role, harness.TierHarness, 2*time.Hour, "PROMPT", "/repo", "/state/dir")
+		got, err := spawn.HeadlessLaunch(lookup(c.token), role, harness.TierHarness, 2*time.Hour, "PROMPT", "/repo", "/state/dir")
 		if err != nil {
 			t.Fatalf("%s: %v", c.token, err)
 		}
@@ -126,7 +127,7 @@ func TestHeadlessLaunchPerKind(t *testing.T) {
 			t.Errorf("%s:\n got %v\nwant %v", c.token, got, c.want)
 		}
 	}
-	if _, err := headlessLaunch(candidate.Candidate{Harness: "nope"}, role, harness.TierHarness, time.Hour, "x", "/repo", "/state/dir"); err == nil {
+	if _, err := spawn.HeadlessLaunch(candidate.Candidate{Harness: "nope"}, role, harness.TierHarness, time.Hour, "x", "/repo", "/state/dir"); err == nil {
 		t.Error("unknown harness kind must be an error, not a panic or an empty argv")
 	}
 }
@@ -303,13 +304,13 @@ func TestStartRoundFailureRecordsSpawnFailedAndLeavesPIDZero(t *testing.T) {
 		t.Errorf("a failed start must leave the endpoint idle: %+v", got.Builder)
 	}
 	var gated bool
-	for _, g := range Gates(rt) {
+	for _, g := range availability.Gates(AvailabilityDeps(rt)) {
 		if g.Token == testAgyRef && g.Kind == "spawn_failed" {
 			gated = true
 		}
 	}
 	if !gated {
-		t.Errorf("spawn_failed must be in the ledger for %s: %+v", testAgyRef, Gates(rt))
+		t.Errorf("spawn_failed must be in the ledger for %s: %+v", testAgyRef, availability.Gates(AvailabilityDeps(rt)))
 	}
 }
 
@@ -3289,7 +3290,7 @@ func TestReconcileHeadlessGatedKillsAndSwitches(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := gateOnLimitSetup(t, fr)
 	old := handleOf(b.Builder)
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -3923,11 +3924,11 @@ func TestStderrLimitTextStillDetected(t *testing.T) {
 	const stderrLine = "error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h0m0s."
 	streamWrite(t, rt, agyToolActive+agyToolDone+stderrLine+"\nrelevo-exit:1\n")
 
-	tail := builderTail(rt, b, limitScanLines)
+	tail := builderTail(rt, b, availability.LimitScanLines)
 	if !strings.Contains(tail, stderrLine) {
 		t.Fatalf("builderTail = %q, want it to contain the raw stderr line %q", tail, stderrLine)
 	}
-	if _, ok := matchLimit(tail, limitPatterns(rt, b.BuilderCandidate), rt.Now(), 0); !ok {
-		t.Errorf("matchLimit(%q, agy patterns) did not match; an stderr-only limit must survive the move", tail)
+	if _, ok := availability.MatchLimit(tail, availability.LimitPatterns(AvailabilityDeps(rt), b.BuilderCandidate), rt.Now(), 0); !ok {
+		t.Errorf("availability.MatchLimit(%q, agy patterns) did not match; an stderr-only limit must survive the move", tail)
 	}
 }

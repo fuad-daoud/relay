@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -44,7 +45,7 @@ type Options struct {
 	// ProbeExec is what Actions.Probe runs a candidate's harness through
 	// (§4.2): cmd/relevo passes its os/exec seam so a probe spawns a real
 	// harness from the cockpit.
-	ProbeExec relevo.LineExec
+	ProbeExec availability.LineExec
 
 	// Version is the running binary's version string (§2.2). "" hides the
 	// version in the header.

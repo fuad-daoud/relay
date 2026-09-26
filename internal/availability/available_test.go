@@ -1,11 +1,10 @@
-package relevo
+package availability
 
 import (
 	"errors"
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 )
 
@@ -17,7 +16,20 @@ const availTwoProviderJSON = `[
   {"harness":"opencode","provider":"cline-pass","model":"m","roles":["builder"]}
 ]`
 
-// TestResolveClearSubject is #301's rule: a subject is known when it names a
+// clearSubjectCase is one TestResolveClearSubject row.
+type clearSubjectCase struct {
+	name       string
+	set        *candidate.Set
+	l          Ledger
+	subject    string
+	want       string
+	wantErr    error
+	wantMsg    string // exact Error() text, when non-empty
+	wantSubstr string // substring Error() must contain, when non-empty
+	notSubstr  string // substring Error() must not contain, when non-empty
+}
+
+// TestResolveClearSubject: a subject is known when it names a
 // configured candidate or provider, or a provider the ledger still gates --
 // which is how a gate left behind by a candidate removed from
 // candidates.json stays clearable. Everything else is refused.
@@ -26,21 +38,11 @@ func TestResolveClearSubject(t *testing.T) {
 
 	twoProviders := candidateSet(t, availTwoProviderJSON)
 	testOnly := candidateSet(t, `[{"harness":"opencode","provider":"test","model":"m","roles":["builder"]}]`)
-	goneGate := availability.Ledger{Entries: []availability.Entry{
-		{Kind: availability.RateLimited, Subject: "gone", At: baseTime, Source: "planner"},
+	goneGate := Ledger{Entries: []Entry{
+		{Kind: RateLimited, Subject: "gone", At: baseTime, Source: "planner"},
 	}}
 
-	tests := []struct {
-		name       string
-		set        *candidate.Set
-		l          availability.Ledger
-		subject    string
-		want       string
-		wantErr    error
-		wantMsg    string // exact Error() text, when non-empty
-		wantSubstr string // substring Error() must contain, when non-empty
-		notSubstr  string // substring Error() must not contain, when non-empty
-	}{
+	tests := []clearSubjectCase{
 		{
 			name: "configured token", set: twoProviders, subject: "claude/test/m",
 			want: "test",
@@ -83,33 +85,38 @@ func TestResolveClearSubject(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := ResolveClearSubject(tt.set, tt.l, tt.subject)
-
-			if tt.wantErr != nil {
-				if !errors.Is(err, tt.wantErr) {
-					t.Fatalf("err = %v, want %v", err, tt.wantErr)
-				}
-			} else if err != nil {
-				t.Fatalf("unexpected err: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("provider = %q, want %q", got, tt.want)
-			}
-			if err == nil {
-				if tt.wantMsg != "" || tt.wantSubstr != "" || tt.notSubstr != "" {
-					t.Fatalf("message assertions need an error, got provider %q", got)
-				}
-				return
-			}
-			if tt.wantMsg != "" && err.Error() != tt.wantMsg {
-				t.Errorf("message = %q, want %q", err.Error(), tt.wantMsg)
-			}
-			if tt.wantSubstr != "" && !strings.Contains(err.Error(), tt.wantSubstr) {
-				t.Errorf("message = %q, want it containing %q", err.Error(), tt.wantSubstr)
-			}
-			if tt.notSubstr != "" && strings.Contains(err.Error(), tt.notSubstr) {
-				t.Errorf("message = %q, want no %q", err.Error(), tt.notSubstr)
-			}
+			checkClearSubject(t, tt, got, err)
 		})
+	}
+}
+
+// checkClearSubject asserts one clear-subject outcome.
+func checkClearSubject(t *testing.T, tt clearSubjectCase, got string, err error) {
+	t.Helper()
+	if tt.wantErr != nil {
+		if !errors.Is(err, tt.wantErr) {
+			t.Fatalf("err = %v, want %v", err, tt.wantErr)
+		}
+	} else if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got != tt.want {
+		t.Errorf("provider = %q, want %q", got, tt.want)
+	}
+	if err == nil {
+		if tt.wantMsg != "" || tt.wantSubstr != "" || tt.notSubstr != "" {
+			t.Fatalf("message assertions need an error, got provider %q", got)
+		}
+		return
+	}
+	if tt.wantMsg != "" && err.Error() != tt.wantMsg {
+		t.Errorf("message = %q, want %q", err.Error(), tt.wantMsg)
+	}
+	if tt.wantSubstr != "" && !strings.Contains(err.Error(), tt.wantSubstr) {
+		t.Errorf("message = %q, want it containing %q", err.Error(), tt.wantSubstr)
+	}
+	if tt.notSubstr != "" && strings.Contains(err.Error(), tt.notSubstr) {
+		t.Errorf("message = %q, want no %q", err.Error(), tt.notSubstr)
 	}
 }
 
@@ -140,7 +147,7 @@ func TestSuggestProvider(t *testing.T) {
 	}
 }
 
-// TestResolveClearSubjectName pins A1 §4.2: `gate --clear <name>` clears that
+// TestResolveClearSubjectName: `gate --clear <name>` clears that
 // candidate's provider, and a bare provider still clears the provider.
 func TestResolveClearSubjectName(t *testing.T) {
 	t.Parallel()
@@ -154,7 +161,7 @@ func TestResolveClearSubjectName(t *testing.T) {
 		{"m", "test"},
 		{"agy-m", "other"},
 	} {
-		provider, err := ResolveClearSubject(set, availability.Ledger{}, tt.subject)
+		provider, err := ResolveClearSubject(set, Ledger{}, tt.subject)
 		if err != nil {
 			t.Fatalf("ResolveClearSubject(%s): %v", tt.subject, err)
 		}
@@ -163,7 +170,7 @@ func TestResolveClearSubjectName(t *testing.T) {
 		}
 	}
 
-	provider, err := ResolveClearSubject(set, availability.Ledger{}, "other")
+	provider, err := ResolveClearSubject(set, Ledger{}, "other")
 	if err != nil {
 		t.Fatalf("ResolveClearSubject(other): %v", err)
 	}

@@ -236,7 +236,7 @@ func TestRenderStatusFooterOnlyWhenEverythingIsDone(t *testing.T) {
 
 func TestRenderStatusGatedBlock(t *testing.T) {
 	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
-	t.Cleanup(SetGateClock(func() time.Time { return now }))
+	t.Cleanup(availability.SetGateClock(func() time.Time { return now }))
 	r := Report{
 		Bindings: []BindingStatus{{
 			Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
@@ -1574,7 +1574,7 @@ func TestStatusCountsOnlyRunningConsults(t *testing.T) {
 func TestStatusPopulatesGated(t *testing.T) {
 	rt, _ := seedBound(t)
 
-	if _, err := Unavailable(rt, testAgyRef, time.Time{}, "reason"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), testAgyRef, time.Time{}, "reason"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 

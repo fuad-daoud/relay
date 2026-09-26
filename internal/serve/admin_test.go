@@ -540,7 +540,7 @@ func TestAdminAvailableRecordsServerClear(t *testing.T) {
 		t.Errorf("removed = %d, want 1", removed)
 	}
 
-	h, err := availability.LoadHistory(db.PrefixKV{KV: s.DB(), Prefix: "serve."}, "")
+	h, err := availability.LoadHistory(availability.Deps{Gates: db.PrefixKV{KV: s.DB(), Prefix: "serve."}, Now: time.Now})
 	if err != nil {
 		t.Fatalf("history.LoadHistory: %v", err)
 	}
@@ -551,8 +551,8 @@ func TestAdminAvailableRecordsServerClear(t *testing.T) {
 	if ev.Kind != availability.Cleared {
 		t.Errorf("kind = %q, want %q", ev.Kind, availability.Cleared)
 	}
-	if ev.Source != relevo.ClearedByServer {
-		t.Errorf("source = %q, want %q", ev.Source, relevo.ClearedByServer)
+	if ev.Source != availability.ClearedByServer {
+		t.Errorf("source = %q, want %q", ev.Source, availability.ClearedByServer)
 	}
 	if ev.Provider != "t" {
 		t.Errorf("provider = %q, want t", ev.Provider)
@@ -575,7 +575,7 @@ func TestFlatStatusStampsOwnersAndDedupsGates(t *testing.T) {
 	saveOwnerBinding(t, s, idB, "persist")
 
 	rtA := ownerRuntime(t, s, idA)
-	if _, err := relevo.Unavailable(rtA, "claude/t/m", now.Add(time.Hour), "quota"); err != nil {
+	if _, err := availability.Unavailable(relevo.AvailabilityDeps(rtA), "claude/t/m", now.Add(time.Hour), "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 

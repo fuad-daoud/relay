@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -33,7 +34,7 @@ func ResolveSendBuilder(rt Runtime, current, token string) (*Resolution, error) 
 //
 // Precondition: token != "". It is a pure read of the ledger and candidates.
 func ResolveSendBuilderFor(rt Runtime, role, current, token string) (*Resolution, error) {
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, role)
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), token, role)
 	if err != nil {
 		return nil, fmt.Errorf("%w %s: %w", ErrBadBuilder, token, err)
 	}

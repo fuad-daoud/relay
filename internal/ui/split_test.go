@@ -238,7 +238,7 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 // TestHeaderGatesAndClock pins the header's right side (§5.3): the clock
 // and needs-you count, and the gated line in the fleet body (D2).
 func TestHeaderGatesAndClock(t *testing.T) {
-	t.Cleanup(relevo.SetGateClock(func() time.Time { return railNow }))
+	t.Cleanup(availability.SetGateClock(func() time.Time { return railNow }))
 	m := splitModel(t, 140, 40, threeRows()...)
 	m.report.Gated = []availability.Gate{{Token: "codex", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)}}
 	h := stripANSI(m.headerView(m.env()))

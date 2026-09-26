@@ -334,7 +334,7 @@ func TestRolesRuntimeFileModeProbe(t *testing.T) {
 	})
 
 	fake := &fakeExec{now: now}
-	got := ProbeCandidate(context.Background(), rt, fake, rolesCandidate(t, set, testClaudeRef), "box")
+	got := availability.ProbeCandidate(context.Background(), AvailabilityDeps(rt), fake, rolesCandidate(t, set, testClaudeRef), "box")
 	if len(fake.argvs) != 1 {
 		t.Fatalf("probe ran %d times, want 1 (Err = %q)", len(fake.argvs), got.Err)
 	}
@@ -344,7 +344,7 @@ func TestRolesRuntimeFileModeProbe(t *testing.T) {
 
 	orphan := candidate.Candidate{Harness: "claude", Provider: "test", Model: "orphan"}
 	fake2 := &fakeExec{now: now}
-	got2 := ProbeCandidate(context.Background(), rt, fake2, orphan, "box")
+	got2 := availability.ProbeCandidate(context.Background(), AvailabilityDeps(rt), fake2, orphan, "box")
 	if got2.Err != "no known role" {
 		t.Errorf("Err = %q, want %q", got2.Err, "no known role")
 	}

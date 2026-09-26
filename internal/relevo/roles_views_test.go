@@ -301,7 +301,7 @@ func TestRolesViewsMergedGateTexts(t *testing.T) {
 	got := FormatCandidates(set, gates)
 
 	want := "   unavailable: roles missing (builder, reviewer) until cleared; " +
-		GateKindText(availability.RateLimited) + " " + GateUntilText(until)
+		availability.GateKindText(availability.RateLimited) + " " + availability.GateUntilText(until)
 	if !strings.Contains(got, want) {
 		t.Errorf("FormatCandidates =\n%q\nwant it to contain:\n%q", got, want)
 	}

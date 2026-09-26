@@ -3,6 +3,7 @@ package relevo
 import (
 	"fmt"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -17,14 +18,14 @@ func staleBuilder(rt Runtime, b store.Binding) bool {
 }
 
 // repickStale picks b's builder again by its actor's order when staleBuilder(rt, b): resolveRole with an empty
-// token over Gates(rt), then applyBuilder. It returns b unchanged and a nil *Resolution when b is not stale.
+// token over availability.Gates(AvailabilityDeps(rt)), then applyBuilder. It returns b unchanged and a nil *Resolution when b is not stale.
 func repickStale(rt Runtime, b store.Binding, allowYolo bool) (store.Binding, *Resolution, error) {
 	if !staleBuilder(rt, b) {
 		return b, nil, nil
 	}
 
 	old := b.BuilderCandidate
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), "", bindingRole(b))
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), "", bindingRole(b))
 	if err != nil {
 		return b, nil, fmt.Errorf("builder %s is no longer configured and no other candidate can take it: %w", old, err)
 	}

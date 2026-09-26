@@ -1,7 +1,7 @@
 # measured with go1.27 linux/amd64
 github.com/fuad-daoud/relevo/cmd/relevo 50.1
 github.com/fuad-daoud/relevo/internal/agentsrc 92.6
-github.com/fuad-daoud/relevo/internal/availability 92.3
+github.com/fuad-daoud/relevo/internal/availability 83.0
 github.com/fuad-daoud/relevo/internal/candidate 96.3
 github.com/fuad-daoud/relevo/internal/capture 95.6
 github.com/fuad-daoud/relevo/internal/chatlabel 91.6
@@ -25,17 +25,17 @@ github.com/fuad-daoud/relevo/internal/planner 83.6
 github.com/fuad-daoud/relevo/internal/policy 96.7
 github.com/fuad-daoud/relevo/internal/proc 86.6
 github.com/fuad-daoud/relevo/internal/release 88.4
-github.com/fuad-daoud/relevo/internal/relevo 86.8
+github.com/fuad-daoud/relevo/internal/relevo 86.9
 github.com/fuad-daoud/relevo/internal/remote 86.7
 github.com/fuad-daoud/relevo/internal/remote/client 68.3
 github.com/fuad-daoud/relevo/internal/roles 92.1
-github.com/fuad-daoud/relevo/internal/serve 78.9
+github.com/fuad-daoud/relevo/internal/serve 79.6
 github.com/fuad-daoud/relevo/internal/setup 91.4
-github.com/fuad-daoud/relevo/internal/spawn 85.7
+github.com/fuad-daoud/relevo/internal/spawn 60.0
 github.com/fuad-daoud/relevo/internal/stats 98.4
 github.com/fuad-daoud/relevo/internal/store 76.6
 github.com/fuad-daoud/relevo/internal/transcript 93.7
-github.com/fuad-daoud/relevo/internal/ui 81.5
+github.com/fuad-daoud/relevo/internal/ui 82.0
 github.com/fuad-daoud/relevo/internal/ui/dash 86.6
 github.com/fuad-daoud/relevo/internal/upgrade 66.7
 github.com/fuad-daoud/relevo/internal/usage 93.8

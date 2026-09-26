@@ -1,4 +1,4 @@
-package relevo
+package availability
 
 import (
 	"context"
@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -72,16 +73,22 @@ func (f *fakeExec) Run(_ context.Context, dir string, argv []string, onLine func
 // probeRuntime builds a Runtime with a real store and a fake clock the
 // caller advances by writing *now. Latency lives in its own temp-dir database,
 // so the recording path in Probe is exercised against a real kv row.
-func probeRuntime(t *testing.T, setBody string) (Runtime, *time.Time) {
+func probeRuntime(t *testing.T, setBody string) (Deps, *time.Time) {
 	t.Helper()
 	now := probeBase
-	rt := Runtime{
-		Store:      store.New(t.TempDir()),
-		Candidates: candidateSet(t, setBody),
-		Latency:    testGateKV(t),
-		Now:        func() time.Time { return now },
+	set := candidateSet(t, setBody)
+	reg, err := roles.Build(nil, set, policy.Policy{})
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
 	}
-	return rt, &now
+	d := Deps{
+		Store:        store.New(t.TempDir()),
+		Candidates:   set,
+		Latency:      testGateKV(t),
+		Now:          func() time.Time { return now },
+		RoleRegistry: func() *roles.Registry { return reg },
+	}
+	return d, &now
 }
 
 func TestProbeTierPerKind(t *testing.T) {
@@ -121,7 +128,7 @@ func TestProbeCandidateMeasuresFirstOutput(t *testing.T) {
 		t.Fatalf("lookup opencode candidate: %v", err)
 	}
 
-	rt, now := probeRuntime(t, testCandidatesJSON)
+	d, now := probeRuntime(t, testCandidatesJSON)
 	fake := &fakeExec{
 		now:   now,
 		total: 900 * time.Millisecond,
@@ -133,7 +140,7 @@ func TestProbeCandidateMeasuresFirstOutput(t *testing.T) {
 		}},
 	}
 
-	got := ProbeCandidate(context.Background(), rt, fake, c, "box")
+	got := ProbeCandidate(context.Background(), d, fake, c, "box")
 
 	if got.TTFTMS != 600 {
 		t.Errorf("TTFTMS = %d, want 600", got.TTFTMS)
@@ -181,7 +188,7 @@ func TestProbeCandidateGitInitFailureRunsNoHarness(t *testing.T) {
 	set := candidateSet(t, testCandidatesJSON)
 	c, _ := set.Lookup(candidate.Ref{Harness: "opencode", Provider: "test", Model: "m"})
 
-	rt, now := probeRuntime(t, testCandidatesJSON)
+	d, now := probeRuntime(t, testCandidatesJSON)
 	fake := &fakeExec{
 		now:    now,
 		total:  900 * time.Millisecond,
@@ -191,7 +198,7 @@ func TestProbeCandidateGitInitFailureRunsNoHarness(t *testing.T) {
 		}},
 	}
 
-	got := ProbeCandidate(context.Background(), rt, fake, c, "box")
+	got := ProbeCandidate(context.Background(), d, fake, c, "box")
 
 	if !strings.HasPrefix(got.Err, "git init: ") || !strings.Contains(got.Err, "no git") {
 		t.Errorf("Err = %q, want it to start with %q and contain %q", got.Err, "git init: ", "no git")
@@ -210,14 +217,14 @@ func TestProbeCandidateNoOutput(t *testing.T) {
 	set := candidateSet(t, testCandidatesJSON)
 	c, _ := set.Lookup(candidate.Ref{Harness: "opencode", Provider: "test", Model: "m"})
 
-	rt, now := probeRuntime(t, testCandidatesJSON)
+	d, now := probeRuntime(t, testCandidatesJSON)
 	fake := &fakeExec{
 		now:     now,
 		total:   300 * time.Millisecond,
 		scripts: [][]fakeLine{{{at: 100 * time.Millisecond, line: `{"type":"step_start","part":{}}`}}},
 	}
 
-	got := ProbeCandidate(context.Background(), rt, fake, c, "box")
+	got := ProbeCandidate(context.Background(), d, fake, c, "box")
 
 	if got.Err != "no model output" {
 		t.Errorf("Err = %q, want %q", got.Err, "no model output")
@@ -233,7 +240,7 @@ func TestProbeCandidateRunErrorKeepsTTFT(t *testing.T) {
 	set := candidateSet(t, testCandidatesJSON)
 	c, _ := set.Lookup(candidate.Ref{Harness: "opencode", Provider: "test", Model: "m"})
 
-	rt, now := probeRuntime(t, testCandidatesJSON)
+	d, now := probeRuntime(t, testCandidatesJSON)
 	fake := &fakeExec{
 		now:    now,
 		total:  900 * time.Millisecond,
@@ -243,7 +250,7 @@ func TestProbeCandidateRunErrorKeepsTTFT(t *testing.T) {
 		}},
 	}
 
-	got := ProbeCandidate(context.Background(), rt, fake, c, "box")
+	got := ProbeCandidate(context.Background(), d, fake, c, "box")
 
 	if got.TTFTMS != 200 {
 		t.Errorf("TTFTMS = %d, want 200", got.TTFTMS)
@@ -268,7 +275,7 @@ func TestProbeCandidateReportsHarnessError(t *testing.T) {
 		t.Fatalf("lookup codex candidate: %v", err)
 	}
 
-	rt, now := probeRuntime(t, codexCandidate)
+	d, now := probeRuntime(t, codexCandidate)
 	fake := &fakeExec{
 		now:    now,
 		total:  900 * time.Millisecond,
@@ -281,7 +288,7 @@ func TestProbeCandidateReportsHarnessError(t *testing.T) {
 		}},
 	}
 
-	got := ProbeCandidate(context.Background(), rt, fake, c, "box")
+	got := ProbeCandidate(context.Background(), d, fake, c, "box")
 
 	want := "You've hit your usage limit. [exit status 1]"
 	if got.Err != want {
@@ -298,7 +305,7 @@ func TestProbeCandidateHarnessErrorWithoutExitError(t *testing.T) {
 	set := candidateSet(t, testCandidatesJSON)
 	c, _ := set.Lookup(candidate.Ref{Harness: "opencode", Provider: "test", Model: "m"})
 
-	rt, now := probeRuntime(t, testCandidatesJSON)
+	d, now := probeRuntime(t, testCandidatesJSON)
 	const quota = "opencode: weekly limit reached"
 	fake := &fakeExec{
 		now:   now,
@@ -308,7 +315,7 @@ func TestProbeCandidateHarnessErrorWithoutExitError(t *testing.T) {
 		}},
 	}
 
-	got := ProbeCandidate(context.Background(), rt, fake, c, "box")
+	got := ProbeCandidate(context.Background(), d, fake, c, "box")
 
 	if got.Err != quota {
 		t.Errorf("Err = %q, want %q", got.Err, quota)
@@ -321,11 +328,11 @@ func TestProbeCandidateHarnessErrorWithoutExitError(t *testing.T) {
 func TestProbeCandidateNoKnownRole(t *testing.T) {
 	t.Parallel()
 
-	rt, now := probeRuntime(t, testCandidatesJSON)
+	d, now := probeRuntime(t, testCandidatesJSON)
 	fake := &fakeExec{now: now}
 
 	c := candidate.Candidate{Harness: "opencode", Provider: "test", Model: "m", Roles: []string{"nope"}}
-	got := ProbeCandidate(context.Background(), rt, fake, c, "box")
+	got := ProbeCandidate(context.Background(), d, fake, c, "box")
 
 	if got.Err != "no known role" {
 		t.Errorf("Err = %q, want %q", got.Err, "no known role")
@@ -338,10 +345,10 @@ func TestProbeCandidateNoKnownRole(t *testing.T) {
 func TestProbeUnknownTokenRunsNothing(t *testing.T) {
 	t.Parallel()
 
-	rt, now := probeRuntime(t, testCandidatesJSON)
+	d, now := probeRuntime(t, testCandidatesJSON)
 	fake := &fakeExec{now: now}
 
-	if _, err := Probe(context.Background(), rt, fake, []string{"nope/test/m"}, "box", nil); err == nil {
+	if _, err := Probe(context.Background(), d, fake, []string{"nope/test/m"}, "box", nil); err == nil {
 		t.Fatalf("Probe(unknown token) error = nil, want an error")
 	}
 	if fake.calls != 0 {
@@ -356,7 +363,7 @@ func TestProbeRecordsHistory(t *testing.T) {
   {"harness":"opencode","provider":"test","model":"m","roles":["builder"]},
   {"harness":"claude","provider":"test","model":"m","roles":["builder"]}
 ]`
-	rt, now := probeRuntime(t, twoCandidates)
+	d, now := probeRuntime(t, twoCandidates)
 	fake := &fakeExec{
 		now:   now,
 		total: 500 * time.Millisecond,
@@ -367,7 +374,7 @@ func TestProbeRecordsHistory(t *testing.T) {
 	}
 
 	var seen []string
-	results, err := Probe(context.Background(), rt, fake, nil, "box", func(r ProbeResult) {
+	results, err := Probe(context.Background(), d, fake, nil, "box", func(r ProbeResult) {
 		seen = append(seen, r.Token)
 	})
 	if err != nil {
@@ -387,7 +394,7 @@ func TestProbeRecordsHistory(t *testing.T) {
 		t.Errorf("each saw %v, want %v in order", seen, wantOrder)
 	}
 
-	h, err := availability.LoadLatency(rt.Latency, "")
+	h, err := LoadLatency(d.Latency, "")
 	if err != nil {
 		t.Fatalf("latency.LoadLatency() error = %v", err)
 	}
@@ -404,24 +411,24 @@ func TestProbeRecordsHistory(t *testing.T) {
 	}
 }
 
-// TestFormatProbe pins A1 §4.4: the line prints the candidate's short name,
+// TestFormatProbe: the line prints the candidate's short name,
 // falling back to the token when the result carries none.
 func TestFormatProbe(t *testing.T) {
 	t.Parallel()
 
-	success := ProbeResult{Sample: availability.Sample{Token: "opencode/test/m", TTFTMS: 640, TotalMS: 1500}, Name: "m"}
+	success := ProbeResult{Sample: Sample{Token: "opencode/test/m", TTFTMS: 640, TotalMS: 1500}, Name: "m"}
 	if got, want := FormatProbe(success, 15), "m"+strings.Repeat(" ", 14)+"  ttft 640ms  total 1.5s"; got != want {
 		t.Errorf("FormatProbe(success) = %q, want %q", got, want)
 	}
 
-	failure := ProbeResult{Sample: availability.Sample{Token: "opencode/test/m", TTFTMS: 200, TotalMS: 900, Err: "exit status 1"}, Name: "m"}
+	failure := ProbeResult{Sample: Sample{Token: "opencode/test/m", TTFTMS: 200, TotalMS: 900, Err: "exit status 1"}, Name: "m"}
 	if got, want := FormatProbe(failure, 15), "m"+strings.Repeat(" ", 14)+"  error: exit status 1  (ttft 200ms)"; got != want {
 		t.Errorf("FormatProbe(failure) = %q, want %q", got, want)
 	}
 
 	// A result with no name -- one read back from a pre-A1 record -- prints
 	// the token.
-	nameless := ProbeResult{Sample: availability.Sample{Token: "opencode/test/m", TTFTMS: 640, TotalMS: 1500}}
+	nameless := ProbeResult{Sample: Sample{Token: "opencode/test/m", TTFTMS: 640, TotalMS: 1500}}
 	if got, want := FormatProbe(nameless, 15), "opencode/test/m  ttft 640ms  total 1.5s"; got != want {
 		t.Errorf("FormatProbe(nameless) = %q, want %q", got, want)
 	}
@@ -441,15 +448,15 @@ func TestProbeNameWidth(t *testing.T) {
 	}
 }
 
-// TestProbeUnknownNameRunsNothing pins A1 §4.2: an unknown candidate name is
+// TestProbeUnknownNameRunsNothing: an unknown candidate name is
 // refused before anything runs.
 func TestProbeUnknownNameRunsNothing(t *testing.T) {
 	t.Parallel()
 
-	rt, now := probeRuntime(t, testCandidatesJSON)
+	d, now := probeRuntime(t, testCandidatesJSON)
 	fake := &fakeExec{now: now}
 
-	if _, err := Probe(context.Background(), rt, fake, []string{"nope"}, "box", nil); err == nil {
+	if _, err := Probe(context.Background(), d, fake, []string{"nope"}, "box", nil); err == nil {
 		t.Fatalf("Probe(unknown name) error = nil, want an error")
 	}
 	if fake.calls != 0 {
