@@ -162,7 +162,7 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
    configuration lives in relevo.db under the state root, not in a file; a
    file you drop into `~/.config/relevo` is imported on the next command and
    removed. It refuses to overwrite the candidates, policy or actors section
-   without `--force`, and `--no-roles` skips the definitions. With claude as the
+   without `--force`, and `--no-agents` skips the definitions. With claude as the
    only harness on `PATH`, the builder is written with no candidates, and init
    prints the command to add one. It says what it wrote and
    the command to run next, e.g.:
@@ -189,7 +189,7 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
 6. Start the daemon (e.g. `relevo daemon &` or `make service`).
 7. Bind your first agent from the planner session:
    ```
-   relevo bind --builder claude/anthropic/sonnet
+   relevo bind --candidate claude/anthropic/sonnet
    ```
    (or, with one candidate, `relevo bind`).
 
@@ -201,7 +201,7 @@ relevo config agents
 ```
 One line per file says `wrote`, `updated (unchanged since relevo wrote it)`,
 `kept (identical)` or `kept (differs; --force to overwrite)`. Pass `--kind` to
-name a harness that is not on `PATH` yet, `--role` for one definition,
+name a harness that is not on `PATH` yet, `--agent` for one definition,
 `--dry-run` to look first. This writes `plan-executor`, `researcher`, `reviewer`
 and `architect` for every kind; `relevo config agents --dry-run` shows what
 would be written.
@@ -242,7 +242,7 @@ relevo config init                 # seed candidates, policy and actors, install
 From the planner session, in the repository you want worked on:
 
 ```
-relevo bind --builder claude/anthropic/sonnet     # start a builder on this tree
+relevo bind --candidate claude/anthropic/sonnet     # start a builder on this tree
 relevo send --file plan.md         # hand it the plan; the builder starts working
 relevo status                      # watch the round
 relevo wait                        # block until the round closes; prints the report
@@ -268,15 +268,15 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
 
 ## Command surface
 
-- `relevo bind [--name N] [--builder CANDIDATE] [--actor R] [--tier T [--allow-yolo]] [--gate CMD|--no-gate] [--regate N] [--resume [--rebind]] [--timeout D] [--feature L] [--planner P]`
-  — start a binding between the calling planner and a builder. `--builder` is
+- `relevo bind [--name N] [--candidate CANDIDATE] [--actor R] [--tier T [--allow-yolo]] [--gate CMD|--no-gate] [--regate N] [--resume [--rebind]] [--timeout D] [--feature L] [--planner P]`
+  — start a binding between the calling planner and a builder. `--candidate` is
   a candidate token; `--actor R` is the writer actor the binding runs (default
   `builder`). A name that already exists is refused rather than reused:
   only the binding's record would be rewritten, so a fresh round 1 would
   collide with the previous session's round log. `--resume --name N` re-points that
   existing binding's planner side at the calling planner without touching the
   builder; `relevo unbind N` is the other way out.
-- `relevo send [NAME|--name N] --file PATH [--dry-run] [--tier T [--allow-yolo]] [--builder CANDIDATE] [--verify|--no-verify] [--regate N]` — stage the file as the current round's
+- `relevo send [NAME|--name N] --file PATH [--dry-run] [--tier T [--allow-yolo]] [--candidate CANDIDATE] [--verify|--no-verify] [--regate N]` — stage the file as the current round's
   plan and hand it to the builder as the prompt of a fresh process started in
   the binding's tree.
   A headless binding whose previous round's process is still running refuses
@@ -352,7 +352,7 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   `:round <binding> [N]`. `:fleet` is the root table of bindings; `enter` opens its round
   detail, `esc` goes back, `:` the command line, `?` the key list. `relevo ui :rounds`
   opens the rounds grid directly (`:rounds` reaches it from the fleet).
-- `relevo bind --worktree --name N [--builder CANDIDATE] [--actor R] [--cwd DIR] [--feature LABEL]` — attach an
+- `relevo bind --worktree --name N [--candidate CANDIDATE] [--actor R] [--cwd DIR] [--feature LABEL]` — attach an
   additional builder to this planner on its own git worktree, starting at
   round 1. This is how one planner drives several builders at once.
   `--actor R` is the writer actor the binding runs (default `builder`).
@@ -380,9 +380,9 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   the harnesses on `PATH` (one builder candidate per harness except claude,
   which only plans, plus a `planner` and a `lite-planner` reader actor for
   claude and opencode) and install the agent definitions (`--force`,
-  `--no-roles`).
+  `--no-agents`).
 - `relevo config agents` — install the per-kind agent definitions
-  (`--kind`, `--role`, `--force`, `--dry-run`).
+  (`--kind`, `--agent`, `--force`, `--dry-run`).
 - `relevo config export|import|get|set|unset|edit` — read and change the
   configuration document section by section.
 - `relevo config secret set|rm|list` — store, forget or list the `typesafe`
@@ -805,7 +805,7 @@ round's failure carries its detail to the client.
 What is refused: `--cwd` cannot be combined with `--server` (a remote binding
 is always created fresh, never bound to an existing directory); `relevo ask`
 ("consults are local-only"); and `relevo bind --resume --rebind` (or
-`--builder`) against a remote binding ("cannot change a remote
+`--candidate`) against a remote binding ("cannot change a remote
 builder; unbind and re-create" -- a binding's mode is fixed at creation, the same
 rule a headless binding follows). `relevo done` and `relevo unbind` tell the
 server first, and only change anything locally once it agrees (a 404 from
@@ -842,9 +842,9 @@ nothing is guessed.
 attaches more, each on its own git worktree, so they never contend for files:
 
 ```
-relevo bind --builder claude/anthropic/sonnet --name api
-relevo bind --worktree --name frontend --builder claude/anthropic/sonnet
-relevo bind --worktree --name backend  --builder opencode/openrouter/z-ai/glm-5.3-flash
+relevo bind --candidate claude/anthropic/sonnet --name api
+relevo bind --worktree --name frontend --candidate claude/anthropic/sonnet
+relevo bind --worktree --name backend  --candidate opencode/openrouter/z-ai/glm-5.3-flash
 
 relevo send --name frontend --file ui_plan.md
 relevo send --name backend  --file api_plan.md
@@ -1219,10 +1219,10 @@ Any `extra_args` are appended verbatim after what relevo renders. Because relevo
 
 ### Choosing a candidate
 
-Pass the token to `relevo bind --builder claude/anthropic/sonnet` and relevo
+Pass the token to `relevo bind --candidate claude/anthropic/sonnet` and relevo
 starts exactly that, gated or not (with a `note:` on stderr if it is).
 
-With `--builder` omitted, relevo decides, by one rule:
+With `--candidate` omitted, relevo decides, by one rule:
 
 - exactly one configured candidate serves the actor → that one, unless it
   is gated;
@@ -1234,7 +1234,7 @@ With `--builder` omitted, relevo decides, by one rule:
   Name one, or add it to the actor.
 
 When every candidate serving the actor is gated or `off`, relevo refuses and
-says why each one is; an explicit `--builder` still bypasses that. The same
+says why each one is; an explicit `--candidate` still bypasses that. The same
 rule applies to `relevo bind --worktree` and `relevo ask --candidate`.
 
 Every choice is written down. `bind` and `ask` print one
@@ -1471,7 +1471,7 @@ client's.
 
 relevo keeps a ledger of when a candidate could not be used: spawn failures it
 observed itself, rate limits you report. It shows the ledger, and an omitted
-`--builder` skips what the ledger gates (see [Choosing a
+`--candidate` skips what the ledger gates (see [Choosing a
 candidate](#choosing-a-candidate)). It is a table in the database, not a file.
 
 Report a limit with:
@@ -1506,7 +1506,7 @@ ungated serves the actor.
 A candidate whose harness agent files are missing on disk is gated the same
 way (`roles missing` in `relevo config` and `relevo
 doctor`), fixed with `relevo config agents --kind <kind>` -- except an
-explicit `--builder` pick of it is **refused**, not allowed to proceed,
+explicit `--candidate` pick of it is **refused**, not allowed to proceed,
 because it cannot succeed. `relevo serve` logs each configured harness
 kind's agent coverage once at startup.
 
@@ -1606,7 +1606,7 @@ For consults (`relevo ask`), tier resolves from the candidate's `tier`, the acto
 
 Every builder runs a new process for each round, so a round may temporarily override the tier with `relevo send --tier <tier> [--allow-yolo]`. The override applies to that round only, and resets to the binding's default tier when the round completes.
 
-`relevo send --builder <token>` moves the binding to another configured candidate from this round on. It is refused while a round is open (stop it first with `relevo stop`). An explicit pick of a gated candidate is recorded and proceeds, as with `relevo bind --worktree --builder`. The binding's tier is re-derived for the new candidate. On a remote binding the server must advertise the `builder` feature.
+`relevo send --candidate <token>` moves the binding to another configured candidate from this round on. It is refused while a round is open (stop it first with `relevo stop`). An explicit pick of a gated candidate is recorded and proceeds, as with `relevo bind --worktree --candidate`. The binding's tier is re-derived for the new candidate. On a remote binding the server must advertise the `builder` feature.
 
 ### Permission-blocked exits
 
@@ -1797,7 +1797,7 @@ consults are not work in flight, so the count does not include them.
 agents; to install just this one:
 
 ```
-relevo config agents --role reviewer
+relevo config agents --agent reviewer
 ```
 
 `relevo doctor` reports whether the definition landed, on every kind.
@@ -1929,7 +1929,7 @@ expired gate keeps no expiry time, so it counts as an event with no duration.
 ### Consult candidates
 
 `relevo ask --actor reviewer` resolves the reviewer actor and picks from its
-`candidates` list, by the same rule as `--builder`.
+`candidates` list, by the same rule as `--candidate`.
 
 In the actors section:
 
@@ -1984,7 +1984,7 @@ and `relevo ask` from -- and relevo does not pick its harness or start it. What
 relevo provides is the definition, so the same architect runs on any kind:
 
 ```
-relevo config agents --role architect
+relevo config agents --agent architect
 ```
 
 (`relevo config agents` with no flags writes it too.)
@@ -2167,14 +2167,14 @@ relaying stops until you point it at a new builder:
 
 ```bash
 relevo bind --resume --name N --rebind                                       # start a fresh builder, picked by the actor's order
-relevo bind --resume --name N --builder agy/google/gemini-3.8-flash-high     # start a fresh builder, naming it
+relevo bind --resume --name N --candidate agy/google/gemini-3.8-flash-high     # start a fresh builder, naming it
 ```
 
 The binding keeps its name, round number, round log, working directory, and diff
 baseline. The replacement builder is started with its agent on the launch line,
 like any builder relevo spawns. With `--rebind` the candidate is resolved through
 the builder actor's candidate list and the ledger, and the pick is logged, exactly as a fresh
-bind with `--builder` omitted. Relevo does not automatically re-send the current
+bind with `--candidate` omitted. Relevo does not automatically re-send the current
 plan: it prints the `relevo send` command pointing at the staged plan so you can
 hand over the round when ready.
 

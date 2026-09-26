@@ -15,7 +15,7 @@ round's report is printed by relevo wait too.
 
 Act on the wait's output after every wait exit except WaitTimeout.
 
-  - Report text: a builder's round closed. Run the project's check command
+  - Report text: a runner's round closed. Run the project's check command
     and compare the diff against the plan before calling done -- do not call
     done on the report's arrival alone.
   - A needs-you outcome: relevo wait's own line gives the reason; run
@@ -37,7 +37,7 @@ Three verbs are tools here, callable directly instead of through the shell:
   - status(name?, all?): one binding, or every binding on this planner, or
     (all: true) every binding relevo knows about.
   - send(name, file, tier?, verify?, regate?, dry_run?): hand a binding's
-    builder a new round.
+    runner a new round.
   - done(name): mark a binding done once its round is verified.
 
 Every other relevo verb -- bind, show, wait, gate, config, and the rest --
