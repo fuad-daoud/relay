@@ -263,6 +263,7 @@ func TestArtifactsOverTheCapHoldTheSeal(t *testing.T) {
 
 	writeReaderStream(t, rt, "reader-bind", 1, readerCloseFinal)
 	touch(t, rt.Store.DonePath("reader-bind", 1))
+	exitReaderRunner(t, rt, b)
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {

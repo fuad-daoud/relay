@@ -971,6 +971,57 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) without a report", codeText), false, true)
 }
 
+// readerFinalMessageGrace is how long a reader round whose marker is present
+// waits for its runner to exit before relevo gives up on it: a runner writes
+// its final message just after the marker and then exits, so two minutes is
+// generous, and a hung one must not hold the round forever.
+const readerFinalMessageGrace = 2 * time.Minute
+
+// readerSummaryEarlyNote is the note a reader round closes with when its
+// runner outlived readerFinalMessageGrace: the summary is the stream as it was,
+// not a completed final message.
+const readerSummaryEarlyNote = "runner still running after its marker; summary taken early"
+
+// holdReaderOnMarker reports whether a reader round whose marker is already on
+// disk must stay open instead of closing. A reader's marker is not the end of
+// its stream: the runner writes its final message just after the marker and
+// then exits, and that message is the round's summary. So the round waits for
+// the exit -- held is true while the process is alive inside
+// readerFinalMessageGrace -- and a runner still alive after the grace is
+// stopped the way `relevo stop` stops one, with early true so the caller closes
+// on the stream as it is.
+//
+// No marker, no pid and no Runner all leave the round to the ordinary close.
+// An unreadable liveness check holds this tick, as the unmarked path treats it
+// as alive.
+func holdReaderOnMarker(ctx context.Context, rt Runtime, b store.Binding) (held, early bool, err error) {
+	if b.Builder.PID == 0 || rt.Runner == nil {
+		return false, false, nil
+	}
+	fi, serr := os.Stat(rt.Store.DonePath(b.Name, b.Round))
+	if serr != nil {
+		return false, false, nil // no marker yet: nothing to hold on
+	}
+	alive, aerr := rt.Runner.Alive(ctx, handleOf(b.Builder))
+	if aerr != nil {
+		slog.Warn("reader liveness check failed; holding the round", "binding", b.Name, "pid", b.Builder.PID, "err", aerr)
+		return true, false, nil
+	}
+	if !alive {
+		return false, false, nil
+	}
+	// A sighting: this daemon now knows the process is alive, so a later tick
+	// never classifies it as lost to a restart.
+	rt.Watched.Mark(b.Builder.PID, b.Builder.StartedAt)
+	if rt.Now().Sub(fi.ModTime()) < readerFinalMessageGrace {
+		return true, false, nil
+	}
+	if _, err := stopProcess(ctx, rt, b.Builder, "stop"); err != nil {
+		return false, false, err
+	}
+	return false, true, nil
+}
+
 // markerClose is the marker branch of reconcileHeadless: it calls
 // closeOnMarker and, when the marker is present and the gate is done, runs the
 // post-close sequence (served-round close, process clear, verify consult,
@@ -981,6 +1032,23 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 // closed and gating are reported so the caller returns exactly what the marker
 // branch does; a marker-absent read comes back unchanged with both false.
 func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, markerNote string, wantVerify bool) (store.Binding, bool, bool, error) {
+	// A reader round closes on its runner's exit, not on the marker: the final
+	// message comes after the marker, so the summary is only complete once the
+	// process has gone. While the runner is alive the round stays open; past
+	// the grace the runner is stopped and the round closes with the summary
+	// taken early.
+	if b.Shape == store.ShapeReader {
+		held, early, err := holdReaderOnMarker(ctx, rt, b)
+		if err != nil {
+			return b, false, false, err
+		}
+		if held {
+			return b, false, false, nil
+		}
+		if early {
+			markerNote = joinNotes(markerNote, readerSummaryEarlyNote)
+		}
+	}
 	base := b.RoundBaselineTree
 	next, closed, gating, rec, err := closeOnMarker(ctx, rt, tx, b, entries, markerNote)
 	if err != nil {

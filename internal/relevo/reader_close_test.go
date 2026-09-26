@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
@@ -95,9 +97,23 @@ func seedLog(t *testing.T, rt Runtime, name string, entries ...store.LogEntry) {
 	}
 }
 
-// TestReaderCloseWritesSummaryFromTheFinalMessage closes a reader round on its
-// marker and checks that summary.md holds the runner's final message, that the
-// report entry points at it, that its tail parses, and that no diff was taken.
+// exitReaderRunner makes the fake runner report the reader's process as
+// exited: a reader round closes on its runner's exit, not on its marker, so a
+// test that wants a close has to let the process go first.
+func exitReaderRunner(t *testing.T, rt Runtime, b store.Binding) {
+	t.Helper()
+	fr, ok := rt.Runner.(*fakeRunner)
+	if !ok {
+		t.Fatalf("Runtime.Runner = %T, want *fakeRunner", rt.Runner)
+	}
+	fr.alive[b.Builder.PID] = []bool{false}
+	fr.exit(b.Builder.PID, 0)
+}
+
+// TestReaderCloseWritesSummaryFromTheFinalMessage closes a reader round whose
+// runner has exited and checks that summary.md holds the runner's final
+// message, that the report entry points at it, that its tail parses, and that
+// no diff was taken.
 func TestReaderCloseWritesSummaryFromTheFinalMessage(t *testing.T) {
 	t.Parallel()
 
@@ -105,6 +121,7 @@ func TestReaderCloseWritesSummaryFromTheFinalMessage(t *testing.T) {
 	rt, b := bindReader(t, repo)
 	writeReaderStream(t, rt, "reader-bind", 1, readerCloseFinal)
 	touch(t, rt.Store.DonePath("reader-bind", 1))
+	exitReaderRunner(t, rt, b)
 
 	if _, err := reconcile(t, rt, b); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -150,6 +167,7 @@ func TestReaderCloseKeepsARunnerWrittenSummary(t *testing.T) {
 	}
 	writeReaderStream(t, rt, "reader-bind", 1, readerCloseFinal)
 	touch(t, rt.Store.DonePath("reader-bind", 1))
+	exitReaderRunner(t, rt, b)
 
 	if _, err := reconcile(t, rt, b); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -180,6 +198,7 @@ func TestReaderCloseRemovesTheScratch(t *testing.T) {
 	}
 	writeReaderStream(t, rt, "reader-bind", 1, readerCloseFinal)
 	touch(t, rt.Store.DonePath("reader-bind", 1))
+	exitReaderRunner(t, rt, b)
 
 	if _, err := reconcile(t, rt, b); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -297,5 +316,106 @@ func TestReaderRoundIsNotAnEscape(t *testing.T) {
 	writer.Shape = store.ShapeWriter
 	if got := escapeCheck(context.Background(), rt, writer, true); got != EscapeNote {
 		t.Errorf("escapeCheck(writer) = %v, want EscapeNote", got)
+	}
+}
+
+// TestReaderRoundWaitsForExitAfterMarker: a reader round's marker is not the
+// end of its stream. While its runner is alive the round stays open even though
+// the marker is present, and the next tick -- after the runner has exited and
+// the stream carries the final message -- closes it with that message as
+// summary.md.
+func TestReaderRoundWaitsForExitAfterMarker(t *testing.T) {
+	t.Parallel()
+
+	repo := readerRepo(t)
+	rt, b := bindReader(t, repo)
+	writeReaderStream(t, rt, "reader-bind", 1, readerCloseFinal)
+	touch(t, rt.Store.DonePath("reader-bind", 1))
+
+	open, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile with a live runner: %v", err)
+	}
+	if open.Round != 1 {
+		t.Fatalf("round = %d with a live runner after its marker, want the round still open on round 1", open.Round)
+	}
+	if _, err := os.Stat(rt.Store.SummaryPath("reader-bind", 1, "reviewer")); !os.IsNotExist(err) {
+		t.Errorf("summary.md was written while the runner was still alive: %v", err)
+	}
+
+	exitReaderRunner(t, rt, open)
+	closed, err := reconcile(t, rt, open)
+	if err != nil {
+		t.Fatalf("Reconcile after the runner exited: %v", err)
+	}
+	if closed.Round != 2 {
+		t.Fatalf("round = %d after the runner exited, want the round closed", closed.Round)
+	}
+	got, err := os.ReadFile(rt.Store.SummaryPath("reader-bind", 1, "reviewer"))
+	if err != nil {
+		t.Fatalf("summary.md was not written: %v", err)
+	}
+	if string(got) != readerCloseFinal {
+		t.Errorf("summary.md = %q, want the final message %q", got, readerCloseFinal)
+	}
+}
+
+// TestReaderRoundGraceClosesALingeringRunner: a runner still alive more than
+// readerFinalMessageGrace after its marker must not hold the round forever. The
+// round closes with the summary taken from the stream as it is, the note says
+// so, and the lingering process is stopped the way `relevo stop` stops one.
+func TestReaderRoundGraceClosesALingeringRunner(t *testing.T) {
+	t.Parallel()
+
+	repo := readerRepo(t)
+	rt, b := bindReader(t, repo)
+	writeReaderStream(t, rt, "reader-bind", 1, readerCloseFinal)
+	marker := rt.Store.DonePath("reader-bind", 1)
+	touch(t, marker)
+	aged := baseTime.Add(-3 * time.Minute)
+	if err := os.Chtimes(marker, aged, aged); err != nil {
+		t.Fatalf("age the marker: %v", err)
+	}
+
+	closed, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if closed.Round != 2 {
+		t.Fatalf("round = %d, want the lingering runner's round closed", closed.Round)
+	}
+	e := reportEntryFor(t, rt, "reader-bind", 1)
+	if !strings.Contains(e.Note, readerSummaryEarlyNote) {
+		t.Errorf("report note = %q, want it to contain %q", e.Note, readerSummaryEarlyNote)
+	}
+	fr, ok := rt.Runner.(*fakeRunner)
+	if !ok {
+		t.Fatalf("Runtime.Runner = %T, want *fakeRunner", rt.Runner)
+	}
+	if len(fr.kills) != 1 {
+		t.Fatalf("kills = %d, want the lingering runner stopped once", len(fr.kills))
+	}
+	if fr.kills[0].PID != b.Builder.PID {
+		t.Errorf("stopped pid = %d, want the runner's pid %d", fr.kills[0].PID, b.Builder.PID)
+	}
+}
+
+// TestWriterRoundStillClosesOnMarker: a writer is unchanged. Its report is a
+// file written before the marker, so a live process does not delay the close.
+func TestWriterRoundStillClosesOnMarker(t *testing.T) {
+	t.Parallel()
+
+	rt, b := sentBinding(t)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touch(t, rt.Store.DonePath("webshop", 1))
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("round = %d with a live runner and a marker, want the writer closed on the marker", got.Round)
 	}
 }
