@@ -341,7 +341,6 @@ type StatusLineRow struct {
 	ReportRound int    `json:"report_round,omitempty"`
 	Harness     string `json:"harness"`
 	Candidate   string `json:"candidate"`
-	Role        string `json:"role,omitempty"`
 	Waiting     string `json:"waiting"`
 	Clock       string `json:"clock"`
 	Tokens      string `json:"tokens"`
@@ -426,7 +425,6 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		ReportRound: reportRound,
 		Harness:     harness,
 		Candidate:   b.BuilderCandidate,
-		Role:        b.Role,
 		Waiting:     waiting(b),
 		Clock:       roundClock(b, now),
 		Tokens:      roundTokens(b),

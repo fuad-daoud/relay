@@ -52,7 +52,7 @@ func TestLogLineLateSuffix(t *testing.T) {
 	late := base
 	late.Late = true
 
-	wantNotLate := ts.Local().Format("2006-01-02 15:04:05") + "  round 4   to_builder plan      /p/004-report.md nudge"
+	wantNotLate := ts.Local().Format("2006-01-02 15:04:05") + "  round 4   to_runner  plan      /p/004-report.md nudge"
 	if got := LogLine(notLate); got != wantNotLate {
 		t.Errorf("\n got  %q\n want %q", got, wantNotLate)
 	}

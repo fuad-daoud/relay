@@ -352,10 +352,9 @@ function stateWord(row: any): StateWord {
   return { word: "", tone: "none" };
 }
 
-// §4.1: the actor a row names: the document's actor, else the row's role for an
-// older binary, else builder.
+// §4.1: the actor a row names: the document's actor, else builder.
 function rowActor(row: any): string {
-  return row?.actor || row?.role || "builder";
+  return row?.actor || "builder";
 }
 
 // §4.1: toneColor maps a StateWord tone to a theme colour. The quiet choice
@@ -1443,7 +1442,7 @@ export default {
           if (tsMatch) {
             const ts = tsMatch[1];
             const rest = tsMatch[2];
-            const dirMatch = rest.match(/^(.*?\b)(to_builder|to_planner)(\b.*)$/);
+            const dirMatch = rest.match(/^(.*?\b)(to_runner|to_planner)(\b.*)$/);
             if (dirMatch) {
               return (
                 <box flexDirection="row">
@@ -1461,7 +1460,7 @@ export default {
               </box>
             );
           }
-          const dirMatch = line.match(/^(.*?\b)(to_builder|to_planner)(\b.*)$/);
+          const dirMatch = line.match(/^(.*?\b)(to_runner|to_planner)(\b.*)$/);
           if (dirMatch) {
             return (
               <box flexDirection="row">

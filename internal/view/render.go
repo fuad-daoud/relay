@@ -146,7 +146,10 @@ func writeBuilderLine(sb *strings.Builder, b BindingStatus) {
 		fmt.Fprintf(sb, "  runner  %-14s %-8s %-9s `%s`",
 			"remote", b.BuilderKind, b.BuilderStatus, builderLabel)
 	}
-	if b.Role != "" {
+	// A builder row is the common case: the actor is always set now, so
+	// printing it would end every row in "actor builder". Only a row whose
+	// runner plays some other actor names it here.
+	if b.Role != "builder" {
 		fmt.Fprintf(sb, "   actor %s", b.Role)
 	}
 	if b.Switches > 0 {

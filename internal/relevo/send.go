@@ -634,7 +634,7 @@ type DryRun struct {
 	// candidate is no longer configured, in which case Candidate is shown.
 	CandidateName string   `json:"candidate_name,omitempty"`
 	Where         string   `json:"where"`               // headless: the harness binary + first arg; remote: "server contabo, branch relevo/x @ <sha12>; server not contacted"
-	GateNote      string   `json:"gate_note,omitempty"` // "rate-limited until 00:26; the daemon would switch after start" / "roles missing: ...; the daemon would switch after start"
+	GateNote      string   `json:"gate_note,omitempty"` // "rate-limited until 00:26; the daemon would switch after start" / "agents missing: ...; the daemon would switch after start"
 	PlanPath      string   `json:"plan_path"`
 	PlanFrom      string   `json:"plan_from"`
 	PlanBytes     int64    `json:"plan_bytes"`

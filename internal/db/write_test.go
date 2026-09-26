@@ -166,6 +166,35 @@ func TestUpsertRoundReplacesColumns(t *testing.T) {
 	}
 }
 
+// TestUpsertRoundEmptyActorIsBuilder pins that a caller that leaves Round.Actor
+// empty stores the builder actor, the column's own default, on both the insert
+// and the update path.
+func TestUpsertRoundEmptyActorIsBuilder(t *testing.T) {
+	d := openTestDB(t)
+	bindingID, err := d.UpsertBinding(newTestBinding("webshop", time.Now()))
+	if err != nil {
+		t.Fatalf("UpsertBinding: %v", err)
+	}
+
+	if _, err := d.UpsertRound(newTestRound(bindingID, 1, OutcomeOpen)); err != nil {
+		t.Fatalf("UpsertRound (insert): %v", err)
+	}
+	if _, err := d.UpsertRound(newTestRound(bindingID, 1, OutcomeReported)); err != nil {
+		t.Fatalf("UpsertRound (update): %v", err)
+	}
+
+	rounds, err := d.Rounds(bindingID)
+	if err != nil {
+		t.Fatalf("Rounds: %v", err)
+	}
+	if len(rounds) != 1 {
+		t.Fatalf("Rounds = %d rows, want 1", len(rounds))
+	}
+	if rounds[0].Actor != "builder" {
+		t.Errorf("Actor = %q, want builder for an empty Round.Actor", rounds[0].Actor)
+	}
+}
+
 func TestAppendEventsIgnoresKnownSeq(t *testing.T) {
 	d := openTestDB(t)
 	bindingID, err := d.UpsertBinding(newTestBinding("webshop", time.Now()))

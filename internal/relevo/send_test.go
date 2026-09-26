@@ -877,7 +877,7 @@ func TestRenderDryRunShape(t *testing.T) {
 		},
 	}
 	want := `would send round 5 to api-auth
-  builder   headless gemini-3.8-flash-high
+  runner    headless gemini-3.8-flash-high
   where     /usr/bin/agy -p
   tier      yolo
   plan      /home/p/.local/state/relevo/api-auth/005-plan.md  (staged from ./plan.md, 4.1 KiB)
@@ -893,7 +893,7 @@ func TestRenderDryRunShape(t *testing.T) {
 
 	// The seven labelled lines appear in this order.
 	at := -1
-	for _, label := range []string{"builder", "where", "tier", "plan", "report", "marker", "prompt"} {
+	for _, label := range []string{"runner", "where", "tier", "plan", "report", "marker", "prompt"} {
 		i := strings.Index(got, "  "+label+" ")
 		if i < 0 {
 			t.Fatalf("no %q line in:\n%s", label, got)

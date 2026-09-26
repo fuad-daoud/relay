@@ -79,7 +79,7 @@ func cmdAsk(args []string) error {
 	}
 
 	if *round > 0 {
-		fmt.Printf("asked round %d's builder (%s session %s) on %s (pid %d)\nfindings: %s\n",
+		fmt.Printf("asked round %d's runner (%s session %s) on %s (pid %d)\nfindings: %s\n",
 			*round, res.Consult.Endpoint.Kind, res.Consult.Endpoint.SessionID, res.Binding,
 			res.Consult.Endpoint.PID, delivery.FindingsCommand(res.Binding, res.Consult.Round, res.Consult.ID))
 		return nil

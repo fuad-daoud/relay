@@ -207,6 +207,28 @@ func TestContractStatus(t *testing.T) {
 	}
 }
 
+// TestStatusDocumentAlwaysNamesTheActor pins that a builder binding's status
+// JSON names its actor, "builder", and carries no pre-A4 role or builder_* key.
+func TestStatusDocumentAlwaysNamesTheActor(t *testing.T) {
+	fx := seedStatusFixture(t)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"status", "--name", "webshop", "--json"})
+	})
+	if err != nil {
+		t.Fatalf("status --json: %v (stderr: %s)", err, stderr)
+	}
+	doc := string(normalize(stdout, fx.roots...))
+	if !strings.Contains(doc, `"actor": "builder"`) {
+		t.Errorf("status document = %s, want actor \"builder\"", doc)
+	}
+	for _, key := range []string{`"role"`, `"builder_candidate"`, `"builder_name"`, `"builder_kind"`, `"builder_status"`, `"builder_definition"`, `"builder_definition_custom"`} {
+		if strings.Contains(doc, key) {
+			t.Errorf("status document still carries %s:\n%s", key, doc)
+		}
+	}
+}
+
 func TestContractStatusLine(t *testing.T) {
 	fx := seedStatusFixture(t)
 	t.Setenv("RELEVO_PLANNER", fx.plannerID)

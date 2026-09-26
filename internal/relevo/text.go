@@ -80,7 +80,7 @@ func StopText(name string, res StopResult) string {
 func RenderDryRun(d DryRun) string {
 	lines := []string{
 		fmt.Sprintf("would send round %d to %s", d.Round, d.Name),
-		fmt.Sprintf("  %-8s  %s", "builder", dryRunBuilderLine(d)),
+		fmt.Sprintf("  %-8s  %s", "runner", dryRunBuilderLine(d)),
 		fmt.Sprintf("  %-8s  %s", "where", d.Where),
 		fmt.Sprintf("  %-8s  %s", "tier", d.Tier),
 		fmt.Sprintf("  %-8s  %s  (staged from %s, %s)", "plan", d.PlanPath, d.PlanFrom, view.HumanBytes(d.PlanBytes)),
