@@ -34,8 +34,6 @@ linters:
         text: '.*'
       - path: '^internal/db/'
         text: '.*'
-      - path: '^internal/doctor/'
-        text: '.*'
       - path: '^internal/e2e/'
         text: '.*'
       - path: '^internal/harness/'

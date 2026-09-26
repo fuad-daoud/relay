@@ -12,9 +12,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/release"
 )
 
-// The relevo Claude Code plugin's install facts (§4.8 rows 1-2). Both live
-// under the user's home, resolved through $HOME so cmd/relevo's TestMain
-// isolation holds.
+// The relevo Claude Code plugin's install facts, resolved through $HOME so
+// cmd/relevo's TestMain isolation holds.
 const (
 	claudeSettingsRel     = ".claude/settings.json"
 	claudePluginStateRel  = ".claude/plugins/installed_plugins.json"
@@ -25,16 +24,14 @@ const (
 )
 
 // ChildProcess is one entry of a host process's child table: the pid and its
-// argv, as /proc/<pid>/task/*/children plus /proc/<pid>/cmdline (or `ps
-// --ppid`) report them.
+// argv, as /proc/<pid>/task/*/children plus /proc/<pid>/cmdline report them.
 type ChildProcess struct {
 	PID  int
 	Args []string
 }
 
 // HasMCPChild reports whether any of a host process's children is a `relevo
-// mcp` process (§4.8's second planner FAIL). Pure: the caller reads the OS
-// and passes the table, so the rule is testable without a live process tree.
+// mcp` process. Pure, so it is testable without a live process tree.
 func HasMCPChild(children []ChildProcess) bool {
 	for _, c := range children {
 		if len(c.Args) == 0 {
@@ -52,47 +49,26 @@ func HasMCPChild(children []ChildProcess) bool {
 	return false
 }
 
-// PlannerCheckInput is everything §4.8's planner rows need that doctor.Run
-// cannot read itself: it has no planner registry, no environment and no
-// working directory. cmd/relevo gathers it; the rules live here.
+// PlannerCheckInput is everything the planner rows need that doctor.Run
+// cannot read itself. cmd/relevo gathers it; the rules live here.
 type PlannerCheckInput struct {
-	// Claude is true when a claude candidate or a claude planner record
-	// exists. The two plugin rows exist only then (§4.8).
-	Claude bool
-	// Home is the home directory the plugin files are read under: $HOME, so
-	// a test (and cmd/relevo's TestMain) can point it at a temp dir.
-	Home string
-	// Repo is the project directory whose .claude/settings.json is read: the
-	// repository `relevo doctor` runs in.
-	Repo string
-	// Detected is planner.Detect's answer: relevo is running inside a Claude
-	// Code session, which is when the planner row exists.
-	Detected bool
-	// Resolved is the planner Resolve found for this session; nil when it
-	// found none.
-	Resolved *planner.Record
-	// Chat is the resolved planner's chatlabel.Label.String() (#386): the
-	// harness's own name for its session, read by cmd/relevo when the
-	// command runs. "" when the label is empty or Resolved is nil.
-	Chat string
-	// ClaimLive is true when a live channel claim exists for Resolved.
-	ClaimLive bool
-	// MCPChild is true when a `relevo mcp` process is a child of the
-	// planner's host process, which is how this session reaches the channel
-	// at all (§4.8). False reads as FAIL: without it, push never arrives.
-	MCPChild bool
-	// Stale names the planner records seen more than seven days ago that no
-	// live binding names.
-	Stale []string
-	// Running is the relevo binary's own version (buildVersion()), compared
-	// with the installed plugin's by the plugin version row. "" skips it.
-	Running string
+	Claude bool   // a claude candidate or planner record exists; gates the plugin rows
+	Home   string // $HOME, so a test can point it at a temp dir
+	Repo   string // the repository `relevo doctor` runs in
+
+	Detected  bool            // planner.Detect: relevo runs inside a Claude Code session
+	Resolved  *planner.Record // the planner Resolve found; nil on a miss
+	Chat      string          // the resolved planner's chatlabel, "" when Resolved is nil
+	ClaimLive bool            // a live channel claim exists for Resolved
+	MCPChild  bool            // a `relevo mcp` process is a child of the planner's host; false is FAIL
+
+	Stale   []string // planner records seen over 7 days ago with no live binding
+	Running string   // relevo's own version, compared with the installed plugin's; "" skips it
 }
 
-// PlannerChecks reports §4.8's rows: the relevo plugin enabled in Claude Code,
-// the installed plugin's SessionStart hook, this session's planner, and the
-// stale-record note. Leaving every field zero reports nothing, so a caller
-// with no Claude Code candidate gets exactly the report it had before.
+// PlannerChecks reports the plugin rows for Claude Code, the installed
+// plugin's SessionStart hook, this session's planner, and the stale-record
+// note. Leaving every field zero reports nothing.
 func PlannerChecks(in PlannerCheckInput) []Check {
 	var checks []Check
 
@@ -103,34 +79,7 @@ func PlannerChecks(in PlannerCheckInput) []Check {
 	}
 
 	if in.Detected {
-		switch {
-		case in.Resolved == nil:
-			checks = append(checks, Check{
-				Name:     "planner",
-				Severity: SevFail,
-				Detail:   "no relevo planner resolved for this Claude Code session",
-				Fix:      "relevo planner init (or enable the relevo plugin so its SessionStart hook runs)",
-			})
-		case !in.MCPChild:
-			checks = append(checks, Check{
-				Name:     "planner",
-				Severity: SevFail,
-				Detail:   fmt.Sprintf("planner %s: no relevo mcp process is a child of its host process; reports never arrive", plannerRef(in.Resolved, in.Chat)),
-				Fix:      "enable the relevo plugin so relevo mcp starts with the session (relevo doctor)",
-			})
-		case !in.ClaimLive:
-			checks = append(checks, Check{
-				Name:     "planner",
-				Severity: SevInfo,
-				Detail:   fmt.Sprintf("planner %s: tools mode: reports arrive by background wait. For push, launch with `--dangerously-load-development-channels plugin:relevo@relevo`, or have an org admin add relevo to `allowedChannelPlugins`", plannerRef(in.Resolved, in.Chat)),
-			})
-		default:
-			checks = append(checks, Check{
-				Name:     "planner",
-				Severity: SevOK,
-				Detail:   fmt.Sprintf("%s; channel claim live", plannerRef(in.Resolved, in.Chat)),
-			})
-		}
+		checks = append(checks, plannerSessionCheck(in))
 	}
 
 	if len(in.Stale) > 0 {
@@ -145,9 +94,41 @@ func PlannerChecks(in PlannerCheckInput) []Check {
 	return checks
 }
 
-// plannerRef renders a planner record for a doctor detail: its name and id,
-// with the harness's own chat label appended when cmd/relevo resolved one
-// (#386). An empty chat leaves today's "name (id)" byte-identical.
+// plannerSessionCheck is the planner row for a detected Claude Code session:
+// FAIL when Resolve missed or no relevo mcp child reaches the channel, INFO
+// while push is unavailable (tools mode), OK once the channel claim is live.
+func plannerSessionCheck(in PlannerCheckInput) Check {
+	switch {
+	case in.Resolved == nil:
+		return Check{
+			Name:     "planner",
+			Severity: SevFail,
+			Detail:   "no relevo planner resolved for this Claude Code session",
+			Fix:      "relevo planner init (or enable the relevo plugin so its SessionStart hook runs)",
+		}
+	case !in.MCPChild:
+		return Check{
+			Name:     "planner",
+			Severity: SevFail,
+			Detail:   fmt.Sprintf("planner %s: no relevo mcp process is a child of its host process; reports never arrive", plannerRef(in.Resolved, in.Chat)),
+			Fix:      "enable the relevo plugin so relevo mcp starts with the session (relevo doctor)",
+		}
+	case !in.ClaimLive:
+		return Check{
+			Name:     "planner",
+			Severity: SevInfo,
+			Detail:   fmt.Sprintf("planner %s: tools mode: reports arrive by background wait. For push, launch with `--dangerously-load-development-channels plugin:relevo@relevo`, or have an org admin add relevo to `allowedChannelPlugins`", plannerRef(in.Resolved, in.Chat)),
+		}
+	default:
+		return Check{
+			Name:     "planner",
+			Severity: SevOK,
+			Detail:   fmt.Sprintf("%s; channel claim live", plannerRef(in.Resolved, in.Chat)),
+		}
+	}
+}
+
+// plannerRef renders "name (id)", with the chat label appended when non-empty.
 func plannerRef(rec *planner.Record, chat string) string {
 	if chat == "" {
 		return rec.Name + " (" + rec.ID + ")"
@@ -155,9 +136,8 @@ func plannerRef(rec *planner.Record, chat string) string {
 	return rec.Name + " (" + rec.ID + ") · " + chat
 }
 
-// pluginEnabledCheck is §4.8's first row: FAIL when a claude candidate or
-// planner record exists and neither the user's nor the repo's settings.json
-// has enabledPlugins["relevo@relevo"] == true.
+// pluginEnabledCheck is the first plugin row: FAIL unless the user's or the
+// repo's settings.json has enabledPlugins["relevo@relevo"] == true.
 func pluginEnabledCheck(home, repo string) Check {
 	for _, path := range []string{
 		filepath.Join(home, claudeSettingsRel),
@@ -179,8 +159,8 @@ func pluginEnabledCheck(home, repo string) Check {
 	}
 }
 
-// pluginEnabled reports whether a settings.json enables relevo@relevo. Anything
-// it cannot parse reads as not enabled, which is the FAIL the fix acts on.
+// pluginEnabled reports whether a settings.json enables relevo@relevo; an
+// unparseable one reads as not enabled.
 func pluginEnabled(raw []byte) bool {
 	var s struct {
 		EnabledPlugins map[string]json.RawMessage `json:"enabledPlugins"`
@@ -192,11 +172,9 @@ func pluginEnabled(raw []byte) bool {
 	return ok && bytes.Equal(bytes.TrimSpace(v), []byte("true"))
 }
 
-// pluginHookCheck is §4.8's second row: FAIL when the installed plugin has no
-// SessionStart hook running `relevo planner init`. A missing
-// installed_plugins.json, a plugin that cannot be found, or a plugin with no
-// hooks.json all read `not checked` (OK), never FAIL: relevo cannot establish
-// the fact, and the row's fix would be a guess.
+// pluginHookCheck is the second plugin row: FAIL when the installed plugin
+// has no SessionStart hook running `relevo planner init`. Anything relevo
+// cannot establish reads `not checked` (OK), never FAIL.
 func pluginHookCheck(home string) Check {
 	raw, err := os.ReadFile(filepath.Join(home, claudePluginStateRel))
 	if err != nil {
@@ -231,14 +209,8 @@ func pluginHookCheck(home string) Check {
 }
 
 // pluginVersionCheck compares the installed relevo@* plugin's version with
-// the running binary's release version. Advisory: the MCP server is the
-// binary on PATH, so a stale plugin serves current tools -- what it
-// carries stale is its manifest and hooks.json, whose concrete symptom
-// the plugin hook row already fails.
-//
-// Every fact relevo cannot prove reads `not checked` (OK), never a warning:
-// a missing or unreadable file, no relevo entry, and a version either side
-// of the comparison cannot parse all take that route.
+// the running binary's. Advisory only: the MCP server runs the binary on
+// PATH regardless. Every fact relevo cannot prove reads `not checked` (OK).
 func pluginVersionCheck(home, running string) Check {
 	const name = "plugin version"
 
@@ -251,10 +223,7 @@ func pluginVersionCheck(home, running string) Check {
 		return Check{Name: name, Severity: SevOK, Detail: "not checked (no readable ~/" + claudePluginStateRel + ")"}
 	}
 
-	// Claude Code's private shape:
-	// {"version":2,"plugins":{"relevo@relevo":[{"version":"0.8.0",...}]}}.
-	// A small struct, not installedPluginDirs: that scans every string for
-	// a path and cannot yield a version.
+	// {"version":2,"plugins":{"relevo@relevo":[{"version":"0.8.0",...}]}}
 	var state struct {
 		Plugins map[string][]struct {
 			Version string `json:"version"`
@@ -270,8 +239,7 @@ func pluginVersionCheck(home, running string) Check {
 		if at <= 0 || key[:at] != "relevo" || len(entries) == 0 {
 			continue
 		}
-		// Several entries for one key: the first is the one to report.
-		plugin, found = entries[0].Version, true
+		plugin, found = entries[0].Version, true // several entries: report the first
 		break
 	}
 	if !found {
@@ -283,8 +251,7 @@ func pluginVersionCheck(home, running string) Check {
 	if !pok || !rok {
 		return Check{Name: name, Severity: SevOK, Detail: "not checked (relevo is " + running + ")"}
 	}
-	// Major.Minor.Patch only: Suffix is ignored, so v0.8.0-15-gd664545
-	// matches 0.8.0.
+	// Major.Minor.Patch only, so v0.8.0-15-gd664545 matches 0.8.0.
 	if pv.Major == rv.Major && pv.Minor == rv.Minor && pv.Patch == rv.Patch {
 		return Check{Name: name, Severity: SevOK, Detail: "plugin " + plugin + " matches relevo"}
 	}
@@ -296,11 +263,9 @@ func pluginVersionCheck(home, running string) Check {
 	}
 }
 
-// installedPluginDirs finds the installed plugin directories the state file
-// names: every absolute path under it that exists and is a directory, and
-// that mentions relevo. The file's exact schema is Claude Code's to change, so
-// this walks the decoded document for strings instead of binding to a shape;
-// anything it cannot find leaves the caller reporting `not checked`.
+// installedPluginDirs finds every absolute, existing directory path
+// mentioning relevo inside the state file, walking the decoded document for
+// strings rather than binding to Claude Code's schema for it.
 func installedPluginDirs(raw []byte) []string {
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {
@@ -320,9 +285,7 @@ func installedPluginDirs(raw []byte) []string {
 }
 
 // hookRunsPlannerInit reports whether a hooks.json has a SessionStart entry
-// whose command runs `relevo planner init`. Decoded and walked rather than
-// substring-matched, so an unrelated mention of "planner init" in another
-// event's command does not count.
+// whose command runs `relevo planner init`.
 func hookRunsPlannerInit(raw []byte) bool {
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {
@@ -352,8 +315,6 @@ func hasSessionStartPlannerInit(v any) bool {
 	return false
 }
 
-// jsonContains reports whether any string inside v contains want. Marshal
-// cannot fail on a decoded document, and its error reads as "no match".
 func jsonContains(v any, want string) bool {
 	switch t := v.(type) {
 	case string:
@@ -365,7 +326,6 @@ func jsonContains(v any, want string) bool {
 	return false
 }
 
-// jsonStrings collects every string in a decoded JSON document.
 func jsonStrings(v any) []string {
 	switch t := v.(type) {
 	case string:

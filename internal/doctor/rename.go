@@ -7,20 +7,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
-// RenameCheck is the one global `rename` row (#292 §3): what relay-era state // name-guard: legacy
-// this machine still has, and what to do about it. It is pure -- the caller
-// supplies the roots and their status -- and it never errors, because a probe
-// relevo cannot complete is the caller's row to build (#292 §6).
+// RenameCheck is the one global `rename` row: what relay-era state // name-guard: legacy
+// this machine still has, and what to do about it. Pure, and never errors.
 //
-// Three states, in this order:
-//
-//	Unmigrated  SevFail  an old root with no new one: relevo cannot run safely beside it
-//	Stale       SevWarn  an old root beside its new one: something relay-era recreated it // name-guard: legacy
+//	Unmigrated  SevFail  an old root with no new one
+//	Stale       SevWarn  an old root beside its new one // name-guard: legacy
 //	neither     SevOK    no relay-era state // name-guard: legacy
 //
-// Unmigrated is tested first: an install can be unmigrated in one root and
-// stale in the other at the same time, and it is the unmigrated root that must
-// stop relevo, so its failure wins over the warning.
+// Unmigrated is tested first: it is the root that must stop relevo, so its
+// failure wins over a stale warning elsewhere.
 func RenameCheck(r legacy.Roots, s legacy.Status) Check {
 	c := Check{Name: "rename", Group: ""}
 
@@ -38,9 +33,7 @@ func RenameCheck(r legacy.Roots, s legacy.Status) Check {
 		return c
 	}
 
-	// The first stale pair, state before config: one row names one pair, and
-	// the state root is the one whose contents matter.
-	var old, new string
+	var old, new string // the first stale pair, state before config
 	switch {
 	case s.OldState && s.NewState:
 		old, new = r.OldState, r.NewState

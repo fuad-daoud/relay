@@ -7,8 +7,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestBindingRoleChecks pins #382 §5.4: a binding whose role roles.json no
-// longer defines gets one FAIL row naming the binding and the role, a builder
+// TestBindingRoleChecks pins that a binding whose role roles.json no longer
+// defines gets one FAIL row naming the binding and the role, a builder
 // binding ("") is always defined, and a DONE binding is not reported.
 func TestBindingRoleChecks(t *testing.T) {
 	known := func(role string) bool { return role == "builder" || role == "ui-builder" }
