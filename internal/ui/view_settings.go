@@ -30,7 +30,7 @@ type settingsView struct {
 	doc     relevo.ConfigDoc
 	err     error // the last ConfigDoc error; shown centred like candidates' error state
 	loaded  bool
-	cur     int // cursor over the 17 settings, never a group rule
+	cur     int // cursor over the 18 settings, never a group rule
 	top     int // first body line shown (page follows the cursor)
 	actions bool
 }

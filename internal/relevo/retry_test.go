@@ -37,7 +37,7 @@ func TestRetryPlanReadsSealed(t *testing.T) {
 	}
 
 	if err := st.WithLock(func(tx *store.Tx) error {
-		sealRounds(st, tx, b)
+		sealRounds(st, tx, b, rt.Policy.ArtifactMaxBytes())
 		return nil
 	}); err != nil {
 		t.Fatalf("sealRounds: %v", err)

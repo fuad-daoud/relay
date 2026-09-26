@@ -320,7 +320,7 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 		// P3c §4.3: before Reconcile, seal every closed round whose files
 		// nothing can still read. Errors are logged per binding and never
 		// fail the tick.
-		sealRounds(d.rt.Store, tx, loaded)
+		sealRounds(d.rt.Store, tx, loaded, d.rt.Policy.ArtifactMaxBytes())
 
 		fresh := backfillPlannerID(d.rt, loaded)
 
@@ -458,7 +458,11 @@ func sweepReaderScratch(ctx context.Context, rt Runtime) {
 // the round's NNN-* files become round_file rows and then leave the binding
 // directory. It never fails the tick -- each error is logged and the next
 // tick retries, which is also what makes a failed removal harmless.
-func sealRounds(st *store.Store, tx *store.Tx, b store.Binding) {
+//
+// artifactMaxBytes is policy.artifact_max_mb in bytes: a round whose artifact
+// directory is over it is left on disk (§3.4), so nothing is dropped, until a
+// later tick sees the cap raised.
+func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes int64) {
 	rounds, err := st.RoundsOnDisk(b.Name)
 	if err != nil {
 		slog.Warn("seal: list rounds", "binding", b.Name, "err", err)
@@ -467,6 +471,10 @@ func sealRounds(st *store.Store, tx *store.Tx, b store.Binding) {
 	for _, r := range rounds {
 		drained := st.StreamDrained(b, r)
 		if !store.Sealable(b, r, drained) {
+			continue
+		}
+		if over, total := artifactCapExceeded(st, b, r, artifactMaxBytes); over {
+			slog.Info("seal held: artifacts over the cap", "binding", b.Name, "round", r, "bytes", total)
 			continue
 		}
 		n, err := tx.SealRound(b.Name, r)

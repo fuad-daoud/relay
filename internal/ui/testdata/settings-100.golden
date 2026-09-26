@@ -1,12 +1,13 @@
   ◆ relevo    settings                                                         v0.13.0-28    14:02  
                                                                                                     
-   17 settings   3 set                                                                              
+   18 settings   3 set                                                                              
                                                                                                     
    SETTING                                         VALUE                   DEFAULT                  
-   rounds ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings · 2 set   
+   rounds ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 4 settings · 2 set   
    max_switches                                    2                       2                        
    max_tier                                        yolo                    edit                     
    verify.default                                  off                     off                      
+   artifact_max_mb                                 25                      25                       
    check ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings   
    gate.default                                    none                    none                     
    gate.timeout                                    10m                     10m                      
@@ -29,6 +30,5 @@
                                                                                                     
    max_switches   2                                                                                 
    How many times relevo may move one round to the next candidate after a rate limit or a failed    
-   start before it asks you. 0 means it asks at once.                                               
 
  enter  edit      r  reset      :  command      ?  all keys      q  quit                            

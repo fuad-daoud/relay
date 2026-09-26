@@ -362,6 +362,9 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 }
 
 func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord, usage *usage.Usage, rusage *store.Rusage, prior *usage.Tokens) (store.Binding, error) {
+	// The round this close is closing: the cap check below sizes that round's
+	// artifact directory after b.Round has advanced.
+	closedRound := b.Round
 	// A reader's report is its artifact directory's summary.md: it is written
 	// here from the runner's final message when the runner wrote none itself,
 	// and it is the path the report entry records. A writer's report is the
@@ -597,6 +600,16 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.ExploringSince = time.Time{}
 	b.StaleSince = time.Time{}
 	b.StaleNotifiedAt = time.Time{}
+
+	// §3.4: a reader round whose artifact directory is over
+	// policy.artifact_max_mb closes as usual -- the summary is written and
+	// the report is queued -- but the binding asks for a human, and nothing
+	// is deleted: sealRounds holds the round back until the cap is raised.
+	if b.Shape == store.ShapeReader {
+		if over, total := artifactCapExceeded(rt.Store, b, closedRound, rt.Policy.ArtifactMaxBytes()); over {
+			b, _ = haltBinding(ctx, rt, b, artifactCapReason(total, rt.Policy.ArtifactMaxBytes()))
+		}
+	}
 
 	return b, nil
 }

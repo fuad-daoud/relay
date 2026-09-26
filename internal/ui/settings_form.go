@@ -184,7 +184,9 @@ func newSettingsForm(env Env, doc relevo.ConfigDoc, form, focusKey string) setti
 			value: func(sel int) any { return sel == 0 },
 		}
 
-		fields = []settingField{msField, tierField, verifyField}
+		amsField := textSettingField("artifact_max_mb", byKey("artifact_max_mb"), parseNonNegInt("a whole number, 0 or more"))
+
+		fields = []settingField{msField, tierField, verifyField, amsField}
 		switch focusKey {
 		case "max_switches":
 			focus = 0
@@ -192,6 +194,8 @@ func newSettingsForm(env Env, doc relevo.ConfigDoc, form, focusKey string) setti
 			focus = 1
 		case "verify.default":
 			focus = 2
+		case "artifact_max_mb":
+			focus = 3
 		}
 
 	case "check":

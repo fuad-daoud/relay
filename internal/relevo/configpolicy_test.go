@@ -27,39 +27,44 @@ func TestSettings(t *testing.T) {
 			PolicyRaw: json.RawMessage(raw),
 		}
 		settings := Settings(doc, 22)
-		if len(settings) != 17 {
-			t.Fatalf("len(settings) = %d, want 17", len(settings))
+		if len(settings) != 18 {
+			t.Fatalf("len(settings) = %d, want 18", len(settings))
 		}
 
-		// Rows 1, 2 and 14 are Set (1-based: indices 0, 1, 13)
+		// Rows 1, 2 and 15 are Set (1-based: indices 0, 1, 14)
 		for i, s := range settings {
-			wantSet := (i == 0 || i == 1 || i == 13)
+			wantSet := (i == 0 || i == 1 || i == 14)
 			if s.Set != wantSet {
 				t.Errorf("row %d (%s).Set = %v, want %v", i+1, s.Key, s.Set, wantSet)
 			}
 		}
 
 		// serve.scope reads slice relevo.slice
-		if settings[13].Key != "serve.scope" || settings[13].Value != "slice relevo.slice" {
-			t.Errorf("serve.scope value = %q, want %q", settings[13].Value, "slice relevo.slice")
+		if settings[14].Key != "serve.scope" || settings[14].Value != "slice relevo.slice" {
+			t.Errorf("serve.scope value = %q, want %q", settings[14].Value, "slice relevo.slice")
 		}
 
 		// serve.max_builders reads 21 / 21
-		if settings[12].Key != "serve.max_builders" || settings[12].Value != "21" || settings[12].Default != "21" {
-			t.Errorf("serve.max_builders = %s / %s, want 21 / 21", settings[12].Value, settings[12].Default)
+		if settings[13].Key != "serve.max_builders" || settings[13].Value != "21" || settings[13].Default != "21" {
+			t.Errorf("serve.max_builders = %s / %s, want 21 / 21", settings[13].Value, settings[13].Default)
 		}
 
 		// max_tier reads yolo / edit
 		if settings[1].Key != "max_tier" || settings[1].Value != "yolo" || settings[1].Default != "edit" {
 			t.Errorf("max_tier = %s / %s, want yolo / edit", settings[1].Value, settings[1].Default)
 		}
+
+		// artifact_max_mb is unset here, so it reads its 25 / 25 default
+		if settings[3].Key != "artifact_max_mb" || settings[3].Value != "25" || settings[3].Default != "25" {
+			t.Errorf("artifact_max_mb = %s / %s, want 25 / 25", settings[3].Value, settings[3].Default)
+		}
 	})
 
 	t.Run("empty policy", func(t *testing.T) {
 		doc := ConfigDoc{}
 		settings := Settings(doc, 4)
-		if len(settings) != 17 {
-			t.Fatalf("len(settings) = %d, want 17", len(settings))
+		if len(settings) != 18 {
+			t.Fatalf("len(settings) = %d, want 18", len(settings))
 		}
 		for i, s := range settings {
 			if s.Set {

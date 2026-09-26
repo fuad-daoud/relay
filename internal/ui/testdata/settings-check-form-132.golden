@@ -1,12 +1,12 @@
   ◆ relevo    settings                                                                                         v0.13.0-28    14:02  
                                                                                                                                     
-   17 settings   3 set                                                                                                              
-                                                                                                                                    
+   18 settings   3 set                                                                                                              
    SETTING                                                                         VALUE                   DEFAULT                  
-   rounds ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings · 2 set   
+   rounds ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 4 settings · 2 set   
    max_switches                                                                    2                       2                        
    max_tier                                                                        yolo                    edit                     
-   verify.default  ╭─ check ────────────────────────────────────────────────────────────────────────────────────╮                   
+   verify.default                                                                  off                     off                      
+   artifact_max_mb ╭─ check ────────────────────────────────────────────────────────────────────────────────────╮                   
    check ┈┈┈┈┈┈┈┈┈┈│                                                                                            │┈┈┈┈┈ 3 settings   
    gate.default    │ command                                     default none                                   │                   
    gate.timeout    │                                                                                            │                   
