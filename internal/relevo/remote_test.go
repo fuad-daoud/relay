@@ -159,7 +159,11 @@ func (f *fakeRemote) RoundFileFrom(ctx context.Context, server, name string, rou
 }
 
 func (f *fakeRemote) RoundBundle(ctx context.Context, server, name string, round int, since string) (io.ReadCloser, error) {
-	f.calls = append(f.calls, fmt.Sprintf("RoundBundle:%s:%s:%d:%s", server, name, round, since))
+	call := fmt.Sprintf("RoundBundle:%s:%s:%d:%s", server, name, round, since)
+	if f.beforeCall != nil {
+		f.beforeCall(call)
+	}
+	f.calls = append(f.calls, call)
 	if f.roundBundleFunc != nil {
 		return f.roundBundleFunc(ctx, server, name, round, since)
 	}
@@ -211,6 +215,8 @@ type fakeTransport struct {
 	absorbCalls   []absorbCall
 	absorbResp    map[string]string
 	absorbErr     error
+
+	beforeAbsorb func()
 }
 
 type snapshotCall struct {
@@ -234,6 +240,9 @@ func (f *fakeTransport) Snapshot(ctx context.Context, repo string, refs []string
 }
 
 func (f *fakeTransport) Absorb(ctx context.Context, repo, contentType string, body io.Reader, refs []string) (map[string]string, error) {
+	if f.beforeAbsorb != nil {
+		f.beforeAbsorb()
+	}
 	f.absorbCalls = append(f.absorbCalls, absorbCall{Repo: repo, ContentType: contentType, Refs: refs})
 	if f.absorbErr != nil {
 		return nil, f.absorbErr

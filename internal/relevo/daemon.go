@@ -278,6 +278,7 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 	// The fetch runs unlocked, before the critical section: a slow or dead
 	// server must not hold the state lock against every writer.
 	pre := d.prefetchRemote(ctx, name)
+	defer pre.release()
 
 	return d.rt.Store.WithLock(func(tx *store.Tx) error {
 		loaded, err := tx.Load(name)
@@ -325,10 +326,11 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 }
 
 // prefetchRemote reads what a remote binding's next reconcile needs from the
-// server, before tickOne takes the state lock. It returns nil for anything
-// that is not a live remote binding and for any read that fails: the tick then
-// reconciles as it did before and the next one retries. It runs inside
-// tickOne's deferred recover, so a panic in the fetch is contained there.
+// server, before tickOne takes the state lock. It returns nil when the binding
+// cannot be loaded or is not a live remote binding; a failed server read
+// travels in the fetch's Err and is classified by the apply half. It runs
+// inside tickOne's deferred recover, so a panic in the fetch is contained
+// there.
 func (d *Daemon) prefetchRemote(ctx context.Context, name string) *remoteFetch {
 	if d.rt.Remote == nil {
 		return nil
