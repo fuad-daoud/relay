@@ -302,7 +302,8 @@ func importTarballLog(dtx *db.Tx, path, id string, files map[string]tarFile) err
 	return dtx.EventReplaceAll(id, evs)
 }
 
-// importTarballRoundFiles writes each NNN-* member as a round_file row.
+// importTarballRoundFiles writes each member whose leading name is NNN-* as a
+// round_file row, a nested "NNN-<actor>/<rel>" name included.
 func importTarballRoundFiles(dtx *db.Tx, id string, files map[string]tarFile) error {
 	now := time.Now().UTC()
 	for base, f := range files {
@@ -354,9 +355,10 @@ type tarFile struct {
 }
 
 // readTarFiles reads every regular member of path whose name is
-// "<top>/<base>", the flat layout tarGzDir wrote, keyed by basename, and
-// returns the top-level directory the first member named. A member over
-// maxArchiveFileBytes fails the read rather than ballooning memory.
+// "<top>/<member>", keyed by the member path below top, and returns the
+// top-level directory the first member named. The member is a flat basename or
+// a nested "NNN-<actor>/<rel>", the round_file name it imports under. A member
+// over maxArchiveFileBytes fails the read rather than ballooning memory.
 func readTarFiles(path string) (files map[string]tarFile, top string, err error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -386,8 +388,11 @@ func readTarFiles(path string) (files map[string]tarFile, top string, err error)
 
 		trimmed := strings.Trim(h.Name, "/")
 		parts := strings.SplitN(trimmed, "/", 2)
-		if len(parts) != 2 || parts[1] == "" || strings.Contains(parts[1], "/") {
-			// Not "<name>/<file>", or nested deeper: not a member we understand.
+		if len(parts) != 2 || parts[1] == "" || containsDotDot(parts[1]) {
+			// Not "<name>/<member>", or a path that escapes: not a member we
+			// understand. The member below <name> may be nested
+			// ("<name>/004-reviewer/summary.md"): that rest is the round_file
+			// name it imports under.
 			continue
 		}
 		if top == "" {

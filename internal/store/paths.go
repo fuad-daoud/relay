@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -16,6 +17,108 @@ func (s *Store) roundFile(name string, round int, suffix, ext string) string {
 		ext = "." + ext
 	}
 	return filepath.Join(s.Dir(name), fmt.Sprintf("%03d-%s%s", round, suffix, ext))
+}
+
+// actorNameRe is the rule an actor name must satisfy to become a directory
+// name: the cockpit spec's agent key, with no slash and no leading dot.
+var actorNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+
+// ArtifactDir is a round's artifact directory, <state>/<binding>/NNN-<actor>/.
+// It may hold any files, in subdirectories too; summary.md in it is the
+// runner's final message.
+//
+// An actor that cannot be a directory name is a programming error, not input:
+// the actor came from validated config, and every other helper here is total,
+// so this panics rather than returning an error.
+func (s *Store) ArtifactDir(name string, round int, actor string) string {
+	mustActor(actor)
+	return filepath.Join(s.Dir(name), fmt.Sprintf("%03d-%s", round, actor))
+}
+
+// SummaryPath is the artifact directory's final message. R4 writes it; A5 only
+// names it.
+func (s *Store) SummaryPath(name string, round int, actor string) string {
+	return filepath.Join(s.ArtifactDir(name, round, actor), "summary.md")
+}
+
+// ArtifactRel is the round_file name of a file inside a round's artifact
+// directory: "NNN-<actor>/<rel>", always with forward slashes, whatever the OS.
+func ArtifactRel(round int, actor, rel string) string {
+	mustActor(actor)
+	return fmt.Sprintf("%03d-%s/%s", round, actor, filepath.ToSlash(rel))
+}
+
+// mustActor panics on an actor that cannot name a directory.
+func mustActor(actor string) {
+	if !actorNameRe.MatchString(actor) {
+		panic(fmt.Sprintf("store: actor %q does not match %s", actor, actorNameRe))
+	}
+}
+
+// roundFileRel resolves path, which must live inside dir, into the round_file
+// name it belongs to: the flat base of a path directly in dir, or
+// "NNN-<actor>/<rel>" with forward slashes for a path inside a top-level round
+// directory. ok is false for a path outside dir, a name that is not a round
+// file, and any path containing "..".
+func roundFileRel(dir, path string) (string, bool) {
+	if containsDotDot(path) {
+		return "", false
+	}
+	rel, err := filepath.Rel(filepath.Clean(dir), path)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	if len(parts) == 1 {
+		if !roundBaseRe.MatchString(parts[0]) {
+			return "", false
+		}
+		return parts[0], true
+	}
+	if !roundBaseRe.MatchString(parts[0]) {
+		return "", false
+	}
+	for _, part := range parts {
+		if part == "" || part == "." {
+			return "", false
+		}
+	}
+	return strings.Join(parts, "/"), true
+}
+
+// bindingRelOf resolves path, under s.root, into the binding it names and the
+// round_file name of the file it points at. A nil Store never resolves: a read
+// of an unrelated path must not need the state dir.
+func (s *Store) bindingRelOf(path string) (binding, name string, ok bool) {
+	if s == nil || containsDotDot(path) {
+		return "", "", false
+	}
+	rel, err := filepath.Rel(filepath.Clean(s.root), path)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", "", false
+	}
+	parts := strings.SplitN(rel, string(filepath.Separator), 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	name, ok = roundFileRel(s.Dir(parts[0]), path)
+	if !ok {
+		return "", "", false
+	}
+	return parts[0], name, true
+}
+
+// containsDotDot reports whether any element of path is "..", before any
+// cleaning: it is how a path that escapes its directory is refused.
+func containsDotDot(path string) bool {
+	for _, part := range strings.FieldsFunc(path, func(r rune) bool {
+		return r == '/' || r == filepath.Separator
+	}) {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) PlanPath(name string, round int) string {
