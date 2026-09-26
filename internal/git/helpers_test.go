@@ -125,3 +125,26 @@ func resolvedTempDir(t *testing.T) string {
 	}
 	return dir
 }
+
+// dirtyWorktree is a repo whose working state is uncommitted: an unstaged edit,
+// a staged edit, a deletion, an untracked file and an ignored one.
+func dirtyWorktree(t *testing.T) string {
+	t.Helper()
+	repoDir := initRepo(t)
+	writeGitFile(t, repoDir, "a.txt", "a1\n")
+	writeGitFile(t, repoDir, "b.txt", "b1\n")
+	writeGitFile(t, repoDir, "c.txt", "c1\n")
+	writeGitFile(t, repoDir, ".gitignore", "*.log\n")
+	runGit(t, repoDir, "add", "a.txt", "b.txt", "c.txt", ".gitignore")
+	runGit(t, repoDir, "commit", "-m", "first")
+
+	writeGitFile(t, repoDir, "a.txt", "a2\n")
+	writeGitFile(t, repoDir, "b.txt", "b2\n")
+	runGit(t, repoDir, "add", "b.txt")
+	if err := os.Remove(filepath.Join(repoDir, "c.txt")); err != nil {
+		t.Fatal(err)
+	}
+	writeGitFile(t, repoDir, "d.txt", "d1\n")
+	writeGitFile(t, repoDir, "e.log", "ignored\n")
+	return repoDir
+}

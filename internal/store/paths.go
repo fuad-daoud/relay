@@ -189,6 +189,10 @@ func (s *Store) ScratchWorktreeDir() string {
 	return filepath.Join(s.WorktreeDir(), ".scratch")
 }
 
+func (s *Store) ScratchWorktreePath(name string, round int) string {
+	return filepath.Join(s.ScratchWorktreeDir(), fmt.Sprintf("%s-%03d", name, round))
+}
+
 // PruneWorktreeDirs removes the parents of relevo's worktrees once they are
 // empty. os.Remove never removes a non-empty directory, so a sibling worktree
 // keeps its parent; it never logs, because a racing `git worktree add`
