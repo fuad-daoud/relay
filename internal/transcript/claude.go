@@ -14,6 +14,8 @@ func renderClaude(obj map[string]any) []string {
 				if t := str(blk["text"]); t != "" {
 					out = append(out, t)
 				}
+			case "thinking":
+				out = append(out, thinkingLines(str(blk["thinking"]))...)
 			}
 		}
 		return out

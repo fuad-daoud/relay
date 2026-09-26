@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/fuad-daoud/relevo/internal/transcript"
 )
 
 // sep joins a pane head's parts with a faint middle dot (X2). Its only user
@@ -62,12 +64,15 @@ func colourDiff(patch string) string {
 // colourTranscript styles a headless builder's log for the terminal tab,
 // by the transcript's own markers and nothing else: a call is a green
 // bullet, a bold tool name and its argument in parentheses, dim; an ok
-// result is dim; an error result is red; every other line -- assistant
-// prose, [unknown] events, the relevo-exit trailer -- is left alone.
+// result is dim; an error result is red; a thinking line is dim italic;
+// every other line -- assistant prose, [unknown] events, the relevo-exit
+// trailer -- is left alone.
 func colourTranscript(body string) string {
 	lines := strings.Split(body, "\n")
 	for i, l := range lines {
 		switch {
+		case transcript.IsThinking(l):
+			lines[i] = dimStyle.Italic(true).Render(l)
 		case strings.HasPrefix(l, "● "):
 			rest := strings.TrimPrefix(l, "● ")
 			name, arg, _ := strings.Cut(rest, " ")

@@ -52,7 +52,7 @@ func (h Harness) Resume(sessionID, prompt string, tier Tier) ([]string, error) {
 		base = []string{"-p", prompt, "--conversation", sessionID,
 			"--output-format", "stream-json"}
 	case "opencode":
-		base = []string{"run", prompt, "--session", sessionID, "--fork", "--format", "json", "--standalone"}
+		base = []string{"run", prompt, "--session", sessionID, "--fork", "--format", "json", "--thinking", "--standalone"}
 	case "codex":
 		return nil, fmt.Errorf("%w: codex", ErrResumeUnsupported)
 	default:

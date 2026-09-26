@@ -458,6 +458,23 @@ func TestColourTranscript(t *testing.T) {
 	}
 }
 
+func TestColourTranscriptDimsThinking(t *testing.T) {
+	body := "∴ considering\n● Bash ls"
+	out := strings.Split(colourTranscript(body), "\n")
+	if p := stripANSI(out[0]); p != "∴ considering" {
+		t.Errorf("thinking text changed: %q", p)
+	}
+	if out[0] != dimStyle.Italic(true).Render("∴ considering") {
+		t.Errorf("thinking line not dim italic: %q", out[0])
+	}
+	if p := stripANSI(out[1]); p != "● Bash(ls)" {
+		t.Errorf("call = %q", p)
+	}
+	if !strings.Contains(out[1], stateActiveStyle.Render("●")) || !strings.Contains(out[1], lipgloss.NewStyle().Bold(true).Render("Bash")) {
+		t.Errorf("call not styled: %q", out[1])
+	}
+}
+
 func TestBodyOfStylesOnlyHeadlessTerminal(t *testing.T) {
 	c := tabContent{loaded: true, body: "● Bash ls"}
 	if got := bodyOf(tabTerminal, c, false); got != "● Bash ls" {

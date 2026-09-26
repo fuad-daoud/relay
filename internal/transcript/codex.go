@@ -29,7 +29,7 @@ func renderCodexItem(item map[string]any) []string {
 		}
 		return nil
 	case "reasoning":
-		return nil
+		return thinkingLines(str(item["text"]))
 	case "error":
 		return []string{errLine(str(item["message"]))}
 	case "command_execution":

@@ -25,6 +25,8 @@ func renderOpencode(obj map[string]any) []string {
 		}
 	case "error":
 		return []string{errLine(str(asMap(obj["error"])["message"]))}
+	case "reasoning":
+		return thinkingLines(str(asMap(obj["part"])["text"]))
 	default:
 		return []string{unknown(obj)}
 	}

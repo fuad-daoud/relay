@@ -636,7 +636,8 @@ What this means in practice:
   never kills anything: it flags `NEEDS YOU` and leaves the process alone.
 - **`relevo gate`** on the provider mid-round kills the running process
   and starts the next candidate on the same round.
-- **opencode 2.x** headless builders launch `run` with `--standalone` (#256):
+- **opencode 2.x** headless builders launch `run` with `--standalone` (#256) and
+  pass `--thinking` too, so the model's reasoning reaches the transcript:
   each headless round gets its own private server instead of the one
   `opencode serve --service` shared by every `opencode run` on that machine,
   so a kill, `relevo done`/`unbind`, a `relevo stop`, or a mid-round switch

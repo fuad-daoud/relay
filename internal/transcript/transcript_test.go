@@ -114,6 +114,14 @@ func TestClaudeTable(t *testing.T) {
 			`{"type":"assistant","message":{"content":[{"type":"text","text":"Reading it.\nTwo lines."},{"type":"tool_use","name":"Read","input":{"file_path":"internal/doctor/doctor.go"}}]}}`,
 			[]string{"Reading it.\nTwo lines.", "● Read internal/doctor/doctor.go"},
 		},
+		"thinking then text in one message": {
+			`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"weigh it"},{"type":"text","text":"done"}]}}`,
+			[]string{"∴ weigh it", "done"},
+		},
+		"empty thinking block is nothing": {
+			`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"","signature":"sig"}]}}`,
+			nil,
+		},
 		"tool with no argument": {
 			`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"ListAgents","input":{}}]}}`,
 			[]string{"● ListAgents"},
@@ -283,6 +291,14 @@ func TestOpencodeTable(t *testing.T) {
 			`{"type":"text","part":{"type":"text","text":""}}`,
 			nil,
 		},
+		"reasoning with several lines": {
+			`{"type":"reasoning","part":{"type":"reasoning","text":"plan\nthen act"}}`,
+			[]string{"∴ plan", "∴ then act"},
+		},
+		"reasoning with empty text is nothing": {
+			`{"type":"reasoning","part":{"type":"reasoning","text":""}}`,
+			nil,
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -327,8 +343,12 @@ var codexCases = map[string]lineCase{
 		`{"type":"item.completed","item":{"type":"agent_message","text":""}}`,
 		nil,
 	},
-	"item.completed reasoning is noise": {
+	"item.completed reasoning renders as thinking": {
 		`{"type":"item.completed","item":{"type":"reasoning","text":"thinking"}}`,
+		[]string{"∴ thinking"},
+	},
+	"item.completed reasoning with empty text": {
+		`{"type":"item.completed","item":{"type":"reasoning","text":""}}`,
 		nil,
 	},
 	"item.completed error": {

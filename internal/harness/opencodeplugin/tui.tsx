@@ -1354,9 +1354,16 @@ export default {
           return out;
         };
 
-        // §4.6: the transcript's four styled branches; any other line returns
+        // §4.6: the transcript's five styled branches; any other line returns
         // null and goes on to the markdown classifier.
         const transcriptSpecial = (line: string) => {
+          if (/^∴/.test(line)) {
+            return (
+              <box flexDirection="row">
+                <text fg={mutedColor}>{line}</text>
+              </box>
+            );
+          }
           const toolMatch = line.match(/^(\s*●\s+\S+)(.*)$/);
           if (toolMatch) {
             return (
