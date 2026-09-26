@@ -18,51 +18,36 @@ import (
 	"time"
 )
 
-// DownloadTimeout is the budget for one whole HTTP request: the release
-// archive is a few megabytes, and a stalled connection must not hang the CLI
-// forever.
+// DownloadTimeout is the budget for one whole HTTP request; a stalled
+// connection must not hang the CLI forever.
 const DownloadTimeout = 5 * time.Minute
 
-// The three bounds keep a hostile or broken endpoint from making relevo
-// allocate without limit.
+// These bounds keep a hostile or broken endpoint from making relevo allocate without limit.
 const (
 	maxChecksums = 1 << 20
 	maxArchive   = 256 << 20
 	maxBinary    = 256 << 20
 )
 
-// Sentinel errors FetchBinary returns; each is wrapped with the URL or tag by
-// the caller side.
+// Sentinel errors FetchBinary returns, each wrapped with the URL or tag by the caller side.
 var (
-	// ErrNoChecksum is checksums.txt holding no line for the archive, or more
-	// than one.
-	ErrNoChecksum = errors.New("no checksum for the archive")
-	// ErrBadTag is a tag that is not exactly a release tag, refused before
-	// any URL is built. DecideUpdate guards this for the CLI, and FetchBinary
-	// checks it again so the downloader is safe on its own (#293).
-	ErrBadTag = errors.New("not a release tag")
-	// ErrChecksumMismatch is the archive's SHA-256 not matching its line.
+	ErrNoChecksum       = errors.New("no checksum for the archive")
+	ErrBadTag           = errors.New("not a release tag")
 	ErrChecksumMismatch = errors.New("archive checksum mismatch")
-	// ErrNoBinary is no regular file named relevo at the archive root.
-	ErrNoBinary = errors.New("archive holds no relevo binary")
-	// ErrTooLarge is a response past its bound.
-	ErrTooLarge = errors.New("response too large")
+	ErrNoBinary         = errors.New("archive holds no relevo binary")
+	ErrTooLarge         = errors.New("response too large")
 )
 
 // Downloader fetches a release archive, verifies it against checksums.txt and
 // extracts the relevo binary into a temp file beside the running executable.
 type Downloader struct {
-	// Base is the download base URL. The CLI always passes DownloadBase;
-	// tests pass an httptest URL. There is no environment override, so no
-	// environment variable can redirect a binary download.
-	Base string
-	// Client is the HTTP client; nil uses one with DownloadTimeout.
-	Client *http.Client
+	Base   string       // download base URL; tests pass an httptest URL
+	Client *http.Client // nil uses one with DownloadTimeout
 }
 
 // FetchBinary produces a verified, executable relevo binary for tag as a temp
-// file in destDir and returns its path. Nothing is written to disk before the
-// checksum passes, and no temp file is left behind on any error.
+// file in destDir. Nothing is written to disk before the checksum passes, and
+// no temp file is left behind on any error.
 func (d *Downloader) FetchBinary(ctx context.Context, tag, goos, goarch, destDir string) (string, error) {
 	if !IsReleaseTag(tag) {
 		return "", fmt.Errorf("%q: %w", tag, ErrBadTag)
@@ -97,9 +82,8 @@ func (d *Downloader) FetchBinary(ctx context.Context, tag, goos, goarch, destDir
 	return writeTempBinary(destDir, bin)
 }
 
-// fetchChecksum reads checksums.txt and returns the SHA-256 for archiveName.
-// Exactly one line must name the archive, and its first field must be 64
-// lowercase hex characters; anything else is ErrNoChecksum.
+// fetchChecksum returns the SHA-256 for archiveName from checksums.txt.
+// Exactly one line must name it, with a 64-char lowercase-hex first field.
 func (d *Downloader) fetchChecksum(ctx context.Context, url, archiveName string) (string, error) {
 	body, err := d.get(ctx, url, maxChecksums)
 	if err != nil {
@@ -122,9 +106,7 @@ func (d *Downloader) fetchChecksum(ctx context.Context, url, archiveName string)
 	return sum, nil
 }
 
-// get performs one bounded, unauthenticated, un-retried GET and returns the
-// body. A transport failure wraps ErrOffline; a non-200 names the URL and the
-// status.
+// get performs one bounded, unauthenticated, un-retried GET.
 func (d *Downloader) get(ctx context.Context, url string, limit int64) ([]byte, error) {
 	client := d.Client
 	if client == nil {
@@ -136,9 +118,9 @@ func (d *Downloader) get(ctx context.Context, url string, limit int64) ([]byte, 
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrOffline, err)
+		return nil, fmt.Errorf("%w: %w", ErrOffline, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s: %s", url, resp.Status)
@@ -154,15 +136,14 @@ func (d *Downloader) get(ctx context.Context, url string, limit int64) ([]byte, 
 	return data, nil
 }
 
-// extractBinary gunzips and reads the verified bytes, returning the first
-// regular file named relevo at the archive root. Every other entry is skipped,
-// and no entry name ever becomes a filesystem path.
+// extractBinary gunzips data and returns the first regular file named relevo
+// at the archive root; no entry name ever becomes a filesystem path.
 func extractBinary(data []byte) ([]byte, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNoBinary, err)
+		return nil, fmt.Errorf("%w: %w", ErrNoBinary, err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
 	for {
@@ -171,7 +152,7 @@ func extractBinary(data []byte) ([]byte, error) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrNoBinary, err)
+			return nil, fmt.Errorf("%w: %w", ErrNoBinary, err)
 		}
 		if hdr.Typeflag != tar.TypeReg || path.Clean(hdr.Name) != "relevo" {
 			continue
@@ -188,8 +169,8 @@ func extractBinary(data []byte) ([]byte, error) {
 	return nil, ErrNoBinary
 }
 
-// writeTempBinary creates a temp file in destDir, writes bin, fsyncs and
-// closes it, and makes it executable. Every failure removes the temp file.
+// writeTempBinary creates a temp file in destDir, writes bin, and makes it
+// executable; every failure removes the temp file.
 func writeTempBinary(destDir string, bin []byte) (string, error) {
 	f, err := os.CreateTemp(destDir, ".relevo-update-*")
 	if err != nil {
@@ -197,8 +178,8 @@ func writeTempBinary(destDir string, bin []byte) (string, error) {
 	}
 	tmp := f.Name()
 	fail := func(err error) (string, error) {
-		f.Close()
-		os.Remove(tmp)
+		_ = f.Close()
+		_ = os.Remove(tmp)
 		return "", err
 	}
 
@@ -209,11 +190,11 @@ func writeTempBinary(destDir string, bin []byte) (string, error) {
 		return fail(err)
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return "", err
 	}
 	if err := os.Chmod(tmp, 0o755); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return "", err
 	}
 	return tmp, nil
