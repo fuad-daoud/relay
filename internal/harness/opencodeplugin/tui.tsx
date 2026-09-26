@@ -868,6 +868,22 @@ export default {
         const needYouCount = rows.filter((r) => r.needs_you).length;
         const totalCount = rows.length;
 
+        // The reason column takes whatever width the terminal leaves after the
+        // fixed columns, so it reaches the page's real right edge instead of a
+        // fixed grid. Read the width the way the binding page does (a signal
+        // accessor or a plain object); the fleet page pads 1 column on each
+        // side, so subtract 2. A renderer that gives no width falls back to 120.
+        let fleetPageWidth = 120;
+        try {
+          const dims: any = useTerminalDimensions();
+          const terminalWidth = typeof dims === "function" ? dims()?.width : dims?.width;
+          if (typeof terminalWidth === "number" && terminalWidth > 0) {
+            fleetPageWidth = Math.max(1, terminalWidth - 2);
+          }
+        } catch {
+          fleetPageWidth = 120;
+        }
+
         // Fetch recent history
         fetchHistory(undefined, currentSessionID);
         const recentHistory = historyCache.get(`p:${currentSessionID}`) || [];
@@ -951,10 +967,10 @@ export default {
               const statusPad = ellipsize(status, 19).padEnd(20, " ");
               const clockPad = (row.clock || "--").padEnd(7, " ");
 
-              // The fixed columns fill the page's 96-wide grid; the reason takes
-              // what is left of it, so STATUS and TIME hold their columns.
+              // The reason takes whatever width the terminal has left after
+              // the fixed columns, so it runs to the page's real right edge.
               const fixed = `${namePad} ${actorPad} ${modelPad}${rndPad}${tokensPad} ${statusPad}${clockPad}`;
-              const reasonPad = Math.max(0, 96 - ROW_PREFIX.length - fixed.length);
+              const reasonPad = Math.max(0, fleetPageWidth - ROW_PREFIX.length - fixed.length);
               const line = `${fixed}${ellipsize(row.reason || "", reasonPad)}`;
 
               return (
