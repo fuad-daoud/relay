@@ -28,10 +28,10 @@ func TestBindingRoleChecks(t *testing.T) {
 	if row.Severity != SevFail {
 		t.Errorf("row.Severity = %v, want SevFail", row.Severity)
 	}
-	if row.Name != "binding role" {
-		t.Errorf("row.Name = %q, want binding role", row.Name)
+	if row.Name != "binding actor" {
+		t.Errorf("row.Name = %q, want binding actor", row.Name)
 	}
-	if !strings.Contains(row.Detail, `binding c runs role "gone"`) {
-		t.Errorf("row.Detail = %q, want it to name binding c and role gone", row.Detail)
+	if !strings.Contains(row.Detail, `binding c runs actor "gone"`) {
+		t.Errorf("row.Detail = %q, want it to name binding c and actor gone", row.Detail)
 	}
 }

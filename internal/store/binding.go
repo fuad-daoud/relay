@@ -57,6 +57,16 @@ type Verdict struct {
 	Findings string `json:"findings"`
 }
 
+// OOMRequeue records the details of an oom-kill that caused this round to be
+// re-queued. Admit clears it when the round is admitted again.
+type OOMRequeue struct {
+	// At is when relevo saw the oom-killed exit (UTC).
+	At time.Time `json:"at"`
+	// Running is the number of local headless rounds with a live process at the
+	// moment of the kill, including the killed one; always at least 1.
+	Running int `json:"running"`
+}
+
 type ServeFacts struct {
 	RepoID       string    `json:"repo_id"`
 	BareRepo     string    `json:"bare_repo"`
@@ -117,8 +127,9 @@ type Binding struct {
 	RoundCap       int       `json:"round_cap"`
 	RoundTimeoutMS int       `json:"round_timeout_ms"`
 	RoundStartedAt time.Time `json:"round_started_at"`
-	// QueuedAt is non-zero while the current round is accepted on a server and
-	// waiting for a builder slot.
+	// QueuedAt is non-zero while the current round is accepted and waiting for a
+	// builder slot: on a server while waiting under serve.max_builders, and on a
+	// local machine while waiting after an oom kill.
 	QueuedAt time.Time `json:"queued_at,omitempty"`
 	// HaltNotifiedRound is deliberately NOT derived from State, which a later
 	// step in the same tick may rewrite.
@@ -139,6 +150,14 @@ type Binding struct {
 	// the CURRENT round, so a switch never lands the pick back on a builder
 	// that just proved it cannot finish the round.
 	RoundExcluded []string `json:"round_excluded,omitempty"`
+
+	// OOMRequeue is non-nil only while this round is queued after a
+	// systemd-oomd kill. Admit clears it.
+	OOMRequeue *OOMRequeue `json:"oom_requeue,omitempty"`
+
+	// RoundOOMKills counts oom kills in the current round; reset to 0
+	// wherever RoundSwitches is reset (reconcile.go and send.go).
+	RoundOOMKills int `json:"round_oom_kills,omitempty"`
 
 	// AbandonedSessions are harness sessions relevo stopped using while their
 	// round was still open. The harness would resume them on its own -- a

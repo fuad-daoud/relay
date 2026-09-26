@@ -872,7 +872,7 @@ func TestRenderDryRunShape(t *testing.T) {
 		DonePath:      "/home/p/.local/state/relevo/api-auth/005-done",
 		Tier:          "yolo",
 		PromptHead: []string{
-			`relevo: round 5 · to builder "api-auth" · from the planner (not the human)`,
+			`relevo: round 5 · to runner "api-auth" · from the planner (not the human)`,
 			"Your working tree is: /home/p/.worktrees/api-auth",
 		},
 	}
@@ -883,7 +883,7 @@ func TestRenderDryRunShape(t *testing.T) {
   plan      /home/p/.local/state/relevo/api-auth/005-plan.md  (staged from ./plan.md, 4.1 KiB)
   report    /home/p/.local/state/relevo/api-auth/005-report.md
   marker    /home/p/.local/state/relevo/api-auth/005-done
-  prompt    relevo: round 5 · to builder "api-auth" · from the planner (not the human)
+  prompt    relevo: round 5 · to runner "api-auth" · from the planner (not the human)
             Your working tree is: /home/p/.worktrees/api-auth
 `
 	got := RenderDryRun(d)
@@ -945,7 +945,7 @@ func TestVerifyPolicyDefault(t *testing.T) {
 }
 
 // switchSetup binds webshop on agy/test/m with a fake runner -- the setup
-// TestSendHeadlessTierYoloOverrideAndRoundClose uses -- for the --builder
+// TestSendHeadlessTierYoloOverrideAndRoundClose uses -- for the --candidate
 // tests. Every local builder is headless, so the runner drives the round.
 func switchSetup(t *testing.T) (Runtime, *fakeRunner) {
 	t.Helper()
@@ -964,7 +964,7 @@ func switchSetup(t *testing.T) (Runtime, *fakeRunner) {
 	return rt, fr
 }
 
-// TestSendBuilderMovesTheCandidateAndPersists pins §5.2 (a): --builder starts
+// TestSendBuilderMovesTheCandidateAndPersists pins §5.2 (a): --candidate starts
 // the round on the named candidate, files its pick entry before the plan
 // entry, and the change persists into the next plain send.
 //
@@ -1036,7 +1036,7 @@ func TestSendBuilderMovesTheCandidateAndPersists(t *testing.T) {
 	}
 }
 
-// TestSendRecordsPickAndPlanInOrderInOneWrite pins #471: a --builder send
+// TestSendRecordsPickAndPlanInOrderInOneWrite pins #471: a --candidate send
 // writes the pick entry and the plan entry in one write, so they land with
 // consecutive seqs in that order, and the binding carries the spawned pid.
 func TestSendRecordsPickAndPlanInOrderInOneWrite(t *testing.T) {

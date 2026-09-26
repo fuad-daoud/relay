@@ -639,6 +639,12 @@ type fakeRunner struct {
 	// order, so a test can prove that no probe ran.
 	scopeActive  map[string]bool
 	scopeQueries []string
+
+	// scopeResults is the answer ScopeResult gives per unit base name; a
+	// missing key returns "". scopeResultQueries records every unit asked for,
+	// in order, so a test can prove that no probe ran.
+	scopeResults       map[string]string
+	scopeResultQueries []string
 }
 
 func newFakeRunner() *fakeRunner {
@@ -721,6 +727,13 @@ func (f *fakeRunner) Rusage(_ context.Context, h spawn.ProcHandle, _ string) (sp
 func (f *fakeRunner) ScopeActive(_ context.Context, unit string) (bool, error) {
 	f.scopeQueries = append(f.scopeQueries, unit)
 	return f.scopeActive[unit], nil
+}
+
+// ScopeResult implements ScopeResultProber: it records the unit and answers
+// from scopeResults, so a test can prove that oom detection ran or did not.
+func (f *fakeRunner) ScopeResult(_ context.Context, unit string) (string, error) {
+	f.scopeResultQueries = append(f.scopeResultQueries, unit)
+	return f.scopeResults[unit], nil
 }
 
 // fakeUsage scripts what the usage reader returns and records the Source

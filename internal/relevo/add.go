@@ -328,7 +328,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Repo:             opts.Repo,
 		Tier:             string(tier),
 		Role:             normRole(opts.Role),
-		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleGates(rt.RoleRegistry(), roleName)),
+		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName)),
 		Regate:           resolveRegate(opts.Regate, rt.Policy),
 		// captureRepo runs against opts.Repo, not cwd: opts.Repo is the
 		// parent checkout the worktree is cut from (its git identity is

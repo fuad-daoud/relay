@@ -71,7 +71,7 @@ func rowFor(name string, actor Actor, agents map[string]AgentEntry) (Row, error)
 		row.Tier = &tier
 	}
 	if actor.Check != nil {
-		row.Gate = actor.Check
+		row.Check = actor.Check
 	}
 	return row, nil
 }

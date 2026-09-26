@@ -299,7 +299,7 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []availability.G
 		for _, c := range serving {
 			refs = append(refs, c.Ref().String())
 		}
-		return Resolution{}, fmt.Errorf("%d candidates serve %q: %v; name one with --builder or --candidate, or set order.%s in config policy: %w", len(serving), role, refs, role, ErrAmbiguousCandidate)
+		return Resolution{}, fmt.Errorf("%d candidates serve %q: %v; name one with --candidate, or set order.%s in config policy: %w", len(serving), role, refs, role, ErrAmbiguousCandidate)
 	}
 
 	var skipped []Skip
@@ -323,14 +323,12 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []availability.G
 func offSkip(token string) Skip { return Skip{Token: token, Off: true} }
 
 // roleSectionText names the config section a file-mode role's candidates live
-// in, for error and view texts: "config actors" when the registry came from
-// the actors section, "config roles" for a roles file (A2 round 2 R2). Legacy
-// mode never reaches it; its texts name the order directly.
+// in, for error and view texts. A4-1a renamed the section to "config actors",
+// so both sources print that: a `roles` file is only ever the input of the A2
+// migration now. Legacy mode never reaches it; its texts name the order
+// directly.
 func roleSectionText(reg *roles.Registry) string {
-	if reg.Source() == roles.SourceActors {
-		return "config actors"
-	}
-	return "config roles"
+	return "config actors"
 }
 
 // roleOff reports whether token is an off entry of role. It is false for a
@@ -356,7 +354,7 @@ func allGated(role string, skipped []Skip) (Resolution, error) {
 	for _, s := range skipped {
 		texts = append(texts, skipText(s, identityName))
 	}
-	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; name one with --builder to bypass, or clear a gate with relevo gate --clear <provider>: %w", role, strings.Join(uniqStrings(texts), ", "), ErrAllGated)
+	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; name one with --candidate to bypass, or clear a gate with relevo gate --clear <provider>: %w", role, strings.Join(uniqStrings(texts), ", "), ErrAllGated)
 }
 
 // identityName leaves every token as it is. It is what ExplainResolution

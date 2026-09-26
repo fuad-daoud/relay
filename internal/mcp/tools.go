@@ -22,13 +22,13 @@ type StatusArgs struct {
 
 // SendArgs is send's input; Name and File are required.
 type SendArgs struct {
-	Name    string `json:"name"`
-	File    string `json:"file"`
-	Tier    string `json:"tier,omitempty"`
-	Builder string `json:"builder,omitempty"`
-	Verify  *bool  `json:"verify,omitempty"`
-	Regate  *int   `json:"regate,omitempty"`
-	DryRun  bool   `json:"dry_run,omitempty"`
+	Name      string `json:"name"`
+	File      string `json:"file"`
+	Tier      string `json:"tier,omitempty"`
+	Candidate string `json:"candidate,omitempty"`
+	Verify    *bool  `json:"verify,omitempty"`
+	Regate    *int   `json:"regate,omitempty"`
+	DryRun    bool   `json:"dry_run,omitempty"`
 }
 
 type DoneArgs struct {
@@ -100,15 +100,15 @@ func Tools() []ToolSpec {
 		},
 		{
 			Name:        "send",
-			Description: "Hand a binding's builder a new round: stage file as the round's plan and prompt the builder. Calls relevo.Send, or relevo.SendDryRun when dry_run is true.",
+			Description: "Hand a binding's runner a new round: stage file as the round's plan and prompt the runner. Calls relevo.Send, or relevo.SendDryRun when dry_run is true.",
 			InputSchema: schemaObject([]string{"name", "file"}, map[string]any{
-				"name":    map[string]any{"type": "string", "description": "binding name"},
-				"file":    map[string]any{"type": "string", "description": "path to the plan file"},
-				"tier":    map[string]any{"type": "string", "description": "permission tier override: harness|read|edit|yolo"},
-				"builder": map[string]any{"type": "string", "description": "candidate token to run this round and later ones on (persists); refused while a round is open"},
-				"verify":  map[string]any{"type": "boolean", "description": "run a read-only reviewer when the round closes"},
-				"regate":  map[string]any{"type": "integer", "description": "automatic repair rounds after a failing gate; 0 disables"},
-				"dry_run": map[string]any{"type": "boolean", "description": "check preconditions and report what send would do, without sending"},
+				"name":      map[string]any{"type": "string", "description": "binding name"},
+				"file":      map[string]any{"type": "string", "description": "path to the plan file"},
+				"tier":      map[string]any{"type": "string", "description": "permission tier override: harness|read|edit|yolo"},
+				"candidate": map[string]any{"type": "string", "description": "candidate name or token to run this round and later ones on (persists); refused while a round is open"},
+				"verify":    map[string]any{"type": "boolean", "description": "run a read-only reviewer when the round closes"},
+				"regate":    map[string]any{"type": "integer", "description": "automatic repair rounds after a failing gate; 0 disables"},
+				"dry_run":   map[string]any{"type": "boolean", "description": "check preconditions and report what send would do, without sending"},
 			}),
 		},
 		{

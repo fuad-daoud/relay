@@ -23,11 +23,11 @@ func mapReader(files map[string][]byte) func(string) ([]byte, error) {
 func TestPushTextExpandsReportWithReadablePath(t *testing.T) {
 	t.Parallel()
 
-	origin := `relevo: round 1 · to planner · about builder "w" (not the human)`
+	origin := `relevo: round 1 · to planner · about runner "w" (not the human)`
 	e := store.LogEntry{
 		Kind:    store.KindReport,
 		Path:    "/x/001-report.md",
-		Payload: origin + "\n\nBuilder finished round 1. Report: /x/001-report.md",
+		Payload: origin + "\n\nThe runner finished round 1. Report: /x/001-report.md",
 	}
 	read := mapReader(map[string][]byte{"/x/001-report.md": []byte("the report body")})
 
@@ -89,7 +89,7 @@ func TestPushTextTruncatesAtNewlineWithinBudget(t *testing.T) {
 		Kind:    store.KindFindings,
 		Round:   4,
 		Path:    "/x/004-7f2a3c1d-findings.md",
-		Payload: `relevo: consult · to planner · about builder "w" (not the human)`,
+		Payload: `relevo: consult · to planner · about runner "w" (not the human)`,
 	}
 	read := mapReader(map[string][]byte{"/x/004-7f2a3c1d-findings.md": []byte(body)})
 
@@ -116,7 +116,7 @@ func TestPushTextTruncatesAtBudgetWhenNoNewline(t *testing.T) {
 	t.Parallel()
 
 	body := strings.Repeat("x", MaxPushBytes+1000) // no newline anywhere
-	e := store.LogEntry{Kind: store.KindReport, Round: 1, Path: "/x/huge.md", Payload: "relevo: round 1 · to planner · about builder \"w\" (not the human)"}
+	e := store.LogEntry{Kind: store.KindReport, Round: 1, Path: "/x/huge.md", Payload: "relevo: round 1 · to planner · about runner \"w\" (not the human)"}
 	read := mapReader(map[string][]byte{"/x/huge.md": []byte(body)})
 
 	got, ok := PushText(e, "webshop", read)
@@ -137,7 +137,7 @@ func TestPushTextTruncatesAtBudgetWhenNoNewline(t *testing.T) {
 func TestPushTextOriginLineIsAlwaysFirst(t *testing.T) {
 	t.Parallel()
 
-	origin := `relevo: round 1 · to planner · about builder "w" (not the human)`
+	origin := `relevo: round 1 · to planner · about runner "w" (not the human)`
 
 	cases := []struct {
 		name string

@@ -166,7 +166,7 @@ func catchUpPayload(b store.Binding, view remote.BindingView, haveReport bool) (
 	if view.Stopped != "" {
 		payload, note = stopPayload(view.Stopped, name, n, " on "+server, haveReport)
 	} else {
-		payload = fmt.Sprintf("Builder finished round %d on %s. Report: %s", n, server, showCommand(name, n, "report"))
+		payload = fmt.Sprintf("The runner finished round %d on %s. Report: %s", n, server, showCommand(name, n, "report"))
 	}
 	if line := capture.DiffLineFromNote(view.DiffNote, view.DiffCommits, view.DiffTree, b.Branch); line != "" {
 		payload = payload + "\n" + line

@@ -431,7 +431,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 // planner and reactivates the binding locally.
 //
 // Errors: "cannot change a remote builder; unbind and add" when the caller
-// asked to change the builder (--rebind, --candidate, --builder pane, or
+// asked to change the builder (--rebind, --candidate, or
 // --headless); ErrRemoteUnavailable; a wrapped server error; a wrapped git
 // error; or a message naming the binding when its branch is gone.
 func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.Endpoint, b store.Binding) (store.Binding, Resolution, error) {
@@ -492,14 +492,14 @@ func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, plannerEP s
 // over everything, an explicit --gate is used as given, and an unset flag takes
 // policy.json's gate.default only when the binding's role gates. A writer role
 // with "gate": false takes no gate.
-func resolveGateFor(gate string, noGate bool, pol policy.Policy, roleGates bool) string {
+func resolveGateFor(gate string, noGate bool, pol policy.Policy, roleChecks bool) string {
 	if noGate {
 		return ""
 	}
 	if gate != "" {
 		return gate
 	}
-	if !roleGates {
+	if !roleChecks {
 		return ""
 	}
 	return pol.GateDefault()
@@ -585,7 +585,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 		State:            store.StateActive,
 		Tier:             string(tier),
 		Role:             normRole(opts.Role),
-		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleGates(rt.RoleRegistry(), roleName)),
+		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName)),
 		Regate:           resolveRegate(opts.Regate, rt.Policy),
 		RepoRef:          captureRepo(ctx, rt, opts.CWD),
 		Feature:          opts.Feature,

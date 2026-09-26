@@ -98,7 +98,7 @@ func TestOpencodeDeliverHappyPath(t *testing.T) {
 		Alive:      aliveAlways,
 	}
 
-	payload := "relevo: round 1 · to planner · about builder \"w\" (not the human)\n\nBuilder finished round 1. Report: /x/001-report.md"
+	payload := "relevo: round 1 · to planner · about runner \"w\" (not the human)\n\nThe runner finished round 1. Report: /x/001-report.md"
 	out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), payload, "/x/001-report.md", time.Time{})
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)

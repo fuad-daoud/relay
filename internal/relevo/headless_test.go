@@ -2471,7 +2471,7 @@ func TestStatusHeadlessWorkingShowsPidAndLogTail(t *testing.T) {
 	}
 
 	text := view.RenderStatus(rep)
-	for _, want := range []string{"  builder  headless       agy      working", fmt.Sprintf("pid %d since", b.Builder.PID), "`agy-m`", "  log      l2\n  log      l3\n  log      l4\n"} {
+	for _, want := range []string{"  runner  headless       agy      working", fmt.Sprintf("pid %d since", b.Builder.PID), "`agy-m`", "  log      l2\n  log      l3\n  log      l4\n"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("view.RenderStatus lacks %q:\n%s", want, text)
 		}
@@ -2493,7 +2493,7 @@ func TestStatusHeadlessIdle(t *testing.T) {
 	if strings.Contains(text, "pid ") || strings.Contains(text, "  log ") {
 		t.Errorf("idle must show no pid and no log lines:\n%s", text)
 	}
-	if !strings.Contains(text, "  builder  headless       agy      idle") {
+	if !strings.Contains(text, "  runner  headless       agy      idle") {
 		t.Errorf("view.RenderStatus:\n%s", text)
 	}
 }

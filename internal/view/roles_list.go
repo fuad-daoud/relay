@@ -11,7 +11,7 @@ import (
 // FormatRoles renders the registry for `relevo config`: one block per role in
 // reg.Names() order, with a blank line between blocks --
 //
-//	<name>  <writer|reader>[  gate]  tier <tier or ->  (<reg.Source()>)
+//	<name>  <writer|reader>[  check]  tier <tier or ->  (<reg.Source()>)
 //	  candidates  <tok>, <tok>      or   candidates  (none)
 //	  <kind>  <agent>[ + <req> ...][  (custom)]
 //
@@ -41,8 +41,8 @@ func formatRole(reg *roles.Registry, role roles.Role) string {
 	} else {
 		b.WriteString("reader")
 	}
-	if role.Gate {
-		b.WriteString("  gate")
+	if role.Check {
+		b.WriteString("  check")
 	}
 	tier := "-"
 	if t, ok := reg.RoleTier(role.Name); ok {

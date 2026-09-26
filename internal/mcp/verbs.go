@@ -88,7 +88,7 @@ func (v *RelevoVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
 	opts := relevo.SendOptions{
 		Tier:      a.Tier,
 		AllowYolo: false,
-		Builder:   a.Builder,
+		Builder:   a.Candidate,
 		Regate:    a.Regate,
 		Verify:    a.Verify,
 	}

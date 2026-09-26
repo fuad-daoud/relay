@@ -182,9 +182,9 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 // a report file was on disk. Pure.
 func stopPayload(how, name string, round int, where string, haveReport bool) (payload, note string) {
 	if haveReport {
-		return fmt.Sprintf("Builder was stopped (%s) for round %d%s. Report: %s", how, round, where, showCommand(name, round, "report")), "stopped"
+		return fmt.Sprintf("The runner was stopped (%s) for round %d%s. Report: %s", how, round, where, showCommand(name, round, "report")), "stopped"
 	}
-	return fmt.Sprintf("Builder was stopped (%s) for round %d%s; no report was written.", how, round, where), "noreport stopped"
+	return fmt.Sprintf("The runner was stopped (%s) for round %d%s; no report was written.", how, round, where), "noreport stopped"
 }
 
 // closeStopped closes an open round whose builder was stopped (#138): the

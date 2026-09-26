@@ -365,7 +365,7 @@ func rolesMissingNote(role, kind string, defs, paths []string) string {
 	if len(custom) > 0 {
 		fixes = append(fixes, "run relevo config agents --kind "+kind+" for a custom agent relevo renders, or install "+strings.Join(custom, ", ")+" yourself")
 	}
-	return "roles missing for " + role + ": " + strings.Join(paths, ", ") + "; " + strings.Join(fixes, "; ")
+	return "agent definitions missing for " + role + ": " + strings.Join(paths, ", ") + "; " + strings.Join(fixes, "; ")
 }
 
 // definitionIsShipped reports whether path is one of defs' shipped paths for
@@ -393,7 +393,7 @@ func GateKindText(k Kind) string {
 	case ExitedNoReport:
 		return "exited without a report"
 	case RolesMissing:
-		return "roles missing"
+		return "agents missing"
 	default:
 		return string(k)
 	}

@@ -177,6 +177,10 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// on its own is stopped with the tick's own liveness read already in hand.
 	d.safely("reap sessions", func() { reapAll(ctx, d.rt, fresh) })
 
+	// Local oom-queued rounds are re-admitted here, because nothing else
+	// admits a local queue.
+	d.safely("admit oom-queued", func() { admitOOMQueued(ctx, d.rt, fresh) })
+
 	// Each of Tick's non-binding phases runs through safely, so a panic in
 	// one cannot take the whole daemon down (#370, spec §4.6): it is logged
 	// with a stack and the next tick tries again.

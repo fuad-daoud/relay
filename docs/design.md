@@ -80,7 +80,7 @@ Three pieces, deliberately thin.
 relevo CLI      Invoked by the PLANNER through its Bash tool. Harness-agnostic, so it
                works whether the planner is claude, opencode or agy.
 
-                 relevo bind --builder <candidate> [--name <n>]
+                 relevo bind --candidate <candidate> [--name <n>]
                  relevo bind --resume <name>
                  relevo send --file <path>
                  relevo wait [<name>]

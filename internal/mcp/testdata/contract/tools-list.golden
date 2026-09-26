@@ -19,12 +19,12 @@
       "name": "status"
     },
     {
-      "description": "Hand a binding's builder a new round: stage file as the round's plan and prompt the builder. Calls relevo.Send, or relevo.SendDryRun when dry_run is true.",
+      "description": "Hand a binding's runner a new round: stage file as the round's plan and prompt the runner. Calls relevo.Send, or relevo.SendDryRun when dry_run is true.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
-          "builder": {
-            "description": "candidate token to run this round and later ones on (persists); refused while a round is open",
+          "candidate": {
+            "description": "candidate name or token to run this round and later ones on (persists); refused while a round is open",
             "type": "string"
           },
           "dry_run": {

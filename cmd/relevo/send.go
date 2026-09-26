@@ -9,17 +9,43 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
+// sendFlagValues holds the pointers send's flags parse into. sendFlagSet
+// defines them on fs; cmdSend and TestRemovedFlagsAreUnknown read the same
+// surface (A4-1a).
+type sendFlagValues struct {
+	file      *string
+	name      *string
+	tier      *string
+	candidate *string
+	allowYolo *bool
+	dryRun    *bool
+	regate    *int
+	verify    *bool
+	noVerify  *bool
+}
+
+// sendFlagSet defines send's flags on fs and returns the values they parse
+// into, so a test can inspect the flag surface without running a send.
+func sendFlagSet(fs *flag.FlagSet) *sendFlagValues {
+	v := &sendFlagValues{}
+	v.file = fs.String("file", "", "path to the plan file to hand the runner")
+	v.name = fs.String("name", "", "binding name (default: the binding for this cwd)")
+	v.tier = fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then the actor's tier, then harness)")
+	v.candidate = fs.String("candidate", "", "candidate name or harness/provider/model token to run this round and later ones on; refused while a round is open")
+	v.allowYolo = fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
+	v.dryRun = fs.Bool("dry-run", false, "check every precondition and print what send would do, without sending")
+	v.regate = fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
+	v.verify = fs.Bool("verify", false, "run a read-only reviewer in a throwaway worktree when the round closes")
+	v.noVerify = fs.Bool("no-verify", false, "do not run a reviewer when the round closes (default: config policy verify.default)")
+	return v
+}
+
 func cmdSend(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
-	file := fs.String("file", "", "path to the plan file to hand the builder")
-	name := fs.String("name", "", "binding name (default: the binding for this cwd)")
-	tier := fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
-	builder := fs.String("builder", "", "candidate name or harness/provider/model token to run this round and later ones on; refused while a round is open")
-	allowYolo := fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
-	dryRun := fs.Bool("dry-run", false, "check every precondition and print what send would do, without sending")
-	regate := fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
-	verify := fs.Bool("verify", false, "run a read-only reviewer in a throwaway worktree when the round closes")
-	noVerify := fs.Bool("no-verify", false, "do not run a reviewer when the round closes (default: config policy verify.default)")
+	v := sendFlagSet(fs)
+	file, name, tier, candidate := v.file, v.name, v.tier, v.candidate
+	allowYolo, dryRun, regate := v.allowYolo, v.dryRun, v.regate
+	verify, noVerify := v.verify, v.noVerify
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -56,7 +82,7 @@ func cmdSend(args []string) error {
 	opts := relevo.SendOptions{
 		Tier:      *tier,
 		AllowYolo: *allowYolo,
-		Builder:   *builder,
+		Builder:   *candidate,
 		Regate:    regateOpt,
 		Verify:    verifyOpt,
 	}
@@ -81,7 +107,7 @@ func cmdSend(args []string) error {
 	if res.Drift != "" {
 		fmt.Println(res.Drift)
 	}
-	fmt.Printf("sent round %d to %s's builder\n", res.Round, target)
+	fmt.Printf("sent round %d to %s's runner\n", res.Round, target)
 	warnWaitingOnYou(rt, target)
 	return nil
 }

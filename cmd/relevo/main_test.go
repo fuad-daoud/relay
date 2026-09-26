@@ -730,7 +730,7 @@ func TestAddHelp(t *testing.T) {
 
 func TestAddValidation(t *testing.T) {
 	// Missing --name
-	err := run([]string{"bind", "--worktree", "--builder", "claude/test/m"})
+	err := run([]string{"bind", "--worktree", "--candidate", "claude/test/m"})
 	if err == nil || !strings.Contains(err.Error(), "--name") {
 		t.Fatalf("expected an error about --name, got %v", err)
 	}
@@ -1078,6 +1078,32 @@ func TestAskFlagsHaveActorNotRole(t *testing.T) {
 	}
 	if fs.Lookup("role") != nil {
 		t.Error("ask still defines --role; it must be removed, not aliased")
+	}
+}
+
+// TestRemovedFlagsAreUnknown pins D1's clean break: every flag A4 renamed is
+// removed, not aliased, so parsing it fails with the flag package's own
+// "flag provided but not defined" error. It parses through the verbs' flag
+// sets only -- no verb runs, so nothing touches the state directory and no
+// harness is spawned.
+func TestRemovedFlagsAreUnknown(t *testing.T) {
+	cases := []struct {
+		name  string
+		flags func(*flag.FlagSet)
+		args  []string
+	}{
+		{"bind", func(fs *flag.FlagSet) { bindFlagSet(fs) }, []string{"--builder", "x"}},
+		{"send", func(fs *flag.FlagSet) { sendFlagSet(fs) }, []string{"--builder", "x"}},
+		{"config agents", func(fs *flag.FlagSet) { agentFlagSet(fs) }, []string{"--role", "x"}},
+		{"config init", func(fs *flag.FlagSet) { initFlagSet(fs) }, []string{"--no-roles"}},
+	}
+	for _, c := range cases {
+		fs := flag.NewFlagSet(c.name, flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		c.flags(fs)
+		if err := parseFlags(fs, c.args); err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+			t.Errorf("%s %v: parse error = %v, want \"flag provided but not defined\"", c.name, c.args, err)
+		}
 	}
 }
 

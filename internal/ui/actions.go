@@ -498,7 +498,7 @@ func (a *plannerActions) Probe(ctx context.Context, name string) Result {
 
 // AgentFiles is one agent's definition state on every harness kind whose
 // binary is installed, in harness.All() order: the same dry run `relevo config
-// agents --role <agent> --dry-run` prints. A source custom agent is rendered
+// agents --agent <agent> --dry-run` prints. A source custom agent is rendered
 // from the live config; a native or unknown name has none.
 func (a *plannerActions) AgentFiles(agent string) ([]harness.AgentFile, error) {
 	env, err := relevo.AgentInstallEnv()

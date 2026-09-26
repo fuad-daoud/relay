@@ -770,6 +770,13 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		suffix = "; permission-blocked: " + denialLine
 	}
 
+	// Detect the oom kill before the exit entry, so the entry says it. A
+	// requested stop still wins and is checked below.
+	oom := codeText == "unknown" && oomKilled(ctx, rt, b)
+	if oom {
+		suffix += "; killed by systemd-oomd (host out of memory)"
+	}
+
 	if err := tx.AppendLog(b.Name, exitEntry(now, b.Round, b.Builder.LogPath, codeText, suffix, builderTail(rt, b, logTailLines))); err != nil {
 		return b, err
 	}
@@ -792,6 +799,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			next = closeServedRound(ctx, rt, next)
 		}
 		return next, nil
+	}
+
+	// An oom kill is not the candidate's failure, so re-queue on the same
+	// candidate with no switch and no exclusion.
+	if oom {
+		return requeueOOM(ctx, rt, tx, b, now)
 	}
 
 	// A cgroup/group kill of the daemon (systemd restart, kill -9 of the

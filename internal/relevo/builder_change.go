@@ -10,11 +10,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// ErrBadBuilder wraps every refusal of a `relevo send --builder` token itself:
+// ErrBadBuilder wraps every refusal of a `relevo send --candidate` token itself:
 // an unknown candidate, a bad ref, a role it does not serve, roles_missing,
 // or a tier above the cap. It exists so the server can map these to 422
 // rather than 500 (#318).
-var ErrBadBuilder = errors.New("send --builder")
+var ErrBadBuilder = errors.New("send --candidate")
 
 // ResolveSendBuilder is ResolveSendBuilderFor with the built-in builder's
 // role, so the callers and tests that predate roles stay unchanged.
@@ -22,9 +22,9 @@ func ResolveSendBuilder(rt Runtime, current, token string) (*Resolution, error) 
 	return ResolveSendBuilderFor(rt, "builder", current, token)
 }
 
-// ResolveSendBuilderFor turns --builder's token into the resolution to apply
+// ResolveSendBuilderFor turns --candidate's token into the resolution to apply
 // for a binding whose writer role is role, or nil for a no-op. An explicit
-// token is resolved exactly as `relevo bind --worktree --builder` resolves one, so a gated
+// token is resolved exactly as `relevo bind --worktree --candidate` resolves one, so a gated
 // candidate still resolves (its gates are recorded on the Resolution) and only
 // roles_missing refuses (#238).
 //
@@ -44,7 +44,7 @@ func ResolveSendBuilderFor(rt Runtime, role, current, token string) (*Resolution
 	return &res, nil
 }
 
-// applyBuilder is the persist half of a `relevo send --builder`: it moves the
+// applyBuilder is the persist half of a `relevo send --candidate`: it moves the
 // binding to res's candidate for this round and every later one, re-derives
 // the binding's stored tier for the new candidate through the normal chain,
 // and clears any round exclusion, which belongs to the old builder's round.
@@ -65,7 +65,7 @@ func applyBuilder(b store.Binding, res Resolution, reg *roles.Registry, pol poli
 }
 
 // roundOpenIn reports whether the binding's round is open: a plan entry for
-// the round with no report entry. It is the --builder refusal's own copy of
+// the round with no report entry. It is the --candidate refusal's own copy of
 // the condition reconcile and Send check inline.
 func roundOpenIn(entries []store.LogEntry, round int) bool {
 	return HasEntry(entries, round, store.DirToBuilder, store.KindPlan) &&

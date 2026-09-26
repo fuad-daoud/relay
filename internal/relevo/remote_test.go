@@ -834,7 +834,7 @@ func TestAddRemoteNoTierSkipsProbe(t *testing.T) {
 }
 
 // TestAddRemoteRolePreRolesServerRefused pins #382 §4: a server that does not
-// advertise remote.FeatureRoles refuses a custom --role before any binding is
+// advertise remote.FeatureRoles refuses a custom --actor before any binding is
 // created there. An old server would ignore the field and run its builder, so
 // the add is refused with no CreateBinding call and no branch or worktree.
 func TestAddRemoteRolePreRolesServerRefused(t *testing.T) {
@@ -856,7 +856,7 @@ func TestAddRemoteRolePreRolesServerRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("Add(--role on a pre-roles server) = nil, want a refusal")
 	}
-	want := `server zen does not run custom roles (role "ui-builder"); upgrade it`
+	want := `server zen does not run custom actors (actor "ui-builder"); upgrade it`
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %q, want %q", err.Error(), want)
 	}
@@ -3799,7 +3799,7 @@ func TestCatchUpStoppedNoReport(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("report must be pending: found=%v err=%v", found, err)
 	}
-	wantText := "Builder was stopped (killed) for round 1 on zen; no report was written."
+	wantText := "The runner was stopped (killed) for round 1 on zen; no report was written."
 	if !strings.Contains(pending.Payload, wantText) {
 		t.Errorf("payload = %q, want it to carry %q", pending.Payload, wantText)
 	}
@@ -5258,7 +5258,7 @@ func TestAskRefusesRemote(t *testing.T) {
 	})
 }
 
-// remoteBuilderRT is the client runtime for the `send --builder` remote tests
+// remoteBuilderRT is the client runtime for the `send --candidate` remote tests
 // (#318): an active remote binding on zen with a current candidate, a fake git
 // whose branch resolves, and a fake transport.
 func remoteBuilderRT(t *testing.T, fr *fakeRemote) (Runtime, *store.Store, *fakeTransport) {
@@ -5394,7 +5394,7 @@ func TestSendRemoteBuilderPreBuilderServerRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("Send --builder against a pre-builder server must be refused")
 	}
-	if !strings.Contains(err.Error(), "cannot change a binding's builder") {
+	if !strings.Contains(err.Error(), "cannot change a binding's candidate") {
 		t.Errorf("err = %q, want the pre-builder refusal", err.Error())
 	}
 	for _, c := range fr.calls {

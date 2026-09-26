@@ -47,7 +47,7 @@ func FormatCandidatesLatencyFor(reg *roles.Registry, set *candidate.Set, gates [
 			}
 		}
 		if len(served) == 0 {
-			return "(no role)"
+			return "(no actor)"
 		}
 		return strings.Join(served, ", ")
 	}, false)

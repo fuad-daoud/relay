@@ -36,6 +36,12 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 
 		prompt := composePrompt(b, rt.Store.PlanPath(name, b.Round), rt.Store.ReportPath(name, b.Round), rt.Store.DonePath(name, b.Round))
 
+		// Add the oom note because the worktree may hold partial work.
+		if b.OOMRequeue != nil {
+			prompt += "\n\n" + oomNote(b.OOMRequeue.At)
+			b.OOMRequeue = nil
+		}
+
 		reason := ""
 		if _, gated := gatedBuilder(rt, b); gated {
 			reason = "gated while queued"

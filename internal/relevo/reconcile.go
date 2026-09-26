@@ -332,7 +332,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	if _, err := os.Stat(reportPath); err == nil {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
 		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-			fmt.Sprintf("Builder finished round %d. Report: %s", b.Round, showCommand(b.Name, b.Round, "report"))+gateSuffix, joinNotes("", note), rec, nil, nil, nil)
+			fmt.Sprintf("The runner finished round %d. Report: %s", b.Round, showCommand(b.Name, b.Round, "report"))+gateSuffix, joinNotes("", note), rec, nil, nil, nil)
 		if err != nil {
 			return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 		}
@@ -389,13 +389,24 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 
 	if outcome != reporttail.OutcomeDone && outcome != reporttail.OutcomeUnstructured {
-		prefix := fmt.Sprintf("Builder finished round %d", b.Round)
-		if strings.HasPrefix(pFirst, prefix) {
-			replacement := prefix + " -- " + outcome
+		// The prefix match accepts the current words and the pre-rename ones,
+		// so a payload carrying either is annotated in place; anything else
+		// gets the outcome appended.
+		prefix := fmt.Sprintf("The runner finished round %d", b.Round)
+		legacyPrefix := fmt.Sprintf("Builder finished round %d", b.Round)
+		matched := ""
+		switch {
+		case strings.HasPrefix(pFirst, prefix):
+			matched = prefix
+		case strings.HasPrefix(pFirst, legacyPrefix):
+			matched = legacyPrefix
+		}
+		if matched != "" {
+			replacement := matched + " -- " + outcome
 			if tail.HaltedAt != "" {
 				replacement += fmt.Sprintf(" at %q", tail.HaltedAt)
 			}
-			pFirst = replacement + pFirst[len(prefix):]
+			pFirst = replacement + pFirst[len(matched):]
 		} else {
 			pFirst = pFirst + fmt.Sprintf(" Outcome: %s.", outcome)
 		}
@@ -527,6 +538,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// and neither does an exclusion recorded against it (#191).
 	b.RoundSwitches = 0
 	b.RoundExcluded = nil
+	b.RoundOOMKills = 0
 	// The round's verify flag has been acted on by the close (#144): the
 	// consult, when there is one, is already running.
 	b.RoundVerify = false

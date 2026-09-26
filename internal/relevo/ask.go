@@ -17,7 +17,7 @@ import (
 type AskOptions struct {
 	Role      string // consult role to spawn; required
 	Candidate string // a harness/provider/model token; empty resolves through the one rule in resolveCandidate
-	File      string // the question file; required
+	File      string // the question file; exactly one of File and Question is set
 	Name      string // binding name, already resolved by the caller
 	// PlannerID is the caller's --planner value when it has one, and the
 	// resolved record's id afterwards. Empty means "resolve this session's
@@ -28,9 +28,38 @@ type AskOptions struct {
 	// spawning a role: Role and Candidate are ignored, because the round's
 	// recorded session fixes both (#147 part 2).
 	Round int
-	// Question is an inline question. With Round > 0 exactly one of File and
-	// Question must be set; without Round it is unused.
+	// Question is an inline question. Exactly one of File and Question is
+	// set, with or without Round.
 	Question string
+}
+
+// CheckAskInput is ask's flag rule, in one place: exactly one of file and
+// question must be set, with or without round, and actor is required when
+// round is 0. The CLI calls it, and it is testable without a harness.
+func CheckAskInput(actor, file, question string, round int) error {
+	if round == 0 && actor == "" {
+		return errors.New("relevo ask needs --actor ACTOR")
+	}
+	if (file == "") == (question == "") {
+		if round > 0 {
+			return errors.New("relevo ask --round needs --file or -q")
+		}
+		return errors.New("relevo ask needs --file PATH or -q QUESTION")
+	}
+	return nil
+}
+
+// askBody reads the question an ask records: the inline question's own bytes,
+// or the file's bytes when file is set.
+func askBody(file, question string) ([]byte, error) {
+	if file == "" {
+		return []byte(question), nil
+	}
+	body, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("read question %s: %w", file, err)
+	}
+	return body, nil
 }
 
 // AskResult is what an ask produced, so the CLI can print the show command
@@ -91,11 +120,11 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		return AskResult{}, ErrNoPlannerSession
 	}
 
-	// Read the caller's file before taking the lock; it is the one input that
-	// does not depend on binding state.
-	body, err := os.ReadFile(opts.File)
+	// Read the caller's question before taking the lock; it is the one input
+	// that does not depend on binding state.
+	body, err := askBody(opts.File, opts.Question)
 	if err != nil {
-		return AskResult{}, fmt.Errorf("read question %s: %w", opts.File, err)
+		return AskResult{}, err
 	}
 
 	reg := rt.RoleRegistry()
@@ -180,13 +209,9 @@ func askRound(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, erro
 	if (opts.File == "") == (opts.Question == "") {
 		return AskResult{}, errors.New("ask --round needs --file or -q")
 	}
-	body := []byte(opts.Question)
-	if opts.File != "" {
-		var err error
-		body, err = os.ReadFile(opts.File)
-		if err != nil {
-			return AskResult{}, fmt.Errorf("read question %s: %w", opts.File, err)
-		}
+	body, err := askBody(opts.File, opts.Question)
+	if err != nil {
+		return AskResult{}, err
 	}
 
 	if rt.Runner == nil {

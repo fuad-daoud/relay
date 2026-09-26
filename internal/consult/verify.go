@@ -17,7 +17,7 @@ import (
 // VerifyRole is the consult Role a verify round's reviewer is recorded under.
 // It is deliberately not "reviewer": the harness role that runs the consult is
 // `reviewer`, while this name marks the record as the round-close check so
-// finishConsult can pick the verdict out of its findings. A `relevo ask --role
+// finishConsult can pick the verdict out of its findings. A `relevo ask --actor
 // reviewer` consult is a different thing.
 const VerifyRole = "verify"
 

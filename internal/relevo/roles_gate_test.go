@@ -77,7 +77,7 @@ func TestRolesGateCustomBuilderGatesOnlyItsKindAndRole(t *testing.T) {
 	if gates[0].Token != testClaudeRef || gates[0].Role != "builder" || gates[0].Kind != availability.RolesMissing {
 		t.Fatalf("gate = %+v, want %s roles-missing for builder", gates[0], testClaudeRef)
 	}
-	if !strings.Contains(gates[0].Note, "roles missing for builder") || !strings.Contains(gates[0].Note, "yourself") {
+	if !strings.Contains(gates[0].Note, "agent definitions missing for builder") || !strings.Contains(gates[0].Note, "yourself") {
 		t.Errorf("note = %q, want it to name builder and the custom fix", gates[0].Note)
 	}
 
@@ -129,8 +129,8 @@ func TestRolesGateExplicitPickRefusedOnlyForItsRole(t *testing.T) {
 	if err == nil {
 		t.Fatal("explicit claude builder pick succeeded, want a refusal")
 	}
-	if !strings.Contains(err.Error(), "roles missing") {
-		t.Errorf("err = %q, want it to say roles missing", err.Error())
+	if !strings.Contains(err.Error(), "agent definitions missing") {
+		t.Errorf("err = %q, want it to say agent definitions missing", err.Error())
 	}
 
 	res, err := resolveRole(rt.Registry, set, gates, testClaudeRef, "reviewer")
@@ -193,7 +193,7 @@ func TestRolesGateLegacyChecksEachRole(t *testing.T) {
 	if roleGates[0].Token != testClaudeRef || roleGates[0].Role != "reviewer" {
 		t.Errorf("gate = %+v, want %s scoped to reviewer", roleGates[0], testClaudeRef)
 	}
-	if !strings.Contains(roleGates[0].Note, "roles missing for reviewer") {
+	if !strings.Contains(roleGates[0].Note, "agent definitions missing for reviewer") {
 		t.Errorf("note = %q, want it to name reviewer", roleGates[0].Note)
 	}
 

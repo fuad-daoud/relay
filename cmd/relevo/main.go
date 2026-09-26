@@ -33,18 +33,18 @@ var version = ""
 var distribution = ""
 
 const usage = `relevo automates the plan/report handoff between two AI coding agent
-processes: a planner hands work to a builder, and relevo moves
+processes: a planner hands work to a runner, and relevo moves
 the files between them.
 
 Usage:
   relevo <command> [flags]
 
 Commands:
-  bind      bind this planner pane to a builder over the current working tree [--tier]
+  bind      bind this planner pane to a runner over the current working tree [--tier]
               (--role is now --actor)
               --worktree | --cwd DIR | --branch B | --server S
-                        attach another builder to this planner, on its own worktree or tree
-  send      stage a plan file as the current round and start the builder [--tier] [--dry-run] [--verify|--no-verify]
+                        attach another runner to this planner, on its own worktree or tree
+  send      stage a plan file as the current round and start the runner [--tier] [--dry-run] [--verify|--no-verify]
   ask       spawn a one-shot consult and record it on the binding
   status    one row per binding: round, state, live pane status, what is pending [--all] [--line]
   history   round history as JSON [--here] [--binding B] [--planner P] [--since D] [--limit N] [-q QUERY] [--json]
@@ -52,7 +52,7 @@ Commands:
   wait      block until a round closes or needs you, then print the pending report; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout [--peek]
   ui [:view [args]]  the cockpit: :fleet, :rounds [query], :round <binding> [N]
   done      mark a binding done; relaying stops (--pick to choose it on screen)
-  stop      kill the builder process and close its round without a report unless one is already on disk
+  stop      kill the runner process and close its round without a report unless one is already on disk
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
               --done clears every binding the planner marked DONE [--delete] [--dry-run]
   daemon    run the long-running reconciler
