@@ -74,9 +74,7 @@ Commands:
   send      stage a plan file as the current round and start the builder [--tier] [--dry-run] [--verify|--no-verify]
   ask       spawn a one-shot consult and record it on the binding
   status    one row per binding: round, state, live pane status, what is pending [--all] [--line]
-  history   one line per round across every binding, live or archived, newest first [--here] [--since 7d] [--json]
-              --tab   tokens and cost across bindings, archived ones included [--since 7d] [--by binding|model|provider] [--json]
-              --stats rounds, outcomes, switches, gate and consults across bindings, archived ones included; provider blocks from the last 30d [--since 7d] [--json]
+  history   round history as JSON [--here] [--binding B] [--planner P] [--since D] [--limit N] [-q QUERY] [--json]
   show      one round's plan, report, diff, drift, gate, findings, log or transcript, live or archived [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--json]
   wait      block until a round closes or needs you, then print the pending report; exit 0 closed, 2 unmarked, 5 halted/blocked per report, 3 needs you, 4 done/unbound, 124 timeout [--peek]
   ui [:view [args]]  the cockpit: :fleet, :rounds [query], :round <binding> [N]

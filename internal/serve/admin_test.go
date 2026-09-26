@@ -115,7 +115,7 @@ func TestAdminStatusAllOwners(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	statuses, builders, err := AdminStatus(ctx, s)
+	statuses, _, err := AdminStatus(ctx, s)
 	if err != nil {
 		t.Fatalf("AdminStatus: %v", err)
 	}
@@ -133,39 +133,6 @@ func TestAdminStatusAllOwners(t *testing.T) {
 	}
 	if len(statuses[1].Report.Bindings) != 1 || statuses[1].Report.Bindings[0].Name != "app-b" {
 		t.Errorf("bob bindings = %+v, want [app-b]", statuses[1].Report.Bindings)
-	}
-
-	rendered := RenderAdminStatus(statuses, builders)
-	if !strings.Contains(rendered, "alice  (") {
-		t.Errorf("rendered missing alice header: %q", rendered)
-	}
-	if !strings.Contains(rendered, "bob  (") {
-		t.Errorf("rendered missing bob header: %q", rendered)
-	}
-	if !strings.Contains(rendered, "  app-a") {
-		t.Errorf("rendered missing indented app-a: %q", rendered)
-	}
-	if !strings.Contains(rendered, "  app-b") {
-		t.Errorf("rendered missing indented app-b: %q", rendered)
-	}
-
-	aliceIdx := strings.Index(rendered, "alice")
-	bobIdx := strings.Index(rendered, "bob")
-	if aliceIdx > bobIdx {
-		t.Errorf("alice (idx %d) should appear before bob (idx %d)", aliceIdx, bobIdx)
-	}
-
-	// Empty input
-	if got := RenderAdminStatus(nil, remote.BuildersView{}); got != "builders 0/0, queued 0\nno owners\n" {
-		t.Errorf("RenderAdminStatus(nil) = %q, want %q", got, "builders 0/0, queued 0\nno owners\n")
-	}
-
-	// Owner with no bindings
-	noBindingsStatus := []OwnerStatus{
-		{Owner: idA, Label: "charlie", Report: relevo.Report{}},
-	}
-	if got := RenderAdminStatus(noBindingsStatus, remote.BuildersView{}); got != "builders 0/0, queued 0\ncharlie  no bindings\n" {
-		t.Errorf("RenderAdminStatus(no bindings) = %q, want %q", got, "builders 0/0, queued 0\ncharlie  no bindings\n")
 	}
 }
 
@@ -259,12 +226,11 @@ func TestAdminStatusBuildersHeader(t *testing.T) {
 		t.Errorf("Builders = %+v, want {Running:1 Queued:1 Cap:1 ...}", builders)
 	}
 
-	rendered := RenderAdminStatus(owners, builders)
-	if !strings.HasPrefix(rendered, "builders 1/1, queued 1\n") {
-		t.Fatalf("rendered does not start with the builders header; got:\n%s", rendered)
+	if len(owners) < 2 || len(owners[1].Report.Bindings) < 1 {
+		t.Fatalf("owners = %+v, want at least 2 owners with bindings", owners)
 	}
-	if !strings.Contains(rendered, "queued 0s (0 ahead)") {
-		t.Errorf("rendered missing the queued row's builder status; got:\n%s", rendered)
+	if got := owners[1].Report.Bindings[0].BuilderStatus; !strings.Contains(got, "queued") {
+		t.Errorf("queued row builder status = %q, want queued", got)
 	}
 }
 
@@ -474,12 +440,11 @@ func TestAdminUnbindByLabelAndId(t *testing.T) {
 	}
 }
 
-// TestAdminOwnerRuntimeAndTabEntries covers the two server-side read
-// helpers (#216), reusing TestAdminUnbindByLabelAndId's setup shape: two
-// enrolled owners, each with one binding holding one report entry, plus the
-// two refusal cases -- a shared label, and an owner with no bindings
-// directory at all.
-func TestAdminOwnerRuntimeAndTabEntries(t *testing.T) {
+// TestAdminOwnerRuntime covers the server-side read helper (#216), reusing
+// TestAdminUnbindByLabelAndId's setup shape: two enrolled owners, each with
+// one binding holding one report entry, plus the two refusal cases -- a shared
+// label, and an owner with no bindings directory at all.
+func TestAdminOwnerRuntime(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()
 
@@ -595,31 +560,6 @@ func TestAdminOwnerRuntimeAndTabEntries(t *testing.T) {
 	}
 	if _, statErr := os.Stat(carolRoot); !os.IsNotExist(statErr) {
 		t.Errorf("AdminOwnerRuntime created %s (stat err %v)", carolRoot, statErr)
-	}
-
-	// Without an owner: every owner's entries, labelled "label/name".
-	entries, err := AdminTabEntries(s, "", time.Time{}, func(string) {})
-	if err != nil {
-		t.Fatalf("AdminTabEntries(all): %v", err)
-	}
-	if len(entries) != 2 {
-		t.Fatalf("every-owner entries = %d, want 2", len(entries))
-	}
-	got := map[string]string{}
-	for _, e := range entries {
-		got[e.Binding] = e.Owner
-	}
-	if got["alice/api"] != "alice" || got["bob/web"] != "bob" {
-		t.Errorf("every-owner entries = %+v, want label/name bindings with Owner set", got)
-	}
-
-	// With an owner: bare names for that owner only.
-	entries, err = AdminTabEntries(s, "alice", time.Time{}, func(string) {})
-	if err != nil {
-		t.Fatalf("AdminTabEntries(alice): %v", err)
-	}
-	if len(entries) != 1 || entries[0].Binding != "api" || entries[0].Owner != "alice" {
-		t.Errorf("alice entries = %+v, want one bare \"api\" owned by alice", entries)
 	}
 }
 

@@ -85,26 +85,6 @@ func TestShowStateWithoutOwnerExits2(t *testing.T) {
 	}
 }
 
-// TestHistoryOwnerWithoutTabExits2 is TestServeShowWithoutOwnerExits2's port
-// to the new form (§8): `--owner` reads the server through the tab form, so
-// `history --owner` without `--tab` refuses, naming --tab, exit 2.
-func TestHistoryOwnerWithoutTabExits2(t *testing.T) {
-	stdout, stderr, runErr := captureOutput(t, func() error {
-		return run([]string{"history", "--owner", "alice"})
-	})
-
-	var ec exitCodeErr
-	if !errors.As(runErr, &ec) || ec.code != 2 {
-		t.Fatalf("expected exit code 2, got %v", runErr)
-	}
-	if len(stdout) != 0 {
-		t.Errorf("expected nothing on stdout, got %q", string(stdout))
-	}
-	if !strings.Contains(string(stderr), "--tab") {
-		t.Errorf("expected mention of --tab on stderr, got %q", string(stderr))
-	}
-}
-
 func TestServeFlagDefaults(t *testing.T) {
 	fs, sf := serveFlagSet()
 
