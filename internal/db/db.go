@@ -108,12 +108,6 @@ func Open(path string) (*DB, error) {
 	if have > know {
 		return &DB{sqlDB: sqlDB, newer: true, have: have, know: know}, nil
 	}
-	if have == know {
-		// Already at this binary's schema: nothing to migrate, so opening
-		// writes nothing and does not queue on the writer's lock.
-		return &DB{sqlDB: sqlDB, have: have, know: know}, nil
-	}
-
 	// A current schema needs no write: taking BEGIN IMMEDIATE here made every
 	// command take the write lock before doing anything, and fail under load.
 	if have == know {
