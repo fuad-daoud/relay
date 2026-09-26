@@ -1,7 +1,6 @@
-package relevo
+package view
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"regexp"
@@ -65,7 +64,7 @@ func TestRenderStatusLineEmpty(t *testing.T) {
 	}
 }
 
-// TestRenderPlannerLine is #386's statusline surface: the first line names the
+// TestRenderPlannerLine is the statusline surface: the first line names the
 // planner, an empty name renders nothing, and a narrow terminal cuts the
 // visible text to the column budget.
 func TestRenderPlannerLine(t *testing.T) {
@@ -90,98 +89,100 @@ func TestRenderPlannerLine(t *testing.T) {
 	}
 }
 
+// TestRenderStatusLineWaitingFallthrough fixtures.
+var wfNow = baseTime
+
+var waitingFallthroughCases = []struct {
+	name         string
+	binding      BindingStatus
+	expectMid    string
+	expectStatus string
+	expectRight  string
+	noSeparator  bool
+}{
+	{
+		name: "report note",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			LastPayload:      &LastEvent{Kind: store.KindReport, Note: "unmarked"},
+		},
+		expectMid:    "r1 · builder on agy",
+		expectStatus: "report in",
+	},
+	{
+		name: "question",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			LastPayload:      &LastEvent{Kind: store.KindQuestion},
+		},
+		expectMid:    "r1 · builder on agy",
+		expectStatus: "question in",
+	},
+	{
+		name: "answer",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			LastPayload:      &LastEvent{Kind: store.KindAnswer},
+		},
+		expectMid:    "r1 · builder on agy",
+		expectStatus: "answered",
+	},
+	{
+		name: "last nil",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			LastPayload:      nil,
+		},
+		expectMid:    "r1 · builder on agy",
+		expectStatus: "no plan yet",
+		expectRight:  "--",
+	},
+	{
+		name: "empty candidate",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "",
+			LastPayload:      &LastEvent{Kind: store.KindPlan},
+		},
+		expectMid:    "r1 · builder",
+		expectStatus: "plan sent",
+		noSeparator:  true,
+	},
+	{
+		name: "candidate with no slash",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			LastPayload:      &LastEvent{Kind: store.KindPlan},
+		},
+		expectMid:    "r1 · builder on agy",
+		expectStatus: "plan sent",
+	},
+}
+
 func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 	t.Parallel()
 
-	now := baseTime
-	tests := []struct {
-		name         string
-		binding      BindingStatus
-		expectMid    string
-		expectStatus string
-		expectRight  string
-		noSeparator  bool
-	}{
-		{
-			name: "report note",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "ACTIVE",
-				BuilderCandidate: "agy",
-				LastPayload:      &LastEvent{Kind: store.KindReport, Note: "unmarked"},
-			},
-			expectMid:    "r1 · builder on agy",
-			expectStatus: "report in",
-		},
-		{
-			name: "question",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "ACTIVE",
-				BuilderCandidate: "agy",
-				LastPayload:      &LastEvent{Kind: store.KindQuestion},
-			},
-			expectMid:    "r1 · builder on agy",
-			expectStatus: "question in",
-		},
-		{
-			name: "answer",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "ACTIVE",
-				BuilderCandidate: "agy",
-				LastPayload:      &LastEvent{Kind: store.KindAnswer},
-			},
-			expectMid:    "r1 · builder on agy",
-			expectStatus: "answered",
-		},
-		{
-			name: "last nil",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "ACTIVE",
-				BuilderCandidate: "agy",
-				LastPayload:      nil,
-			},
-			expectMid:    "r1 · builder on agy",
-			expectStatus: "no plan yet",
-			expectRight:  "--",
-		},
-		{
-			name: "empty candidate",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "ACTIVE",
-				BuilderCandidate: "",
-				LastPayload:      &LastEvent{Kind: store.KindPlan},
-			},
-			expectMid:    "r1 · builder",
-			expectStatus: "plan sent",
-			noSeparator:  true,
-		},
-		{
-			name: "candidate with no slash",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "ACTIVE",
-				BuilderCandidate: "agy",
-				LastPayload:      &LastEvent{Kind: store.KindPlan},
-			},
-			expectMid:    "r1 · builder on agy",
-			expectStatus: "plan sent",
-		},
-	}
-
-	for _, tt := range tests {
+	for _, tt := range waitingFallthroughCases {
 		t.Run(tt.name, func(t *testing.T) {
 			rep := Report{Bindings: []BindingStatus{tt.binding}}
-			out := RenderStatusLine(rep, now, 80)
+			out := RenderStatusLine(rep, wfNow, 80)
 			lines := splitLines(out)
 			if len(lines) != 1 {
 				t.Fatalf("got %d lines, want 1", len(lines))
@@ -243,7 +244,7 @@ func TestRenderStatusLineIgnoresBookkeepingLast(t *testing.T) {
 	}
 }
 
-// TestRenderStatusLineLiveSegment pins the trailing live segment (#234):
+// TestRenderStatusLineLiveSegment pins the trailing live segment:
 // a row whose round is running shows the live figure last in the middle
 // cell, before the right cell's clock and state.
 func TestRenderStatusLineLiveSegment(t *testing.T) {
@@ -446,146 +447,149 @@ func TestWaitingReportOutcome(t *testing.T) {
 
 // TestRowStatus pins the one status column: Status and Tone come from one
 // rule in one order, so no surface has to derive a status again.
-func TestRowStatus(t *testing.T) {
-	now := baseTime
-	tests := []struct {
-		name       string
-		binding    BindingStatus
-		wantStatus string
-		wantTone   string
-		wantReason string
-	}{
-		{
-			name: "plan sent",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "ACTIVE",
-				BuilderCandidate: "agy",
-				LastPayload:      &LastEvent{Kind: store.KindPlan, Direction: store.DirToBuilder, TS: now.Add(-2 * time.Minute)},
-			},
-			wantStatus: "plan sent",
-			wantTone:   "phase",
-		},
-		{
-			name: "no payload",
-			binding: BindingStatus{
-				Name:    "api",
-				Round:   1,
-				Display: "ACTIVE",
-			},
-			wantStatus: "no plan yet",
-			wantTone:   "phase",
-		},
-		{
-			name: "delivered plain report",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "ACTIVE",
-				BuilderCandidate: "agy",
-				LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, Round: 1, TS: now.Add(-2 * time.Minute)},
-			},
-			wantStatus: "REPORT IN",
-			wantTone:   "report",
-		},
-		{
-			name: "delivered report with a note and an outcome",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "ACTIVE",
-				BuilderCandidate: "agy",
-				LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, Note: "unmarked", Outcome: "halted", TS: now.Add(-2 * time.Minute)},
-			},
-			wantStatus: "REPORT IN · unmarked · halted",
-			wantTone:   "report",
-		},
-		{
-			name: "delivered report whose outcome is done",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "ACTIVE",
-				BuilderCandidate: "agy",
-				LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, Outcome: "done", TS: now.Add(-2 * time.Minute)},
-			},
-			wantStatus: "REPORT IN",
-			wantTone:   "report",
-		},
-		{
-			name: "delivered question",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "ACTIVE",
-				BuilderCandidate: "agy",
-				LastPayload:      &LastEvent{Kind: store.KindQuestion, Direction: store.DirToPlanner, TS: now.Add(-2 * time.Minute)},
-			},
-			wantStatus: "QUESTION IN",
-			wantTone:   "report",
-		},
-		{
-			name: "report still in flight on a live deliverer route",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "ACTIVE",
-				BuilderCandidate: "agy",
-				PlannerRoute:     "deliverer",
-				PlannerRouteLive: true,
-				Pending:          &PendingInfo{Round: 1, Kind: store.KindReport},
-				LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, TS: now.Add(-5 * time.Second)},
-			},
-			wantStatus: "report in",
-			wantTone:   "phase",
-		},
-		{
-			name: "stalled report",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "ACTIVE",
-				BuilderCandidate: "agy",
-				PlannerRoute:     "deliverer",
-				PlannerRouteLive: true,
-				Pending:          &PendingInfo{Round: 1, Kind: store.KindReport},
-				LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, TS: now.Add(-2 * time.Minute)},
-			},
-			wantStatus: "NEEDS YOU",
-			wantTone:   "needs",
-			wantReason: "report in",
-		},
-		{
-			name:       "paused display",
-			binding:    BindingStatus{Name: "api", Round: 1, Display: "PAUSED", BuilderCandidate: "agy"},
-			wantStatus: "PAUSED",
-			wantTone:   "quiet",
-		},
-		{
-			name:       "held display",
-			binding:    BindingStatus{Name: "api", Round: 1, Display: "HELD", BuilderCandidate: "agy"},
-			wantStatus: "HELD",
-			wantTone:   "held",
-		},
-		{
-			name: "needs you display carries its detail as the reason",
-			binding: BindingStatus{
-				Name:             "api",
-				Round:            1,
-				Display:          "NEEDS YOU",
-				BuilderCandidate: "agy",
-				Detail:           "round 1 was open",
-			},
-			wantStatus: "NEEDS YOU",
-			wantTone:   "needs",
-			wantReason: "round 1 was open",
-		},
-	}
+// TestRowStatus fixtures.
+var rsNow = baseTime
 
-	for _, tt := range tests {
+var rowStatusCases = []struct {
+	name       string
+	binding    BindingStatus
+	wantStatus string
+	wantTone   string
+	wantReason string
+}{
+	{
+		name: "plan sent",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			LastPayload:      &LastEvent{Kind: store.KindPlan, Direction: store.DirToBuilder, TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "plan sent",
+		wantTone:   "phase",
+	},
+	{
+		name: "no payload",
+		binding: BindingStatus{
+			Name:    "api",
+			Round:   1,
+			Display: "ACTIVE",
+		},
+		wantStatus: "no plan yet",
+		wantTone:   "phase",
+	},
+	{
+		name: "delivered plain report",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, Round: 1, TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "REPORT IN",
+		wantTone:   "report",
+	},
+	{
+		name: "delivered report with a note and an outcome",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, Note: "unmarked", Outcome: "halted", TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "REPORT IN · unmarked · halted",
+		wantTone:   "report",
+	},
+	{
+		name: "delivered report whose outcome is done",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, Outcome: "done", TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "REPORT IN",
+		wantTone:   "report",
+	},
+	{
+		name: "delivered question",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			LastPayload:      &LastEvent{Kind: store.KindQuestion, Direction: store.DirToPlanner, TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "QUESTION IN",
+		wantTone:   "report",
+	},
+	{
+		name: "report still in flight on a live deliverer route",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			PlannerRoute:     "deliverer",
+			PlannerRouteLive: true,
+			Pending:          &PendingInfo{Round: 1, Kind: store.KindReport},
+			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, TS: rsNow.Add(-5 * time.Second)},
+		},
+		wantStatus: "report in",
+		wantTone:   "phase",
+	},
+	{
+		name: "stalled report",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy",
+			PlannerRoute:     "deliverer",
+			PlannerRouteLive: true,
+			Pending:          &PendingInfo{Round: 1, Kind: store.KindReport},
+			LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, TS: rsNow.Add(-2 * time.Minute)},
+		},
+		wantStatus: "NEEDS YOU",
+		wantTone:   "needs",
+		wantReason: "report in",
+	},
+	{
+		name:       "paused display",
+		binding:    BindingStatus{Name: "api", Round: 1, Display: "PAUSED", BuilderCandidate: "agy"},
+		wantStatus: "PAUSED",
+		wantTone:   "quiet",
+	},
+	{
+		name:       "held display",
+		binding:    BindingStatus{Name: "api", Round: 1, Display: "HELD", BuilderCandidate: "agy"},
+		wantStatus: "HELD",
+		wantTone:   "held",
+	},
+	{
+		name: "needs you display carries its detail as the reason",
+		binding: BindingStatus{
+			Name:             "api",
+			Round:            1,
+			Display:          "NEEDS YOU",
+			BuilderCandidate: "agy",
+			Detail:           "round 1 was open",
+		},
+		wantStatus: "NEEDS YOU",
+		wantTone:   "needs",
+		wantReason: "round 1 was open",
+	},
+}
+
+func TestRowStatus(t *testing.T) {
+
+	for _, tt := range rowStatusCases {
 		t.Run(tt.name, func(t *testing.T) {
-			rows := StatusLineRows(Report{Bindings: []BindingStatus{tt.binding}}, now)
+			rows := StatusLineRows(Report{Bindings: []BindingStatus{tt.binding}}, rsNow)
 			if len(rows) != 1 {
 				t.Fatalf("len(rows) = %d, want 1", len(rows))
 			}
@@ -867,97 +871,6 @@ func TestRenderStatusLineColours(t *testing.T) {
 	}
 }
 
-func setupPlannerStatusStore(t *testing.T) Runtime {
-	t.Helper()
-	rt := newRuntime(t)
-	bindings := []store.Binding{
-		{
-			Name:             "zeta",
-			CWD:              "/a",
-			PlannerID:        testClaimPlanner,
-			Builder:          store.Endpoint{Kind: "agy"},
-			BuilderCandidate: testAgyRef,
-			Round:            1,
-			State:            store.StateActive,
-		},
-		{
-			Name:             "alpha",
-			CWD:              "/b",
-			PlannerID:        testClaimPlanner,
-			Builder:          store.Endpoint{Kind: "agy"},
-			BuilderCandidate: testAgyRef,
-			Round:            1,
-			State:            store.StateActive,
-		},
-		{
-			Name:             "other",
-			CWD:              "/c",
-			PlannerID:        otherClaimPlanner,
-			Builder:          store.Endpoint{Kind: "agy"},
-			BuilderCandidate: testAgyRef,
-			Round:            1,
-			State:            store.StateActive,
-		},
-		{
-			Name:             "finished",
-			CWD:              "/d",
-			PlannerID:        testClaimPlanner,
-			Builder:          store.Endpoint{Kind: "agy"},
-			BuilderCandidate: testAgyRef,
-			Round:            1,
-			State:            store.StateDone,
-		},
-	}
-	for _, b := range bindings {
-		if err := rt.Store.Save(b); err != nil {
-			t.Fatalf("Save(%s): %v", b.Name, err)
-		}
-	}
-	return rt
-}
-
-func TestPlannerStatusFiltersToOnePlanner(t *testing.T) {
-	rt := setupPlannerStatusStore(t)
-	ctx := context.Background()
-
-	rep, err := PlannerStatus(ctx, rt, testClaimPlanner)
-	if err != nil {
-		t.Fatalf("PlannerStatus: %v", err)
-	}
-	if len(rep.Bindings) != 2 {
-		t.Fatalf("got %d bindings, want 2", len(rep.Bindings))
-	}
-	if rep.Bindings[0].Name != "alpha" || rep.Bindings[1].Name != "zeta" {
-		t.Errorf("got bindings [%s, %s], want [alpha, zeta]", rep.Bindings[0].Name, rep.Bindings[1].Name)
-	}
-	for i, b := range rep.Bindings {
-		if b.PlannerID != testClaimPlanner {
-			t.Errorf("row %d PlannerID = %q, want %q", i, b.PlannerID, testClaimPlanner)
-		}
-	}
-
-	repOther, err := PlannerStatus(ctx, rt, otherClaimPlanner)
-	if err != nil {
-		t.Fatalf("PlannerStatus(other): %v", err)
-	}
-	if len(repOther.Bindings) != 1 || repOther.Bindings[0].Name != "other" {
-		t.Errorf("got %d bindings for the other planner, want only 'other'", len(repOther.Bindings))
-	}
-}
-
-func TestPlannerStatusEmptyPlannerIsEmpty(t *testing.T) {
-	rt := setupPlannerStatusStore(t)
-	ctx := context.Background()
-
-	rep, err := PlannerStatus(ctx, rt, "")
-	if err != nil {
-		t.Fatalf("PlannerStatus: %v", err)
-	}
-	if len(rep.Bindings) != 0 {
-		t.Errorf("got %d bindings, want 0", len(rep.Bindings))
-	}
-}
-
 func TestRoundClock(t *testing.T) {
 	t.Parallel()
 
@@ -1118,6 +1031,13 @@ func TestStatusLineRows(t *testing.T) {
 		}
 	})
 
+}
+
+func TestStatusLineRowsTokens(t *testing.T) {
+	t.Parallel()
+
+	now := baseTime
+
 	t.Run("open round with LiveUsage samples -> tokens = <n> tok", func(t *testing.T) {
 		b := BindingStatus{
 			Name:             "api",
@@ -1158,6 +1078,13 @@ func TestStatusLineRows(t *testing.T) {
 			t.Errorf("Tokens = %q, want '25k tok'", rows[0].Tokens)
 		}
 	})
+
+}
+
+func TestStatusLineRowsRemote(t *testing.T) {
+	t.Parallel()
+
+	now := baseTime
 
 	t.Run("remote row (Server set) -> harness <h>@<server>", func(t *testing.T) {
 		b := BindingStatus{
@@ -1213,6 +1140,13 @@ func TestStatusLineRows(t *testing.T) {
 		}
 	})
 
+}
+
+func TestStatusLineRowsEmptyDoc(t *testing.T) {
+	t.Parallel()
+
+	now := baseTime
+
 	t.Run("empty report -> [] (not nil) once wrapped in StatusLineDoc and marshalled", func(t *testing.T) {
 		rows := StatusLineRows(Report{}, now)
 		if rows == nil {
@@ -1235,6 +1169,13 @@ func TestStatusLineRows(t *testing.T) {
 			t.Errorf("json %q does not contain '\"rows\":[]'", s)
 		}
 	})
+
+}
+
+func TestStatusLineRowsPending(t *testing.T) {
+	t.Parallel()
+
+	now := baseTime
 
 	t.Run("delivered report (Pending nil) -> needs_you false, report_in true, report_round = its round", func(t *testing.T) {
 		b := BindingStatus{
@@ -1298,6 +1239,13 @@ func TestStatusLineRows(t *testing.T) {
 		}
 	})
 
+}
+
+func TestStatusLineRowsStalled(t *testing.T) {
+	t.Parallel()
+
+	now := baseTime
+
 	t.Run("pending report, deliverer live, 61s old -> needs_you true", func(t *testing.T) {
 		b := BindingStatus{
 			Name:             "worker",
@@ -1325,6 +1273,13 @@ func TestStatusLineRows(t *testing.T) {
 		}
 	})
 
+}
+
+func TestStatusLineRowsPull(t *testing.T) {
+	t.Parallel()
+
+	now := baseTime
+
 	t.Run("pending report, route pull -> needs_you true at once", func(t *testing.T) {
 		b := BindingStatus{
 			Name:         "worker",
@@ -1350,6 +1305,13 @@ func TestStatusLineRows(t *testing.T) {
 			t.Errorf("ReportIn = %v, want false (still pending)", rows[0].ReportIn)
 		}
 	})
+
+}
+
+func TestStatusLineRowsNeedsYou(t *testing.T) {
+	t.Parallel()
+
+	now := baseTime
 
 	t.Run("NEEDS YOU display with a plan payload -> needs_you true, report_in false, report_round 0", func(t *testing.T) {
 		b := BindingStatus{
@@ -1401,81 +1363,81 @@ func TestStatusLineRows(t *testing.T) {
 	})
 }
 
-// TestRenderStatusLineSharesTheRowRule is #393: the Claude Code line is
+// TestRenderStatusLineSharesTheRowRule is the Claude Code line is
 // rendered from StatusLineRows, so its text carries exactly the row's shown
 // round (report_round when > 0, else round) and the row's word -- no word for
 // ACTIVE, REPORT IN for a delivered report, NEEDS YOU for a stalled pending or
 // a NEEDS YOU display.
+// TestRenderStatusLineSharesTheRowRule fixtures.
+var srrNow = baseTime
+var srrRep = Report{Bindings: []BindingStatus{
+	{
+		Name:             "active",
+		Round:            2,
+		Display:          "ACTIVE",
+		BuilderCandidate: "agy",
+		RoundStart:       srrNow.Add(-3 * time.Minute),
+		LastPayload:      &LastEvent{TS: srrNow.Add(-3 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+	},
+	{
+		Name:             "delivered",
+		Round:            5,
+		Display:          "ACTIVE",
+		BuilderCandidate: "agy",
+		RoundStart:       srrNow.Add(-4 * time.Minute),
+		LastPayload:      &LastEvent{TS: srrNow.Add(-4 * time.Minute), Round: 4, Kind: store.KindReport, Direction: store.DirToPlanner},
+	},
+	{
+		Name:             "stalled",
+		Round:            7,
+		Display:          "ACTIVE",
+		BuilderCandidate: "agy",
+		PlannerRoute:     "deliverer",
+		PlannerRouteLive: true,
+		Pending:          &PendingInfo{Round: 6, Kind: store.KindReport},
+		RoundStart:       srrNow.Add(-7 * time.Minute),
+		LastPayload:      &LastEvent{TS: srrNow.Add(-2 * time.Minute), Round: 6, Kind: store.KindReport, Direction: store.DirToPlanner},
+	},
+	{
+		Name:             "stuck",
+		Round:            3,
+		Display:          "NEEDS YOU",
+		BuilderCandidate: "agy",
+		RoundStart:       srrNow.Add(-2 * time.Minute),
+		LastPayload:      &LastEvent{TS: srrNow.Add(-2 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+	},
+	{
+		Name:             "paused",
+		Round:            6,
+		Display:          "PAUSED",
+		BuilderCandidate: "agy",
+		RoundStart:       srrNow.Add(-6 * time.Minute),
+		LastPayload:      &LastEvent{TS: srrNow.Add(-1 * time.Minute), Round: 5, Kind: store.KindReport, Direction: store.DirToPlanner},
+	},
+}}
+var srrCases = []struct {
+	i     int
+	round int
+	word  string
+	dot   string
+}{
+	{0, 2, "", "○"},
+	{1, 4, "REPORT IN", "○"},
+	{2, 6, "NEEDS YOU", "●"},
+	{3, 3, "NEEDS YOU", "●"},
+	{4, 5, "PAUSED", "○"},
+}
+
 func TestRenderStatusLineSharesTheRowRule(t *testing.T) {
 	t.Parallel()
 
-	now := baseTime
-	rep := Report{Bindings: []BindingStatus{
-		{
-			Name:             "active",
-			Round:            2,
-			Display:          "ACTIVE",
-			BuilderCandidate: "agy",
-			RoundStart:       now.Add(-3 * time.Minute),
-			LastPayload:      &LastEvent{TS: now.Add(-3 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
-		},
-		{
-			Name:             "delivered",
-			Round:            5,
-			Display:          "ACTIVE",
-			BuilderCandidate: "agy",
-			RoundStart:       now.Add(-4 * time.Minute),
-			LastPayload:      &LastEvent{TS: now.Add(-4 * time.Minute), Round: 4, Kind: store.KindReport, Direction: store.DirToPlanner},
-		},
-		{
-			Name:             "stalled",
-			Round:            7,
-			Display:          "ACTIVE",
-			BuilderCandidate: "agy",
-			PlannerRoute:     "deliverer",
-			PlannerRouteLive: true,
-			Pending:          &PendingInfo{Round: 6, Kind: store.KindReport},
-			RoundStart:       now.Add(-7 * time.Minute),
-			LastPayload:      &LastEvent{TS: now.Add(-2 * time.Minute), Round: 6, Kind: store.KindReport, Direction: store.DirToPlanner},
-		},
-		{
-			Name:             "stuck",
-			Round:            3,
-			Display:          "NEEDS YOU",
-			BuilderCandidate: "agy",
-			RoundStart:       now.Add(-2 * time.Minute),
-			LastPayload:      &LastEvent{TS: now.Add(-2 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
-		},
-		{
-			Name:             "paused",
-			Round:            6,
-			Display:          "PAUSED",
-			BuilderCandidate: "agy",
-			RoundStart:       now.Add(-6 * time.Minute),
-			LastPayload:      &LastEvent{TS: now.Add(-1 * time.Minute), Round: 5, Kind: store.KindReport, Direction: store.DirToPlanner},
-		},
-	}}
-
-	rows := StatusLineRows(rep, now)
-	lines := splitLines(RenderStatusLine(rep, now, 120))
+	rows := StatusLineRows(srrRep, srrNow)
+	lines := splitLines(RenderStatusLine(srrRep, srrNow, 120))
 	if len(rows) != len(lines) {
 		t.Fatalf("got %d rows and %d lines, want one line per row", len(rows), len(lines))
 	}
 
-	cases := []struct {
-		i     int
-		round int
-		word  string
-		dot   string
-	}{
-		{0, 2, "", "○"},
-		{1, 4, "REPORT IN", "○"},
-		{2, 6, "NEEDS YOU", "●"},
-		{3, 3, "NEEDS YOU", "●"},
-		{4, 5, "PAUSED", "○"},
-	}
-
-	for _, tc := range cases {
+	for _, tc := range srrCases {
 		row := rows[tc.i]
 		shown := row.Round
 		if row.ReportRound > 0 {

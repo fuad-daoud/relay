@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 func TestConfirmAnyKeyCancels(t *testing.T) {
@@ -54,7 +54,7 @@ func TestConfirmAnyKeyCancels(t *testing.T) {
 
 func TestConfirmModalOneButtonRow(t *testing.T) {
 	env := Env{Now: time.Now()}
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name:    "webshop",
 		Round:   1,
 		Branch:  "main",

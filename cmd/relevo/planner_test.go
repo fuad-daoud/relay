@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // plannerRegistryAt is a registry over the database the state root holds, for
@@ -316,7 +317,7 @@ func TestAnnotatePlannerChat(t *testing.T) {
 	}
 
 	rt := relevo.Runtime{Planners: reg}
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{
+	rep := view.Report{Bindings: []view.BindingStatus{
 		{Name: "one", PlannerID: knownID},
 		{Name: "two", PlannerID: knownID},
 		{Name: "three", PlannerID: "pl_zzzzzzzzzzzz"},

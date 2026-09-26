@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // dashJump builds a dashboard jump message.
@@ -17,11 +18,11 @@ func dashJump(name, id string, round int) dash.JumpMsg {
 }
 
 func cmdEnv(rows ...string) Env {
-	bs := make([]relevo.BindingStatus, len(rows))
+	bs := make([]view.BindingStatus, len(rows))
 	for i, r := range rows {
-		bs[i] = relevo.BindingStatus{Name: r, Display: "ACTIVE"}
+		bs[i] = view.BindingStatus{Name: r, Display: "ACTIVE"}
 	}
-	return Env{Report: relevo.Report{Bindings: bs}, Loaded: true, Now: railNow}
+	return Env{Report: view.Report{Bindings: bs}, Loaded: true, Now: railNow}
 }
 
 // TestCmdLineMatchesRanks pins §4.7's matching and ranking: a
@@ -65,16 +66,16 @@ func TestCmdLineMatchesRanks(t *testing.T) {
 // live binding with a long name, typed `r`. The live entry survives the cap
 // of 8 because live bindings sort before done ones (§2.3, §5).
 func TestCommandMatchesLiveBeforeDone(t *testing.T) {
-	var bindings []relevo.BindingStatus
+	var bindings []view.BindingStatus
 	for i := 1; i <= 7; i++ {
-		bindings = append(bindings, relevo.BindingStatus{
+		bindings = append(bindings, view.BindingStatus{
 			Name: fmt.Sprintf("d%d", i), Round: 1, Display: "DONE",
 		})
 	}
-	bindings = append(bindings, relevo.BindingStatus{
+	bindings = append(bindings, view.BindingStatus{
 		Name: "live-binding-long", Round: 2, Display: "ACTIVE",
 	})
-	env := Env{Report: relevo.Report{Bindings: bindings}}
+	env := Env{Report: view.Report{Bindings: bindings}}
 
 	c := newCmdLine()
 	c.input.SetValue("r")
@@ -157,7 +158,7 @@ func TestCmdLineExecuteCommands(t *testing.T) {
 
 	t.Run("rounds without a DB", func(t *testing.T) {
 		st := store.New(t.TempDir())
-		noDB := testEnv(plannerSource{relevo.Runtime{Store: st}}, relevo.Report{}, 140, 40)
+		noDB := testEnv(plannerSource{relevo.Runtime{Store: st}}, view.Report{}, 140, 40)
 		msg, ok := execLine("rounds", noDB, p)().(noticeMsg)
 		if !ok {
 			t.Fatalf("rounds without a DB must notice, got %T", execLine("rounds", noDB, p)())
@@ -168,7 +169,7 @@ func TestCmdLineExecuteCommands(t *testing.T) {
 	})
 
 	t.Run("round live opens a round view", func(t *testing.T) {
-		m := splitModel(t, 140, 40, relevo.BindingStatus{Name: "api", Round: 4, Display: "ACTIVE"})
+		m := splitModel(t, 140, 40, view.BindingStatus{Name: "api", Round: 4, Display: "ACTIVE"})
 		cmd := execLine("round api 2", m.env(), m.prefs)
 		m = drain(t, m, cmd)
 		rv, ok := m.top().(roundView)
@@ -185,7 +186,7 @@ func TestCmdLineExecuteCommands(t *testing.T) {
 // database is a notice (§5.4).
 func TestOpenRoundNotFound(t *testing.T) {
 	st := store.New(t.TempDir())
-	env := testEnv(plannerSource{relevo.Runtime{Store: st}}, relevo.Report{}, 140, 40)
+	env := testEnv(plannerSource{relevo.Runtime{Store: st}}, view.Report{}, 140, 40)
 	msg, ok := openRound(env, dashJump("ghost", "h1", 1))().(noticeMsg)
 	if !ok {
 		t.Fatalf("openRound must notice, got %T", openRound(env, dashJump("ghost", "h1", 1))())
@@ -198,7 +199,7 @@ func TestOpenRoundNotFound(t *testing.T) {
 // TestOpenRoundLive: a live row resolves to a roundOpenMsg with its key.
 func TestOpenRoundLive(t *testing.T) {
 	st := store.New(t.TempDir())
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{{Name: "persist", Round: 3, Display: "ACTIVE"}}}
+	rep := view.Report{Bindings: []view.BindingStatus{{Name: "persist", Round: 3, Display: "ACTIVE"}}}
 	env := testEnv(plannerSource{relevo.Runtime{Store: st}}, rep, 140, 40)
 	msg, ok := openRound(env, dashJump("persist", "b1", 2))().(roundOpenMsg)
 	if !ok {

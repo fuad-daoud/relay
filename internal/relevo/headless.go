@@ -23,6 +23,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // ErrBuilderBusy reports a send against a headless binding whose previous
@@ -1052,9 +1053,9 @@ const statusTailLines = 3
 // Alive check, then, for an exited process, the trailer's code. No Runner
 // means relevo cannot say. A live process whose stream has gone quiet
 // (binding.StalledSince, #252) reads "stalled <age>" in place of "working".
-func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *HeadlessInfo) {
+func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *view.HeadlessInfo) {
 	e := b.Builder
-	info := &HeadlessInfo{PID: e.PID, LogPath: e.LogPath}
+	info := &view.HeadlessInfo{PID: e.PID, LogPath: e.LogPath}
 	if e.StartedAt != 0 {
 		info.StartedAt = time.Unix(e.StartedAt, 0)
 	}

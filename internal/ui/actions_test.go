@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // gateCall is one Gate invocation, recorded by fakeActions.
@@ -198,7 +199,7 @@ func (f *fakeActions) Rollback(_ context.Context, rev int64) Result {
 func key(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
 
 // actionModel is a loaded shell at 140x40 with a as its Actions seam.
-func actionModel(t *testing.T, a Actions, rows ...relevo.BindingStatus) Model {
+func actionModel(t *testing.T, a Actions, rows ...view.BindingStatus) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
 	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Actions: a})
@@ -206,20 +207,20 @@ func actionModel(t *testing.T, a Actions, rows ...relevo.BindingStatus) Model {
 	res, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = res.(Model)
 	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: relevo.Report{Bindings: rows}})
+	res, _ = m.Update(statusMsg{report: view.Report{Bindings: rows}})
 	return res.(Model)
 }
 
 // goldenActionModel is actionModel for the goldens: the full report with a as
 // the Actions seam.
-func goldenActionModel(t *testing.T, width, height int, a Actions, rep relevo.Report) Model {
+func goldenActionModel(t *testing.T, width, height int, a Actions, rep view.Report) Model {
 	t.Helper()
 	return goldenActionModelWithStore(t, width, height, a, rep, store.New(t.TempDir()))
 }
 
 // goldenActionModelWithStore is goldenActionModel over st, so a fixture whose
 // plan tab reads its body and sent time from a seeded store can supply it.
-func goldenActionModelWithStore(t *testing.T, width, height int, a Actions, rep relevo.Report, st *store.Store) Model {
+func goldenActionModelWithStore(t *testing.T, width, height int, a Actions, rep view.Report, st *store.Store) Model {
 	t.Helper()
 	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Actions: a, Version: "v0.13.0-28-gb66c6fc"})
 	m.now = func() time.Time { return railNow }
@@ -248,7 +249,7 @@ func pointer(t *testing.T, m Model, key string) Model {
 
 func TestStopKeyConfirmsThenCalls(t *testing.T) {
 	fa := &fakeActions{result: Result{Text: "webshop round 4 stopped", Refresh: true}}
-	m := actionModel(t, fa, relevo.BindingStatus{Name: "webshop", Round: 4, Display: "ACTIVE"})
+	m := actionModel(t, fa, view.BindingStatus{Name: "webshop", Round: 4, Display: "ACTIVE"})
 
 	res, cmd := m.Update(key('x'))
 	m = drain(t, res.(Model), cmd)
@@ -285,7 +286,7 @@ func TestStopKeyConfirmsThenCalls(t *testing.T) {
 }
 
 func TestConfirmNamesTheOwningPlanner(t *testing.T) {
-	owned := relevo.BindingStatus{Name: "webshop", Round: 4, Display: "ACTIVE", PlannerName: "architect-1"}
+	owned := view.BindingStatus{Name: "webshop", Round: 4, Display: "ACTIVE", PlannerName: "architect-1"}
 	yours := owned
 	yours.PlannerName = "you"
 
@@ -303,7 +304,7 @@ func TestConfirmNamesTheOwningPlanner(t *testing.T) {
 		strings.Join(stopConfirmLines(yours, railNow), "\n"),
 		strings.Join(doneConfirmLines(yours), "\n"),
 		strings.Join(unbindConfirmLines(yours), "\n"),
-		strings.Join(stopConfirmLines(relevo.BindingStatus{}, railNow), "\n"),
+		strings.Join(stopConfirmLines(view.BindingStatus{}, railNow), "\n"),
 	} {
 		if strings.Contains(got, "planner ") {
 			t.Errorf("no planner line for you or an empty planner:\n%s", got)
@@ -313,7 +314,7 @@ func TestConfirmNamesTheOwningPlanner(t *testing.T) {
 
 func TestDoneKeyConfirmsThenCalls(t *testing.T) {
 	fa := &fakeActions{result: Result{Text: "atlas marked done", Refresh: true}}
-	m := actionModel(t, fa, relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
+	m := actionModel(t, fa, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
 
 	res, cmd0 := m.Update(key('D'))
 	m = drain(t, res.(Model), cmd0)
@@ -337,7 +338,7 @@ func TestDoneKeyConfirmsThenCalls(t *testing.T) {
 
 func TestUnbindKeyConfirmsThenCalls(t *testing.T) {
 	fa := &fakeActions{result: Result{Text: "archived atlas", Refresh: true}}
-	m := actionModel(t, fa, relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE", Branch: "relevo/atlas"})
+	m := actionModel(t, fa, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE", Branch: "relevo/atlas"})
 
 	res, cmd0 := m.Update(key('u'))
 	m = drain(t, res.(Model), cmd0)
@@ -364,7 +365,7 @@ func TestUnbindKeyConfirmsThenCalls(t *testing.T) {
 // the form open on `for`; a valid one submits both fields at once.
 func TestGatePromptValidatesDuration(t *testing.T) {
 	fa := &fakeActions{result: Result{Text: "gated", Refresh: true}}
-	m := actionModel(t, fa, relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE", BuilderCandidate: "opencode/cline-pass/glm"})
+	m := actionModel(t, fa, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE", BuilderCandidate: "opencode/cline-pass/glm"})
 
 	res, cmd0 := m.Update(key('g'))
 	m = drain(t, res.(Model), cmd0)
@@ -410,7 +411,7 @@ func TestGatePromptValidatesDuration(t *testing.T) {
 
 func TestUngateCommand(t *testing.T) {
 	fa := &fakeActions{result: Result{Text: "cleared cline-pass (1 entries)", Refresh: true}}
-	m := actionModel(t, fa, relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
+	m := actionModel(t, fa, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
 
 	cmd := execLine("ungate cline-pass", m.env(), m.prefs)
 	m = drain(t, m, cmd)
@@ -449,7 +450,7 @@ func TestUngateCommand(t *testing.T) {
 }
 
 func TestActionResultBecomesNoticeAndLog(t *testing.T) {
-	m := actionModel(t, &fakeActions{}, relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
+	m := actionModel(t, &fakeActions{}, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
 
 	res, _ := m.Update(workingMsg{verb: "stop", key: "atlas"})
 	m = res.(Model)
@@ -492,7 +493,7 @@ func TestActionResultBecomesNoticeAndLog(t *testing.T) {
 
 func TestSecondActionOnSameBindingRefused(t *testing.T) {
 	fa := &fakeActions{}
-	m := actionModel(t, fa, relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
+	m := actionModel(t, fa, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
 
 	res, _ := m.Update(workingMsg{verb: "stop", key: "atlas"})
 	m = res.(Model)
@@ -513,7 +514,7 @@ func TestSecondActionOnSameBindingRefused(t *testing.T) {
 }
 
 func TestActionKeysHiddenWithoutActions(t *testing.T) {
-	m := actionModel(t, nil, relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
+	m := actionModel(t, nil, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
 
 	hidden := map[string]bool{"x": true, "D": true, "u": true, "g": true, "o": true, "E": true, "b": true, "r": true}
 	for _, kh := range fleet(m).Keys() {
@@ -533,7 +534,7 @@ func TestActionKeysHiddenWithoutActions(t *testing.T) {
 
 func TestShellKeyExecs(t *testing.T) {
 	fa := &fakeActions{shellCmd: exec.Command("true")}
-	m := actionModel(t, fa, relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
+	m := actionModel(t, fa, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
 
 	res, cmd := m.Update(key('o'))
 	m = res.(Model)
@@ -611,7 +612,7 @@ func TestSendPromptThenConfirm(t *testing.T) {
 	}
 
 	fa := &fakeActions{result: Result{Text: "sent round 5 to atlas", Refresh: true}}
-	m := actionModel(t, fa, relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE", CWD: dir})
+	m := actionModel(t, fa, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE", CWD: dir})
 
 	res, cmd := m.Update(key('s'))
 	m = drain(t, res.(Model), cmd)
@@ -671,7 +672,7 @@ func TestEditorSendSkipsEmpty(t *testing.T) {
 
 func TestBindPromptChain(t *testing.T) {
 	fa := &fakeActions{candidates: []string{"deepseek", "glm", "haiku"}}
-	m := actionModel(t, fa, relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
+	m := actionModel(t, fa, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
 
 	res, cmd := m.Update(key('b'))
 	m = drain(t, res.(Model), cmd)
@@ -751,8 +752,8 @@ func TestBindPromptChain(t *testing.T) {
 }
 
 func TestRetryConfirmText(t *testing.T) {
-	open := relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"}
-	idle := relevo.BindingStatus{Name: "atlas", Round: 4, Display: "PAUSED"}
+	open := view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"}
+	idle := view.BindingStatus{Name: "atlas", Round: 4, Display: "PAUSED"}
 
 	if got := retryConfirmTitle(open, "haiku"); got != "Stop atlas round 4 and resend its plan on haiku?" {
 		t.Errorf("open-round retry title = %q", got)
@@ -773,7 +774,7 @@ func TestRetryConfirmText(t *testing.T) {
 // candidate list): enter on an enabled row opens the confirm and Retry.
 func TestRetryKeyCarriesTheChosenCandidate(t *testing.T) {
 	fa := &fakeActions{candidates: []string{"glm", "haiku"}}
-	m := actionModel(t, fa, relevo.BindingStatus{
+	m := actionModel(t, fa, view.BindingStatus{
 		Name: "atlas", Round: 4, Display: "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm", BuilderName: "glm",
 	})
@@ -809,14 +810,14 @@ func TestRetryKeyCarriesTheChosenCandidate(t *testing.T) {
 
 func TestReportReadyRowAndPull(t *testing.T) {
 	fa := &fakeActions{pullText: "round 3 report\n\nall good\n", pullOK: true}
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "atlas", Round: 3, Display: "ACTIVE", PlannerName: "you",
-		Last:    &relevo.LastEvent{TS: railNow.Add(-3 * time.Minute), Round: 3, Kind: store.KindReport},
-		Pending: &relevo.PendingInfo{Round: 3, Kind: store.KindReport},
+		Last:    &view.LastEvent{TS: railNow.Add(-3 * time.Minute), Round: 3, Kind: store.KindReport},
+		Pending: &view.PendingInfo{Round: 3, Kind: store.KindReport},
 	}
 	// The post-pull refetch must still answer with the row: a store with no
 	// bindings would read as "atlas is gone" and pop the round view.
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{b}}
+	rep := view.Report{Bindings: []view.BindingStatus{b}}
 	st := store.New(t.TempDir())
 	m := newModel(context.Background(), fixedSource{rt: relevo.Runtime{Store: st}, rep: rep},
 		Options{Interval: time.Second, Actions: fa})
@@ -860,10 +861,10 @@ func TestReportReadyRowAndPull(t *testing.T) {
 // row came from.
 type fixedSource struct {
 	rt  relevo.Runtime
-	rep relevo.Report
+	rep view.Report
 }
 
-func (s fixedSource) Status(context.Context) (relevo.Report, error) { return s.rep, nil }
+func (s fixedSource) Status(context.Context) (view.Report, error) { return s.rep, nil }
 
 func (s fixedSource) Runtime(k string) (relevo.Runtime, string, bool) { return s.rt, k, true }
 
@@ -874,7 +875,7 @@ func (s fixedSource) MarkViewed(string) {}
 func TestFooterDropsWholeKeys(t *testing.T) {
 	allowed := map[string]bool{": command": true, "? all keys": true, "q quit": true, "esc back": true}
 	for _, width := range []int{80, 100, 140} {
-		m := actionModel(t, &fakeActions{}, relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
+		m := actionModel(t, &fakeActions{}, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
 		res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 40})
 		m = res.(Model)
 		for _, kh := range m.top().Keys() {

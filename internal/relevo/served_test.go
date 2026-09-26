@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // servedTierCandidatesJSON has one builder candidate with a "read" tier
@@ -917,8 +918,8 @@ func TestLiveViewOf(t *testing.T) {
 	gateStarted := at.Add(-1 * time.Minute)
 
 	u := &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}}
-	row := BindingStatus{
-		Headless: &HeadlessInfo{
+	row := view.BindingStatus{
+		Headless: &view.HeadlessInfo{
 			PID:       1234,
 			StartedAt: started,
 			ExitCode:  "3",
@@ -926,7 +927,7 @@ func TestLiveViewOf(t *testing.T) {
 		},
 		LiveUsage:        u,
 		RoundPriorTokens: usage.Tokens{In: 500, Out: 250},
-		Live:             &LiveDiff{Files: 4, Added: 20, Removed: 5, Shared: true},
+		Live:             &view.LiveDiff{Files: 4, Added: 20, Removed: 5, Shared: true},
 		LastProgressAt:   lastProg,
 	}
 	b := store.Binding{
@@ -975,7 +976,7 @@ func TestLiveViewOf(t *testing.T) {
 	}
 
 	// nil Headless, LiveUsage and Live give zero values and nil pointers
-	rowNil := BindingStatus{
+	rowNil := view.BindingStatus{
 		LastProgressAt: lastProg,
 	}
 	bNil := store.Binding{}

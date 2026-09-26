@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 var update = flag.Bool("update", false, "update golden files")
@@ -234,8 +234,8 @@ func TestContractStatusDocument(t *testing.T) {
 		Owner:    remote.ClientID("SHA256:alice11111111111111111111111111111111111111"),
 		Label:    "alice",
 		LastSeen: fixedTime,
-		Report: relevo.Report{
-			Bindings: []relevo.BindingStatus{
+		Report: view.Report{
+			Bindings: []view.BindingStatus{
 				{
 					Name:          "active-task",
 					State:         "ACTIVE",
@@ -252,8 +252,8 @@ func TestContractStatusDocument(t *testing.T) {
 		Owner:    remote.ClientID("SHA256:bob2222222222222222222222222222222222222222"),
 		Label:    "bob",
 		LastSeen: fixedTime.Add(2 * time.Hour),
-		Report: relevo.Report{
-			Bindings: []relevo.BindingStatus{
+		Report: view.Report{
+			Bindings: []view.BindingStatus{
 				{
 					Name:          "done-task",
 					State:         "DONE",

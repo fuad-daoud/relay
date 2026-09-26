@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // histFixtureDir is the ingest package's own golden fixture -- three
@@ -94,7 +95,7 @@ func seedArchivedHistBinding(t *testing.T) (relevo.Runtime, relevo.HistoryBindin
 func TestPointAtArchivedRowLoadsPlanFromDB(t *testing.T) {
 	rt, h := seedArchivedHistBinding(t)
 
-	v, cmd := newHistRoundView(testEnv(plannerSource{rt}, relevo.Report{}, 140, 40), h, 0)
+	v, cmd := newHistRoundView(testEnv(plannerSource{rt}, view.Report{}, 140, 40), h, 0)
 	rv := v.(roundView)
 
 	if rv.pane.detail.live {
@@ -143,7 +144,7 @@ func TestArchivedTerminalTabShowsTranscriptRows(t *testing.T) {
 		t.Fatalf("round = %d, want 2", rv.pane.detail.round)
 	}
 
-	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}, testEnv(plannerSource{rt}, relevo.Report{}, 140, 40))
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}}, testEnv(plannerSource{rt}, view.Report{}, 140, 40))
 	rv = next.(roundView)
 	if cmd == nil {
 		t.Fatal("expected a fetch command for the terminal tab")
@@ -168,7 +169,7 @@ func TestArchivedMissingDiffIsEmptyProse(t *testing.T) {
 	rv := newTestHistRound(t, rt, h, 0)
 	rv.pane.tabInFlight = false
 
-	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}}, testEnv(plannerSource{rt}, relevo.Report{}, 140, 40))
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}}, testEnv(plannerSource{rt}, view.Report{}, 140, 40))
 	_ = next
 	if cmd == nil {
 		t.Fatal("expected a fetch command for the diff tab")
@@ -204,7 +205,7 @@ func TestArchivedStepRoundRefetches(t *testing.T) {
 	}
 	rv.pane.tabInFlight = false
 
-	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}}, testEnv(plannerSource{rt}, relevo.Report{}, 140, 40))
+	next, cmd := rv.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}}, testEnv(plannerSource{rt}, view.Report{}, 140, 40))
 	rv = next.(roundView)
 	if rv.pane.detail.round != 2 {
 		t.Fatalf("round = %d, want 2", rv.pane.detail.round)

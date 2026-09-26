@@ -14,13 +14,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 type OwnerStatus struct {
 	Owner    remote.ClientID
-	Label    string        // Clients.LabelOf
-	LastSeen time.Time     // max over the owner's bindings of Serve.LastSeen; zero when none
-	Report   relevo.Report // relevo.Status over that owner's runtime
+	Label    string      // Clients.LabelOf
+	LastSeen time.Time   // max over the owner's bindings of Serve.LastSeen; zero when none
+	Report   view.Report // relevo.Status over that owner's runtime
 }
 
 // AdminStatus returns every owner who has a bindings directory, sorted by
@@ -80,7 +81,7 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 			}
 			q := c.Queued[i]
 			row.Queued = &remote.QueueView{Position: i + 1, Ahead: i, Running: c.Running, Cap: builders.Cap, Since: q.QueuedAt}
-			row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", relevo.AgeText(now.Sub(q.QueuedAt)), i)
+			row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", view.AgeText(now.Sub(q.QueuedAt)), i)
 		}
 		label := s.clients.LabelOf(id)
 		owners = append(owners, OwnerStatus{
@@ -100,17 +101,17 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 
 // FlatStatus is the whole fleet as one report, Owner/OwnerLabel stamped on each
 // row. Gated is the first owner's slice: the ledger is server-wide.
-func FlatStatus(ctx context.Context, s *Server) (relevo.Report, error) {
+func FlatStatus(ctx context.Context, s *Server) (view.Report, error) {
 	owners, _, err := AdminStatus(ctx, s)
 	if err != nil {
-		return relevo.Report{}, err
+		return view.Report{}, err
 	}
 
-	rows := make([]relevo.BindingStatus, 0)
+	rows := make([]view.BindingStatus, 0)
 	for _, o := range owners {
 		label := o.Label
 		if label == "" {
-			label = relevo.ShortOwner(string(o.Owner))
+			label = view.ShortOwner(string(o.Owner))
 		}
 		for _, row := range o.Report.Bindings {
 			row.Owner = string(o.Owner)
@@ -119,7 +120,7 @@ func FlatStatus(ctx context.Context, s *Server) (relevo.Report, error) {
 		}
 	}
 
-	out := relevo.Report{Bindings: rows}
+	out := view.Report{Bindings: rows}
 	if len(owners) > 0 {
 		out.Gated = owners[0].Report.Gated
 	}
@@ -135,10 +136,10 @@ type StatusJSON struct {
 }
 
 type OwnerJSON struct {
-	Owner    string        `json:"owner"`
-	Label    string        `json:"label"`
-	LastSeen *time.Time    `json:"last_seen"`
-	Report   relevo.Report `json:"report"`
+	Owner    string      `json:"owner"`
+	Label    string      `json:"label"`
+	LastSeen *time.Time  `json:"last_seen"`
+	Report   view.Report `json:"report"`
 }
 
 func StatusDocument(owners []OwnerStatus, builders remote.BuildersView) StatusJSON {

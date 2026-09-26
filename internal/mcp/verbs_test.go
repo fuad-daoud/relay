@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // testGateKV is a real t.TempDir() database for a Runtime literal's Gates field.
@@ -93,9 +94,9 @@ func TestRelevoVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	rep, ok := res.(relevo.Report)
+	rep, ok := res.(view.Report)
 	if !ok {
-		t.Fatalf("result = %#v, want relevo.Report", res)
+		t.Fatalf("result = %#v, want view.Report", res)
 	}
 	if len(rep.Bindings) != 1 || rep.Bindings[0].Name != "mine-a" {
 		t.Fatalf("default status = %+v, want only mine-a (this planner, DONE hidden)", rep.Bindings)
@@ -105,7 +106,7 @@ func TestRelevoVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status all: %v", err)
 	}
-	rep = res.(relevo.Report)
+	rep = res.(view.Report)
 	if len(rep.Bindings) != 3 {
 		t.Fatalf("all status = %d bindings, want 3", len(rep.Bindings))
 	}
@@ -114,7 +115,7 @@ func TestRelevoVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status by name: %v", err)
 	}
-	rep = res.(relevo.Report)
+	rep = res.(view.Report)
 	if len(rep.Bindings) != 1 || rep.Bindings[0].Name != "mine-done" {
 		t.Fatalf("status by name = %+v, want only mine-done (DONE included when named)", rep.Bindings)
 	}
@@ -140,7 +141,7 @@ func TestMCPStatusFiltersByPlanner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	rep := res.(relevo.Report)
+	rep := res.(view.Report)
 	if len(rep.Bindings) != 1 || rep.Bindings[0].Name != "mine" {
 		t.Fatalf("status = %+v, want only mine (the same pane's cousin is another planner)", rep.Bindings)
 	}

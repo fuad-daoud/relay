@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // databaseCheck is doctor's `database` row (P3d §4.7): the path, the file
@@ -54,7 +55,7 @@ func databaseCheck(st *store.Store) doctor.Check {
 		size = info.Size()
 	}
 	c.Detail = fmt.Sprintf("%s · %s · schema v%d · %d live, %d archived",
-		path, relevo.HumanBytes(size), version, live, archived)
+		path, view.HumanBytes(size), version, live, archived)
 	return c
 }
 

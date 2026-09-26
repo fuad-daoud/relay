@@ -1,4 +1,4 @@
-package relevo
+package view
 
 import (
 	"fmt"
@@ -11,8 +11,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// FormatActors renders the actors section for `relevo config` (A2 round 2 R7):
-// one two-line block per actor in name order,
+// FormatActors renders the actors section for `relevo config`: one two-line
+// block per actor in name order,
 //
 //	<name>  <agent>  <writer|reader>  <shipped|custom>  tier <tier or ->[  check on|off]
 //	  candidates  <name>, <name> (off)

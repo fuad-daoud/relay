@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // envNow is the clock a view hands the roundPane: the shell reads time once
@@ -87,7 +88,7 @@ func newHistRoundView(env Env, h relevo.HistoryBinding, round int) (View, tea.Cm
 // row finds a report row by key (BindingStatus.Key()): a planner row keys
 // by Name, a server row by owner/name, so two clients' same-named bindings
 // never collide. Moved from model.go (R2.8).
-func row(rep relevo.Report, key string) *relevo.BindingStatus {
+func row(rep view.Report, key string) *view.BindingStatus {
 	for i := range rep.Bindings {
 		if rep.Bindings[i].Key() == key {
 			return &rep.Bindings[i]
@@ -101,7 +102,7 @@ func row(rep relevo.Report, key string) *relevo.BindingStatus {
 // previous (finished) round instead of the live tail. It returns r.PlanRound
 // when > 0, else r.Round - 1 (a binding with no plan yet, or a row from an
 // older relevo serve whose JSON lacks plan_round).
-func paneRound(r relevo.BindingStatus) int {
+func paneRound(r view.BindingStatus) int {
 	if r.PlanRound > 0 {
 		return r.PlanRound
 	}
@@ -110,7 +111,7 @@ func paneRound(r relevo.BindingStatus) int {
 
 // roundsOf returns the count of sent rounds (§2.2): r.PlanRound when it is > 0,
 // else r.Round.
-func roundsOf(r relevo.BindingStatus) int {
+func roundsOf(r view.BindingStatus) int {
 	if r.PlanRound > 0 {
 		return r.PlanRound
 	}

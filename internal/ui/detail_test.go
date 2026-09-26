@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/muesli/termenv"
 )
 
@@ -23,7 +24,7 @@ func TestEnteringDetailFetchesPlanTabAndNoOther(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	m := splitModel(t, 140, 40, relevo.BindingStatus{Name: name, Round: 2, Display: "ACTIVE"})
+	m := splitModel(t, 140, 40, view.BindingStatus{Name: name, Round: 2, Display: "ACTIVE"})
 
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = res.(Model)
@@ -50,7 +51,7 @@ func TestSwitchingToUnloadedTabFetchesOnlyThatOne(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.active = tabReport
 	rv.pane.tabInFlight = false
 	rv.pane.detail.cache[tabReport] = tabContent{loaded: true, body: "x"}
@@ -78,7 +79,7 @@ func TestScrollParkAndRestore(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.active = tabReport
 	rv.pane.detail.vp = viewport.New(140, 20)
 	rv.pane.detail.cache[tabReport] = tabContent{loaded: true, body: strings.Repeat("report line\n", 50)}
@@ -137,7 +138,7 @@ func TestTabErrorDoesNotCorruptOtherTabs(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.vp = viewport.New(80, 20)
 
 	rv.pane.detail.cache[tabDiff] = tabContent{loaded: true, err: errors.New("disk read failed")}
@@ -161,7 +162,7 @@ func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.active = tabDiff
 	rv.pane.detail.vp = viewport.New(80, 20)
 
@@ -185,7 +186,7 @@ func TestPanicOnShrinkingContent(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.active = tabDiff
 	rv.pane.detail.vp = viewport.New(80, 20)
 	rv.pane.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
@@ -213,7 +214,7 @@ func TestSwitchTabBackIntoInvalidatedTabNoPanic(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.active = tabDiff
 	rv.pane.detail.vp = viewport.New(80, 20)
 	rv.pane.detail.vp.SetContent(strings.Repeat("diff line\n", 200))
@@ -234,7 +235,7 @@ func TestRefreshActiveTabPreservesLiveScroll(t *testing.T) {
 	if err := st.Save(newTestBinding("webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 3, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.detail.active = tabTerminal
 	rv.pane.detail.follow = false
 	rv.pane.detail.vp = viewport.New(80, 20)
@@ -263,8 +264,8 @@ func TestInvalidationResetsParkedOffset(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	ts := time.Now()
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{
-		{Name: "webshop", Round: 3, Display: "ACTIVE", Last: &relevo.LastEvent{TS: ts, Round: 3}},
+	rep := view.Report{Bindings: []view.BindingStatus{
+		{Name: "webshop", Round: 3, Display: "ACTIVE", Last: &view.LastEvent{TS: ts, Round: 3}},
 	}}
 	rv := newTestRound(t, rt, rep, "webshop", 0)
 	rv.pane.detail.active = tabTerminal
@@ -274,8 +275,8 @@ func TestInvalidationResetsParkedOffset(t *testing.T) {
 	rv.pane.detail.scroll[tabLog] = 15
 	rv.pane.detail.scroll[tabTerminal] = 10
 
-	newRep := relevo.Report{Bindings: []relevo.BindingStatus{
-		{Name: "webshop", Round: 3, Display: "ACTIVE", Last: &relevo.LastEvent{TS: ts.Add(5 * time.Second), Round: 3}},
+	newRep := view.Report{Bindings: []view.BindingStatus{
+		{Name: "webshop", Round: 3, Display: "ACTIVE", Last: &view.LastEvent{TS: ts.Add(5 * time.Second), Round: 3}},
 	}}
 	next, _ := rv.Update(statusMsg{report: newRep}, testEnv(plannerSource{rt}, newRep, 140, 40))
 	got := next.(roundView)
@@ -308,7 +309,7 @@ func TestNonRoundKeyedTabsAccepted(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: name, Round: 4, Display: "ACTIVE"}}}, name, 0)
+			rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: name, Round: 4, Display: "ACTIVE"}}}, name, 0)
 			rv.pane.detail.round = 3
 			rv.pane.detail.active = tabReport
 			rv.pane.tabInFlight = false
@@ -336,7 +337,7 @@ func TestFiveTabsLoadContentEndToEnd(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	rv := newTestRound(t, rt, relevo.Report{Bindings: []relevo.BindingStatus{{Name: name, Round: 4, Display: "ACTIVE"}}}, name, 0)
+	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: name, Round: 4, Display: "ACTIVE"}}}, name, 0)
 	rv.pane.detail.round = 3
 	rv.pane.detail.active = tabReport
 	rv.pane.tabInFlight = false

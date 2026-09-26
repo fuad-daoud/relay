@@ -1,4 +1,4 @@
-package relevo
+package view
 
 // A2 round 2's view tests: an actors-built registry reports file mode, and
 // `relevo config`'s actors block renders shipped, off, custom and native

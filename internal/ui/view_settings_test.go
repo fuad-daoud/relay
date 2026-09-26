@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // settingsFixtureJSON is 3a's real policy: the store's raw policy body this
@@ -51,7 +52,7 @@ func settingsFixtureDocNoTiers(t *testing.T) relevo.ConfigDoc {
 // ':settings' command's doc load would.
 func settingsFixtureView(t *testing.T, fa *fakeActions) settingsView {
 	t.Helper()
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v, cmd := newSettingsView(env)
 	next, _ := v.Update(cmd(), env)
 	return next.(settingsView)
@@ -89,7 +90,7 @@ func settingsFormType(f settingsForm, s string) settingsForm {
 // message "set max_tier edit".
 func TestSettingsRoundsFormChangesMaxTier(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDocNoTiers(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 1 // max_tier
 
@@ -126,7 +127,7 @@ func TestSettingsRoundsFormChangesMaxTier(t *testing.T) {
 // gate.default.
 func TestSettingsCheckFormSetsCommand(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 3 // gate.default
 
@@ -155,7 +156,7 @@ func TestSettingsCheckFormSetsCommand(t *testing.T) {
 // enter records no edit.
 func TestSettingsTimingFormBadDuration(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 7 // stall_after
 
@@ -186,7 +187,7 @@ func TestSettingsTimingFormBadDuration(t *testing.T) {
 // from the body.
 func TestSettingsResetMaxTier(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDocNoTiers(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 1 // max_tier
 
@@ -225,7 +226,7 @@ func TestSettingsResetMaxTier(t *testing.T) {
 // default is refused by roles.Build's cap check.
 func TestSettingsResetRefusedBeforeConfirm(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 1 // max_tier
 
@@ -249,7 +250,7 @@ func TestSettingsResetRefusedBeforeConfirm(t *testing.T) {
 // e. r on gate.default (unset) is a notice, with no confirm.
 func TestSettingsResetUnsetNotices(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 3 // gate.default, unset in the fixture
 
@@ -274,7 +275,7 @@ func TestSettingsResetUnsetNotices(t *testing.T) {
 // cpu_quota and enter writes serve.scope.cpu_quota, keeping serve.scope.slice.
 func TestSettingsServeScopeFormSetsCPUQuota(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 13 // serve.scope
 
@@ -311,7 +312,7 @@ func TestSettingsServeScopeFormSetsCPUQuota(t *testing.T) {
 // parent both prune away.
 func TestSettingsServeScopeFormClearingSliceRemovesServe(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 13 // serve.scope
 
@@ -345,7 +346,7 @@ func TestSettingsServeScopeFormClearingSliceRemovesServe(t *testing.T) {
 // form shows the memory_max error and enter records no edit.
 func TestSettingsScopeFormBadMemoryMax(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 11 // scope
 
@@ -380,7 +381,7 @@ func TestSettingsScopeFormBadMemoryMax(t *testing.T) {
 // classify.
 func TestSettingsClassifyFormTurnsOn(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 15 // classify
 
@@ -430,7 +431,7 @@ func TestSettingsClassifyFormTurnsOffIgnoresPendingFields(t *testing.T) {
 	doc.PolicyRaw = json.RawMessage(raw)
 
 	fa := &fakeActions{doc: doc}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 15 // classify
 
@@ -466,7 +467,7 @@ func TestSettingsClassifyFormTurnsOffIgnoresPendingFields(t *testing.T) {
 // timeout, all disabled while provider stays off.
 func TestSettingsClassifyFormTabSkipsDisabledFields(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 15 // classify
 
@@ -485,7 +486,7 @@ func TestSettingsClassifyFormTabSkipsDisabledFields(t *testing.T) {
 // HumanPolicyError's tier rule and this test fails.
 func TestSettingsResetRefusalIsPlainWords(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 1 // max_tier
 
@@ -507,7 +508,7 @@ func TestSettingsResetRefusalIsPlainWords(t *testing.T) {
 // f. down from verify.default lands on gate.default, never on a rule line.
 func TestSettingsDownSkipsRule(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
 	v.cur = 2 // verify.default
 

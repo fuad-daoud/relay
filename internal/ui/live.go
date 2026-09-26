@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // liveRuntime is the one runtime a planner cockpit reads: the fleet refresh
@@ -85,7 +86,7 @@ type liveSource struct {
 // Status reloads the shared runtime, then reports the fleet. A reload error is
 // dropped: the last good snapshot still answers, and the config screens report
 // a load failure themselves.
-func (s liveSource) Status(ctx context.Context) (relevo.Report, error) {
+func (s liveSource) Status(ctx context.Context) (view.Report, error) {
 	_ = s.live.Refresh()
 	return relevo.Status(ctx, s.live.Get())
 }

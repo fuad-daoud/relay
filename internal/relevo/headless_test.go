@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // The headless fixtures (#303 step 3): a local builder is a process relevo runs
@@ -1439,8 +1440,8 @@ func TestStatusHeadlessStalledLabel(t *testing.T) {
 	}
 	if got := rep.Bindings[0].BuilderStatus; !strings.HasPrefix(got, "stalled ") {
 		t.Fatalf("BuilderStatus = %q, want it to start with %q", got, "stalled ")
-	} else if !strings.Contains(got, AgeText(baseTime.Sub(b.StalledSince))) {
-		t.Errorf("BuilderStatus = %q, want it to contain the age %q", got, AgeText(baseTime.Sub(b.StalledSince)))
+	} else if !strings.Contains(got, view.AgeText(baseTime.Sub(b.StalledSince))) {
+		t.Errorf("BuilderStatus = %q, want it to contain the age %q", got, view.AgeText(baseTime.Sub(b.StalledSince)))
 	}
 
 	b.StalledSince = time.Time{}
@@ -2469,10 +2470,10 @@ func TestStatusHeadlessWorkingShowsPidAndLogTail(t *testing.T) {
 		t.Errorf("Tail = %q, want the last three lines", row.Headless.Tail)
 	}
 
-	text := RenderStatus(rep)
+	text := view.RenderStatus(rep)
 	for _, want := range []string{"  builder  headless       agy      working", fmt.Sprintf("pid %d since", b.Builder.PID), "`agy-m`", "  log      l2\n  log      l3\n  log      l4\n"} {
 		if !strings.Contains(text, want) {
-			t.Errorf("RenderStatus lacks %q:\n%s", want, text)
+			t.Errorf("view.RenderStatus lacks %q:\n%s", want, text)
 		}
 	}
 }
@@ -2488,12 +2489,12 @@ func TestStatusHeadlessIdle(t *testing.T) {
 	if row.BuilderStatus != "idle" || row.Headless == nil || row.Headless.PID != 0 || len(row.Headless.Tail) != 0 {
 		t.Errorf("row = %q %+v; want idle with no pid and no tail", row.BuilderStatus, row.Headless)
 	}
-	text := RenderStatus(rep)
+	text := view.RenderStatus(rep)
 	if strings.Contains(text, "pid ") || strings.Contains(text, "  log ") {
 		t.Errorf("idle must show no pid and no log lines:\n%s", text)
 	}
 	if !strings.Contains(text, "  builder  headless       agy      idle") {
-		t.Errorf("RenderStatus:\n%s", text)
+		t.Errorf("view.RenderStatus:\n%s", text)
 	}
 }
 

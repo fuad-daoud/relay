@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // roundPane is one binding's round detail: its state, its fetch
@@ -20,7 +21,7 @@ type roundPane struct {
 	src     Source
 	ctx     context.Context
 	now     func() time.Time
-	report  relevo.Report
+	report  view.Report
 	detail  detailModel
 	actions bool // Actions != nil: action keys are shown
 
@@ -312,7 +313,7 @@ func (p roundPane) detailHeader() string {
 }
 
 // tokensLine renders the tokens and facts row at the top of the body (§3.3).
-func (p roundPane) tokensLine(b *relevo.BindingStatus) string {
+func (p roundPane) tokensLine(b *view.BindingStatus) string {
 	if b == nil || !p.detail.live {
 		left := "   " + faintStyle.Render("no live facts for a released binding")
 		return spread(left, "", p.width)
@@ -472,7 +473,7 @@ func (p roundPane) sourceLine() string {
 // hintLine is the one rendered line under a blocked builder's dialog on
 // the terminal tab: the verb that resolves it (spec §3.4). The ui runs
 // nothing; it names the command.
-func (p roundPane) hintLine(b *relevo.BindingStatus) (string, bool) {
+func (p roundPane) hintLine(b *view.BindingStatus) (string, bool) {
 	if b == nil || b.Waiting == nil || b.Waiting.Cause != "blocked" || p.detail.active != tabTerminal {
 		return "", false
 	}

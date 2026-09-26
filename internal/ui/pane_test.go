@@ -12,14 +12,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // paneModel builds a roundPane directly (R2.10): the pane is the same type
 // round 1 extracted, only the wrapper Model is gone.
-func paneModel(t *testing.T, b relevo.BindingStatus, active tab) roundPane {
+func paneModel(t *testing.T, b view.BindingStatus, active tab) roundPane {
 	t.Helper()
 	p := roundPane{width: 140, rows: 36, now: func() time.Time { return railNow },
-		report: relevo.Report{Bindings: []relevo.BindingStatus{b}}}
+		report: view.Report{Bindings: []view.BindingStatus{b}}}
 	p.detail = detailModel{name: b.Key(), round: paneRound(b), rounds: roundsOf(b), live: true, active: active,
 		vp: viewport.New(p.contentWidth(), p.viewportHeight())}
 	p.fillViewport()
@@ -27,13 +28,13 @@ func paneModel(t *testing.T, b relevo.BindingStatus, active tab) roundPane {
 }
 
 func TestPaneHeadRows(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
 		PlannerID: "planner-9f2", PlannerName: "architect-1", PlannerKind: "claude", PlannerRoute: "channel",
 		BuilderKind: "agy", BuilderStatus: "blocked", Consults: 2,
 		Branch: "relevo/webshop", Dirty: true,
-		LastClose: &relevo.CloseInfo{Round: 3, Commits: 2, Tree: "clean"},
-		Last:      &relevo.LastEvent{TS: railNow.Add(-2 * time.Minute), Round: 4, Kind: store.KindQuestion},
+		LastClose: &view.CloseInfo{Round: 3, Commits: 2, Tree: "clean"},
+		Last:      &view.LastEvent{TS: railNow.Add(-2 * time.Minute), Round: 4, Kind: store.KindQuestion},
 	}
 	p := paneModel(t, b, tabReport)
 	if p.headRows() != 6 {
@@ -44,9 +45,9 @@ func TestPaneHeadRows(t *testing.T) {
 		t.Errorf("tokensLine missing commits: %q", tokens)
 	}
 
-	oneCommit := relevo.BindingStatus{
+	oneCommit := view.BindingStatus{
 		Name: "ledger", Round: 2, Display: "ACTIVE", Dirty: true,
-		LastClose: &relevo.CloseInfo{Round: 1, Commits: 1, Tree: "dirty"},
+		LastClose: &view.CloseInfo{Round: 1, Commits: 1, Tree: "dirty"},
 	}
 	pOne := paneModel(t, oneCommit, tabReport)
 	tokensOne := stripANSI(pOne.tokensLine(&oneCommit))
@@ -54,17 +55,17 @@ func TestPaneHeadRows(t *testing.T) {
 		t.Errorf("tokensLine missing +1 commit: %q", tokensOne)
 	}
 	rv := roundView{pane: pOne}
-	ctxLeft, _ := rv.Context(testEnv(pOne.src, relevo.Report{Bindings: []relevo.BindingStatus{oneCommit}}, pOne.width, pOne.rows))
+	ctxLeft, _ := rv.Context(testEnv(pOne.src, view.Report{Bindings: []view.BindingStatus{oneCommit}}, pOne.width, pOne.rows))
 	if !strings.Contains(stripANSI(ctxLeft), "dirty") {
 		t.Errorf("context row missing dirty: %q", ctxLeft)
 	}
 }
 
 func TestPaneHeadHeadlessAndCwd(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "api", Round: 2, Display: "ACTIVE", CWD: "/home/x/api",
 		BuilderKind: "opencode", BuilderStatus: "working", BuilderCandidate: "opencode-1",
-		Headless: &relevo.HeadlessInfo{PID: 48211, StartedAt: railNow.Add(-21 * time.Minute)},
+		Headless: &view.HeadlessInfo{PID: 48211, StartedAt: railNow.Add(-21 * time.Minute)},
 	}
 	p := paneModel(t, b, tabReport)
 	tokens := stripANSI(p.tokensLine(&b))
@@ -72,14 +73,14 @@ func TestPaneHeadHeadlessAndCwd(t *testing.T) {
 		t.Errorf("tokensLine missing pid: %q", tokens)
 	}
 	rv := roundView{pane: p}
-	ctxLeft, _ := rv.Context(testEnv(p.src, relevo.Report{Bindings: []relevo.BindingStatus{b}}, p.width, p.rows))
+	ctxLeft, _ := rv.Context(testEnv(p.src, view.Report{Bindings: []view.BindingStatus{b}}, p.width, p.rows))
 	if !strings.Contains(stripANSI(ctxLeft), "/home/x/api") {
 		t.Errorf("context row missing cwd: %q", ctxLeft)
 	}
 }
 
 func TestTabBarWordsAndUnderline(t *testing.T) {
-	p := paneModel(t, relevo.BindingStatus{Name: "a", Round: 1, Display: "ACTIVE"}, tabDiff)
+	p := paneModel(t, view.BindingStatus{Name: "a", Round: 1, Display: "ACTIVE"}, tabDiff)
 	tabs := p.tabsRow()
 	plain := stripANSI(tabs)
 	words := plain
@@ -105,37 +106,37 @@ func TestTabBarWordsAndUnderline(t *testing.T) {
 func TestRoundContextByGroup(t *testing.T) {
 	cases := []struct {
 		name     string
-		b        relevo.BindingStatus
+		b        view.BindingStatus
 		pillWord string
 	}{
 		{
 			name:     "needs you",
-			b:        relevo.BindingStatus{Name: "b1", Round: 1, Display: "NEEDS YOU"},
+			b:        view.BindingStatus{Name: "b1", Round: 1, Display: "NEEDS YOU"},
 			pillWord: "needs you",
 		},
 		{
 			name:     "working",
-			b:        relevo.BindingStatus{Name: "b2", Round: 1, Display: "ACTIVE", BuilderStatus: "working"},
+			b:        view.BindingStatus{Name: "b2", Round: 1, Display: "ACTIVE", BuilderStatus: "working"},
 			pillWord: "working",
 		},
 		{
 			name:     "idle",
-			b:        relevo.BindingStatus{Name: "b3", Round: 1, Display: "ACTIVE", BuilderStatus: "idle"},
+			b:        view.BindingStatus{Name: "b3", Round: 1, Display: "ACTIVE", BuilderStatus: "idle"},
 			pillWord: "idle",
 		},
 		{
 			name:     "on hold",
-			b:        relevo.BindingStatus{Name: "b4", Round: 1, Display: "HELD"},
+			b:        view.BindingStatus{Name: "b4", Round: 1, Display: "HELD"},
 			pillWord: "on hold",
 		},
 		{
 			name:     "other",
-			b:        relevo.BindingStatus{Name: "b5", Round: 1, Display: "CUSTOM"},
+			b:        view.BindingStatus{Name: "b5", Round: 1, Display: "CUSTOM"},
 			pillWord: "custom",
 		},
 		{
 			name:     "done",
-			b:        relevo.BindingStatus{Name: "b6", Round: 1, Display: "DONE"},
+			b:        view.BindingStatus{Name: "b6", Round: 1, Display: "DONE"},
 			pillWord: "done",
 		},
 	}
@@ -144,7 +145,7 @@ func TestRoundContextByGroup(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p := paneModel(t, tc.b, tabPlan)
 			rv := roundView{pane: p, actions: true}
-			env := testEnv(p.src, relevo.Report{Bindings: []relevo.BindingStatus{tc.b}}, p.width, p.rows)
+			env := testEnv(p.src, view.Report{Bindings: []view.BindingStatus{tc.b}}, p.width, p.rows)
 			left, _ := rv.Context(env)
 			plain := stripANSI(left)
 			if !strings.Contains(plain, tc.pillWord) {
@@ -179,7 +180,7 @@ func TestRoundContextByGroup(t *testing.T) {
 }
 
 func TestRoundTokensLineHist(t *testing.T) {
-	p := paneModel(t, relevo.BindingStatus{Name: "archived-binding"}, tabPlan)
+	p := paneModel(t, view.BindingStatus{Name: "archived-binding"}, tabPlan)
 	p.detail.live = false
 	p.detail.round = 2
 	p.detail.rounds = 5
@@ -193,7 +194,7 @@ func TestRoundTokensLineHist(t *testing.T) {
 func TestRoundHeadRowsMatchView(t *testing.T) {
 	for _, h := range []int{12, 18, 40} {
 		t.Run(fmt.Sprintf("height-%d", h), func(t *testing.T) {
-			b := relevo.BindingStatus{Name: "srv", Round: 1, Display: "ACTIVE", BuilderStatus: "working"}
+			b := view.BindingStatus{Name: "srv", Round: 1, Display: "ACTIVE", BuilderStatus: "working"}
 			p := paneModel(t, b, tabPlan)
 			p.rows = h
 			p.detail.cache[tabPlan] = tabContent{loaded: true, body: "VP_TEST_LINE_1\nVP_TEST_LINE_2\nVP_TEST_LINE_3"}
@@ -220,7 +221,7 @@ func TestRoundHeadRowsMatchView(t *testing.T) {
 }
 
 func TestRoundTokensLineKeepsOnlyCounts(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "api", Round: 2, Display: "ACTIVE",
 		LiveUsage: &usage.Usage{
 			Harness: "opencode", Model: "glm-5.3-flash", DurationMS: 4 * 60_000,
@@ -243,7 +244,7 @@ func TestRoundTokensLineKeepsOnlyCounts(t *testing.T) {
 		}
 	}
 
-	bZero := relevo.BindingStatus{
+	bZero := view.BindingStatus{
 		Name: "api", Round: 2, Display: "ACTIVE",
 		LiveUsage: &usage.Usage{
 			Harness: "opencode", Model: "glm-5.3-flash", DurationMS: 4 * 60_000,
@@ -263,17 +264,17 @@ func TestRoundTokensLineKeepsOnlyCounts(t *testing.T) {
 }
 
 func TestRoundNoRawToken(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name:             "api",
 		Round:            2,
 		Display:          "ACTIVE",
 		BuilderName:      "gemini-3.8-flash-high",
 		BuilderCandidate: "opencode-1",
-		Headless:         &relevo.HeadlessInfo{PID: 1234, StartedAt: railNow.Add(-5 * time.Minute)},
+		Headless:         &view.HeadlessInfo{PID: 1234, StartedAt: railNow.Add(-5 * time.Minute)},
 	}
 	p := paneModel(t, b, tabPlan)
 	rv := roundView{pane: p, actions: true}
-	env := testEnv(p.src, relevo.Report{Bindings: []relevo.BindingStatus{b}}, p.width, p.rows)
+	env := testEnv(p.src, view.Report{Bindings: []view.BindingStatus{b}}, p.width, p.rows)
 	view := rv.Body(env, 140, 40)
 	if strings.Contains(view, "`") {
 		t.Errorf("view contains backtick: %q", view)
@@ -284,7 +285,7 @@ func TestRoundNoRawToken(t *testing.T) {
 }
 
 func TestSourceLineOmitsTimeWhenUnknown(t *testing.T) {
-	b := relevo.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
+	b := view.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
 	p := paneModel(t, b, tabPlan)
 	p.detail.cache[tabPlan] = tabContent{loaded: true, body: "x", round: 2}
 	if got := stripANSI(p.sourceLine()); got != "plan r2" {
@@ -326,7 +327,7 @@ func TestDiffStatAndColour(t *testing.T) {
 }
 
 func TestSourceLinePerTab(t *testing.T) {
-	b := relevo.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
+	b := view.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
 	p := paneModel(t, b, tabReport)
 	p.detail.cache[tabReport] = tabContent{loaded: true, body: "x", round: 2, at: railNow.Add(-time.Hour)}
 	if got := stripANSI(p.sourceLine()); got != "report r2 · 13:02" {
@@ -337,8 +338,8 @@ func TestSourceLinePerTab(t *testing.T) {
 	if got := stripANSI(p.sourceLine()); got != "remote · captured 1s ago · 3 lines" {
 		t.Errorf("terminal source = %q", got)
 	}
-	b.Headless = &relevo.HeadlessInfo{LogPath: "/x/002-builder.log"}
-	p.report = relevo.Report{Bindings: []relevo.BindingStatus{b}}
+	b.Headless = &view.HeadlessInfo{LogPath: "/x/002-builder.log"}
+	p.report = view.Report{Bindings: []view.BindingStatus{b}}
 	p.detail.headless = true
 	p.detail.cache[tabTerminal] = tabContent{loaded: true, body: "l1\nl2\nl3", at: railNow.Add(-time.Second),
 		transcript: true, logName: "002-builder.log"}
@@ -376,8 +377,8 @@ func TestSourceLinePerTab(t *testing.T) {
 }
 
 func TestHintLineOnlyForBlockedTerminal(t *testing.T) {
-	b := relevo.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		Waiting: &relevo.Waiting{Cause: "blocked", Hint: "relevo status --name webshop"}}
+	b := view.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
+		Waiting: &view.Waiting{Cause: "blocked", Hint: "relevo status --name webshop"}}
 	p := paneModel(t, b, tabTerminal)
 	line, ok := p.hintLine(&b)
 	if !ok || stripANSI(line) != "relevo: relevo status --name webshop" {
@@ -399,8 +400,8 @@ func TestHintLineOnlyForBlockedTerminal(t *testing.T) {
 }
 
 func TestPaneViewRowsAndWidth(t *testing.T) {
-	b := relevo.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		Waiting: &relevo.Waiting{Cause: "blocked", Hint: "relevo status --name webshop"}}
+	b := view.BindingStatus{Name: "webshop", Round: 4, Display: "NEEDS YOU",
+		Waiting: &view.Waiting{Cause: "blocked", Hint: "relevo status --name webshop"}}
 	p := paneModel(t, b, tabTerminal)
 	p.detail.cache[tabTerminal] = tabContent{loaded: true, body: strings.Repeat("screen line\n", 50)}
 	p.detail.vp.SetContent(bodyOf(tabTerminal, p.detail.cache[tabTerminal], false))
@@ -511,7 +512,7 @@ func TestBodyOfStylesOnlyHeadlessTerminal(t *testing.T) {
 }
 
 func TestViewportReachesBottomOfLongLines(t *testing.T) {
-	b := relevo.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
+	b := view.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
 	p := paneModel(t, b, tabLog)
 	p.detail.vp.Width = 40
 	p.detail.vp.Height = 3
@@ -533,7 +534,7 @@ func TestViewportReachesBottomOfLongLines(t *testing.T) {
 func TestRoundTokensLineCostWord(t *testing.T) {
 	// A LiveUsage whose cost part is unknown: no price for x/y; stream still open; timed out
 	// renders "no price" and not "stream".
-	bUnknown := relevo.BindingStatus{
+	bUnknown := view.BindingStatus{
 		Name:    "worker",
 		Round:   1,
 		Display: "ACTIVE",
@@ -555,7 +556,7 @@ func TestRoundTokensLineCostWord(t *testing.T) {
 	}
 
 	// A measured cost word stays as it is.
-	bMeasured := relevo.BindingStatus{
+	bMeasured := view.BindingStatus{
 		Name:    "worker",
 		Round:   1,
 		Display: "ACTIVE",
@@ -577,7 +578,7 @@ func TestRoundsOfIdleAfterReport(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
 	end := railNow.Add(-10 * time.Minute)
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name:          "idle-b",
 		Round:         6,
 		PlanRound:     5,
@@ -588,7 +589,7 @@ func TestRoundsOfIdleAfterReport(t *testing.T) {
 	if err := st.Save(store.Binding{Name: b.Name, CWD: "/repo/" + b.Name, Round: 6, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{b}}
+	rep := view.Report{Bindings: []view.BindingStatus{b}}
 	env := testEnv(plannerSource{rt}, rep, 140, 40)
 
 	v, _ := newRoundView(env, b.Name, 0)
@@ -621,7 +622,7 @@ func TestRoundsOfIdleAfterReport(t *testing.T) {
 func TestRoundsOfWorking(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name:          "work-b",
 		Round:         3,
 		PlanRound:     3,
@@ -632,7 +633,7 @@ func TestRoundsOfWorking(t *testing.T) {
 	if err := st.Save(store.Binding{Name: b.Name, CWD: "/repo/" + b.Name, Round: 3, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{b}}
+	rep := view.Report{Bindings: []view.BindingStatus{b}}
 	env := testEnv(plannerSource{rt}, rep, 140, 40)
 
 	v, _ := newRoundView(env, b.Name, 0)
@@ -648,7 +649,7 @@ func TestRoundsOfWorking(t *testing.T) {
 func TestRoundContextNarrowDropsWholeParts(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: st}
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name:          "narrow-b",
 		Round:         1,
 		PlanRound:     1,
@@ -663,7 +664,7 @@ func TestRoundContextNarrowDropsWholeParts(t *testing.T) {
 	if err := st.Save(store.Binding{Name: b.Name, CWD: "/repo/" + b.Name, Round: 1, State: store.StateActive}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rep := relevo.Report{Bindings: []relevo.BindingStatus{b}}
+	rep := view.Report{Bindings: []view.BindingStatus{b}}
 
 	widths := []int{132, 100, 80, 60}
 	for _, w := range widths {

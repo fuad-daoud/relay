@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // configUsage is the whole `relevo config` surface: what a bare `relevo config`
@@ -109,10 +109,10 @@ func configShow(args []string) error {
 	}
 	if len(L.Actors) > 0 {
 		fmt.Println("actors")
-		fmt.Print(relevo.FormatActors(L, rt.RoleRegistry()))
+		fmt.Print(view.FormatActors(L, rt.RoleRegistry()))
 	} else {
 		fmt.Println("roles")
-		fmt.Print(relevo.FormatRoles(rt.RoleRegistry()))
+		fmt.Print(view.FormatRoles(rt.RoleRegistry()))
 	}
 	fmt.Println("pick")
 	fmt.Print(formatPolicy(rt))

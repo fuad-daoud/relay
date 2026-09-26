@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // noteConsultRolesTooLong prints, after a successful bind/add, the one
@@ -139,7 +140,7 @@ func formatCandidates(rt relevo.Runtime) string {
 		lat[ref] = h.Summary(ref)
 	}
 
-	return relevo.FormatCandidatesLatencyFor(rt.RoleRegistry(), rt.Candidates, availability.Gates(relevo.AvailabilityDeps(rt)), lat)
+	return view.FormatCandidatesLatencyFor(rt.RoleRegistry(), rt.Candidates, availability.Gates(relevo.AvailabilityDeps(rt)), lat)
 }
 
 // legacyGatesPath is <dir>/<name> for the pre-kv gate documents, moved to

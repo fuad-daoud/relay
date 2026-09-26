@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // statsWindows is the `:stats` window cycle: 7d → 30d → 90d → all → 7d.
@@ -1705,7 +1706,7 @@ func (v statsView) statsCandDetail(env Env, c statsOverviewCand) []string {
 
 // statsCandMeta is a candidate token's "harness · provider · roles" (§4.4):
 // the harness and provider come from the token, the roles from the runtime's
-// role registry (relevo.CandidateRoles), which is where the actors config
+// role registry (view.CandidateRoles), which is where the actors config
 // keeps them. They are omitted, with their " · ", when the token does not
 // parse, the set is nil, or the candidate has no role.
 func statsCandMeta(env Env, token string) string {
@@ -1714,7 +1715,8 @@ func statsCandMeta(env Env, token string) string {
 		return ""
 	}
 	parts := []string{ref.Harness, ref.Provider}
-	if served := relevo.CandidateRoles(env.Src.Base(), token); len(served) > 0 {
+	rt := env.Src.Base()
+	if served := view.CandidateRoles(rt.RoleRegistry(), rt.Candidates, token); len(served) > 0 {
 		parts = append(parts, strings.Join(served, ", "))
 	}
 	return strings.Join(parts, " · ")

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // Verbs is what a tools/call dispatches to, each returning what the CLI's
@@ -40,7 +41,7 @@ func (v *RelevoVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
 	}
 
 	if a.Name != "" {
-		var found *relevo.BindingStatus
+		var found *view.BindingStatus
 		for i := range rep.Bindings {
 			if rep.Bindings[i].Name == a.Name {
 				found = &rep.Bindings[i]
@@ -50,11 +51,11 @@ func (v *RelevoVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
 		if found == nil {
 			return nil, fmt.Errorf("no binding named %s", a.Name)
 		}
-		rep.Bindings = []relevo.BindingStatus{*found}
+		rep.Bindings = []view.BindingStatus{*found}
 	}
 
 	if a.Name == "" && !a.All {
-		rep = relevo.HideDone(rep)
+		rep = view.HideDone(rep)
 	}
 
 	return rep, nil

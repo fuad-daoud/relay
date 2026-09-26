@@ -15,8 +15,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/availability"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // getwd is os.Getwd, to the repo path the bind confirm names, "" when the
@@ -250,7 +250,7 @@ func (p promptBox) keys() []KeyHelp {
 // plannerConfirmLine names the planner a confirm affects, when that planner
 // is neither the human at the cockpit nor empty (§4.3). wait is the phrase
 // that follows the name.
-func plannerConfirmLine(b relevo.BindingStatus, wait string) string {
+func plannerConfirmLine(b view.BindingStatus, wait string) string {
 	if b.PlannerName == "" || b.PlannerName == "you" {
 		return ""
 	}
@@ -259,7 +259,7 @@ func plannerConfirmLine(b relevo.BindingStatus, wait string) string {
 
 // stopConfirmLines is x's confirm body: who else is affected, what is being
 // stopped, and the keys. Pure, so it is tested directly (§4.3, §5).
-func stopConfirmLines(b relevo.BindingStatus, now time.Time) []string {
+func stopConfirmLines(b view.BindingStatus, now time.Time) []string {
 	var lines []string
 	if l := plannerConfirmLine(b, "is waiting on this round"); l != "" {
 		lines = append(lines, l)
@@ -269,7 +269,7 @@ func stopConfirmLines(b relevo.BindingStatus, now time.Time) []string {
 }
 
 // doneConfirmLines is D's confirm body (§4.3).
-func doneConfirmLines(b relevo.BindingStatus) []string {
+func doneConfirmLines(b view.BindingStatus) []string {
 	var lines []string
 	if l := plannerConfirmLine(b, "owns this binding"); l != "" {
 		lines = append(lines, l)
@@ -278,7 +278,7 @@ func doneConfirmLines(b relevo.BindingStatus) []string {
 }
 
 // unbindConfirmLines is u's confirm body (§4.3).
-func unbindConfirmLines(b relevo.BindingStatus) []string {
+func unbindConfirmLines(b view.BindingStatus) []string {
 	var lines []string
 	if l := plannerConfirmLine(b, "owns this binding"); l != "" {
 		lines = append(lines, l)
@@ -298,7 +298,7 @@ func joinFacts(parts ...string) string {
 }
 
 // stopCmd is the x key's confirm on b (§4.3, §5).
-func stopCmd(env Env, b relevo.BindingStatus) tea.Cmd {
+func stopCmd(env Env, b view.BindingStatus) tea.Cmd {
 	key := b.Key()
 	return openOverlay(confirmBox{
 		kind:   "stop",
@@ -313,7 +313,7 @@ func stopCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 }
 
 // doneCmd is the D key's confirm on b (§4.3).
-func doneCmd(env Env, b relevo.BindingStatus) tea.Cmd {
+func doneCmd(env Env, b view.BindingStatus) tea.Cmd {
 	key := b.Key()
 	return openOverlay(confirmBox{
 		kind:   "done",
@@ -328,7 +328,7 @@ func doneCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 }
 
 // unbindCmd is the u key's confirm on b (§4.3).
-func unbindCmd(env Env, b relevo.BindingStatus) tea.Cmd {
+func unbindCmd(env Env, b view.BindingStatus) tea.Cmd {
 	key := b.Key()
 	return openOverlay(confirmBox{
 		kind:   "unbind",
@@ -345,7 +345,7 @@ func unbindCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 // gateCmd is the g key's one form on b (§3.3): the duration and the reason,
 // validated and submitted together. The duration must parse and be positive,
 // or the form stays open on that field.
-func gateCmd(env Env, b relevo.BindingStatus) tea.Cmd {
+func gateCmd(env Env, b view.BindingStatus) tea.Cmd {
 	key := b.Key()
 	subject := b.BuilderCandidate
 
@@ -393,7 +393,7 @@ func gateCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 // picker keeps the prompt's pre-fill (plansDir(b)), tab completion and file
 // validation; it adds a list of the directory's recent plans. root is the
 // binding's tree, which relative values resolve against (§2.5).
-func sendCmd(env Env, b relevo.BindingStatus) tea.Cmd {
+func sendCmd(env Env, b view.BindingStatus) tea.Cmd {
 	p := sendPicker{env: env, b: b, input: newPromptInput(), pick: -1, root: b.CWD}
 	if d := plansDir(b); d != "" {
 		p.input.SetValue(d)
@@ -405,7 +405,7 @@ func sendCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 // plansDir is the send picker's pre-fill: the binding tree's docs/plans/
 // directory, made relative to that tree ("docs/plans/"), when it exists, ""
 // when it does not (§4.5, §2.5).
-func plansDir(b relevo.BindingStatus) string {
+func plansDir(b view.BindingStatus) string {
 	if b.CWD == "" {
 		return ""
 	}
@@ -455,12 +455,12 @@ func pathCompletion(value string) []string {
 // (internal/relevo/reconcile.go), so relevo.Send opens round b.Round, not
 // b.Round+1 (W3). A binding with a round open is refused by Send itself, so
 // the label stays and the refusal comes back as the action's error.
-func sendConfirmTitle(b relevo.BindingStatus, file string) string {
+func sendConfirmTitle(b view.BindingStatus, file string) string {
 	return fmt.Sprintf("Send %s to %s as round %d?", file, b.Key(), b.Round)
 }
 
 // sendConfirmLines names who else is affected, then the keys (§4.3, §4.5).
-func sendConfirmLines(b relevo.BindingStatus) []string {
+func sendConfirmLines(b view.BindingStatus) []string {
 	var lines []string
 	if l := plannerConfirmLine(b, "is waiting on this round"); l != "" {
 		lines = append(lines, l)
@@ -471,7 +471,7 @@ func sendConfirmLines(b relevo.BindingStatus) []string {
 // editorCmd is the E key: draft a plan in the state directory's tui-plans/,
 // open $EDITOR on it with the terminal released, and, when the human left
 // something new and non-empty in it, ask the same send confirm s asks (§4.5).
-func editorCmd(env Env, b relevo.BindingStatus) tea.Cmd {
+func editorCmd(env Env, b view.BindingStatus) tea.Cmd {
 	key := b.Key()
 	dir, ok := tuiPlansDir(env)
 	if !ok {
@@ -589,7 +589,7 @@ func bindConfirmTitle(in BindInput) string {
 // retryCmd is the r key: a candidate list, then the confirm (§3.5). The list
 // is the role's candidates in their order, including the current one; the
 // current candidate and any gated one are disabled.
-func retryCmd(env Env, b relevo.BindingStatus) tea.Cmd {
+func retryCmd(env Env, b view.BindingStatus) tea.Cmd {
 	key := b.Key()
 	current := candidateText(b)
 
@@ -675,7 +675,7 @@ func gatedBy(env Env, name string) *availability.Gate {
 // retryConfirmTitle is the retry confirm's question (§4.5): an open round is
 // stopped first and the question names it; with nothing open the last plan is
 // simply resent as a new round.
-func retryConfirmTitle(b relevo.BindingStatus, candidate string) string {
+func retryConfirmTitle(b view.BindingStatus, candidate string) string {
 	if roundOpen(b) {
 		return fmt.Sprintf("Stop %s round %d and resend its plan on %s?", b.Key(), b.Round, candidate)
 	}
@@ -684,7 +684,7 @@ func retryConfirmTitle(b relevo.BindingStatus, candidate string) string {
 
 // retryConfirmLines names who else is affected, that the candidate persists as
 // the binding's builder, then the keys (§4.5).
-func retryConfirmLines(b relevo.BindingStatus, candidate string) []string {
+func retryConfirmLines(b view.BindingStatus, candidate string) []string {
 	var lines []string
 	if l := plannerConfirmLine(b, "is waiting on this round"); l != "" {
 		lines = append(lines, l)
@@ -696,7 +696,7 @@ func retryConfirmLines(b relevo.BindingStatus, candidate string) []string {
 // roundOpen reports whether the row has a round in flight, the fact that
 // decides which retry confirm is shown (§4.5). ACTIVE is the one display word
 // that means a round is open.
-func roundOpen(b relevo.BindingStatus) bool { return b.Display == "ACTIVE" }
+func roundOpen(b view.BindingStatus) bool { return b.Display == "ACTIVE" }
 
 // shellCmd is the o key: a shell in the binding's tree, with the terminal
 // released and restored. A failure to start one is a notice (§4.3, §6).
@@ -718,7 +718,7 @@ func shellCmd(env Env, key string) tea.Cmd {
 // was an action key at all. Without Actions every action key does nothing; a
 // second action on a binding that already carries one is refused with a
 // notice. 'b' is deliberately not here: only the fleet binds (fleetActionKey).
-func actionKey(env Env, b relevo.BindingStatus, k string) (tea.Cmd, bool) {
+func actionKey(env Env, b view.BindingStatus, k string) (tea.Cmd, bool) {
 	if env.Actions == nil {
 		return nil, false
 	}
@@ -752,7 +752,7 @@ func actionKey(env Env, b relevo.BindingStatus, k string) (tea.Cmd, bool) {
 // fleetActionKey is actionKey plus the fleet's own 'b': a bind names no
 // binding yet, so it has no row to act on and no in-flight action to collide
 // with (§4.5).
-func fleetActionKey(env Env, b relevo.BindingStatus, k string) (tea.Cmd, bool) {
+func fleetActionKey(env Env, b view.BindingStatus, k string) (tea.Cmd, bool) {
 	if k == "b" {
 		if env.Actions == nil {
 			return nil, false

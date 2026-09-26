@@ -6,7 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // actionEntry is one recorded cockpit action result for the session (:log).
@@ -30,9 +30,9 @@ type Model struct {
 	// after newModel.
 	stack []View
 
-	report relevo.Report // newest good status; kept on a failed refresh
-	err    error         // last refresh error
-	notice string        // sticky footer notice; cleared by the next key
+	report view.Report // newest good status; kept on a failed refresh
+	err    error       // last refresh error
+	notice string      // sticky footer notice; cleared by the next key
 
 	// statusInFlight is the status fetch's single-flight guard. It is
 	// separate from a view's own guards: a terminal read can block.

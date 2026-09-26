@@ -6,47 +6,47 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // TestWhatAge ports the rail's whatAge assertions to view_fleet.go (R2.10).
 func TestWhatAge(t *testing.T) {
 	cases := []struct {
 		name     string
-		b        relevo.BindingStatus
+		b        view.BindingStatus
 		wantWhat string
 		wantAge  string
 	}{
 		{
 			name: "needs you blocked",
-			b: relevo.BindingStatus{Display: "NEEDS YOU",
-				Waiting: &relevo.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)}},
+			b: view.BindingStatus{Display: "NEEDS YOU",
+				Waiting: &view.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)}},
 			wantWhat: "question", wantAge: "2m",
 		},
 		{
 			name:     "needs you detail",
-			b:        relevo.BindingStatus{Display: "NEEDS YOU", Detail: "broken: no space"},
+			b:        view.BindingStatus{Display: "NEEDS YOU", Detail: "broken: no space"},
 			wantWhat: "broken: no space",
 		},
 		{
 			name:     "needs you bare",
-			b:        relevo.BindingStatus{Display: "NEEDS YOU"},
+			b:        view.BindingStatus{Display: "NEEDS YOU"},
 			wantWhat: "needs you",
 		},
 		{
 			name:     "active working",
-			b:        relevo.BindingStatus{Display: "ACTIVE", BuilderStatus: "working"},
+			b:        view.BindingStatus{Display: "ACTIVE", BuilderStatus: "working"},
 			wantWhat: "working",
 		},
 		{
 			name:     "done",
-			b:        relevo.BindingStatus{Display: "DONE", Last: &relevo.LastEvent{TS: railNow.Add(-3 * time.Hour)}},
+			b:        view.BindingStatus{Display: "DONE", Last: &view.LastEvent{TS: railNow.Add(-3 * time.Hour)}},
 			wantWhat: "done", wantAge: "3h",
 		},
 		{
 			name:     "paused",
-			b:        relevo.BindingStatus{Display: "PAUSED", Last: &relevo.LastEvent{TS: railNow.Add(-time.Hour), Kind: "pause"}},
+			b:        view.BindingStatus{Display: "PAUSED", Last: &view.LastEvent{TS: railNow.Add(-time.Hour), Kind: "pause"}},
 			wantWhat: "paused", wantAge: "1h",
 		},
 	}
@@ -63,10 +63,10 @@ func TestWhatAge(t *testing.T) {
 // TestNowCellCarriesTheStaleLabel is the stale-label port (#135): a NEEDS
 // YOU row carries its stale age in the NOW cell.
 func TestNowCellCarriesTheStaleLabel(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU", BuilderKind: "agy",
 		Stale:   "stale 4h 0m",
-		Waiting: &relevo.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)},
+		Waiting: &view.Waiting{Cause: "blocked", Since: railNow.Add(-2 * time.Minute)},
 	}
 	if got := nowCell(b, railNow); !strings.Contains(got, "· stale 4h 0m") {
 		t.Errorf("nowCell = %q, want it to carry %q", got, "· stale 4h 0m")
@@ -82,7 +82,7 @@ func TestCandidateText(t *testing.T) {
 		"":                                    "-",
 	}
 	for in, want := range cases {
-		if got := candidateText(relevo.BindingStatus{BuilderCandidate: in}); got != want {
+		if got := candidateText(view.BindingStatus{BuilderCandidate: in}); got != want {
 			t.Errorf("candidateText(%q) = %q, want %q", in, got, want)
 		}
 	}
@@ -120,8 +120,8 @@ func TestSpendText(t *testing.T) {
 // TestFleetBodyHeader pins D4: the table's first list lines are section lines,
 // and neither the loading nor the empty body has one.
 func TestFleetBodyHeader(t *testing.T) {
-	rows := []relevo.BindingStatus{{Name: "webshop", Round: 4, Display: "ACTIVE", BuilderStatus: "working"}}
-	loaded := Env{Loaded: true, Now: railNow, Report: relevo.Report{Bindings: rows}, Width: 140, Height: 40}
+	rows := []view.BindingStatus{{Name: "webshop", Round: 4, Display: "ACTIVE", BuilderStatus: "working"}}
+	loaded := Env{Loaded: true, Now: railNow, Report: view.Report{Bindings: rows}, Width: 140, Height: 40}
 	f := newFleetView(true)
 
 	body := stripANSI(f.Body(loaded, 140, 40))
@@ -138,7 +138,7 @@ func TestFleetBodyHeader(t *testing.T) {
 		t.Errorf("the loading body must have no section line: %q", body)
 	}
 	empty := loaded
-	empty.Report = relevo.Report{}
+	empty.Report = view.Report{}
 	if body := stripANSI(f.Body(empty, 140, 40)); strings.Contains(body, "working") {
 		t.Errorf("the empty body must have no section line: %q", body)
 	}
@@ -146,7 +146,7 @@ func TestFleetBodyHeader(t *testing.T) {
 
 // TestFleetHeaderSurvivesNarrowing pins D4: at 80 columns, name and now survive.
 func TestFleetHeaderSurvivesNarrowing(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "ACTIVE", BuilderStatus: "working",
 		BuilderCandidate: "cline/deepseek", PlannerName: "architect-1",
 		Spend: &usage.Spend{Measured: 1.23},
@@ -164,7 +164,7 @@ func TestFleetHeaderSurvivesNarrowing(t *testing.T) {
 // line read "1 needs you" for one and "N need you" for more, from the one
 // helper, so they cannot drift.
 func TestNeedsYouGrammarIsShared(t *testing.T) {
-	one := splitModel(t, 140, 40, relevo.BindingStatus{Name: "webshop", Round: 1, Display: "NEEDS YOU"})
+	one := splitModel(t, 140, 40, view.BindingStatus{Name: "webshop", Round: 1, Display: "NEEDS YOU"})
 	if h := stripANSI(one.headerView(one.env())); !strings.Contains(h, "● 1 needs you") {
 		t.Errorf("header = %q, want the singular", h)
 	}
@@ -174,8 +174,8 @@ func TestNeedsYouGrammarIsShared(t *testing.T) {
 	}
 
 	two := splitModel(t, 140, 40,
-		relevo.BindingStatus{Name: "webshop", Round: 1, Display: "NEEDS YOU"},
-		relevo.BindingStatus{Name: "docs", Round: 1, Display: "NEEDS YOU"},
+		view.BindingStatus{Name: "webshop", Round: 1, Display: "NEEDS YOU"},
+		view.BindingStatus{Name: "docs", Round: 1, Display: "NEEDS YOU"},
 	)
 	if h := stripANSI(two.headerView(two.env())); !strings.Contains(h, "● 2 need you") {
 		t.Errorf("header = %q, want the plural", h)
@@ -190,12 +190,12 @@ func TestNeedsYouGrammarIsShared(t *testing.T) {
 // only matching rows, the selection survives, enter keeps the filter, and
 // esc clears it.
 func TestFleetFilter(t *testing.T) {
-	rows := []relevo.BindingStatus{
+	rows := []view.BindingStatus{
 		{Name: "webshop", Round: 4, Display: "ACTIVE", CWD: "/home/x/web"},
 		{Name: "docs", Round: 1, Display: "DONE"},
 		{Name: "api", Round: 2, Display: "ACTIVE"},
 	}
-	env := Env{Loaded: true, Now: railNow, Report: relevo.Report{Bindings: rows}, Width: 140, Height: 40, StatusAt: railNow}
+	env := Env{Loaded: true, Now: railNow, Report: view.Report{Bindings: rows}, Width: 140, Height: 40, StatusAt: railNow}
 	f := newFleetView(true)
 	f.showDone = true
 	key := func(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
@@ -274,7 +274,7 @@ func TestFleetFilter(t *testing.T) {
 // TestFleetFilterMatchesEveryShownField pins A4's field list: key, actor,
 // candidate, planner, repo and state all match, case-insensitively.
 func TestFleetFilterMatchesEveryShownField(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "PAUSED", Role: "reviewer",
 		BuilderCandidate: "cline-pass/deepseek-v4.1-flash#high",
 		PlannerName:      "architect-1", CWD: "/home/x/relevo",
@@ -292,7 +292,7 @@ func TestFleetFilterMatchesEveryShownField(t *testing.T) {
 // TestFleetColumnsAndNarrowDropOrder pins D4: the new drop order planner first,
 // then spend, then candidate.
 func TestFleetColumnsAndNarrowDropOrder(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "ACTIVE", BuilderStatus: "working",
 		BuilderCandidate: "cline-pass/deepseek-v4.1-flash#high",
 		PlannerName:      "architect-1",
@@ -331,12 +331,12 @@ func TestFleetColumnsAndNarrowDropOrder(t *testing.T) {
 // TestFleetNeedsYouSecondLine pins §2.3 and D4: a NEEDS YOU row with a Waiting
 // line gets a second line with the quote glyph "╰ ".
 func TestFleetNeedsYouSecondLine(t *testing.T) {
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "webshop", Round: 4, Display: "NEEDS YOU",
-		Waiting: &relevo.Waiting{Cause: "blocked", Line: "which database should r4 use?"},
+		Waiting: &view.Waiting{Cause: "blocked", Line: "which database should r4 use?"},
 	}
 	f := newFleetView(true)
-	env := Env{Loaded: true, Now: railNow, Report: relevo.Report{Bindings: []relevo.BindingStatus{b}}, Width: 140, Height: 40}
+	env := Env{Loaded: true, Now: railNow, Report: view.Report{Bindings: []view.BindingStatus{b}}, Width: 140, Height: 40}
 	lines := f.fleetListLines(env, 140)
 	if len(lines) != 4 {
 		t.Fatalf("%d lines, want 4 (section + row + question + blank)", len(lines))
@@ -349,8 +349,8 @@ func TestFleetNeedsYouSecondLine(t *testing.T) {
 	}
 
 	// No Waiting line: no second line.
-	b.Waiting = &relevo.Waiting{Cause: "blocked"}
-	env.Report = relevo.Report{Bindings: []relevo.BindingStatus{b}}
+	b.Waiting = &view.Waiting{Cause: "blocked"}
+	env.Report = view.Report{Bindings: []view.BindingStatus{b}}
 	if got := len(f.fleetListLines(env, 140)); got != 3 {
 		t.Errorf("without a Waiting line: %d lines, want 3", got)
 	}

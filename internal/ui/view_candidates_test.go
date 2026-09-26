@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/muesli/termenv"
 )
 
@@ -89,13 +90,13 @@ func candFixtureGates() []availability.Gate {
 
 // candGatedReport is the report the goldens and unit tests hang their gates
 // on.
-func candGatedReport() relevo.Report { return relevo.Report{Gated: candFixtureGates()} }
+func candGatedReport() view.Report { return view.Report{Gated: candFixtureGates()} }
 
 // candUnusedReport is candGatedReport plus one live rate limit on antigravity,
 // a provider no candidate in the fixture uses.
-func candUnusedReport() relevo.Report {
+func candUnusedReport() view.Report {
 	rep := candGatedReport()
-	rep.Unused = []relevo.ProviderGate{{
+	rep.Unused = []view.ProviderGate{{
 		Provider: "antigravity",
 		Since:    railNow.Add(-40 * time.Hour),
 		Until:    railNow.Add(3 * time.Hour),
@@ -107,13 +108,13 @@ func candUnusedReport() relevo.Report {
 }
 
 // candEnv is the Env the view's pure helpers are called with.
-func candEnv(rep relevo.Report) Env {
+func candEnv(rep view.Report) Env {
 	return Env{Loaded: true, Now: railNow, Report: rep, Width: 132, Height: 34}
 }
 
 // goldenCandidatesModel is the candidates goldens' builder: a loaded shell, the
 // `:candidates` command, and its doc load drained.
-func goldenCandidatesModel(t *testing.T, width, height int, fa *fakeActions, rep relevo.Report) Model {
+func goldenCandidatesModel(t *testing.T, width, height int, fa *fakeActions, rep view.Report) Model {
 	t.Helper()
 	m := goldenActionModel(t, width, height, fa, rep)
 	return drain(t, m, execLine("candidates", m.env(), m.prefs))
@@ -121,13 +122,13 @@ func goldenCandidatesModel(t *testing.T, width, height int, fa *fakeActions, rep
 
 // candActionEnv is the view's Env with an Actions seam: the key tests pass an
 // env whose Actions is the fake under test.
-func candActionEnv(a Actions, rep relevo.Report) Env {
+func candActionEnv(a Actions, rep view.Report) Env {
 	return Env{Ctx: context.Background(), Actions: a, Loaded: true, Now: railNow,
 		Report: rep, Width: 132, Height: 34}
 }
 
 // candView loads a candidates view over fa's doc at width x height.
-func candView(t *testing.T, fa *fakeActions, rep relevo.Report, width, height int) candidatesView {
+func candView(t *testing.T, fa *fakeActions, rep view.Report, width, height int) candidatesView {
 	t.Helper()
 	env := Env{Ctx: context.Background(), Actions: fa, Report: rep, Loaded: true,
 		Now: railNow, Width: width, Height: height}
@@ -532,7 +533,7 @@ func TestCandidatesContextCountsUnusedProviderGates(t *testing.T) {
 	}
 
 	rep := candUnusedReport()
-	rep.Unused = append(rep.Unused, relevo.ProviderGate{Provider: "other", Since: railNow, Source: "planner"})
+	rep.Unused = append(rep.Unused, view.ProviderGate{Provider: "other", Since: railNow, Source: "planner"})
 	two := candView(t, fa, rep, 132, 34)
 	left, _ = two.Context(candActionEnv(fa, rep))
 	if !strings.Contains(stripANSI(left), "2 gates on unused providers") {

@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // WaitResult is what `relevo wait` reports once it stops polling.
@@ -40,7 +41,7 @@ const (
 	// WaitUnmarked is the exit code for a round that closed without a marked
 	// report (unmarked, scraped, or noreport).
 	WaitUnmarked = 2
-	// WaitNeedsYou is the exit code for a binding WaitingOn classified as
+	// WaitNeedsYou is the exit code for a binding view.WaitingOn classified as
 	// needing a human.
 	WaitNeedsYou = 3
 	// WaitGone is the exit code for a binding that is DONE, or was unbound
@@ -88,7 +89,7 @@ func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
 
 // WaitOutcome classifies one binding's round into a WaitResult, per spec
 // §4.6. Pure apart from questionOf. The report entry for round is checked
-// before State == done and before WaitingOn, so an earlier round's close is
+// before State == done and before view.WaitingOn, so an earlier round's close is
 // reported regardless of what the binding is doing now.
 func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionOf func(name string, round int) string) WaitResult {
 	if e, ok := lastReportEntry(entries, round); ok {
@@ -111,7 +112,7 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 		return WaitResult{Code: WaitGone, Done: true}
 	}
 
-	if w, ok := WaitingOn(b, entries, questionOf); ok {
+	if w, ok := view.WaitingOn(b, entries, questionOf); ok {
 		return WaitResult{Code: WaitNeedsYou, Line: w.Line, Done: true}
 	}
 

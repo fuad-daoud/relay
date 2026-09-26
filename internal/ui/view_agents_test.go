@@ -10,13 +10,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // agentsFixtureList loads an agentsView over fa's doc and files, as the
 // ':agents' command's load would.
 func agentsFixtureList(t *testing.T, fa *fakeActions) agentsView {
 	t.Helper()
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	v, cmd := newAgentsView(env)
 	next, _ := v.Update(cmd(), env)
 	return next.(agentsView)
@@ -40,7 +41,7 @@ func agentFixtureView(t *testing.T, fa *fakeActions, name string) agentView {
 	rows := agentRows(fa.doc, fa.files)
 	for _, r := range rows {
 		if r.name == name {
-			v, _ := newAgentView(candActionEnv(fa, relevo.Report{}), fa.doc, r)
+			v, _ := newAgentView(candActionEnv(fa, view.Report{}), fa.doc, r)
 			return v.(agentView)
 		}
 	}
@@ -121,7 +122,7 @@ func TestAgentsUsedByResearcher(t *testing.T) {
 func TestAgentsArchitectRowFaint(t *testing.T) {
 	fa := &fakeActions{doc: candFixtureDoc(t)}
 	v := agentsFixtureList(t, fa)
-	env := candActionEnv(fa, relevo.Report{})
+	env := candActionEnv(fa, view.Report{})
 	rows := v.rows()
 	architect := rows[agentRowIndex(t, rows, "architect")]
 	if len(architect.usedBy) != 0 {
@@ -182,7 +183,7 @@ func TestAgentsDeleteShippedNotices(t *testing.T) {
 	v := agentsFixtureList(t, fa)
 	v.cur = agentRowIndex(t, v.rows(), "researcher")
 
-	_, cmd := v.Update(key('d'), candActionEnv(fa, relevo.Report{}))
+	_, cmd := v.Update(key('d'), candActionEnv(fa, view.Report{}))
 	if cmd == nil {
 		t.Fatal("d must return a command")
 	}
@@ -206,7 +207,7 @@ func TestAgentsDeleteCustomAgentConfirms(t *testing.T) {
 	v := agentsFixtureList(t, fa)
 	v.cur = agentRowIndex(t, v.rows(), "scout")
 
-	_, cmd := v.Update(key('d'), candActionEnv(fa, relevo.Report{}))
+	_, cmd := v.Update(key('d'), candActionEnv(fa, view.Report{}))
 	if cmd == nil {
 		t.Fatal("d must return a command")
 	}
@@ -245,7 +246,7 @@ func TestAgentsDeleteUsedCustomAgentNotices(t *testing.T) {
 	v := agentsFixtureList(t, fa)
 	v.cur = agentRowIndex(t, v.rows(), "scout")
 
-	_, cmd := v.Update(key('d'), candActionEnv(fa, relevo.Report{}))
+	_, cmd := v.Update(key('d'), candActionEnv(fa, view.Report{}))
 	if cmd == nil {
 		t.Fatal("d must return a command")
 	}
@@ -268,7 +269,7 @@ func TestAgentResetUpToDateNotices(t *testing.T) {
 	v := agentFixtureView(t, fa, "researcher")
 	v.cur = 1 // claude
 
-	_, cmd := v.Update(key('r'), candActionEnv(fa, relevo.Report{}))
+	_, cmd := v.Update(key('r'), candActionEnv(fa, view.Report{}))
 	if cmd == nil {
 		t.Fatal("r must return a command")
 	}
@@ -298,7 +299,7 @@ func TestAgentResetEditedConfirms(t *testing.T) {
 	v := agentFixtureView(t, fa, "researcher")
 	v.cur = 1 // claude
 
-	_, cmd := v.Update(key('r'), candActionEnv(fa, relevo.Report{}))
+	_, cmd := v.Update(key('r'), candActionEnv(fa, view.Report{}))
 	if cmd == nil {
 		t.Fatal("r must return a command")
 	}
@@ -344,7 +345,7 @@ func TestAgentResetOnEditNewerSaysNewerCopy(t *testing.T) {
 	v := agentFixtureView(t, fa, "researcher")
 	v.cur = 1 // claude
 
-	_, cmd := v.Update(key('r'), candActionEnv(fa, relevo.Report{}))
+	_, cmd := v.Update(key('r'), candActionEnv(fa, view.Report{}))
 	if cmd == nil {
 		t.Fatal("r must return a command")
 	}
@@ -386,7 +387,7 @@ func TestAgentViewShippedResetWordingUnchanged(t *testing.T) {
 			v := agentFixtureView(t, fa, "researcher")
 			v.cur = 1 // claude
 
-			_, cmd := v.Update(key('r'), candActionEnv(fa, relevo.Report{}))
+			_, cmd := v.Update(key('r'), candActionEnv(fa, view.Report{}))
 			if cmd == nil {
 				t.Fatal("r must return a command")
 			}
@@ -418,7 +419,7 @@ func TestAgentResetMissingConfirmsWrite(t *testing.T) {
 	v := agentFixtureView(t, fa, "researcher")
 	v.cur = 1 // claude
 
-	_, cmd := v.Update(key('r'), candActionEnv(fa, relevo.Report{}))
+	_, cmd := v.Update(key('r'), candActionEnv(fa, view.Report{}))
 	if cmd == nil {
 		t.Fatal("r must return a command")
 	}
@@ -498,7 +499,7 @@ func TestAgentViewSourceCustomAgentResets(t *testing.T) {
 		t.Error("a source custom agent's view must offer r")
 	}
 
-	_, cmd := v.Update(key('r'), candActionEnv(fa, relevo.Report{}))
+	_, cmd := v.Update(key('r'), candActionEnv(fa, view.Report{}))
 	if cmd == nil {
 		t.Fatal("r must return a command")
 	}
@@ -563,7 +564,7 @@ func TestAgentEditOpensEditor(t *testing.T) {
 	v := agentFixtureView(t, fa, "researcher")
 	v.cur = 1 // claude
 
-	_, cmd := v.Update(key('e'), candActionEnv(fa, relevo.Report{}))
+	_, cmd := v.Update(key('e'), candActionEnv(fa, view.Report{}))
 	if cmd == nil {
 		t.Fatal("e must return a command")
 	}
@@ -589,7 +590,7 @@ func TestAgentEditMissingNotices(t *testing.T) {
 	v := agentFixtureView(t, fa, "researcher")
 	v.cur = 1 // claude
 
-	_, cmd := v.Update(key('e'), candActionEnv(fa, relevo.Report{}))
+	_, cmd := v.Update(key('e'), candActionEnv(fa, view.Report{}))
 	if cmd == nil {
 		t.Fatal("e must return a command")
 	}

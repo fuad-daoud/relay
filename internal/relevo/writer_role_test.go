@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // uiBuilderRow is the custom writer row this file's tests add: shape writer,
@@ -404,7 +405,7 @@ func TestStatusShowsRole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	rows := map[string]BindingStatus{}
+	rows := map[string]view.BindingStatus{}
 	for _, row := range rep.Bindings {
 		rows[row.Name] = row
 	}
@@ -415,11 +416,11 @@ func TestStatusShowsRole(t *testing.T) {
 		t.Errorf("plain-status row Role = %q, want empty", rows["plain-status"].Role)
 	}
 
-	uiOnly := RenderStatus(Report{Bindings: []BindingStatus{rows["ui-status"]}})
+	uiOnly := view.RenderStatus(view.Report{Bindings: []view.BindingStatus{rows["ui-status"]}})
 	if !strings.Contains(uiOnly, "role ui-builder") {
 		t.Errorf("ui builder line = %q, want `role ui-builder`", uiOnly)
 	}
-	plainOnly := RenderStatus(Report{Bindings: []BindingStatus{rows["plain-status"]}})
+	plainOnly := view.RenderStatus(view.Report{Bindings: []view.BindingStatus{rows["plain-status"]}})
 	if strings.Contains(plainOnly, "role ui-builder") {
 		t.Errorf("builder builder line = %q, want no role suffix", plainOnly)
 	}

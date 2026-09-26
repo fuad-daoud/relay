@@ -9,15 +9,15 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/availability"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // TestCommandModalGroupsSections: a report with 2 live, 1 done binding and 1
 // gate, typed `r`. The stripped box shows VIEWS, then BINDINGS with the done
 // binding last, and the selected row is the first match (§3.1, §5).
 func TestCommandModalGroupsSections(t *testing.T) {
-	rep := relevo.Report{
-		Bindings: []relevo.BindingStatus{
+	rep := view.Report{
+		Bindings: []view.BindingStatus{
 			{Name: "runtime", Round: 1, Display: "ACTIVE", BuilderStatus: "working"},
 			{Name: "serve", Round: 1, Display: "ACTIVE", BuilderStatus: "idle"},
 			{Name: "render", Round: 1, Display: "DONE"},
@@ -69,15 +69,15 @@ func TestCommandModalGroupsSections(t *testing.T) {
 // TestCommandModalFoldsOverflow: 12 bindings, empty input. It shows 8 rows and
 // `+ N more match` (§3.1, §5).
 func TestCommandModalFoldsOverflow(t *testing.T) {
-	var bindings []relevo.BindingStatus
+	var bindings []view.BindingStatus
 	for i := 1; i <= 12; i++ {
-		bindings = append(bindings, relevo.BindingStatus{
+		bindings = append(bindings, view.BindingStatus{
 			Name:    "b" + string(rune('a'+i-1)),
 			Round:   1,
 			Display: "ACTIVE", BuilderStatus: "idle",
 		})
 	}
-	m := goldenActionModel(t, 140, 40, &fakeActions{}, relevo.Report{Bindings: bindings})
+	m := goldenActionModel(t, 140, 40, &fakeActions{}, view.Report{Bindings: bindings})
 	res, _ := m.Update(key(':'))
 	m = res.(Model)
 
@@ -112,7 +112,7 @@ func TestCommandModalFoldsOverflow(t *testing.T) {
 // MOVE & VIEW holds . and /, and ANYWHERE holds : (§3.2, §5).
 func TestHelpModalColumns(t *testing.T) {
 	m := goldenActionModel(t, 140, 40, &fakeActions{},
-		relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
+		view.Report{Bindings: allStatesRows(), Gated: gatedGates()})
 	res, _ := m.Update(key('?'))
 	m = res.(Model)
 
@@ -151,7 +151,7 @@ func TestHelpModalColumns(t *testing.T) {
 // in ANYWHERE (§2.6, §5).
 func TestHelpNoDuplicateKeys(t *testing.T) {
 	m := goldenActionModel(t, 140, 40, &fakeActions{},
-		relevo.Report{Bindings: allStatesRows(), Gated: gatedGates()})
+		view.Report{Bindings: allStatesRows(), Gated: gatedGates()})
 	res, _ := m.Update(key('?'))
 	m = res.(Model)
 
@@ -167,7 +167,7 @@ func TestHelpNoDuplicateKeys(t *testing.T) {
 // box open with an error and focus on for (§3.3, §5).
 func TestGateFormOneSubmitCallsGateOnce(t *testing.T) {
 	fa := &fakeActions{result: Result{Text: "gated", Refresh: true}}
-	m := actionModel(t, fa, relevo.BindingStatus{
+	m := actionModel(t, fa, view.BindingStatus{
 		Name: "atlas", Round: 4, Display: "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm",
 	})
@@ -224,7 +224,7 @@ func TestGateFormOneSubmitCallsGateOnce(t *testing.T) {
 // (§3.3, §5).
 func TestGateFormEmptyDurationIsUntilCleared(t *testing.T) {
 	fa := &fakeActions{result: Result{Text: "gated", Refresh: true}}
-	m := actionModel(t, fa, relevo.BindingStatus{
+	m := actionModel(t, fa, view.BindingStatus{
 		Name: "atlas", Round: 4, Display: "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm",
 	})
@@ -245,7 +245,7 @@ func TestGateFormEmptyDurationIsUntilCleared(t *testing.T) {
 // TestGateFormNoPrompt: the stripped gate form carries no `> ` prompt before
 // its fields; the label already names each field (§2.4, §5).
 func TestGateFormNoPrompt(t *testing.T) {
-	m := actionModel(t, &fakeActions{}, relevo.BindingStatus{
+	m := actionModel(t, &fakeActions{}, view.BindingStatus{
 		Name: "atlas", Round: 4, Display: "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm",
 	})
@@ -261,7 +261,7 @@ func TestGateFormNoPrompt(t *testing.T) {
 // TestModalFooterShowsOverlayKeys: with the gate form open, the footer contains
 // `next field` and not `? all keys` (§2.1, §5).
 func TestModalFooterShowsOverlayKeys(t *testing.T) {
-	m := actionModel(t, &fakeActions{}, relevo.BindingStatus{
+	m := actionModel(t, &fakeActions{}, view.BindingStatus{
 		Name: "atlas", Round: 4, Display: "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm",
 	})
@@ -282,11 +282,11 @@ func TestModalFooterShowsOverlayKeys(t *testing.T) {
 // enter opens the retry confirm naming it (§3.5, §5).
 func TestRetryListDisablesCurrentAndGated(t *testing.T) {
 	fa := &fakeActions{candidates: []string{"current-c", "gated-g", "ready-r"}}
-	b := relevo.BindingStatus{
+	b := view.BindingStatus{
 		Name: "atlas", Round: 4, Display: "ACTIVE", BuilderName: "current-c",
 	}
-	rep := relevo.Report{
-		Bindings: []relevo.BindingStatus{b},
+	rep := view.Report{
+		Bindings: []view.BindingStatus{b},
 		Gated: []availability.Gate{{
 			Token: "agy/provider/gated-g", Name: "gated-g",
 			Kind: availability.RateLimited, Until: railNow.Add(time.Hour),
@@ -363,7 +363,7 @@ func TestSendPickerListsNewestFirst(t *testing.T) {
 		}
 	}
 
-	m := actionModel(t, &fakeActions{}, relevo.BindingStatus{
+	m := actionModel(t, &fakeActions{}, view.BindingStatus{
 		Name: "atlas", Round: 4, Display: "ACTIVE", CWD: dir,
 	})
 	res, cmd := m.Update(key('s'))
@@ -432,7 +432,7 @@ func TestSendPickerRelativePath(t *testing.T) {
 	rel := filepath.Join("docs", "plans") + string(filepath.Separator)
 
 	fa := &fakeActions{}
-	m := actionModel(t, fa, relevo.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE", CWD: dir})
+	m := actionModel(t, fa, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE", CWD: dir})
 
 	res, cmd := m.Update(key('s'))
 	m = drain(t, res.(Model), cmd)
@@ -493,7 +493,7 @@ func TestSendPickerRelativePath(t *testing.T) {
 // TestSendPickerCtrlEOpensEditorFlow: ctrl+e returns a non-nil cmd and closes
 // the picker. Assert via the returned overlay state (§3.4, §5).
 func TestSendPickerCtrlEOpensEditorFlow(t *testing.T) {
-	m := actionModel(t, &fakeActions{}, relevo.BindingStatus{
+	m := actionModel(t, &fakeActions{}, view.BindingStatus{
 		Name: "atlas", Round: 4, Display: "ACTIVE", CWD: t.TempDir(),
 	})
 	res, cmd := m.Update(key('s'))
