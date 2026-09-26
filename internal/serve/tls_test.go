@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"net"
@@ -16,6 +17,27 @@ func testSecretStore(t *testing.T) SecretStore {
 	return SecretStore{DB: testServeDB(t), Root: t.TempDir()}
 }
 
+func requireDNS(t *testing.T, cert *x509.Certificate, name string) {
+	t.Helper()
+	for _, d := range cert.DNSNames {
+		if d == name {
+			return
+		}
+	}
+	t.Errorf("missing DNS SAN %s in %v", name, cert.DNSNames)
+}
+
+func requireIP(t *testing.T, cert *x509.Certificate, ipStr string) {
+	t.Helper()
+	target := net.ParseIP(ipStr)
+	for _, ip := range cert.IPAddresses {
+		if ip.Equal(target) {
+			return
+		}
+	}
+	t.Errorf("missing IP SAN %s in %v", ipStr, cert.IPAddresses)
+}
+
 func TestInitTLSAndLoad(t *testing.T) {
 	secrets := testSecretStore(t)
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
@@ -29,7 +51,6 @@ func TestInitTLSAndLoad(t *testing.T) {
 		t.Fatal("expected non-empty fingerprint")
 	}
 
-	// The key and certificate are secrets now, not files (P5 §4.5).
 	keyPEM, ok, err := secrets.SecretGet(tlsKeySecret)
 	if err != nil || !ok || len(keyPEM) == 0 {
 		t.Fatalf("serve.tls.key secret = (len %d, ok %v, err %v), want present", len(keyPEM), ok, err)
@@ -47,59 +68,27 @@ func TestInitTLSAndLoad(t *testing.T) {
 		t.Fatal("cert.Leaf is nil")
 	}
 
-	// Validity 10 years
 	if !cert.Leaf.NotBefore.Equal(now) {
 		t.Errorf("NotBefore = %v, want %v", cert.Leaf.NotBefore, now)
 	}
-	wantAfter := now.AddDate(10, 0, 0)
-	if !cert.Leaf.NotAfter.Equal(wantAfter) {
+	if wantAfter := now.AddDate(10, 0, 0); !cert.Leaf.NotAfter.Equal(wantAfter) {
 		t.Errorf("NotAfter = %v, want %v", cert.Leaf.NotAfter, wantAfter)
 	}
 
-	// SANs
-	hasDNS := func(name string) bool {
-		for _, d := range cert.Leaf.DNSNames {
-			if d == name {
-				return true
-			}
-		}
-		return false
+	for _, name := range []string{"example.com", "localhost"} {
+		requireDNS(t, cert.Leaf, name)
 	}
-	hasIP := func(ipStr string) bool {
-		target := net.ParseIP(ipStr)
-		for _, ip := range cert.Leaf.IPAddresses {
-			if ip.Equal(target) {
-				return true
-			}
-		}
-		return false
-	}
-
-	if !hasDNS("example.com") {
-		t.Errorf("missing DNS SAN example.com in %v", cert.Leaf.DNSNames)
-	}
-	if !hasDNS("localhost") {
-		t.Errorf("missing DNS SAN localhost in %v", cert.Leaf.DNSNames)
-	}
-	if !hasIP("10.0.0.1") {
-		t.Errorf("missing IP SAN 10.0.0.1 in %v", cert.Leaf.IPAddresses)
-	}
-	if !hasIP("127.0.0.1") {
-		t.Errorf("missing IP SAN 127.0.0.1 in %v", cert.Leaf.IPAddresses)
+	for _, ip := range []string{"10.0.0.1", "127.0.0.1"} {
+		requireIP(t, cert.Leaf, ip)
 	}
 	if hn, err := os.Hostname(); err == nil && hn != "" {
 		if net.ParseIP(hn) != nil {
-			if !hasIP(hn) {
-				t.Errorf("missing machine hostname IP SAN %s in %v", hn, cert.Leaf.IPAddresses)
-			}
+			requireIP(t, cert.Leaf, hn)
 		} else {
-			if !hasDNS(hn) {
-				t.Errorf("missing machine hostname DNS SAN %s in %v", hn, cert.Leaf.DNSNames)
-			}
+			requireDNS(t, cert.Leaf, hn)
 		}
 	}
 
-	// Fingerprint check
 	certFP, err := Fingerprint(secrets)
 	if err != nil {
 		t.Fatalf("Fingerprint: %v", err)
@@ -126,7 +115,7 @@ func TestInitTLSRefusesOverwrite(t *testing.T) {
 	}
 }
 
-// TestTLSImportsLegacyFiles pins P5 §4.5's import: a serve root left by a pre-P5
+// TestTLSImportsLegacyFiles pins the import: a serve root left by an older
 // relevo holds server.key and server.crt files, and the first TLS read adopts
 // them into the secrets and removes them.
 func TestTLSImportsLegacyFiles(t *testing.T) {

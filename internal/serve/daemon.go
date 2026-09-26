@@ -40,18 +40,12 @@ func (s *Server) Tick(ctx context.Context) error {
 		}
 	}
 
-	// Every owner has been reconciled (pids of exited builders cleared,
-	// closed rounds released), so admit can start queued rounds into the
-	// slots that freed up this tick (#285). Still under s.mu.
-	//
-	// Before admit reuses a slot, collect the bindings that are done with the
-	// server: a settled served binding is archived and its worktree, branch
-	// and refs released (§7). Failures are logged per binding inside and never
-	// fail the tick.
+	// Every owner is reconciled, so admit can start queued rounds into the slots
+	// that freed up. collectSettled runs first, so a settled binding's slot and
+	// worktree are released before reuse. All three run under s.mu.
 	if _, err := s.collectSettled(ctx); err != nil {
 		slog.Warn("collect settled failed", "err", err)
 	}
-	// Prune bare repos that no live binding references. Still under s.mu.
 	s.pruneUnusedRepos(ctx)
 	if err := s.admit(ctx); err != nil {
 		slog.Warn("admit failed", "err", err)
@@ -59,18 +53,10 @@ func (s *Server) Tick(ctx context.Context) error {
 	return nil
 }
 
-// Run executes the daemon tick loop until ctx is cancelled.
-// When serving plain HTTP, it logs a warning once per tick summary (every 60 ticks);
-// the spec says "every tick logs it", but once a minute (every 60 ticks at the 1s floor)
-// is the honest reading of that.
-//
-// A tick already in flight when ctx is cancelled runs to completion on a
-// context cancellation cannot reach (#373 §4.1): a tick cut between
-// Runner.Start and tx.Save would leave a live builder while the round still
-// looked queued. Run returns nil after that tick, and starts no new one.
-//
-// tickFn, when non-nil, replaces Tick. It is the narrow seam the drain tests
-// use to hold a tick open; production leaves it nil.
+// Run executes the daemon tick loop until ctx is cancelled. A tick in flight
+// when ctx is cancelled runs to completion on a context cancellation cannot
+// reach: a tick cut between Runner.Start and tx.Save would leave a live builder
+// while the round still looked queued. tickFn, when non-nil, replaces Tick.
 func (s *Server) Run(ctx context.Context) error {
 	interval := s.cfg.Interval
 	if interval < 500*time.Millisecond {
@@ -104,6 +90,8 @@ func (s *Server) Run(ctx context.Context) error {
 			s.mu.Lock()
 			insecure := s.insecureHTTP
 			s.mu.Unlock()
+			// "every tick logs it" is read as once a minute (60 ticks at the
+			// 1s floor): a warning per second would drown the log.
 			if insecure && ticks%60 == 0 {
 				slog.Warn("serving plain HTTP; every client request is readable on the network")
 			}
@@ -117,14 +105,9 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
-// importOwnerTarballs imports every owner's pending .archive/*.tar.gz once,
-// at startup, through ListArchived, which imports and removes each one
-// (internal/store/archive.go §4.4). A tarball placed in an owner's .archive/
-// before the daemon starts is therefore a record from the first tick on.
-// It never fails startup: a broken owner directory or an import error is
-// logged and the walk continues.
-//
-// The caller holds s.mu, the same rule Tick's owner walk follows.
+// importOwnerTarballs imports every owner's pending .archive/*.tar.gz once, at
+// startup, through ListArchived, which imports and removes each one; an error is
+// logged, never a startup failure. The caller holds s.mu.
 func (s *Server) importOwnerTarballs() {
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
 	entries, err := os.ReadDir(bindingsDir)
