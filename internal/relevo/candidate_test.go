@@ -75,6 +75,8 @@ func limit(token string) ledger.Gate {
 }
 
 func TestResolveCandidate(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name            string
 		setBody         string
@@ -337,6 +339,8 @@ func TestResolveCandidate(t *testing.T) {
 }
 
 func TestResolveCandidateIsDeterministic(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 
 	c1, err1 := resolveCandidate(set, policy.Policy{}, nil, "", "reviewer")
@@ -359,6 +363,8 @@ func TestResolveCandidateIsDeterministic(t *testing.T) {
 }
 
 func TestExplainResolution(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	lookup := func(tok string) candidate.Candidate {
 		ref, err := candidate.ParseRef(tok)
@@ -478,6 +484,8 @@ func TestExplainResolution(t *testing.T) {
 // byte-identical to its pre-A1 text, while PickText, the line a human reads,
 // names each candidate.
 func TestPickTextUsesNamesStoredNoteUnchanged(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	ref, err := candidate.ParseRef(testClaudeRef)
 	if err != nil {
@@ -527,6 +535,8 @@ func TestPickTextUsesNamesStoredNoteUnchanged(t *testing.T) {
 }
 
 func TestCandidateKind(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{
 		Candidates: candidateSet(t, testCandidatesJSON),
 		Gates:      testGateKV(t),
@@ -557,6 +567,8 @@ func (f fakeRoleChecker) Missing(kind string, _ []string) []string { return f[ki
 // makes rolesMissingGates run even when rt.Roles is nil would make this
 // control assertion fail.
 func TestRolesMissingSkipsInOrder(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testOpencodeRef, testClaudeRef)
 	rt.Roles = fakeRoleChecker{"opencode": {".config/opencode/agents/researcher.md"}}
@@ -589,6 +601,8 @@ func TestRolesMissingSkipsInOrder(t *testing.T) {
 // every other gate (recorded, but the pick proceeds), roles_missing refuses
 // an explicit --builder pick outright, because it cannot succeed.
 func TestRolesMissingRefusesExplicit(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Roles = fakeRoleChecker{"opencode": {".config/opencode/agents/researcher.md"}}
 
@@ -604,6 +618,8 @@ func TestRolesMissingRefusesExplicit(t *testing.T) {
 // TestResolveRoleByName pins A1 §4.2: an explicit candidate may be named by
 // its short name, and the refusals name the candidate by that name.
 func TestResolveRoleByName(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 
 	res, err := resolveCandidate(set, policy.Policy{}, nil, "claude-m", "builder")

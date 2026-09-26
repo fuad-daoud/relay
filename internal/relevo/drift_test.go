@@ -12,6 +12,8 @@ import (
 )
 
 func TestCaptureDrift_Cases(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	cases := []struct {
@@ -340,6 +342,8 @@ func TestCaptureDrift_Cases(t *testing.T) {
 }
 
 func TestCaptureDrift_DiffTreesArgOrder(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	fg := &fakeGit{
@@ -384,6 +388,8 @@ func TestCaptureDrift_DiffTreesArgOrder(t *testing.T) {
 }
 
 func TestDriftRenderers_Goldens(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name        string
 		res         DriftResult
@@ -466,6 +472,8 @@ func TestDriftRenderers_Goldens(t *testing.T) {
 }
 
 func TestReadDrift(t *testing.T) {
+	t.Parallel()
+
 	s := store.New(t.TempDir())
 	rt := Runtime{Store: s, Gates: testGateKV(t)}
 

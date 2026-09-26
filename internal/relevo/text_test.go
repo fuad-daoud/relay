@@ -7,6 +7,8 @@ import "testing"
 // never say different things (spec §5).
 
 func TestDoneText(t *testing.T) {
+	t.Parallel()
+
 	base := "webshop marked done; relaying stopped (relevo unbind --done archives it when you are finished with it)"
 	cases := []struct {
 		name string
@@ -32,6 +34,8 @@ func TestDoneText(t *testing.T) {
 }
 
 func TestUnbindText(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		res  UnbindResult
@@ -56,6 +60,8 @@ func TestUnbindText(t *testing.T) {
 }
 
 func TestUnbindTextProcessLines(t *testing.T) {
+	t.Parallel()
+
 	got := UnbindText("x", UnbindResult{ProcessStopped: 4242})
 	if got != "unbound x\nstopped builder process 4242" {
 		t.Errorf("stopped: %q", got)
@@ -71,6 +77,8 @@ func TestUnbindTextProcessLines(t *testing.T) {
 }
 
 func TestRestoreText(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		res  Resolution

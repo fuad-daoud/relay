@@ -85,6 +85,8 @@ func probeRuntime(t *testing.T, setBody string) (Runtime, *time.Time) {
 }
 
 func TestProbeTierPerKind(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		kind string
 		want harness.Tier
@@ -111,6 +113,8 @@ func TestProbeTierPerKind(t *testing.T) {
 }
 
 func TestProbeCandidateMeasuresFirstOutput(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	c, err := set.Lookup(candidate.Ref{Harness: "opencode", Provider: "test", Model: "m"})
 	if err != nil {
@@ -172,6 +176,8 @@ func TestProbeCandidateMeasuresFirstOutput(t *testing.T) {
 }
 
 func TestProbeCandidateGitInitFailureRunsNoHarness(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	c, _ := set.Lookup(candidate.Ref{Harness: "opencode", Provider: "test", Model: "m"})
 
@@ -199,6 +205,8 @@ func TestProbeCandidateGitInitFailureRunsNoHarness(t *testing.T) {
 }
 
 func TestProbeCandidateNoOutput(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	c, _ := set.Lookup(candidate.Ref{Harness: "opencode", Provider: "test", Model: "m"})
 
@@ -220,6 +228,8 @@ func TestProbeCandidateNoOutput(t *testing.T) {
 }
 
 func TestProbeCandidateRunErrorKeepsTTFT(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	c, _ := set.Lookup(candidate.Ref{Harness: "opencode", Provider: "test", Model: "m"})
 
@@ -244,6 +254,8 @@ func TestProbeCandidateRunErrorKeepsTTFT(t *testing.T) {
 }
 
 func TestProbeCandidateReportsHarnessError(t *testing.T) {
+	t.Parallel()
+
 	// codex writes the real reason to stdout as a JSON event; the stderr
 	// tail ends with an unrelated stdin note. The probe must report the
 	// harness's own message, not the tail.
@@ -281,6 +293,8 @@ func TestProbeCandidateReportsHarnessError(t *testing.T) {
 }
 
 func TestProbeCandidateHarnessErrorWithoutExitError(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	c, _ := set.Lookup(candidate.Ref{Harness: "opencode", Provider: "test", Model: "m"})
 
@@ -305,6 +319,8 @@ func TestProbeCandidateHarnessErrorWithoutExitError(t *testing.T) {
 }
 
 func TestProbeCandidateNoKnownRole(t *testing.T) {
+	t.Parallel()
+
 	rt, now := probeRuntime(t, testCandidatesJSON)
 	fake := &fakeExec{now: now}
 
@@ -320,6 +336,8 @@ func TestProbeCandidateNoKnownRole(t *testing.T) {
 }
 
 func TestProbeUnknownTokenRunsNothing(t *testing.T) {
+	t.Parallel()
+
 	rt, now := probeRuntime(t, testCandidatesJSON)
 	fake := &fakeExec{now: now}
 
@@ -332,6 +350,8 @@ func TestProbeUnknownTokenRunsNothing(t *testing.T) {
 }
 
 func TestProbeRecordsHistory(t *testing.T) {
+	t.Parallel()
+
 	const twoCandidates = `[
   {"harness":"opencode","provider":"test","model":"m","roles":["builder"]},
   {"harness":"claude","provider":"test","model":"m","roles":["builder"]}
@@ -387,6 +407,8 @@ func TestProbeRecordsHistory(t *testing.T) {
 // TestFormatProbe pins A1 §4.4: the line prints the candidate's short name,
 // falling back to the token when the result carries none.
 func TestFormatProbe(t *testing.T) {
+	t.Parallel()
+
 	success := ProbeResult{Sample: latency.Sample{Token: "opencode/test/m", TTFTMS: 640, TotalMS: 1500}, Name: "m"}
 	if got, want := FormatProbe(success, 15), "m"+strings.Repeat(" ", 14)+"  ttft 640ms  total 1.5s"; got != want {
 		t.Errorf("FormatProbe(success) = %q, want %q", got, want)
@@ -408,6 +430,8 @@ func TestFormatProbe(t *testing.T) {
 // TestProbeNameWidth pins round 3 F2: the probe column is sized from the
 // names FormatProbe prints, and an empty list is width 0.
 func TestProbeNameWidth(t *testing.T) {
+	t.Parallel()
+
 	if got := ProbeNameWidth(nil); got != 0 {
 		t.Errorf("ProbeNameWidth(nil) = %d, want 0", got)
 	}
@@ -420,6 +444,8 @@ func TestProbeNameWidth(t *testing.T) {
 // TestProbeUnknownNameRunsNothing pins A1 §4.2: an unknown candidate name is
 // refused before anything runs.
 func TestProbeUnknownNameRunsNothing(t *testing.T) {
+	t.Parallel()
+
 	rt, now := probeRuntime(t, testCandidatesJSON)
 	fake := &fakeExec{now: now}
 

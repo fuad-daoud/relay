@@ -8,6 +8,8 @@ import (
 // TestConsultRolesTooLong pins the boundary the note turns on: a name one
 // character under the derived-name limit fits, one over does not.
 func TestConsultRolesTooLong(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		want []string

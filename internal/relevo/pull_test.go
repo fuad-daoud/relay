@@ -18,6 +18,8 @@ import (
 // pending payload and confirms it with the route it was given -- the helper
 // `relevo wait` calls with route "wait" (P4a round 2 §4.1).
 func TestPullPendingReturnsAndMarksDelivered(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
@@ -35,6 +37,8 @@ func TestPullPendingReturnsAndMarksDelivered(t *testing.T) {
 
 // TestPullPendingWithNothingPending: nothing queued reads as nothing to print.
 func TestPullPendingWithNothingPending(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 	if _, _, err := pullPending(context.Background(), rt, "webshop", "wait"); err != nil {
@@ -53,6 +57,8 @@ func TestPullPendingWithNothingPending(t *testing.T) {
 // TestPullPendingMarksDeliveredRoute: pullPending marks the entry delivered
 // with the route the caller passed -- "wait" from Wait (§4.1).
 func TestPullPendingMarksDeliveredRoute(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
@@ -111,6 +117,8 @@ func seedPendingReport(t *testing.T, rt Runtime, name, path string, kind store.K
 // followed by a blank line and the report file's own text, so the planner
 // needs no second read.
 func TestPullPendingPrintsReportText(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	path := filepath.Join(t.TempDir(), "001-report.md")
 	if err := os.WriteFile(path, []byte("line one\nline two\n"), 0o644); err != nil {
@@ -146,6 +154,8 @@ func TestPullPendingPrintsReportText(t *testing.T) {
 // to the cap and names the `relevo show` command that prints the full text
 // (§4.2).
 func TestPullPendingCapsReportText(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	path := filepath.Join(t.TempDir(), "001-report.md")
 	// Exactly MaxPushBytes + 4096 bytes of newline-terminated lines.
@@ -175,6 +185,8 @@ func TestPullPendingCapsReportText(t *testing.T) {
 // not an error and the entry stays delivered -- the payload still names the
 // show command.
 func TestPullPendingUnreadableReportFallsBackToPayload(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	path := filepath.Join(t.TempDir(), "missing-report.md")
 	seedPendingReport(t, rt, "webshop", path, store.KindReport)
@@ -205,6 +217,8 @@ func TestPullPendingUnreadableReportFallsBackToPayload(t *testing.T) {
 // context stops before the next sleep. The sleep function is injected, so no
 // test really sleeps.
 func TestRetryBusy(t *testing.T) {
+	t.Parallel()
+
 	busy := fmt.Errorf("tx begin: %w", db.ErrBusy)
 
 	t.Run("busy twice then nil retries with the delays", func(t *testing.T) {
@@ -319,6 +333,8 @@ func seedPendingRounds(t *testing.T, rt Runtime, name string, rounds []int, path
 // pending, pullPendingThrough returns round 1's text under a header naming its
 // round, then round 2's text last, and confirms both with route "wait" (#433).
 func TestPullPendingThroughDeliversEarlierAndWaited(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	dir := t.TempDir()
 	r1 := filepath.Join(dir, "001-report.md")
@@ -371,6 +387,8 @@ func TestPullPendingThroughDeliversEarlierAndWaited(t *testing.T) {
 // pullPendingThrough returns exactly what pullPending returns for the same
 // fixture -- a single delivery is untouched by the through-round path (#433).
 func TestPullPendingThroughSingleIsUnchanged(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "002-report.md")
 	if err := os.WriteFile(path, []byte("round 2 body\n"), 0o644); err != nil {

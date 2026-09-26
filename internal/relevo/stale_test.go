@@ -39,6 +39,8 @@ const staleAgyNewJSON = `[
 ]`
 
 func TestStaleBuilder(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t) // testCandidatesJSON holds agy/test/m
 	remote := store.Binding{
 		BuilderCandidate: testAgyRef,
@@ -69,6 +71,8 @@ func TestStaleBuilder(t *testing.T) {
 }
 
 func TestGatedBuilderSeesAStaleTokensProvider(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, staleAgyPairJSON)
 	if _, err := Unavailable(rt, "agy/old/m", time.Time{}, "quota"); err != nil {
@@ -83,6 +87,8 @@ func TestGatedBuilderSeesAStaleTokensProvider(t *testing.T) {
 }
 
 func TestGatedBuilderIgnoresTheEditedCandidatesNewProvider(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, staleAgyPairJSON)
 	if _, err := Unavailable(rt, "agy/new/m", time.Time{}, "quota"); err != nil {
@@ -96,6 +102,8 @@ func TestGatedBuilderIgnoresTheEditedCandidatesNewProvider(t *testing.T) {
 }
 
 func TestReconcileHeadlessStaleGatedSwitches(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := gateOnLimitSetup(t, fr)
 	old := handleOf(b.Builder)
@@ -122,6 +130,8 @@ func TestReconcileHeadlessStaleGatedSwitches(t *testing.T) {
 }
 
 func TestLimitPatternsStaleTokenUsesHarnessPatterns(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, staleAgyNewJSON)
 
@@ -136,6 +146,8 @@ func TestLimitPatternsStaleTokenUsesHarnessPatterns(t *testing.T) {
 }
 
 func TestSendStaleBuilderPicksAgain(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := switchSetup(t) // webshop bound on agy/test/m
 	rt.Policy = orderOf("builder", testClaudeRef, testOpencodeRef)
 	// agy/test/m was deleted from the set after the binding picked it.
@@ -172,6 +184,8 @@ func TestSendStaleBuilderPicksAgain(t *testing.T) {
 }
 
 func TestSendStaleBuilderNoCandidateRefuses(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := switchSetup(t)
 	rt.Policy = orderOf("builder", testClaudeRef, testOpencodeRef)
 	// The stale binding's pool, every member of which is gated.
@@ -197,6 +211,8 @@ func TestSendStaleBuilderNoCandidateRefuses(t *testing.T) {
 }
 
 func TestAdmitStaleBuilderSwitches(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt := newRuntime(t)
 	rt.Runner = fr
@@ -245,6 +261,8 @@ func TestAdmitStaleBuilderSwitches(t *testing.T) {
 }
 
 func TestRegateStaleBuilderPicksAgain(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 	b.Gate = "make check"
@@ -316,6 +334,8 @@ func TestRegateStaleBuilderPicksAgain(t *testing.T) {
 }
 
 func TestReconcileHeadlessLostToDaemonRestartStaleSwitches(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0) // the daemon started after the builder
@@ -356,6 +376,8 @@ func TestReconcileHeadlessLostToDaemonRestartStaleSwitches(t *testing.T) {
 }
 
 func TestGatedNoteStaleToken(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, staleAgyPairJSON)
 	if _, err := Unavailable(rt, "agy/old/m", time.Time{}, "quota"); err != nil {

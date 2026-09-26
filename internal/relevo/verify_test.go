@@ -20,6 +20,8 @@ func relevoBlock(body string) string {
 // with no gate, and the block template it must answer with. Mutation check:
 // drop any one argument from the format string and this fails.
 func TestVerifyQuestionNamesEveryFile(t *testing.T) {
+	t.Parallel()
+
 	q := verifyQuestion("webshop", 1,
 		"/state/webshop/001-plan.md",
 		"/state/webshop/001-report.md",
@@ -47,6 +49,8 @@ func TestVerifyQuestionNamesEveryFile(t *testing.T) {
 }
 
 func TestVerifyDiffCommand(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		baseline string
 		closed   string
@@ -68,6 +72,8 @@ func TestVerifyDiffCommand(t *testing.T) {
 // both reason forms, and the unstructured answers that must not be read as a
 // judgement.
 func TestParseVerdict(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name        string
 		findings    string
@@ -130,6 +136,8 @@ func TestParseVerdict(t *testing.T) {
 // relevo-verify-* scope, with the template's CPUQuota and the gate quota left
 // behind in the template.
 func TestVerifyConsultScope(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.Git = &fakeGit{headCommitID: "head1"}

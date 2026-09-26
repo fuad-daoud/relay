@@ -273,6 +273,8 @@ func (r *recordingTransport) Absorb(ctx context.Context, repo, contentType strin
 // over fakeRemote (#100 step 5): no client key, enrolled, not enrolled, a
 // changed certificate, unreachable, and an unrecognised error.
 func TestProbeServersStates(t *testing.T) {
+	t.Parallel()
+
 	servers := map[string]client.ServerEntry{"zen": {URL: "https://zen:7777"}}
 
 	cases := []struct {
@@ -343,6 +345,8 @@ func TestProbeServersStates(t *testing.T) {
 // WhoAmI.Features/BuilderTier/MaxTier into the enrolled probe, and leaves
 // them zero for a pre-tier (non-aware) server (#141 remote half).
 func TestProbeServersFillsTierFields(t *testing.T) {
+	t.Parallel()
+
 	servers := map[string]client.ServerEntry{
 		"zen":   {URL: "https://zen:7777"},
 		"other": {URL: "https://other:7777"},
@@ -377,6 +381,8 @@ func TestProbeServersFillsTierFields(t *testing.T) {
 // case: WhoAmI carries no Features, so the probe is not TierAware and its
 // tier fields stay empty (#141 remote half).
 func TestProbeServersPreTierLeavesTierFieldsZero(t *testing.T) {
+	t.Parallel()
+
 	servers := map[string]client.ServerEntry{"zen": {URL: "https://zen:7777"}}
 	rt := Runtime{Remote: &fakeRemote{
 		whoAmIResp: remote.WhoAmI{Label: "laptop"}, // no Features: pre-tier server
@@ -400,6 +406,8 @@ func TestProbeServersPreTierLeavesTierFieldsZero(t *testing.T) {
 // -- not aware, or aware at a tier above harness -- is silent (#141 remote
 // half).
 func TestServerTierWarning(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		p    ServerProbe
@@ -423,6 +431,8 @@ func TestServerTierWarning(t *testing.T) {
 // per probe: the builder-tier annotation on the row, and a "!!" warning line
 // underneath when ServerTierWarning fires (#141 remote half).
 func TestRenderServersShowsTierAndWarning(t *testing.T) {
+	t.Parallel()
+
 	probes := []ServerProbe{
 		{Name: "zen", URL: "https://zen:7777", State: "enrolled", Label: "laptop", TierAware: true, BuilderTier: "harness", MaxTier: "edit"},
 		{Name: "old", URL: "https://old:7777", State: "enrolled", Label: "laptop", TierAware: false},
@@ -445,6 +455,8 @@ func TestRenderServersShowsTierAndWarning(t *testing.T) {
 // on (<slice>, <quota>); an enrolled server that is not queue-aware (a
 // pre-queue server) gets no builders text.
 func TestRenderServersBuilders(t *testing.T) {
+	t.Parallel()
+
 	probes := []ServerProbe{
 		{
 			Name: "zen", URL: "https://zen:7777", State: "enrolled", Label: "laptop",
@@ -574,6 +586,8 @@ func TestAddRemoteCreatesBranchAfterServerAgrees(t *testing.T) {
 // the binding was written with PlannerID "" and a zero planner, so
 // planner-filtered status hid it and the channel route could not key on it.
 func TestAddRemoteRecordsPlanner(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	rt := newRuntime(t)
 	rt.Git = &fakeGit{
@@ -1353,6 +1367,8 @@ func TestAddRemoteCleansUpLocalBranchOnSaveFailure(t *testing.T) {
 }
 
 func TestSendRemoteRecordsOnlyOnSuccess(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	b := store.Binding{
@@ -1427,6 +1443,8 @@ func TestSendRemoteRecordsOnlyOnSuccess(t *testing.T) {
 }
 
 func TestSendRemoteRoundStartedIsSuccess(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	b := store.Binding{
@@ -1503,6 +1521,8 @@ func TestSendRemoteRoundStartedIsSuccess(t *testing.T) {
 // is reported as an error, and nothing is written locally: a resend must
 // not look like it succeeded.
 func TestSendRemoteHaltedIsAnError(t *testing.T) {
+	t.Parallel()
+
 	newRT := func(t *testing.T, fr *fakeRemote) (Runtime, *store.Store) {
 		t.Helper()
 		st := store.New(t.TempDir())
@@ -1608,6 +1628,8 @@ func TestSendRemoteHaltedIsAnError(t *testing.T) {
 // reaches StartRound over the wire, after the pre-tier probe succeeds
 // (#141 remote half).
 func TestSendRemoteTierPassedToStartRound(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	b := store.Binding{
@@ -1667,6 +1689,8 @@ func TestSendRemoteTierPassedToStartRound(t *testing.T) {
 // StartRound retry is asked for exactly when WhoAmI advertises
 // idempotent_send, and never otherwise.
 func TestSendRemoteStartRoundRetryFollowsTheFeature(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name     string
 		features []string
@@ -1729,6 +1753,8 @@ func TestSendRemoteStartRoundRetryFollowsTheFeature(t *testing.T) {
 // StartRound maps back to ErrTierAboveMax client-side, matching the local
 // refusal's wording (#141 remote half).
 func TestSendRemoteTierAboveMaxWraps(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	b := store.Binding{
@@ -1786,6 +1812,8 @@ func TestSendRemoteTierAboveMaxWraps(t *testing.T) {
 }
 
 func TestSendRemoteFirstSendFullBundle(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	b := store.Binding{
@@ -1847,6 +1875,8 @@ func TestSendRemoteFirstSendFullBundle(t *testing.T) {
 }
 
 func TestSendRemoteShipsTags(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	b := store.Binding{
@@ -1904,6 +1934,8 @@ func TestSendRemoteShipsTags(t *testing.T) {
 }
 
 func TestSendRemoteSetsLastShipped(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	b := store.Binding{
@@ -2102,6 +2134,8 @@ func (h *captureHandler) snapshot() []slog.Record {
 }
 
 func TestDoneRemoteForwardsFirst(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
@@ -2130,6 +2164,8 @@ func TestDoneRemoteForwardsFirst(t *testing.T) {
 }
 
 func TestUnbindRemote404Proceeds(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
@@ -2164,6 +2200,8 @@ func TestUnbindRemote404Proceeds(t *testing.T) {
 // the headless builder and archives its copy -- then deletes the local
 // record, whether or not a round is open.
 func TestUnbindRemoteRunningRoundForwardsAndDeletes(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
@@ -2195,6 +2233,8 @@ func TestUnbindRemoteRunningRoundForwardsAndDeletes(t *testing.T) {
 }
 
 func TestGCRemoteOnlyWhenDone(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 
@@ -2232,6 +2272,8 @@ func TestGCRemoteOnlyWhenDone(t *testing.T) {
 }
 
 func TestForwardUnavailable(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 
@@ -2284,6 +2326,8 @@ func TestForwardUnavailable(t *testing.T) {
 // ForwardUnavailable does) must fail this: alpha would still be called, beta
 // would not.
 func TestForwardAvailablePostsToEveryServerOnce(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 
@@ -2355,6 +2399,8 @@ func TestForwardAvailablePostsToEveryServerOnce(t *testing.T) {
 }
 
 func TestServerInUse(t *testing.T) {
+	t.Parallel()
+
 	bindings := []store.Binding{
 		remoteBinding("zen"),
 		func() store.Binding { b := remoteBinding("mars"); b.Name = "other"; return b }(),
@@ -2373,6 +2419,8 @@ func TestServerInUse(t *testing.T) {
 }
 
 func TestReconcileRemoteRunningMirrorsLog(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -2421,6 +2469,8 @@ func TestReconcileRemoteRunningMirrorsLog(t *testing.T) {
 }
 
 func TestMirrorLogAppends(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -2459,6 +2509,8 @@ func TestMirrorLogAppends(t *testing.T) {
 }
 
 func TestMirrorLogOldServerReplaces(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -2494,6 +2546,8 @@ func TestMirrorLogOldServerReplaces(t *testing.T) {
 }
 
 func TestMirrorLogShrankRefetches(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -2540,6 +2594,8 @@ func TestMirrorLogShrankRefetches(t *testing.T) {
 }
 
 func TestMirrorLogUnchangedLogWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -2596,6 +2652,8 @@ func TestMirrorLogUnchangedLogWritesNothing(t *testing.T) {
 }
 
 func TestMirrorLogWritesARow(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -2655,6 +2713,8 @@ func TestMirrorLogWritesARow(t *testing.T) {
 }
 
 func TestMirrorLogRowRewritesWhenServerShrank(t *testing.T) {
+	t.Parallel()
+
 	t.Run("server shrank", func(t *testing.T) {
 		st := store.New(t.TempDir())
 		b := remoteBinding("zen")
@@ -2742,6 +2802,8 @@ func TestMirrorLogRowRewritesWhenServerShrank(t *testing.T) {
 }
 
 func TestMirrorLogKeepsALegacyFile(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -2956,6 +3018,8 @@ func TestObserveRemoteCopiesStalledSince(t *testing.T) {
 // view copies the server's queue facts onto Builder.RemoteQueue, sets
 // RemoteStatus to "queued", and neither halts nor catches up.
 func TestObserveRemoteQueuedKeepsFacts(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("contabo")
 	if err := st.Save(b); err != nil {
@@ -2996,6 +3060,8 @@ func TestObserveRemoteQueuedKeepsFacts(t *testing.T) {
 // TestObserveRemoteRunningClearsQueue pins #285's clear rule: a binding that
 // was queued and now observes a running view drops its stale RemoteQueue.
 func TestObserveRemoteRunningClearsQueue(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("contabo")
 	b.Builder.RemoteStatus = string(remote.RoundQueued)
@@ -3020,6 +3086,8 @@ func TestObserveRemoteRunningClearsQueue(t *testing.T) {
 }
 
 func TestObserveRemoteRunningStoresLive(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("contabo")
 	if err := st.Save(b); err != nil {
@@ -3092,6 +3160,8 @@ func TestObserveRemoteRunningStoresLive(t *testing.T) {
 }
 
 func TestObserveRemoteClosedClearsLive(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("contabo")
 	b.Builder.RemoteStatus = string(remote.RoundRunning)
@@ -3126,6 +3196,8 @@ func TestObserveRemoteClosedClearsLive(t *testing.T) {
 // naming the server, and that a later tick whose view still names the same
 // candidate adds nothing more (#100 step 2).
 func TestReconcileRemoteRefreshesCandidate(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	b.BuilderCandidate = "claude/anthropic/haiku"
@@ -3196,6 +3268,8 @@ func TestReconcileRemoteRefreshesCandidate(t *testing.T) {
 }
 
 func TestReconcileRemoteNeedsYouHalts(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -3220,6 +3294,8 @@ func TestReconcileRemoteNeedsYouHalts(t *testing.T) {
 }
 
 func TestReconcileRemoteUnreachableIsNotHalt(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	b.RoundTimeoutMS = 1000 // 1s budget; unreachableGrace (30m) is what keeps this from halting below
@@ -3258,6 +3334,8 @@ func TestReconcileRemoteUnreachableIsNotHalt(t *testing.T) {
 }
 
 func TestReconcileRemoteUnreachablePastBudgetHalts(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	b.RoundTimeoutMS = 1000 // 1s budget
@@ -3295,6 +3373,8 @@ func TestReconcileRemoteUnreachablePastBudgetHalts(t *testing.T) {
 }
 
 func TestReconcileRemote401Halts(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -3321,6 +3401,8 @@ func TestReconcileRemote401Halts(t *testing.T) {
 // RemoteStatus and never halts, because a one-shot has no clock to measure a
 // grace against.
 func TestReconcileRemote401StaleIsTransientWithoutGrace(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -3349,6 +3431,8 @@ func TestReconcileRemote401StaleIsTransientWithoutGrace(t *testing.T) {
 // Mutation: make a non-revoked 401 halt immediately and this fails on the
 // first sight.
 func TestReconcileRemote401StaleHaltsAfterGrace(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -3392,6 +3476,8 @@ func TestReconcileRemote401StaleHaltsAfterGrace(t *testing.T) {
 // a poll that gets through forgets it, so a later transient 401 starts its own
 // 15 minutes rather than inheriting the old clock.
 func TestReconcileRemote401GraceResetsOnSuccess(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -3432,6 +3518,8 @@ func TestReconcileRemote401GraceResetsOnSuccess(t *testing.T) {
 }
 
 func TestReconcileRemote404Halts(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -3463,6 +3551,8 @@ func TestReconcileRemote404Halts(t *testing.T) {
 // closed round -- the report entry lands, pending -- without ever
 // delivering it to a planner pane.
 func TestSyncRemoteCollectsClosedRoundWithoutDelivery(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -3525,6 +3615,8 @@ func TestSyncRemoteCollectsClosedRoundWithoutDelivery(t *testing.T) {
 // network for a binding it should not sync: one already DONE, and one that
 // is not a remote binding at all.
 func TestSyncRemoteSkipsDoneAndLocal(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 
 	doneRemote := remoteBinding("zen")
@@ -3561,6 +3653,8 @@ func TestSyncRemoteSkipsDoneAndLocal(t *testing.T) {
 // skipped like a DONE one: a paused binding is not being relayed, and the
 // daemon's Reconcile skips it too.
 func TestSyncRemoteSkipsPausedBinding(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	b.State = store.StatePaused
@@ -3589,6 +3683,8 @@ func TestSyncRemoteSkipsPausedBinding(t *testing.T) {
 // lock makes the read verbs leave remote sync entirely to the daemon: no
 // network call, no state lock.
 func TestSyncRemoteUnlessDaemonSkipsWhileDaemonRuns(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -3622,6 +3718,8 @@ func TestSyncRemoteUnlessDaemonSkipsWhileDaemonRuns(t *testing.T) {
 // TestSyncRemoteUnlessDaemonSyncsWithoutDaemon checks that with no daemon
 // lock the read verbs sync as before: the poll is the only collector.
 func TestSyncRemoteUnlessDaemonSyncsWithoutDaemon(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -3672,6 +3770,8 @@ func stoppedRoundRemote(stopped, dirtyCommit string) *fakeRemote {
 // Mutation check: make the report-404 halt ignore view.Stopped and this fails
 // on the binding halting.
 func TestCatchUpStoppedNoReport(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
@@ -3724,6 +3824,8 @@ func TestCatchUpStoppedNoReport(t *testing.T) {
 // file on the server: the payload names it and the note says stopped, not
 // noreport stopped.
 func TestCatchUpStoppedWithReport(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
@@ -3760,6 +3862,8 @@ func TestCatchUpStoppedWithReport(t *testing.T) {
 // server does not say was stopped, with no report file, halts exactly as it
 // did before #344.
 func TestCatchUpNotStoppedNoReportHalts(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
@@ -3786,6 +3890,8 @@ func TestCatchUpNotStoppedNoReportHalts(t *testing.T) {
 // also carried uncommitted work keeps both facts, where the dirty clause used
 // to replace the note.
 func TestCatchUpStoppedDirtyNote(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
@@ -3814,6 +3920,8 @@ func TestCatchUpStoppedDirtyNote(t *testing.T) {
 // planner's own repo sits on its own branch.
 
 func TestCatchUpOrderAndIdempotence(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
 	clientRepo, c1 := newRemoteClientRepo(t, "api")
@@ -3951,6 +4059,8 @@ func TestCatchUpOrderAndIdempotence(t *testing.T) {
 //
 // Mutation: drop the Idle catch-up and no report entry or Ack appears.
 func TestObserveRemoteIdleCatchUpRecoversLostReport(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -3995,6 +4105,8 @@ func TestObserveRemoteIdleCatchUpRecoversLostReport(t *testing.T) {
 // report entry already on disk means the ack (or the local bookkeeping) got
 // through, so an Idle view must not collect the round a second time.
 func TestObserveRemoteIdleWithReportDoesNotCatchUp(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -4033,6 +4145,8 @@ func TestObserveRemoteIdleWithReportDoesNotCatchUp(t *testing.T) {
 }
 
 func TestCatchUpDirtyNote(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
 	clientRepo, c1 := newRemoteClientRepo(t, "api")
@@ -4134,6 +4248,8 @@ func TestCatchUpDirtyNote(t *testing.T) {
 // capture its own diff from a local baseline that a remote binding never
 // has.
 func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -4233,6 +4349,8 @@ func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
 // queued payload repeats it as a Paths: line right after its Diff: line. A
 // note without the clause adds no line.
 func TestCatchUpAppendsPathsLineFromView(t *testing.T) {
+	t.Parallel()
+
 	const joinedNote = "24 files, +1 -2; 1 commit on relevo/x, tree clean paths: report 0, diff 24"
 
 	cases := []struct {
@@ -4318,6 +4436,8 @@ func TestCatchUpAppendsPathsLineFromView(t *testing.T) {
 // adopted branch to it, so the planner's own branch is the one carrying the
 // round's result.
 func TestCatchUpAdoptedBranchAbsorbsServerRef(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
 
@@ -4423,6 +4543,8 @@ func TestCatchUpAdoptedBranchAbsorbsServerRef(t *testing.T) {
 }
 
 func TestCatchUpFetchesStream(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -4469,6 +4591,8 @@ func TestCatchUpFetchesStream(t *testing.T) {
 }
 
 func TestCatchUpStreamMissingIsFine(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -4514,6 +4638,8 @@ func TestCatchUpStreamMissingIsFine(t *testing.T) {
 }
 
 func TestCatchUpWritesTheLogAsARow(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -4561,6 +4687,8 @@ func TestCatchUpWritesTheLogAsARow(t *testing.T) {
 }
 
 func TestCatchUpKeepsALegacyLogFile(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -4634,6 +4762,8 @@ func TestCatchUpKeepsALegacyLogFile(t *testing.T) {
 // entry stores it verbatim instead of re-measuring a round whose record
 // lives on the server.
 func TestCatchUpKeepsServerUsage(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -4703,6 +4833,8 @@ func TestCatchUpKeepsServerUsage(t *testing.T) {
 }
 
 func TestCatchUpRecordsPriorTokens(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -4779,6 +4911,8 @@ func TestCatchUpRecordsPriorTokens(t *testing.T) {
 // the server's cgroup measurement rides the same view as Usage, and lands
 // on the report entry catchUp writes (#244, #216).
 func TestCatchUpRecordsRusage(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -4846,6 +4980,8 @@ func TestCatchUpRecordsRusage(t *testing.T) {
 // entry says the server sent none -- basis unknown -- rather than reading
 // a record the client does not have.
 func TestCatchUpPreUsageServerNotes(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -4904,6 +5040,8 @@ func TestCatchUpPreUsageServerNotes(t *testing.T) {
 }
 
 func TestCatchUpBranchCheckedOutRetries(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	g := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
 	clientRepo, c1 := newRemoteClientRepo(t, "api")
@@ -5027,6 +5165,8 @@ func TestCatchUpBranchCheckedOutLogsOnce(t *testing.T) {
 }
 
 func TestCatchUpAbsorbFailuresHaltAtTen(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
 	if err := st.Save(b); err != nil {
@@ -5073,6 +5213,8 @@ func TestCatchUpAbsorbFailuresHaltAtTen(t *testing.T) {
 }
 
 func TestResumeRemoteRefusesRebind(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
@@ -5093,6 +5235,8 @@ func TestResumeRemoteRefusesRebind(t *testing.T) {
 }
 
 func TestAskRefusesRemote(t *testing.T) {
+	t.Parallel()
+
 	t.Run("Ask", func(t *testing.T) {
 		rt, _ := seedForAsk(t)
 		b := remoteBinding("zen")
@@ -5153,6 +5297,8 @@ func remoteBuilderRT(t *testing.T, fr *fakeRemote) (Runtime, *store.Store, *fake
 // pick entry lands under the sent round, and a following observeRemote with
 // the same view writes no spurious switch.
 func TestSendRemoteBuilderChangesCandidate(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	view := remote.BindingView{RoundState: remote.RoundRunning, Candidate: "opencode/test/m"}
 	fr := &fakeRemote{
@@ -5228,6 +5374,8 @@ func TestSendRemoteBuilderChangesCandidate(t *testing.T) {
 // TestSendRemoteBuilderPreBuilderServerRefused pins §5.3 (b): a server
 // without the builder feature is refused before anything is shipped.
 func TestSendRemoteBuilderPreBuilderServerRefused(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fr := &fakeRemote{
 		whoAmIResp:     remote.WhoAmI{Features: []string{remote.FeatureTier}},
@@ -5263,6 +5411,8 @@ func TestSendRemoteBuilderPreBuilderServerRefused(t *testing.T) {
 // TestSendRemoteBuilderRefusedWhileRoundOpen pins §5.3 (c): the client's own
 // open round refuses before any server contact.
 func TestSendRemoteBuilderRefusedWhileRoundOpen(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fr := &fakeRemote{
 		whoAmIResp:     remote.WhoAmI{Features: []string{remote.FeatureTier, remote.FeatureBuilder}},
@@ -5338,6 +5488,8 @@ func TestAddRemoteMatchesCandidateByName(t *testing.T) {
 // TestForwardAvailableResolvesNameToToken pins A1 §4.2: a candidate name is
 // forwarded to every server as its canonical token.
 func TestForwardAvailableResolvesNameToToken(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 

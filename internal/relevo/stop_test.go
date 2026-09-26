@@ -33,6 +33,8 @@ func stopEntries(t *testing.T, rt Runtime, name string) []store.LogEntry {
 }
 
 func TestStopDecisionTable(t *testing.T) {
+	t.Parallel()
+
 	open := store.Binding{Round: 1, RoundStartedAt: baseTime}
 	queued := store.Binding{Round: 1, QueuedAt: baseTime}
 
@@ -58,6 +60,8 @@ func TestStopDecisionTable(t *testing.T) {
 // TestStopPayload pins the exact payload and note a stopped close writes, for
 // both haveReport values and both where values (local "" and remote).
 func TestStopPayload(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name        string
 		how         string
@@ -115,6 +119,8 @@ func TestStopPayload(t *testing.T) {
 // round without a report -- never through the exit-without-report path, which
 // would switch the builder and charge the round.
 func TestStopHeadlessKillsAndClosesWithoutSwitch(t *testing.T) {
+	t.Parallel()
+
 	t.Run("no report", func(t *testing.T) {
 		fr := newFakeRunner()
 		rt, b := sentHeadless(t, fr)
@@ -257,6 +263,8 @@ func ownedStopFixture(t *testing.T, fr *fakeRunner, queued bool) (Runtime, store
 // Serve.ClosedRound names the stopped round and RoundStateOf reports closed,
 // so the owner's ServedView is no longer "running" (nor "idle").
 func TestStopOwnedRunningRoundClosesServedRound(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := ownedStopFixture(t, fr, false)
 
@@ -295,6 +303,8 @@ func TestStopOwnedRunningRoundClosesServedRound(t *testing.T) {
 // cleared (the server's census is derived from it), no process is killed, and
 // the round closes as stopped with the dequeued wording.
 func TestStopOwnedQueuedRoundDequeues(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := ownedStopFixture(t, fr, true)
 
@@ -329,6 +339,8 @@ func TestStopOwnedQueuedRoundDequeues(t *testing.T) {
 }
 
 func TestStopNothingToStop(t *testing.T) {
+	t.Parallel()
+
 	t.Run("no open round", func(t *testing.T) {
 		rt, b := sentBinding(t)
 		b.RoundStartedAt = time.Time{}
@@ -403,6 +415,8 @@ func remoteStopFixture(t *testing.T, fr *fakeRemote) (Runtime, remote.BindingVie
 // runs one observe pass so the round is closed locally with the stopped
 // payload pending -- never delivered.
 func TestStopRemoteKillsAndCollects(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fr := &fakeRemote{whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureStop}}}
 	rt, _ := remoteStopFixture(t, fr)
@@ -445,6 +459,8 @@ func TestStopRemoteKillsAndCollects(t *testing.T) {
 // server whose WhoAmI advertises no FeatureStop is told nothing, and the hint
 // names relevo unbind.
 func TestStopRemotePreStopServerRefuses(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fr := &fakeRemote{whoAmIResp: remote.WhoAmI{}}
 	rt, _ := remoteStopFixture(t, fr)
@@ -467,6 +483,8 @@ func TestStopRemotePreStopServerRefuses(t *testing.T) {
 // server's answer becomes the local sentinel, so the CLI prints "nothing to
 // stop" and exits 0.
 func TestStopRemoteNothingToStop(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fr := &fakeRemote{
 		whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureStop}},
@@ -482,6 +500,8 @@ func TestStopRemoteNothingToStop(t *testing.T) {
 // TestStopRemote404NamesUnbind pins the server-404 refusal and its hint: the
 // binding is gone there, so the local record should be unbound.
 func TestStopRemote404NamesUnbind(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fr := &fakeRemote{
 		whoAmIResp: remote.WhoAmI{Features: []string{remote.FeatureStop}},
@@ -500,6 +520,8 @@ func TestStopRemote404NamesUnbind(t *testing.T) {
 // stopped the round, so a failed local observe is not an error. Stop still
 // reports killed and leaves the binding alone, not halted.
 func TestStopRemotePartialSuccess(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fr := &fakeRemote{
 		whoAmIResp:    remote.WhoAmI{Features: []string{remote.FeatureStop}},
@@ -525,6 +547,8 @@ func TestStopRemotePartialSuccess(t *testing.T) {
 }
 
 func TestSendClearsStopRequest(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	b.StopRequestedAt = baseTime
 	b.StopGraceMS = 300000

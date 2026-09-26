@@ -53,6 +53,8 @@ func rolesViewsSection(t *testing.T, got, start, end string) string {
 // Mutation check: make FormatPolicyFor print FormatPolicy's "  (no order set)"
 // header instead of "  (config roles)" and this test fails on its first line.
 func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesViewsCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder":  {Candidates: []string{"claude/test/b", "claude/test/a"}},
@@ -91,6 +93,8 @@ func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 // TestRolesViewsFormatPolicyForLegacyMatches pins §3.1's legacy half: with a
 // legacy registry the file-mode entry point is FormatPolicy byte for byte.
 func TestRolesViewsFormatPolicyForLegacyMatches(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testClaudeRef, testAgyRef)
 	gates := []ledger.Gate{{Token: testClaudeRef, Kind: ledger.RateLimited, Until: baseTime.Add(time.Hour)}}
@@ -110,6 +114,8 @@ func TestRolesViewsFormatPolicyForLegacyMatches(t *testing.T) {
 // Mutation check: render the rows from every gate instead of gatesForRole and
 // the builder half fails.
 func TestRolesViewsPerRoleGateFiltering(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	gates := []ledger.Gate{{
 		Token: testClaudeRef, Kind: ledger.RolesMissing, Role: "reviewer",
@@ -133,6 +139,8 @@ func TestRolesViewsPerRoleGateFiltering(t *testing.T) {
 // definition for the role, each give their exact text -- and nothing else,
 // since in file mode the list is the assignment.
 func TestRolesViewsPolicyWarningsForFileMode(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, `[
 	  {"harness":"claude","provider":"test","model":"m","roles":["builder"]}
 	]`)
@@ -160,6 +168,8 @@ func TestRolesViewsPolicyWarningsForFileMode(t *testing.T) {
 // listed candidate gated for builder only, builder has a refusal and reviewer
 // -- same candidates, same gates -- has none.
 func TestRolesViewsRoleRefusalsForFileMode(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder":  {Candidates: []string{testClaudeRef, testOpencodeRef}},
@@ -186,6 +196,8 @@ func TestRolesViewsRoleRefusalsForFileMode(t *testing.T) {
 // is the registry's answer, "(no role)" when no role lists the candidate, and
 // the tier segment is gone -- the role owns the tier in file mode.
 func TestRolesViewsFormatCandidatesLatencyForFileMode(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, `[
 	  {"harness":"claude","provider":"test","model":"m","roles":["builder"],"tier":"yolo"},
 	  {"harness":"opencode","provider":"test","model":"m","roles":["builder"]}
@@ -216,6 +228,8 @@ func TestRolesViewsFormatCandidatesLatencyForFileMode(t *testing.T) {
 // so a reader role only roles.json knows is reported, while the legacy wrapper
 // keeps reporting only the built-in consult roles.
 func TestRolesViewsConsultRolesTooLongFor(t *testing.T) {
+	t.Parallel()
+
 	const newReader = "abcdefghijklmnopqrstuvwxyz0123" // 30 characters
 	set := candidateSet(t, testCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
@@ -238,6 +252,8 @@ func TestRolesViewsConsultRolesTooLongFor(t *testing.T) {
 // file mode names each legacy field still set, in order, and legacy mode says
 // nothing -- without roles.json those fields are the source, not stale copies.
 func TestRolesViewsLegacyRoleFieldWarnings(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, `[
 	  {"harness":"claude","provider":"test","model":"m","roles":["builder"],"tier":"yolo"}
 	]`)
@@ -273,6 +289,8 @@ func TestRolesViewsLegacyRoleFieldWarnings(t *testing.T) {
 // Mutation check: render one part per gate instead of grouping by kind and
 // until, and the merged roles-missing part is gone.
 func TestRolesViewsMergedGateTexts(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	until := baseTime.Add(time.Hour)
 	gates := []ledger.Gate{
@@ -297,6 +315,8 @@ func TestRolesViewsMergedGateTexts(t *testing.T) {
 // whose row lists nothing gives the roles.json wording, and the error still
 // matches ErrRoleNotServed.
 func TestRolesViewsResolveRoleFileModeNothingServes(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder": {Candidates: []string{}},

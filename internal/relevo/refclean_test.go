@@ -11,6 +11,8 @@ import (
 
 // N2: TestRepoDirOf
 func TestRepoDirOf(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		b    store.Binding
@@ -65,6 +67,8 @@ func TestRepoDirOf(t *testing.T) {
 
 // N3: TestBindingRefCandidates
 func TestBindingRefCandidates(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	tests := []struct {
 		name     string
@@ -136,6 +140,8 @@ func TestBindingRefCandidates(t *testing.T) {
 
 // N4: TestCleanRefs
 func TestCleanRefs(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	t.Run("on remote: branch uses deleteBranchCalls and non-branch uses deleteRefCalls", func(t *testing.T) {
@@ -240,6 +246,8 @@ func TestCleanRefs(t *testing.T) {
 
 // N5: TestSweepRefs
 func TestSweepRefs(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	rt := newRuntime(t)
 
@@ -298,6 +306,8 @@ func TestSweepRefs(t *testing.T) {
 
 // N6: TestRefLines
 func TestRefLines(t *testing.T) {
+	t.Parallel()
+
 	outcomes := []RefOutcome{
 		{Ref: "refs/heads/relevo/old", Deleted: true},
 		{Ref: "refs/heads/relevo/dry", WouldDelete: true},
@@ -321,6 +331,8 @@ func TestRefLines(t *testing.T) {
 
 // N7: TestGCDeletesPushedRelevoBranch
 func TestGCDeletesPushedRelevoBranch(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	wt := t.TempDir()
 	fg := &fakeGit{
@@ -363,6 +375,8 @@ func TestGCDeletesPushedRelevoBranch(t *testing.T) {
 
 // N8: TestGCKeepsUnpushedBranch
 func TestGCKeepsUnpushedBranch(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	wt := t.TempDir()
 	fg := &fakeGit{
@@ -405,6 +419,8 @@ func TestGCKeepsUnpushedBranch(t *testing.T) {
 
 // N9: TestGCKeptWorktreeTouchesNoRef
 func TestGCKeptWorktreeTouchesNoRef(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	wt := t.TempDir()
 	fg := &fakeGit{
@@ -448,6 +464,8 @@ func TestGCKeptWorktreeTouchesNoRef(t *testing.T) {
 
 // N10: TestGCDryRunDeletesNoRef
 func TestGCDryRunDeletesNoRef(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	wt := t.TempDir()
 	fg := &fakeGit{
@@ -493,6 +511,8 @@ func TestGCDryRunDeletesNoRef(t *testing.T) {
 // listed. Mutation: ignore ok and the missing-branch case proposes a
 // nonexistent ref.
 func TestBindingRefCandidatesSkipsAMissingBranch(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	cut := store.Binding{Name: "api", Branch: "relevo/api"}
 	adopted := store.Binding{Name: "api", Branch: "feature/x", ExistingBranch: true, Builder: store.Endpoint{Mode: store.ModeRemote}}

@@ -41,6 +41,8 @@ func refusedAdd(t *testing.T, rt Runtime, fg *fakeGit) {
 // branch that checkout had checked out, asked of the source repo -- not of
 // the fresh worktree -- so `relevo land` knows what to rebase onto.
 func TestAddRecordsBaseRef(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123", currentBranchResult: "main"}
 	rt := newTestRuntime(t, fg)
 	repo := addRepo(t)
@@ -76,6 +78,8 @@ func TestAddRecordsBaseRef(t *testing.T) {
 // rather than the literal "HEAD", so land asks for --onto instead of
 // fetching a ref that does not exist.
 func TestAddRecordsNoBaseRefWithoutBranch(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{
 		headCommitID:     "commit-head-123",
 		currentBranchErr: errors.New("detached"),
@@ -99,6 +103,8 @@ func TestAddRecordsNoBaseRefWithoutBranch(t *testing.T) {
 // is nothing to capture facts about at all, and afterwards would merely
 // report the same facts back over an extra git call).
 func TestAddRecordsRepoFromCWDNotWorktree(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{
 		headCommitID:       "commit-head-123",
 		repoFactsOrigin:    "git@github.com:o/r.git",
@@ -128,6 +134,8 @@ func TestAddRecordsRepoFromCWDNotWorktree(t *testing.T) {
 }
 
 func TestAddCreatesAWorktreeBindingAtRoundOne(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newTestRuntime(t, fg)
 	repo := addRepo(t)
@@ -194,6 +202,8 @@ func TestAddCreatesAWorktreeBindingAtRoundOne(t *testing.T) {
 }
 
 func TestAddRefusesAnAmbiguousCandidateBeforeCuttingAWorktree(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newTestRuntime(t, fg)
 
@@ -209,6 +219,8 @@ func TestAddRefusesAnAmbiguousCandidateBeforeCuttingAWorktree(t *testing.T) {
 }
 
 func TestAddResolvesTheOnlyBuilderCandidate(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newTestRuntime(t, fg)
 	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
@@ -225,6 +237,8 @@ func TestAddResolvesTheOnlyBuilderCandidate(t *testing.T) {
 }
 
 func TestAddRefusesADuplicateName(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newTestRuntime(t, fg)
 	repo := addRepo(t)
@@ -247,6 +261,8 @@ func TestAddRefusesADuplicateName(t *testing.T) {
 // builds a 33-character builder agent name, and Add must refuse it before the
 // worktree is cut -- a refused name leaves nothing behind.
 func TestAddRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newTestRuntime(t, fg)
 
@@ -271,6 +287,8 @@ func TestAddRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
 }
 
 func TestAddBindsAPreparedDirectoryWithCWD(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newTestRuntime(t, fg)
 	prepared := addRepo(t)
@@ -297,6 +315,8 @@ func TestAddBindsAPreparedDirectoryWithCWD(t *testing.T) {
 }
 
 func TestAddRefusesATreeAnotherBindingDrives(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newTestRuntime(t, fg)
 	prepared := addRepo(t)
@@ -324,6 +344,8 @@ func TestAddRefusesATreeAnotherBindingDrives(t *testing.T) {
 // and created relevo/<name>, a later refusal rolls both back, so a retry does
 // not fail with "branch already exists".
 func TestAddRollbackDeletesTheBranchItCreated(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newTestRuntime(t, fg)
 
@@ -350,6 +372,8 @@ func TestAddRollbackDeletesTheBranchItCreated(t *testing.T) {
 }
 
 func TestAddHeadlessCutsTheWorktreeAndSpawnsNothing(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newTestRuntime(t, fg)
 	repo := addRepo(t)
@@ -382,6 +406,8 @@ func TestAddHeadlessCutsTheWorktreeAndSpawnsNothing(t *testing.T) {
 // `add --branch`: a branch that already exists locally is checked out into
 // relevo's own worktree, with no worktree cut and no branch created.
 func TestAddBranchLocalChecksOutWithoutCutting(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{
 		branchExists: true,
 		refSHA:       map[string]string{"refs/heads/feature/api-auth": "tip123"},
@@ -428,6 +454,8 @@ func TestAddBranchLocalChecksOutWithoutCutting(t *testing.T) {
 // TestAddBranchOriginOnlyTracksFirst pins the origin half: when only
 // origin/<branch> exists, relevo first makes a local tracking branch.
 func TestAddBranchOriginOnlyTracksFirst(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{
 		branchExists: false,
 		refSHA: map[string]string{
@@ -467,6 +495,8 @@ func TestAddBranchOriginOnlyTracksFirst(t *testing.T) {
 // TestAddBranchMissingRefuses pins that a branch on neither the local repo nor
 // origin is a refusal before any git write.
 func TestAddBranchMissingRefuses(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{branchExists: false, refSHA: map[string]string{}}
 	rt := newTestRuntime(t, fg)
 
@@ -489,6 +519,8 @@ func TestAddBranchMissingRefuses(t *testing.T) {
 // TestAddBranchCheckedOutRefuses pins the refusal when the existing branch is
 // checked out in another worktree, before any builder is resolved or started.
 func TestAddBranchCheckedOutRefuses(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{
 		branchExists:        true,
 		refSHA:              map[string]string{"refs/heads/feature/x": "tip"},
@@ -514,6 +546,8 @@ func TestAddBranchCheckedOutRefuses(t *testing.T) {
 // TestAddBranchDrivenByLiveBindingRefuses pins the guard: a branch a live
 // binding already drives cannot be adopted, while a DONE binding does not block.
 func TestAddBranchDrivenByLiveBindingRefuses(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{
 		branchExists: true,
 		refSHA:       map[string]string{"refs/heads/feature/x": "tip"},
@@ -559,6 +593,8 @@ func TestAddBranchDrivenByLiveBindingRefuses(t *testing.T) {
 // TestAddBranchWithCwdRefused pins that Add itself refuses the flag pair, not
 // only the CLI.
 func TestAddBranchWithCwdRefused(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newTestRuntime(t, fg)
 
@@ -577,6 +613,8 @@ func TestAddBranchWithCwdRefused(t *testing.T) {
 // TestDefaultBindingName pins the derivation store.ValidName accepts, and that
 // an underivable branch returns ValidName's own error.
 func TestDefaultBindingName(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		branch  string
 		want    string
@@ -612,6 +650,8 @@ func TestDefaultBindingName(t *testing.T) {
 // deletes a branch in zero places, so neither unbind nor done+gc may remove an
 // ExistingBranch binding's adopted branch.
 func TestUnbindExistingBranchNeverDeletes(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	setup := func(t *testing.T, fg *fakeGit) (Runtime, string) {
@@ -675,6 +715,8 @@ func TestUnbindExistingBranchNeverDeletes(t *testing.T) {
 // that cannot honour the tier is refused and the worktree Add just cut is
 // rolled back -- no binding, no kept tree.
 func TestAddRefusesUnsupportedTierBeforeWorktree(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newTestRuntime(t, fg)
 	repo := addRepo(t)

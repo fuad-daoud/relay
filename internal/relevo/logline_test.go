@@ -10,6 +10,8 @@ import (
 )
 
 func TestLogLineWithoutUsageIsTodaysFormat(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
 	e := store.LogEntry{TS: ts, Round: 4, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/p/004-report.md", Note: "scraped"}
 	want := ts.Local().Format("2006-01-02 15:04:05") + "  round 4   to_planner report    /p/004-report.md scraped"
@@ -22,6 +24,8 @@ func TestLogLineWithoutUsageIsTodaysFormat(t *testing.T) {
 }
 
 func TestLogLineWithUsageAddsSecondLine(t *testing.T) {
+	t.Parallel()
+
 	e := store.LogEntry{TS: time.Now(), Round: 4, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/p/004-report.md",
 		Usage: &usage.Usage{Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-5", DurationMS: 60_000,
 			Tokens: usage.Tokens{In: 100, Out: 10}, Cost: usage.Cost{USD: 0.5, Basis: usage.Measured}, Samples: 1}}
@@ -39,6 +43,8 @@ func TestLogLineWithUsageAddsSecondLine(t *testing.T) {
 }
 
 func TestLogLineLateSuffix(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
 	base := store.LogEntry{TS: ts, Round: 4, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: "/p/004-report.md", Note: "nudge"}
 	notLate := base
@@ -62,6 +68,8 @@ func TestLogLineLateSuffix(t *testing.T) {
 }
 
 func TestLogLineOutcomeAndFlagged(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
 	e := store.LogEntry{
 		TS:        ts,
@@ -82,6 +90,8 @@ func TestLogLineOutcomeAndFlagged(t *testing.T) {
 }
 
 func TestLogLineClassify(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
 	e := store.LogEntry{
 		TS:        ts,
@@ -117,6 +127,8 @@ func TestLogLineClassify(t *testing.T) {
 }
 
 func TestLogLineTierOnPlanOnly(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
 	plan := store.LogEntry{
 		TS:        ts,
@@ -148,6 +160,8 @@ func TestLogLineTierOnPlanOnly(t *testing.T) {
 // TestLogLineGateSuffix pins #132: a report entry with a Gate record appends
 // " gate=<Result>"; an entry with none carries no such suffix.
 func TestLogLineGateSuffix(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
 	withGate := store.LogEntry{
 		TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
@@ -170,6 +184,8 @@ func TestLogLineGateSuffix(t *testing.T) {
 // appends " session=<kind>:<id8>" (the id cut to eight characters); an entry
 // with none carries no suffix.
 func TestLogLineSessionSuffix(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 9, 18, 14, 31, 7, 0, time.UTC)
 	withSession := store.LogEntry{
 		TS: ts, Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
@@ -198,6 +214,8 @@ func TestLogLineSessionSuffix(t *testing.T) {
 // contract's own correction: 8550 ms is 8.55 s, an exact tie, and half-up
 // (ms+50)/100 gives 86 tenths -> "8.6s".
 func TestShortCPU(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		ms   int64
 		want string
@@ -227,6 +245,8 @@ func TestShortCPU(t *testing.T) {
 // line carries the cpu time at seconds resolution rather than
 // usage.ShortDuration's "<1m", and shortBytes still renders peak memory.
 func TestLogLineRusageUsesSecondsResolution(t *testing.T) {
+	t.Parallel()
+
 	e := store.LogEntry{
 		Kind:   store.KindReport,
 		Rusage: &store.Rusage{CPUMS: 8550, PeakMemBytes: 341 << 20},

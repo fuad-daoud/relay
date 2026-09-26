@@ -18,6 +18,8 @@ import (
 // section is file mode, names actors in its list text, and is neither the
 // roles.json nor the legacy source.
 func TestActorsRegistryIsFileMode(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, `[{"harness":"claude","provider":"test","model":"a"}]`)
 
 	rf, _, err := actors.ToRolesFile(nil, map[string]actors.Actor{
@@ -75,6 +77,8 @@ Design the screens.
 // TestFormatActors pins R7: the shipped, off, custom and native entries, and
 // that no escape code ever appears.
 func TestFormatActors(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, `[
 	  {"harness":"claude","provider":"test","model":"a"},
 	  {"harness":"claude","provider":"test","model":"b"},

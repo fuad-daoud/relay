@@ -38,6 +38,8 @@ func writePlan(t *testing.T, body string) string {
 // process that cannot start -- is startRound's ErrRunnerUnavailable and the
 // spawn-failed switch, both covered in headless_test.go.
 func TestSendLogsThePlan(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "x"), SendOptions{}); err != nil {
@@ -58,6 +60,8 @@ func TestSendLogsThePlan(t *testing.T) {
 }
 
 func TestSendCapturesBaselineWithFakeGit(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 	fg := &fakeGit{snapshotTreeID: "tree-abc123", headCommitID: "head-abc123"}
 	rt.Git = fg
@@ -90,6 +94,8 @@ func TestSendCapturesBaselineWithFakeGit(t *testing.T) {
 }
 
 func TestSendHeadFailureLeavesTreeAndClearsHead(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 	rt.Git = &fakeGit{snapshotTreeID: "tree-abc123", headCommitErr: errors.New("unborn HEAD")}
 
@@ -106,6 +112,8 @@ func TestSendHeadFailureLeavesTreeAndClearsHead(t *testing.T) {
 }
 
 func TestSendBaselineFailureTolerated(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 	fg := &fakeGit{snapshotTreeErr: errors.New("git broken")}
 	rt.Git = fg
@@ -143,6 +151,8 @@ func TestSendBaselineFailureTolerated(t *testing.T) {
 // TestSendRefusesPaused: a paused binding has no builder to address and its
 // worktree is gone; the human resumes it first. No plan is staged.
 func TestSendRefusesPaused(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	b := store.Binding{
@@ -171,6 +181,8 @@ func TestSendRefusesPaused(t *testing.T) {
 }
 
 func TestSendUnchangedTreeBetweenRounds(t *testing.T) {
+	t.Parallel()
+
 	rt, b := seedBound(t)
 	b.Round = 2
 	b.RoundClosedTree = "tree-1"
@@ -201,6 +213,8 @@ func TestSendUnchangedTreeBetweenRounds(t *testing.T) {
 }
 
 func TestSendChangedTreeBetweenRounds(t *testing.T) {
+	t.Parallel()
+
 	rt, b := seedBound(t)
 	b.Round = 2
 	b.RoundClosedTree = "tree-1"
@@ -268,6 +282,8 @@ func TestSendChangedTreeBetweenRounds(t *testing.T) {
 // an unconsumed pending report is still returned by Pull after a Send with drift.
 // An unconfirmed drift entry would shadow the report in pendingForPlanner.
 func TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport(t *testing.T) {
+	t.Parallel()
+
 	rt, b := queuedBinding(t) // queues an unconfirmed report for round 1
 	b.Round = 2
 	b.RoundClosedTree = "tree-1"
@@ -302,6 +318,8 @@ func TestSendDriftEntryPinsConfirmedDoesNotShadowPendingReport(t *testing.T) {
 }
 
 func TestSendRound1NoRoundClosedTreeSilent(t *testing.T) {
+	t.Parallel()
+
 	rt, b := seedBound(t)
 	if b.RoundClosedTree != "" {
 		t.Fatalf("expected round 1 RoundClosedTree to be empty, got %q", b.RoundClosedTree)
@@ -330,6 +348,8 @@ func TestSendRound1NoRoundClosedTreeSilent(t *testing.T) {
 }
 
 func TestSendSuccessfulSendClearsRoundClosedTree(t *testing.T) {
+	t.Parallel()
+
 	rt, b := seedBound(t)
 	b.Round = 2
 	b.RoundClosedTree = "tree-closed"
@@ -359,6 +379,8 @@ func TestSendSuccessfulSendClearsRoundClosedTree(t *testing.T) {
 // the builder is told the plan, the report and the completion marker, in that
 // order, and told the marker is its last action (spec §3.3).
 func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{Name: "webshop", CWD: "/repo/webshop", Round: 3}
 	got := composePrompt(b, "/s/003-plan.md", "/s/003-report.md", "/s/003-done")
 
@@ -389,6 +411,8 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 }
 
 func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	// Create an agy candidate without extra_args so TierYolo adds --dangerously-skip-permissions cleanly
 	rt := newRuntime(t)
@@ -539,6 +563,8 @@ func TestSendKillsTheBuilderWhenTheSendFailsAfterSpawn(t *testing.T) {
 // scope unit is still loaded, Send refuses before it spawns anything, with
 // ErrScopeActive, and leaves no plan file or NEEDS YOU behind.
 func TestSendRefusesWhileTheRoundsScopeIsActive(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
 	rt.Scope = &ScopeSpec{}
@@ -572,6 +598,8 @@ func TestSendRefusesWhileTheRoundsScopeIsActive(t *testing.T) {
 // rt.Scope nil, no scope unit can exist, so Send never asks the runner about
 // one and the send proceeds normally.
 func TestSendWithScopesOffNeverProbesAScope(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
 
@@ -584,6 +612,8 @@ func TestSendWithScopesOffNeverProbesAScope(t *testing.T) {
 }
 
 func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
 
@@ -656,6 +686,8 @@ func endProcess(t *testing.T, rt Runtime, b store.Binding) {
 // reports the launch it would use -- the harness binary first -- without
 // starting anything.
 func TestSendDryRunHeadlessShowsArgv(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
 
@@ -681,6 +713,8 @@ func TestSendDryRunHeadlessShowsArgv(t *testing.T) {
 // TestSendDryRunGateNote pins the advisory gate note: a rate-limited candidate
 // still dry-runs, but the note says the daemon would switch after the start.
 func TestSendDryRunGateNote(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 
 	if _, err := Unavailable(rt, testAgyRef, time.Time{}, "quota"); err != nil {
@@ -703,6 +737,8 @@ func TestSendDryRunGateNote(t *testing.T) {
 // returns the identical error Send would, exit-1 text included, and writes
 // nothing on the way.
 func TestSendDryRunErrorsMatchSend(t *testing.T) {
+	t.Parallel()
+
 	type dryRunCase struct {
 		name  string
 		opts  SendOptions
@@ -817,6 +853,8 @@ func TestSendDryRunErrorsMatchSend(t *testing.T) {
 // TestRenderDryRunShape pins the exact rendered shape of a dry run: the seven
 // labelled lines, in order, with the 1024-based size.
 func TestRenderDryRunShape(t *testing.T) {
+	t.Parallel()
+
 	d := DryRun{
 		Name:          "api-auth",
 		Round:         5,
@@ -873,6 +911,8 @@ func TestRenderDryRunShape(t *testing.T) {
 // TestVerifyPolicyDefault pins #144's trigger: an explicit SendOptions.Verify
 // wins, and a plain Send takes policy.json verify.default.
 func TestVerifyPolicyDefault(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 	rt.Policy.Verify = &policy.VerifyPolicy{Default: true}
 
@@ -929,6 +969,8 @@ func switchSetup(t *testing.T) (Runtime, *fakeRunner) {
 // preflight substitution, and this test fails on the persisted
 // BuilderCandidate assertion.
 func TestSendBuilderMovesTheCandidateAndPersists(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 
 	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# go"), SendOptions{Builder: testClaudeRef})
@@ -995,6 +1037,8 @@ func TestSendBuilderMovesTheCandidateAndPersists(t *testing.T) {
 // writes the pick entry and the plan entry in one write, so they land with
 // consecutive seqs in that order, and the binding carries the spawned pid.
 func TestSendRecordsPickAndPlanInOrderInOneWrite(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# go"), SendOptions{Builder: testClaudeRef}); err != nil {
@@ -1043,6 +1087,8 @@ func TestSendRecordsPickAndPlanInOrderInOneWrite(t *testing.T) {
 // TestSendBuilderRefusedWhileRoundOpen pins §5.2 (b): an open round is
 // refused before anything is staged or spawned.
 func TestSendBuilderRefusedWhileRoundOpen(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
 		t.Fatalf("prime Send: %v", err)
@@ -1087,6 +1133,8 @@ func TestSendBuilderRefusedWhileRoundOpen(t *testing.T) {
 // not yet ingested, is refused: the round is over, and restaging its plan
 // would start a second builder the daemon would close on the stale marker.
 func TestSendRefusedWhileDoneMarkerNotIngested(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
 		t.Fatalf("prime Send: %v", err)
@@ -1143,6 +1191,8 @@ func TestSendRefusedWhileDoneMarkerNotIngested(t *testing.T) {
 // builder wrote only its report: the report alone proves the builder is done,
 // even though the marker has not appeared yet.
 func TestSendRefusedWhileReportNotIngested(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
 		t.Fatalf("prime Send: %v", err)
@@ -1198,6 +1248,8 @@ func TestSendRefusedWhileReportNotIngested(t *testing.T) {
 // a builder that died without writing either file leaves the round re-sendable,
 // exactly as before.
 func TestSendAfterExitWithoutReportStillResends(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
 		t.Fatalf("prime Send: %v", err)
@@ -1225,6 +1277,8 @@ func TestSendAfterExitWithoutReportStillResends(t *testing.T) {
 // and advances), the next round has no marker and the send goes through, staged
 // at the new round's plan path.
 func TestSendProceedsOnceRoundClosed(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
 		t.Fatalf("prime Send: %v", err)
@@ -1273,6 +1327,8 @@ func TestSendProceedsOnceRoundClosed(t *testing.T) {
 // TestSendBuilderUnknownTokenWritesNothing pins §5.2 (c): a token that does
 // not resolve is refused with ErrBadBuilder before any write.
 func TestSendBuilderUnknownTokenWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 	before, err := rt.Store.ReadLog("webshop")
 	if err != nil {
@@ -1306,6 +1362,8 @@ func TestSendBuilderUnknownTokenWritesNothing(t *testing.T) {
 // rate-limited candidate proceeds, and the pick line records the bypass and
 // names the live gate.
 func TestSendBuilderGatedTokenProceeds(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := switchSetup(t)
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
@@ -1333,6 +1391,8 @@ func TestSendBuilderGatedTokenProceeds(t *testing.T) {
 // TestSendDryRunBuilderMakesNoWrites pins §5.2 (e): the dry run reports the
 // new candidate and its argv, and writes nothing.
 func TestSendDryRunBuilderMakesNoWrites(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 	before, err := rt.Store.ReadLog("webshop")
 	if err != nil {
@@ -1369,6 +1429,8 @@ func TestSendDryRunBuilderMakesNoWrites(t *testing.T) {
 // own candidate is a no-op -- no pick entry, no tier change, and the send
 // proceeds exactly as a plain one.
 func TestSendBuilderSameCandidateIsPlainSend(t *testing.T) {
+	t.Parallel()
+
 	rt, fr := switchSetup(t)
 
 	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# go"), SendOptions{Builder: testAgyRef})

@@ -29,6 +29,8 @@ func offRows() map[string]roles.Row {
 // TestResolveSkipsOff pins §4.3: with no explicit token the walk passes an off
 // entry over exactly as it passes a gated one, and the pick note says "(off)".
 func TestResolveSkipsOff(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesRuntimeCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, offRows())
 
@@ -55,6 +57,8 @@ func TestResolveSkipsOff(t *testing.T) {
 // TestResolveExplicitOffNotes pins §4.3's explicit case: naming an off
 // candidate serves it, and the resolution carries the advisory note.
 func TestResolveExplicitOffNotes(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesRuntimeCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, offRows())
 
@@ -78,6 +82,8 @@ func TestResolveExplicitOffNotes(t *testing.T) {
 // or gated the error is today's ErrAllGated, with the off entries listed as
 // "<name> (off)".
 func TestAllOffOrGated(t *testing.T) {
+	t.Parallel()
+
 	t.Run("all off", func(t *testing.T) {
 		set := candidateSet(t, rolesRuntimeCandidatesJSON)
 		reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
@@ -135,6 +141,8 @@ func TestAllOffOrGated(t *testing.T) {
 // plain word "off" in the status column, never "<- would pick", and never an
 // escape code (relevo config is read through a pipe).
 func TestFormatPolicyShowsOff(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesRuntimeCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder": {
@@ -168,6 +176,8 @@ func TestFormatPolicyShowsOff(t *testing.T) {
 // header names the section the registry came from -- "config actors" for the
 // actors section, "config roles" for a roles file.
 func TestFormatPolicyHeaderSaysActors(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesRuntimeCandidatesJSON)
 	rows := map[string]roles.Row{"builder": {Candidates: []string{testClaudeRef}}}
 

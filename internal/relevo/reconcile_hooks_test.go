@@ -31,6 +31,8 @@ func (r *recordDispatcher) getEvents() []hooks.Event {
 }
 
 func TestReconcile_EmitsRoundStartedOnReport(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	disp := &recordDispatcher{}
 	rt.Hooks = disp
@@ -75,6 +77,8 @@ func TestReconcile_EmitsRoundStartedOnReport(t *testing.T) {
 }
 
 func TestReconcile_NoEventsWhenUnchanged(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	disp := &recordDispatcher{}
 	rt.Hooks = disp
@@ -101,6 +105,8 @@ func TestReconcile_NoEventsWhenUnchanged(t *testing.T) {
 // builder_stalled event fires exactly once when a stall is first stamped,
 // never again while it persists, and never when it clears.
 func TestBuilderStalledHookFiresOncePerEpisode(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	disp := &recordDispatcher{}
@@ -154,6 +160,8 @@ func TestBuilderStalledHookFiresOncePerEpisode(t *testing.T) {
 }
 
 func TestDone_EmitsStateChanged(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	disp := &recordDispatcher{}
 	rt.Hooks = disp

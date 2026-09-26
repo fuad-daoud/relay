@@ -51,6 +51,8 @@ func switches(t *testing.T, rt Runtime) []store.LogEntry {
 // Mutation check (run and report): break switchBuilder's gated-candidate walk
 // and this fails.
 func TestGatedSwitchesAtOnce(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentSwitchable(t)
 	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
@@ -96,6 +98,8 @@ func TestGatedSwitchesAtOnce(t *testing.T) {
 // the top of switchBuilder still applies to it -- a binding already at the
 // limit still halts instead of switching again.
 func TestGatedSwitchDoesNotCount(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentSwitchable(t)
 	limit := rt.Policy.SwitchLimit()
 	b.RoundSwitches = limit - 1
@@ -142,6 +146,8 @@ func TestGatedSwitchDoesNotCount(t *testing.T) {
 }
 
 func TestGatedIgnoresSpawnFailedGate(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentSwitchable(t)
 	recordSpawnFailure(rt, "agy/other/m", "webshop", errors.New("x"))
 
@@ -162,6 +168,8 @@ func TestGatedIgnoresSpawnFailedGate(t *testing.T) {
 }
 
 func TestNoOrderHalts(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentSwitchable(t)
 	rt.Policy = policy.Policy{}
 	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
@@ -186,6 +194,8 @@ func TestNoOrderHalts(t *testing.T) {
 }
 
 func TestMaxSwitchesZeroHalts(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentSwitchable(t)
 	zero := 0
 	rt.Policy.MaxSwitches = &zero
@@ -223,6 +233,8 @@ func TestMaxSwitchesZeroHalts(t *testing.T) {
 // the second halt below would leave Halt empty (HaltNotifiedRound is
 // already back at b.Round from the first halt's dedup).
 func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	fr.script(b.Builder.PID, false)
@@ -323,6 +335,8 @@ func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
 // first assertion below fails, since the second and third calls would each
 // advance it by a minute.
 func TestRepeatedHaltKeepsHaltAt(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 
 	first, err := haltBinding(context.Background(), rt, b, "webshop: same reason")
@@ -384,6 +398,8 @@ func TestRepeatedHaltKeepsHaltAt(t *testing.T) {
 }
 
 func TestAllGatedHalts(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentSwitchable(t)
 	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
@@ -412,6 +428,8 @@ func TestAllGatedHalts(t *testing.T) {
 }
 
 func TestSwitchRecordsOutgoingUsage(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentSwitchable(t)
 	b.Builder.StreamStart = 4200
 	if err := rt.Store.Save(b); err != nil {
@@ -469,6 +487,8 @@ func TestSwitchRecordsOutgoingUsage(t *testing.T) {
 // the drain that follows renders only the bytes past the old offset -- the
 // old harness's lines are not rendered a second time (or with the new kind).
 func TestSwitchKeepsTheStreamCursor(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentSwitchable(t) // round 1 open on agy/other/m
 	seedLegacyLog(t, rt, "webshop", 1)
 

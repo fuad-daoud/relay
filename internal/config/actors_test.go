@@ -13,6 +13,8 @@ import (
 // roles all present the registry comes from actors, the roles section is
 // ignored with a warning, and the agents section is kept for round 2.
 func TestLoadPrefersActors(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 
 	if _, err := s.Put(Candidates, []byte(
@@ -63,6 +65,8 @@ func TestLoadPrefersActors(t *testing.T) {
 // TestValidateActorsAgents pins §4.2's Validate cases: a bad agents or actors
 // body is refused by the same single-section check every other section uses.
 func TestValidateActorsAgents(t *testing.T) {
+	t.Parallel()
+
 	if _, err := Validate(Agents, []byte(
 		`{"my-exec":{"shape":"writer","native":{"claude":{"agent":"my-exec"}}}}`)); err != nil {
 		t.Errorf("Validate(agents, good) = %v, want nil", err)
@@ -82,6 +86,8 @@ func TestValidateActorsAgents(t *testing.T) {
 // TestExportIncludesActors pins §4.2's export order: EncodeDoc walks Sections,
 // so agents comes before actors.
 func TestExportIncludesActors(t *testing.T) {
+	t.Parallel()
+
 	out, err := EncodeDoc(Doc{
 		Agents: json.RawMessage(`{"my-exec":{"shape":"writer","native":{"claude":{"agent":"my-exec"}}}}`),
 		Actors: json.RawMessage(`{"builder":{"agent":"plan-executor","candidates":["sonnet"]}}`),

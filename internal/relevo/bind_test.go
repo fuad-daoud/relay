@@ -117,6 +117,8 @@ func testPlannerRegistry(t *testing.T, rec planner.Record) (*planner.DBRegistry,
 // TestBindRepoFactsFailureIsNil pins that a git failure never fails a bind:
 // captureRepo swallows it and RepoRef stays nil.
 func TestBindRecordsRepoFeatureAndLocator(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Git = &fakeGit{
 		repoFactsOrigin:    "git@github.com:o/r.git",
@@ -152,6 +154,8 @@ func TestBindRecordsRepoFeatureAndLocator(t *testing.T) {
 }
 
 func TestBindRepoFactsFailureIsNil(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Git = &fakeGit{repoFactsErr: errors.New("not a git repository")}
 
@@ -172,6 +176,8 @@ func TestBindRepoFactsFailureIsNil(t *testing.T) {
 // used to pass, so Planner.PaneID is no longer written by anything (see the
 // field's own comment); the assertion on it is gone with the pane.
 func TestBindRecordsPlannerFromRegistry(t *testing.T) {
+	t.Parallel()
+
 	rt := runtimeWithPlanner(t, "sess-from-record", "/home/x/.claude/projects/slug/S.jsonl")
 
 	b, err := Bind(context.Background(), rt, BindOptions{
@@ -226,6 +232,8 @@ func TestBindNoPlannerIsHardError(t *testing.T) {
 // TestBindRejectsBadFeature pins that a bad --feature is refused before
 // anything is spawned, with the same error store.ValidFeature reports.
 func TestBindRejectsBadFeature(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
@@ -245,6 +253,8 @@ func TestBindRejectsBadFeature(t *testing.T) {
 // deleted the pane client's ErrInvalidAgentName with it, so the wrapped
 // error is store.ValidName's own text.
 func TestBindRefusesAnOverlongBuilderName(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	name := "abcdefghij1234567890abcde" // 25 chars; + "-builder" = 33
@@ -294,6 +304,8 @@ func launchArgs(t *testing.T, rt Runtime, b store.Binding, tier harness.Tier) []
 }
 
 func TestBindRefusesACandidateThatDoesNotServeBuilder(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, `[{"harness":"claude","provider":"test","model":"m","roles":["reviewer"]}]`)
 
@@ -313,6 +325,8 @@ func TestBindRefusesACandidateThatDoesNotServeBuilder(t *testing.T) {
 }
 
 func TestBindSpawnUnknownAliasFails(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
@@ -327,6 +341,8 @@ func TestBindSpawnUnknownAliasFails(t *testing.T) {
 }
 
 func TestBindResolvesTheOnlyBuilderCandidate(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--x"]}]`)
 
@@ -351,6 +367,8 @@ func TestBindResolvesTheOnlyBuilderCandidate(t *testing.T) {
 }
 
 func TestBindRefusesAnAmbiguousCandidate(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
@@ -365,6 +383,8 @@ func TestBindRefusesAnAmbiguousCandidate(t *testing.T) {
 }
 
 func TestBindWithNoCandidatesSaysSo(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, "[]")
 
@@ -377,6 +397,8 @@ func TestBindWithNoCandidatesSaysSo(t *testing.T) {
 }
 
 func TestResumeWithoutABuilderDoesNotSpawn(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
 
@@ -401,6 +423,8 @@ func TestResumeWithoutABuilderDoesNotSpawn(t *testing.T) {
 }
 
 func TestBindRefusesSecondBindingOnSameTree(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	opts := BindOptions{Name: "webshop", Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo"}
 	if _, err := Bind(context.Background(), rt, opts); err != nil {
@@ -415,6 +439,8 @@ func TestBindRefusesSecondBindingOnSameTree(t *testing.T) {
 }
 
 func TestBindResumeRepointsPlannerAndKeepsRound(t *testing.T) {
+	t.Parallel()
+
 	rt := runtimeWithPlanner(t, "planner-sess-2", "")
 	b, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Candidate: testOpencodeRef, PlannerID: testPlannerName, CWD: "/repo",
@@ -454,6 +480,8 @@ func TestBindResumeRepointsPlannerAndKeepsRound(t *testing.T) {
 // (which endpointOf wipes along with the rest of the old Planner endpoint)
 // since it was previously empty.
 func TestResumeKeepsFieldsAndRefreshesLocator(t *testing.T) {
+	t.Parallel()
+
 	rt := runtimeWithPlanner(t, "planner-sess", "")
 
 	existing := store.Binding{
@@ -501,6 +529,8 @@ func TestResumeKeepsFieldsAndRefreshesLocator(t *testing.T) {
 // must not overwrite it with whatever rt.Sessions resolves for the new
 // planner pane's session.
 func TestResumeKeepsExistingLocatorWhenAlreadySet(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	existing := store.Binding{
@@ -531,6 +561,8 @@ func TestResumeKeepsExistingLocatorWhenAlreadySet(t *testing.T) {
 }
 
 func TestSanitizeName(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string]string{
 		"webshop":    "webshop",
 		"money/ai":   "money-ai",
@@ -555,6 +587,8 @@ func TestSanitizeName(t *testing.T) {
 // caller passed neither --rebind nor --builder, because a paused binding has
 // no builder identity left to keep.
 func TestBindRefusesExistingName(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	existing := store.Binding{
@@ -597,6 +631,8 @@ func TestBindRefusesExistingName(t *testing.T) {
 }
 
 func TestBindResumeStillAdoptsAnExistingName(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	existing := store.Binding{
@@ -626,6 +662,8 @@ func TestBindResumeStillAdoptsAnExistingName(t *testing.T) {
 }
 
 func TestBindRebindWithGoneBuilder(t *testing.T) {
+	t.Parallel()
+
 	existing := store.Binding{
 		Name:              "webshop",
 		CWD:               "/repo",
@@ -704,6 +742,8 @@ func TestBindRebindWithGoneBuilder(t *testing.T) {
 }
 
 func TestBindResumeDoneBindingScope(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	existing := store.Binding{
@@ -761,6 +801,8 @@ func TestBindResumeDoneBindingScope(t *testing.T) {
 }
 
 func TestResumeRestoresMissingWorktree(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
@@ -813,6 +855,8 @@ func TestResumeRestoresMissingWorktree(t *testing.T) {
 // caller passed neither --rebind nor --builder, because a paused binding has
 // no builder identity left to keep.
 func TestResumePausedRestoresAndRebinds(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
@@ -870,6 +914,8 @@ func TestResumePausedRestoresAndRebinds(t *testing.T) {
 }
 
 func TestResumeRestoreHeadlessHasNoOrphan(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
@@ -902,6 +948,8 @@ func TestResumeRestoreHeadlessHasNoOrphan(t *testing.T) {
 }
 
 func TestResumeRefusesRestoreWithoutBranch(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
@@ -940,6 +988,8 @@ func TestResumeRefusesRestoreWithoutBranch(t *testing.T) {
 }
 
 func TestResumeRefusesRestoreFromWrongRepo(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	fg := &fakeGit{} // branchExists stays false: the caller's cwd has no relevo/webshop
 	rt.Git = fg
@@ -980,6 +1030,8 @@ func TestResumeRefusesRestoreFromWrongRepo(t *testing.T) {
 }
 
 func TestResumeSurfacesBranchCheckedOut(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	fg := &fakeGit{checkoutWorktreeErr: git.ErrBranchCheckedOut}
 	rt.Git = fg
@@ -1011,6 +1063,8 @@ func TestResumeSurfacesBranchCheckedOut(t *testing.T) {
 }
 
 func TestResumePresentWorktreeIsNotRestored(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
@@ -1045,6 +1099,8 @@ func TestResumePresentWorktreeIsNotRestored(t *testing.T) {
 }
 
 func TestRebindOnDoneWithRestoredWorktree(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	fg := &fakeGit{}
 	rt.Git = fg
@@ -1083,6 +1139,8 @@ func TestRebindOnDoneWithRestoredWorktree(t *testing.T) {
 }
 
 func TestBindRebindNotFound(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
@@ -1097,6 +1155,8 @@ func TestBindRebindNotFound(t *testing.T) {
 }
 
 func TestBindTimeoutOverrideAndDefault(t *testing.T) {
+	t.Parallel()
+
 	t.Run("override is stored", func(t *testing.T) {
 		rt := newRuntime(t)
 
@@ -1130,6 +1190,8 @@ func TestBindTimeoutOverrideAndDefault(t *testing.T) {
 }
 
 func TestUnbindTeardown(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	t.Run("ordinary binding unbinds with all-zero result", func(t *testing.T) {
@@ -1313,6 +1375,8 @@ func TestUnbindTeardown(t *testing.T) {
 }
 
 func TestUnbindReportsAnAlreadyGoneWorktree(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fg := &fakeGit{}
 	rt := newRuntime(t)
@@ -1368,6 +1432,8 @@ func (f *worktreeDeletingGit) RemoveWorktree(ctx context.Context, dir, path stri
 // empty .worktrees/ behind. The fake deletes the tree the way git does.
 // Mutation: drop the prune call and .worktrees survives.
 func TestUnbindTeardownPrunesWorktreeDirs(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	t.Run("last worktree gone removes .worktrees", func(t *testing.T) {
@@ -1472,6 +1538,8 @@ func TestUnbindTeardownPrunesWorktreeDirs(t *testing.T) {
 // tree that changed hands says nothing about the new one and RoundClosedTree
 // is cleared.
 func TestResumeRebindClearsRoundClosedTree(t *testing.T) {
+	t.Parallel()
+
 	existing := store.Binding{
 		Name:             "webshop",
 		CWD:              "/repo",
@@ -1511,6 +1579,8 @@ func TestResumeRebindClearsRoundClosedTree(t *testing.T) {
 }
 
 func TestResumePlannerOnlyPreservesRoundClosedTree(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	const closedTree = "tree-closed-123"
@@ -1547,6 +1617,8 @@ func TestResumePlannerOnlyPreservesRoundClosedTree(t *testing.T) {
 }
 
 func TestResumeRebindResolvesThroughTheOrder(t *testing.T) {
+	t.Parallel()
+
 	// #92: a builder that halted between rounds is gone, no round is open,
 	// and the planner wants a replacement without naming a token. Rebind
 	// must walk policy.json order and the ledger exactly as create does,
@@ -1599,6 +1671,8 @@ func TestResumeRebindResolvesThroughTheOrder(t *testing.T) {
 }
 
 func TestBindHeadlessRecordsAnEndpointAndSpawnsNothing(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	b, res, err := BindResolved(context.Background(), rt, BindOptions{
@@ -1640,6 +1714,8 @@ func TestBindHeadlessRecordsAnEndpointAndSpawnsNothing(t *testing.T) {
 // A binding's mode is fixed at creation. Rebinding a headless binding whose
 // process is gone must produce another headless endpoint, not a pane (#119).
 func TestBindResumeRebindKeepsAHeadlessBindingHeadless(t *testing.T) {
+	t.Parallel()
+
 	existing := store.Binding{
 		Name:    "webshop",
 		CWD:     "/repo",
@@ -1692,6 +1768,8 @@ func TestBindResumeRebindKeepsAHeadlessBindingHeadless(t *testing.T) {
 // The Runner is the only thing that can see a process, so a headless
 // binding's liveness is its answer. A live process refuses the rebind (§4.3).
 func TestBindResumeRebindRefusesALiveHeadlessProcess(t *testing.T) {
+	t.Parallel()
+
 	existing := store.Binding{
 		Name:    "webshop",
 		CWD:     "/repo",
@@ -1729,6 +1807,8 @@ func TestBindResumeRebindRefusesALiveHeadlessProcess(t *testing.T) {
 }
 
 func TestBindHeadlessStillRefusesAnOverlongName(t *testing.T) {
+	t.Parallel()
+
 	// The agent name is validated even though no agent is started:
 	// the name is what status, log and a later pane-mode rebind identify
 	// the builder by, and the limit must not depend on the mode.
@@ -1743,6 +1823,8 @@ func TestBindHeadlessStillRefusesAnOverlongName(t *testing.T) {
 }
 
 func TestBindWithTierEditOnClaude(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
@@ -1767,6 +1849,8 @@ func TestBindWithTierEditOnClaude(t *testing.T) {
 }
 
 func TestBindWithTierYoloWithoutAllowYoloRefused(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
@@ -1788,6 +1872,8 @@ func TestBindWithTierYoloWithoutAllowYoloRefused(t *testing.T) {
 }
 
 func TestBindOpencodeCandidateTierReadRefused(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	_, err := Bind(context.Background(), rt, BindOptions{
@@ -1809,6 +1895,8 @@ func TestBindOpencodeCandidateTierReadRefused(t *testing.T) {
 }
 
 func TestBindPolicyTierBuilderRead(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy.Tier = map[string]string{"builder": "read"}
 
@@ -1840,6 +1928,8 @@ func TestBindPolicyTierBuilderRead(t *testing.T) {
 // TestBindGateFlagStored pins #132: an explicit --gate is stored on the
 // binding as given.
 func TestBindGateFlagStored(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
@@ -1857,6 +1947,8 @@ func TestBindGateFlagStored(t *testing.T) {
 // TestBindGatePolicyDefaultApplied pins #132: with no --gate, policy.json's
 // gate.default is used.
 func TestBindGatePolicyDefaultApplied(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy.Gate = &policy.GatePolicy{Default: "make check"}
 
@@ -1874,6 +1966,8 @@ func TestBindGatePolicyDefaultApplied(t *testing.T) {
 // TestBindNoGateOverridesPolicyDefault pins #132: --no-gate opts a binding
 // out of policy.json's gate.default.
 func TestBindNoGateOverridesPolicyDefault(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy.Gate = &policy.GatePolicy{Default: "make check"}
 
@@ -1892,6 +1986,8 @@ func TestBindNoGateOverridesPolicyDefault(t *testing.T) {
 // TestBindRegateFlagStored pins #132 part 2: an explicit --regate is stored on
 // the binding as given.
 func TestBindRegateFlagStored(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	b, err := Bind(context.Background(), rt, BindOptions{
@@ -1916,6 +2012,8 @@ func TestBindRegateFlagStored(t *testing.T) {
 // TestBindRegatePolicyDefaultApplied pins #132 part 2: with no --regate,
 // policy.json's gate.regate becomes the binding's budget.
 func TestBindRegatePolicyDefaultApplied(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy.Gate = &policy.GatePolicy{Regate: ptr(2)}
 
@@ -1933,6 +2031,8 @@ func TestBindRegatePolicyDefaultApplied(t *testing.T) {
 // TestBindRegateFlagOverridesPolicy pins #132 part 2: an explicit --regate 0
 // turns the policy default off for this binding.
 func TestBindRegateFlagOverridesPolicy(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy.Gate = &policy.GatePolicy{Regate: ptr(2)}
 

@@ -19,6 +19,8 @@ func mapQuestion(m map[string]string) func(name string, round int) string {
 }
 
 func TestQuestionFirstLine(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	if err := rt.Store.Save(store.Binding{Name: "api", CWD: "/repo"}); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -39,6 +41,8 @@ func TestQuestionFirstLine(t *testing.T) {
 }
 
 func TestWaitingLine(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
 
 	t.Run("blocked with a sub-hour age", func(t *testing.T) {
@@ -79,6 +83,8 @@ func TestWaitingLine(t *testing.T) {
 }
 
 func TestWaitingOnYou(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	a := store.Binding{Name: "a", CWD: "/repo/a", Round: 1, State: store.StateNeedsYou}
@@ -144,6 +150,8 @@ func TestWaitingOnYou(t *testing.T) {
 }
 
 func TestWaitingOn(t *testing.T) {
+	t.Parallel()
+
 	const (
 		answerHint = "relevo status --name api"
 		statusHint = "relevo status --name api"

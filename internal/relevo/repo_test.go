@@ -10,6 +10,8 @@ import (
 )
 
 func TestCaptureRepoNormalisesOrigin(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Git: &fakeGit{repoFactsOrigin: "git@github.com:o/r.git", repoFactsCommonDir: "/repo/.git"}}
 
 	got := captureRepo(context.Background(), rt, "/repo")
@@ -21,6 +23,8 @@ func TestCaptureRepoNormalisesOrigin(t *testing.T) {
 }
 
 func TestCaptureRepoNilGitReturnsNil(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Git: nil}
 
 	if got := captureRepo(context.Background(), rt, "/repo"); got != nil {
@@ -29,6 +33,8 @@ func TestCaptureRepoNilGitReturnsNil(t *testing.T) {
 }
 
 func TestCaptureRepoErrorReturnsNil(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Git: &fakeGit{repoFactsErr: errors.New("not a repo")}}
 
 	if got := captureRepo(context.Background(), rt, "/repo"); got != nil {
@@ -37,6 +43,8 @@ func TestCaptureRepoErrorReturnsNil(t *testing.T) {
 }
 
 func TestPlannerLocatorResolves(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Sessions: func(kind, sessionID string) (string, bool) {
 		if kind == "claude" && sessionID == "S" {
 			return "/home/x/.claude/projects/slug/S.jsonl", true
@@ -51,6 +59,8 @@ func TestPlannerLocatorResolves(t *testing.T) {
 }
 
 func TestPlannerLocatorNilSessionsReturnsEmpty(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Sessions: nil}
 
 	if got := plannerLocator(rt, "claude", "S"); got != "" {
@@ -59,6 +69,8 @@ func TestPlannerLocatorNilSessionsReturnsEmpty(t *testing.T) {
 }
 
 func TestPlannerLocatorNotFoundReturnsEmpty(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Sessions: func(kind, sessionID string) (string, bool) {
 		return "", false
 	}}

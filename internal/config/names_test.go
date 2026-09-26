@@ -12,6 +12,8 @@ import (
 // writes a derived name into every element that lacks one, keeping every key
 // and the element order; the second run returns false and writes nothing.
 func TestEnsureCandidateNamesWritesOnce(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 
 	body := `[
@@ -113,6 +115,8 @@ func TestEnsureCandidateNamesWritesOnce(t *testing.T) {
 // TestEnsureCandidateNamesAbsentSection pins the no-op case: a store with no
 // candidates section has nothing to name.
 func TestEnsureCandidateNamesAbsentSection(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 
 	changed, err := s.EnsureCandidateNames()
@@ -131,6 +135,8 @@ func TestEnsureCandidateNamesAbsentSection(t *testing.T) {
 // TestFillCandidateNames verifies that missing names are filled, existing names
 // are preserved, and unparseable JSON passes through untouched.
 func TestFillCandidateNames(t *testing.T) {
+	t.Parallel()
+
 	// Missing names get filled
 	nameless := `[
   {
@@ -194,6 +200,8 @@ func TestFillCandidateNames(t *testing.T) {
 // body produces exactly one revision whose changes include the candidates add
 // with names.
 func TestPutCandidatesRecordsOneRevision(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 
 	nameless := `[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}]`

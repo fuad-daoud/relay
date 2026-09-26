@@ -72,6 +72,8 @@ func tickConsults(t *testing.T, rt Runtime) store.Binding {
 // `State != ConsultRunning` guard at the top of reconcileConsults and this
 // fails. Without the guard every tick re-queues findings already delivered.
 func TestTerminalConsultsAreNeverRevisited(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, c := seedHeadlessConsult(t, fr)
 
@@ -142,6 +144,8 @@ func seedSpawning(t *testing.T) (Runtime, *fakeClock) {
 }
 
 func TestReconcileSkipsAFreshReservation(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedSpawning(t)
 
 	b := tickConsults(t, rt)
@@ -161,6 +165,8 @@ func TestReconcileSkipsAFreshReservation(t *testing.T) {
 }
 
 func TestReconcileExpiresAStaleReservation(t *testing.T) {
+	t.Parallel()
+
 	rt, clock := seedSpawning(t)
 	clock.Advance(consultSpawnTimeout + time.Second)
 
@@ -222,6 +228,8 @@ func seedHeadlessConsult(t *testing.T, fr *fakeRunner) (Runtime, store.Consult) 
 // assistant message is the findings. Deleting the PutRoundFile leaves the
 // consult running and this fails.
 func TestHeadlessConsultFinalMessageBecomesFindings(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, c := seedHeadlessConsult(t, fr)
 
@@ -263,6 +271,8 @@ func TestHeadlessConsultFinalMessageBecomesFindings(t *testing.T) {
 // TestHeadlessConsultExitWithoutTextIsSilent: a process that died without a
 // final message is reported silent with its exit code and where to look.
 func TestHeadlessConsultExitWithoutTextIsSilent(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, c := seedHeadlessConsult(t, fr)
 
@@ -295,6 +305,8 @@ func TestHeadlessConsultExitWithoutTextIsSilent(t *testing.T) {
 // TestHeadlessConsultTimesOut: a process still alive past consultTimeout is
 // killed and reported silent.
 func TestHeadlessConsultTimesOut(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, c := seedHeadlessConsult(t, fr)
 	clock := &fakeClock{now: baseTime}
@@ -326,6 +338,8 @@ func TestHeadlessConsultTimesOut(t *testing.T) {
 // Mutation check: move FinalText back before the trailer check and this fails:
 // the partial text becomes a findings file and the record is Done.
 func TestHeadlessConsultNoTrailerIsSilentDespiteText(t *testing.T) {
+	t.Parallel()
+
 	// run leaves an assistant message on the stream and kills the process
 	// without a trailer, then ticks the consults.
 	run := func(t *testing.T, rt Runtime, fr *fakeRunner, c store.Consult) store.Binding {
@@ -482,6 +496,8 @@ func TestVerifyVerdictParsedOntoFindingsAndBinding(t *testing.T) {
 // TestVerifyUnstructuredWhenNoBlock pins #144's prose case: findings without
 // a readable block are delivered as unstructured rather than guessed at.
 func TestVerifyUnstructuredWhenNoBlock(t *testing.T) {
+	t.Parallel()
+
 	rt, fr, _, _ := startVerifyRound(t)
 	leaveVerifyStream(t, rt, fr, "I read it; it looks fine to me, no block here.\n")
 

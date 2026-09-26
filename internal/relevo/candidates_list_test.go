@@ -18,6 +18,8 @@ import (
 // the faint wrapper, so the block carries no escapes.
 
 func TestFormatCandidates(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	got := FormatCandidates(set, nil)
 	want := "agy-m" + strings.Repeat(" ", 5) + "agy/test/m     " + "  builder   [--dangerously-skip-permissions]   note: extra_args carries --dangerously-skip-permissions; launches at tier harness only -- move it to \"tier\"\n" +
@@ -29,6 +31,8 @@ func TestFormatCandidates(t *testing.T) {
 }
 
 func TestFormatCandidatesEmpty(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, "[]")
 	got := FormatCandidates(set, nil)
 	want := "no candidates configured; set one with relevo config set candidates (see README \"Candidates\")\n"
@@ -38,6 +42,8 @@ func TestFormatCandidatesEmpty(t *testing.T) {
 }
 
 func TestFormatCandidatesMarksGated(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	gates := []ledger.Gate{
 		{Token: testClaudeRef, Kind: ledger.RateLimited, Until: time.Time{}},
@@ -52,6 +58,8 @@ func TestFormatCandidatesMarksGated(t *testing.T) {
 }
 
 func TestFormatCandidatesTier(t *testing.T) {
+	t.Parallel()
+
 	json := `[
   {"harness":"claude","provider":"test","model":"m","roles":["builder"],"tier":"yolo"},
   {"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]}
@@ -67,6 +75,8 @@ func TestFormatCandidatesTier(t *testing.T) {
 }
 
 func TestFormatCandidatesLatencySuffix(t *testing.T) {
+	t.Parallel()
+
 	const twoCandidates = `[
   {"harness":"claude","provider":"test","model":"m","roles":["builder"]},
   {"harness":"opencode","provider":"test","model":"m","roles":["builder"]}
@@ -99,6 +109,8 @@ func TestFormatCandidatesLatencySuffix(t *testing.T) {
 // reads: the roles come from the runtime's registry, in reg.Names() order, and
 // a zero Runtime -- no registry, no set -- answers nil instead of panicking.
 func TestCandidateRoles(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	reg, err := roles.Build(nil, set, policy.Policy{})
 	if err != nil {
@@ -120,6 +132,8 @@ func TestCandidateRoles(t *testing.T) {
 // config` through a pipe, so the candidates block must be plain text -- no SGR
 // sequence anywhere in it.
 func TestFormatCandidatesHasNoEscapes(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder":  {Candidates: []string{testClaudeRef, testAgyRef}},

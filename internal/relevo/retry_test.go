@@ -16,6 +16,8 @@ import (
 // daemon drives it (sealRounds under the state lock), so a retry keeps working
 // on a round relevo no longer holds on disk.
 func TestRetryPlanReadsSealed(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	rt := Runtime{Store: st, Now: func() time.Time { return baseTime }}
 
@@ -55,6 +57,8 @@ func TestRetryPlanReadsSealed(t *testing.T) {
 // TestRetryPlanMissingNamesTheRound: a round with no plan recorded is an
 // error naming the round, not an empty plan a Send would push.
 func TestRetryPlanMissingNamesTheRound(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 
 	_, err := RetryPlan(rt, "webshop", 4)
@@ -70,6 +74,8 @@ func TestRetryPlanMissingNamesTheRound(t *testing.T) {
 // (§4.5). It returns the pending text and marks the entry delivered to "tui",
 // so the daemon's own delivery and a background wait no longer claim it.
 func TestPullMarksTuiRoute(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 

@@ -7,6 +7,8 @@ import (
 )
 
 func TestFakeRunnerScriptsAliveAndRecordsKills(t *testing.T) {
+	t.Parallel()
+
 	f := newFakeRunner()
 	var _ Runner = f
 
@@ -73,6 +75,8 @@ func TestFakeRunnerScriptsAliveAndRecordsKills(t *testing.T) {
 // ok false when it limits nothing. A malformed AllowedCPUs or CPUQuota
 // contributes nothing rather than panicking.
 func TestGoMaxProcsFor(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name  string
 		scope ScopeSpec

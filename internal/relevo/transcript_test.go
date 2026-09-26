@@ -56,6 +56,8 @@ func transcriptRead(s *store.Store) func(string) ([]byte, bool, error) {
 // N1: renderStream must be byte-for-byte what the drain appends for the same
 // stream, and stable as a prefix when the stream grows.
 func TestRenderStreamMatchesTheDrain(t *testing.T) {
+	t.Parallel()
+
 	agy := jsonlLine(t, "agy.jsonl", 5) + jsonlLine(t, "agy.jsonl", 6)
 	claude := jsonlLine(t, "claude.jsonl", 5) + jsonlLine(t, "claude.jsonl", 6)
 	// A trailing partial line: the stream ends mid-event.
@@ -105,6 +107,8 @@ func TestRenderStreamMatchesTheDrain(t *testing.T) {
 // N2: streamTail is the last n rendered lines, read backwards in doubling
 // windows, across a segment boundary, and through the read fallback.
 func TestStreamTail(t *testing.T) {
+	t.Parallel()
+
 	agy := jsonlLine(t, "agy.jsonl", 5) + jsonlLine(t, "agy.jsonl", 6)
 	multi := `{"type":"assistant","message":{"content":[{"type":"text","text":"alpha\nbeta\ngamma"}]}}` + "\n"
 	var body strings.Builder
@@ -199,6 +203,8 @@ func TestStreamTail(t *testing.T) {
 // N3: builderTail reads the log when the endpoint writes one, the stream when
 // it points elsewhere (2b), and "" when neither exists.
 func TestBuilderTailLogOrStream(t *testing.T) {
+	t.Parallel()
+
 	s := transcriptStore(t)
 	rt := Runtime{Store: s}
 	logPath := s.BuilderLogPath("webshop", 1)
@@ -240,6 +246,8 @@ func TestBuilderTailLogOrStream(t *testing.T) {
 // the round's stored segments, then the live endpoint's, then the fallback
 // kind, and reports a miss.
 func TestRoundTranscript(t *testing.T) {
+	t.Parallel()
+
 	agy := jsonlLine(t, "agy.jsonl", 5)
 	claude := jsonlLine(t, "claude.jsonl", 5) + jsonlLine(t, "claude.jsonl", 6)
 	stream := agy + claude
@@ -363,6 +371,8 @@ func TestRoundTranscript(t *testing.T) {
 // disk), overwrites it as the round switches harnesses, and succeeds with
 // only a warning when the binding has no record.
 func TestStartProcessRecordsSegmentsRow(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt := newRuntime(t)
 	rt.Runner = fr
@@ -451,6 +461,8 @@ func TestStartProcessRecordsSegmentsRow(t *testing.T) {
 // N6: once the endpoint has moved to a later round, the old round's
 // transcript uses the stored row's segments, not the live ones.
 func TestRoundTranscriptOfASealedSwitchedRound(t *testing.T) {
+	t.Parallel()
+
 	s := transcriptStore(t)
 	agy := jsonlLine(t, "agy.jsonl", 5)
 	claude := jsonlLine(t, "claude.jsonl", 5)

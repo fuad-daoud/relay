@@ -178,6 +178,8 @@ func playAgyOnSend(t *testing.T, fake *fakeEnvExec, home string, read bool) {
 }
 
 func TestAgyDeliverNotMineForOtherKind(t *testing.T) {
+	t.Parallel()
+
 	d, fake, _ := newAgyRig(t)
 
 	out, reason, err := d.Deliver(context.Background(),
@@ -197,6 +199,8 @@ func TestAgyDeliverNotMineForOtherKind(t *testing.T) {
 }
 
 func TestAgyDeliverBadConversationID(t *testing.T) {
+	t.Parallel()
+
 	d, fake, _ := newAgyRig(t)
 
 	out, reason, err := d.Deliver(context.Background(),
@@ -216,6 +220,8 @@ func TestAgyDeliverBadConversationID(t *testing.T) {
 }
 
 func TestAgyDeliverGaveUpAfterFallback(t *testing.T) {
+	t.Parallel()
+
 	d, fake, _ := newAgyRig(t)
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	d.Now = func() time.Time { return now }
@@ -272,6 +278,8 @@ func TestAgyDeliverLogsGiveUpOncePerPayload(t *testing.T) {
 }
 
 func TestAgyDeliverNoCredsIsUnavailable(t *testing.T) {
+	t.Parallel()
+
 	d, fake, _ := newAgyRig(t)
 	d.Creds = testSecrets(t)
 
@@ -292,6 +300,8 @@ func TestAgyDeliverNoCredsIsUnavailable(t *testing.T) {
 }
 
 func TestAgyDeliverNonLoopbackIsUnavailable(t *testing.T) {
+	t.Parallel()
+
 	d, fake, _ := newAgyRig(t)
 	writeAgyCredsFixture(t, d.Creds, AgyCreds{
 		ConversationID: agyTestConv,
@@ -317,6 +327,8 @@ func TestAgyDeliverNonLoopbackIsUnavailable(t *testing.T) {
 }
 
 func TestAgyDeliverAlreadyReadDoesNotSend(t *testing.T) {
+	t.Parallel()
+
 	d, fake, home := newAgyRig(t)
 	writeAgyMessage(t, home, "m-already", agyTestConv, agyTestPayload, time.Now().UTC(), false)
 	markAgyRead(t, home, "m-already")
@@ -338,6 +350,8 @@ func TestAgyDeliverAlreadyReadDoesNotSend(t *testing.T) {
 }
 
 func TestAgyDeliverSentNotReadDoesNotResend(t *testing.T) {
+	t.Parallel()
+
 	d, fake, home := newAgyRig(t)
 	writeAgyMessage(t, home, "m-sent", agyTestConv, agyTestPayload, time.Now().UTC(), false)
 
@@ -358,6 +372,8 @@ func TestAgyDeliverSentNotReadDoesNotResend(t *testing.T) {
 }
 
 func TestAgyDeliverConfirmsViaReadJSON(t *testing.T) {
+	t.Parallel()
+
 	d, fake, home := newAgyRig(t)
 	playAgyOnSend(t, fake, home, true)
 
@@ -378,6 +394,8 @@ func TestAgyDeliverConfirmsViaReadJSON(t *testing.T) {
 }
 
 func TestAgyDeliverSentButNeverReadIsUnavailable(t *testing.T) {
+	t.Parallel()
+
 	d, fake, home := newAgyRig(t)
 	playAgyOnSend(t, fake, home, false)
 
@@ -398,6 +416,8 @@ func TestAgyDeliverSentButNeverReadIsUnavailable(t *testing.T) {
 }
 
 func TestAgyDeliverTokenOnlyInEnv(t *testing.T) {
+	t.Parallel()
+
 	t.Run("with AgentAPIExe", func(t *testing.T) {
 		d, fake, home := newAgyRig(t)
 		playAgyOnSend(t, fake, home, true)
@@ -470,6 +490,8 @@ func assertAgySendArgs(t *testing.T, args []string) {
 // TestAgyDeliverSendErrorIsRedacted pins both error spellings from §3: a Run
 // error whose text quotes the token, and a JSON {"error": ...} on stdout.
 func TestAgyDeliverSendErrorIsRedacted(t *testing.T) {
+	t.Parallel()
+
 	t.Run("a Run error", func(t *testing.T) {
 		d, fake, _ := newAgyRig(t)
 		fake.err = errors.New("boom: " + agyTestToken + " leaked\nsecond line")
@@ -512,6 +534,8 @@ func TestAgyDeliverSendErrorIsRedacted(t *testing.T) {
 }
 
 func TestAgyDeliverOversizeSendsPointer(t *testing.T) {
+	t.Parallel()
+
 	d, fake, home := newAgyRig(t)
 	playAgyOnSend(t, fake, home, true)
 
@@ -538,6 +562,8 @@ func TestAgyDeliverOversizeSendsPointer(t *testing.T) {
 }
 
 func TestAgyDeliverOlderMessageDoesNotMatch(t *testing.T) {
+	t.Parallel()
+
 	d, fake, home := newAgyRig(t)
 	d.FallbackAfter = time.Hour
 
@@ -561,6 +587,8 @@ func TestAgyDeliverOlderMessageDoesNotMatch(t *testing.T) {
 // for: DeliverPending over a real AgyDeliverer confirms the pending entry with
 // route deliverer:agy.
 func TestDeliverPendingAgyDeliversViaDeliverer(t *testing.T) {
+	t.Parallel()
+
 	d, fake, home := newAgyRig(t)
 	playAgyOnSend(t, fake, home, true)
 

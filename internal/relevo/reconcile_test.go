@@ -64,6 +64,8 @@ func touch(t *testing.T, path string) {
 // no session cursor to drain and no agent list to compare a session against.
 // Their headless equivalents live in headless_test.go.
 func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
@@ -106,6 +108,8 @@ func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
 // independence for the first seconds of a round: the marker closes the round
 // even though very little time has passed since the process started.
 func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	clock := &fakeClock{now: baseTime}
 	rt = withClock(rt, clock)
@@ -139,6 +143,8 @@ func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
 // TestReconcileSkipsPaused: Reconcile returns immediately for a PAUSED
 // binding, exactly as it does for DONE.
 func TestReconcileSkipsPaused(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	b.State = store.StatePaused
 	b.Builder = store.Endpoint{Kind: "agy", Mode: store.ModeHeadless} // pause cleared the identity
@@ -160,6 +166,8 @@ func TestReconcileSkipsPaused(t *testing.T) {
 }
 
 func TestReconcileDiffCapture(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	fg := &fakeGit{
 		snapshotTreeID: "tree-end",
@@ -261,6 +269,8 @@ func TestReconcileDiffCapture(t *testing.T) {
 }
 
 func TestQueueReportRecordsCommitFacts(t *testing.T) {
+	t.Parallel()
+
 	closeRound := func(t *testing.T, fg *fakeGit, head string) (store.Binding, []store.LogEntry) {
 		t.Helper()
 		rt, b := sentBinding(t)
@@ -366,6 +376,8 @@ func TestQueueReportRecordsCommitFacts(t *testing.T) {
 // Rusage from rt.Runner.Rusage when the runner has one, and stays nil
 // when it does not (#244, #216).
 func TestQueueReportRecordsRusage(t *testing.T) {
+	t.Parallel()
+
 	setup := func(t *testing.T) (Runtime, store.Binding, *fakeRunner) {
 		t.Helper()
 		fr := newFakeRunner()
@@ -431,6 +443,8 @@ func TestQueueReportRecordsRusage(t *testing.T) {
 }
 
 func TestQueueReport_RoundClosedTree(t *testing.T) {
+	t.Parallel()
+
 	t.Run("ordinary close", func(t *testing.T) {
 		rt, b := sentBinding(t)
 		fg := &fakeGit{
@@ -541,6 +555,8 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 // and the session cursor are gone.
 
 func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
@@ -576,6 +592,8 @@ func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
 // waiting for idle and scraping a worse artefact. Mutation: fall through to
 // scrapeReport -> the note is "scraped".
 func TestCloseOnMarkerWithoutReportIsNoreport(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	touch(t, rt.Store.DonePath("webshop", 1))
 
@@ -600,6 +618,8 @@ func TestCloseOnMarkerWithoutReportIsNoreport(t *testing.T) {
 }
 
 func TestCloseOnMarkerAbsentDoesNothing(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
@@ -627,6 +647,8 @@ func TestCloseOnMarkerAbsentDoesNothing(t *testing.T) {
 // move the closeOnMarker call behind a live-process check -> this fails
 // because the process below is alive (an unscripted pid is alive forever).
 func TestReconcileClosesOnMarkerWhileBuilderStillWorking(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
@@ -650,6 +672,8 @@ func TestReconcileClosesOnMarkerWhileBuilderStillWorking(t *testing.T) {
 // not evidence the builder is finished. Mutation: gate on the report instead
 // of the marker -> the round advances on the first tick.
 func TestReconcileReportWithoutMarkerIsNotAClose(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
@@ -676,6 +700,8 @@ func TestReconcileReportWithoutMarkerIsNotAClose(t *testing.T) {
 // (TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked and
 // TestReconcileHeadlessMarkerClosesAndClearsTheHandle).
 func TestReconcileReportTailAndOrigin(t *testing.T) {
+	t.Parallel()
+
 	t.Run("status halted with halted_at", func(t *testing.T) {
 		rt, b := sentBinding(t)
 		reportContent := "Some report content\n\n```relevo\nstatus: halted\nhalted_at: \"Task 2 step 3\"\n```\n"
@@ -1247,6 +1273,8 @@ func gates(t *testing.T, rt Runtime) []store.LogEntry {
 // exactly as it did before the gate existed -- no process is started and the
 // payload is unchanged.
 func TestGateNotConfiguredIsUnchanged(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1289,6 +1317,8 @@ func TestGateNotConfiguredIsUnchanged(t *testing.T) {
 // through to the marker close instead of returning early); this test fails
 // because the second tick's round has advanced and a second process started.
 func TestGateStartsOnMarkerAndHoldsTheRound(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1377,6 +1407,8 @@ func TestGateStartsOnMarkerAndHoldsTheRound(t *testing.T) {
 // round with a gate=pass annotation, a Gate record on the entry, and the
 // gate's payload line.
 func TestGatePassClosesWithAnnotation(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1431,6 +1463,8 @@ func TestGatePassClosesWithAnnotation(t *testing.T) {
 // round with gate=fail, and the payload carries the log's last
 // gateTailLines non-empty lines, not the first.
 func TestGateFailAddsTail(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1491,6 +1525,8 @@ func TestGateFailAddsTail(t *testing.T) {
 // TestGateTimeoutKills pins #132: a gate that outlives its timeout is
 // killed and the round closes with gate=timeout.
 func TestGateTimeoutKills(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1556,6 +1592,8 @@ func TestGateTimeoutKills(t *testing.T) {
 // with no Runner cannot hang the round -- it closes this tick with a
 // gate=error annotation instead.
 func TestGateNoRunnerIsErrorNotHang(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	rt.Runner = nil
 	b.Gate = "make check"
@@ -1651,6 +1689,8 @@ func failRoundWithGate(t *testing.T, rt Runtime, b store.Binding, fr *fakeRunner
 // budget stages round N+1 as a repair plan, hands it to the builder exactly as
 // Send would, and logs `repair k/M` on the new round's plan entry.
 func TestRegateFailOpensRepairRound(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1716,6 +1756,8 @@ func TestRegateFailOpensRepairRound(t *testing.T) {
 // budget is spent, the next failing gate ends the loop with NEEDS YOU instead
 // of another repair round.
 func TestRegateBoundHaltsNeedsYou(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1755,6 +1797,8 @@ func TestRegateBoundHaltsNeedsYou(t *testing.T) {
 // a second identical failure -- same content modulo the clock -- means the
 // repair changed nothing that mattered, so the loop ends early.
 func TestRegateIdenticalSignatureHaltsEarly(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1787,6 +1831,8 @@ func TestRegateIdenticalSignatureHaltsEarly(t *testing.T) {
 // TestRegatePassResetsCount pins #132 part 2's reset: a passing gate clears
 // the repair bookkeeping, so the next failing gate gets a fresh budget.
 func TestRegatePassResetsCount(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1843,6 +1889,8 @@ func TestRegatePassResetsCount(t *testing.T) {
 // TestNoRegateUnchanged pins the off switch (#132 part 2): Regate 0 is
 // exactly today's behaviour -- the failure is reported, nothing is re-sent.
 func TestNoRegateUnchanged(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -1882,6 +1930,8 @@ func TestNoRegateUnchanged(t *testing.T) {
 // start -- it clears the repair bookkeeping and, when --regate is given, sets
 // the binding's budget.
 func TestSendResetsRepairBookkeeping(t *testing.T) {
+	t.Parallel()
+
 	rt, b := seedBound(t)
 	b.RepairCount = 1
 	b.LastGateSig = "x"
@@ -1929,6 +1979,8 @@ func TestSendResetsRepairBookkeeping(t *testing.T) {
 // what this test now pins. A human Send clears the stamp and the notification
 // bookkeeping.
 func TestReconcileNeedsYouGoesStale(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	disp := &recordDispatcher{}
 	rt.Hooks = disp
@@ -2009,6 +2061,8 @@ func TestReconcileNeedsYouGoesStale(t *testing.T) {
 // Mutation check (run and report): delete the wantVerify block from
 // Reconcile's close path and this fails on addDetachedWorktreeCalls.
 func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	fg := &fakeGit{headCommitID: "head1"}
 	rt, _ := seedBound(t)
@@ -2110,6 +2164,8 @@ func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
 // where the closed round's gate log is, because seeing the gate's own output
 // is the point of running verify after the gate.
 func TestVerifyGateLogIsPassed(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -2167,6 +2223,8 @@ const candidateSetWithoutReviewerJSON = `[
 // round with no reviewer candidate closes normally, logs one "verify skipped:"
 // note, starts nothing, and leaves no throwaway worktree behind.
 func TestVerifySkippedWhenNoReviewerCandidate(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -2245,6 +2303,8 @@ func roundReportEntry(t *testing.T, rt Runtime, round int) store.LogEntry {
 // returns the binding unchanged and drives nothing -- even a written report
 // and done marker are left for the newer relevo.
 func TestReconcileLeavesAnUnknownStateAlone(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	fr := rt.Runner.(*fakeRunner)
 	if err := os.WriteFile(rt.Store.ReportPath(b.Name, 1), []byte("done"), 0o644); err != nil {

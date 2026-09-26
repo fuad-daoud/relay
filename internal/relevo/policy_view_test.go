@@ -15,6 +15,8 @@ import (
 )
 
 func TestPolicyWarningsNoneWhenConsistent(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
@@ -25,6 +27,8 @@ func TestPolicyWarningsNoneWhenConsistent(t *testing.T) {
 }
 
 func TestPolicyWarningsNoneWhenNoOrder(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 
 	got := PolicyWarnings(set, policy.Policy{})
@@ -34,6 +38,8 @@ func TestPolicyWarningsNoneWhenNoOrder(t *testing.T) {
 }
 
 func TestPolicyWarningsMatrix(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	pol := policy.Policy{Order: map[string][]string{
 		"builder":  {testAgyRef, "claude/test/nope"},
@@ -60,6 +66,8 @@ func TestPolicyWarningsMatrix(t *testing.T) {
 }
 
 func TestFormatPolicyOrderWithGatedFirst(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef)
 	until := baseTime.Add(10 * time.Minute)
@@ -87,6 +95,8 @@ func TestFormatPolicyOrderWithGatedFirst(t *testing.T) {
 }
 
 func TestFormatPolicyNoOrderTwoServeRefuses(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 
 	got := FormatPolicy(set, policy.Policy{}, nil, history.History{}, baseTime, time.UTC)
@@ -110,6 +120,8 @@ func TestFormatPolicyNoOrderTwoServeRefuses(t *testing.T) {
 }
 
 func TestFormatPolicyAllGated(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 	gates := []ledger.Gate{limit(testAgyRef), limit(testClaudeRef), limit(testOpencodeRef)}
@@ -135,6 +147,8 @@ func TestFormatPolicyAllGated(t *testing.T) {
 }
 
 func TestFormatPolicyEmptySet(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, "[]")
 
 	got := FormatPolicy(set, orderOf("builder", testAgyRef), nil, history.History{}, baseTime, time.UTC)
@@ -152,6 +166,8 @@ const testClaudeOnlyJSON = `[
 ]`
 
 func TestFormatPolicySoleWithOrder(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testClaudeOnlyJSON)
 	pol := orderOf("reviewer", testClaudeRef)
 
@@ -198,6 +214,8 @@ func wantHourRow(provider string, kind ledger.Kind, counts [24]int) string {
 }
 
 func TestFormatPolicyPeakColumn(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef)
 	now := time.Date(2026, 9, 11, 21, 15, 0, 0, time.UTC)
@@ -241,6 +259,8 @@ func TestFormatPolicyPeakColumn(t *testing.T) {
 }
 
 func TestFormatPolicyPeakWrapsMidnight(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef)
 	now := time.Date(2026, 9, 11, 23, 50, 0, 0, time.UTC)
@@ -259,6 +279,8 @@ func TestFormatPolicyPeakWrapsMidnight(t *testing.T) {
 }
 
 func TestFormatPolicyNoHistoryNoBlock(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef)
 
@@ -273,6 +295,8 @@ func TestFormatPolicyNoHistoryNoBlock(t *testing.T) {
 }
 
 func TestFormatPolicyGateAndPeakOrder(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef)
 	now := time.Date(2026, 9, 11, 21, 0, 0, 0, time.UTC)
@@ -292,6 +316,8 @@ func TestFormatPolicyGateAndPeakOrder(t *testing.T) {
 }
 
 func TestFormatPolicyRepeatedGateRendersOnce(t *testing.T) {
+	t.Parallel()
+
 	// #93: `relevo gate <token>` three times without a `--clear` between
 	// leaves three live ledger entries on one token. The row says it once.
 	set := candidateSet(t, testCandidatesJSON)
@@ -314,6 +340,8 @@ func TestFormatPolicyRepeatedGateRendersOnce(t *testing.T) {
 }
 
 func TestAllGatedErrorNamesEachGateOnce(t *testing.T) {
+	t.Parallel()
+
 	// The refusal text goes through the same renderer as the pick line.
 	set := candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
 	gates := []ledger.Gate{
@@ -331,6 +359,8 @@ func TestAllGatedErrorNamesEachGateOnce(t *testing.T) {
 }
 
 func TestRoleRefusalsNoOrder(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 
 	got := RoleRefusals(set, policy.Policy{}, nil)
@@ -347,6 +377,8 @@ func TestRoleRefusalsNoOrder(t *testing.T) {
 }
 
 func TestRoleRefusalsNoneWhenOrderedOrSole(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
@@ -356,6 +388,8 @@ func TestRoleRefusalsNoneWhenOrderedOrSole(t *testing.T) {
 }
 
 func TestRoleRefusalsAllGated(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 	gates := []ledger.Gate{limit(testAgyRef), limit(testClaudeRef), limit(testOpencodeRef)}
@@ -374,6 +408,8 @@ func TestRoleRefusalsAllGated(t *testing.T) {
 }
 
 func TestRoleRefusalsEmptySet(t *testing.T) {
+	t.Parallel()
+
 	if got := RoleRefusals(nil, policy.Policy{}, nil); got != nil {
 		t.Errorf("RoleRefusals(nil) = %+v, want nil", got)
 	}
@@ -395,6 +431,8 @@ func clearedEvent(provider string, at time.Time, d time.Duration) history.Event 
 // The even-count case pins the lower middle as the median, so it is always
 // a duration that was observed rather than an average of two.
 func TestFormatHistoryBlockedFor(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		clears  []history.Event
@@ -449,6 +487,8 @@ func TestFormatHistoryBlockedFor(t *testing.T) {
 
 // TestBlockedText pins blockedText's flooring at each of the three scales.
 func TestBlockedText(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		d    time.Duration
 		want string

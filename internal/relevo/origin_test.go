@@ -7,6 +7,8 @@ import (
 )
 
 func TestOriginLine(t *testing.T) {
+	t.Parallel()
+
 	t.Run("to builder byte-exact", func(t *testing.T) {
 		got := OriginLine("b1", 2, store.DirToBuilder, store.KindPlan)
 		want := `relevo: round 2 · to builder "b1" · from the planner (not the human)`
@@ -41,6 +43,8 @@ func TestOriginLine(t *testing.T) {
 }
 
 func TestWithOrigin(t *testing.T) {
+	t.Parallel()
+
 	origin := `relevo: round 1 · to planner · about builder "b1" (not the human)`
 
 	t.Run("plain payload inserts exactly one blank line", func(t *testing.T) {

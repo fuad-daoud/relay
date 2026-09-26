@@ -26,6 +26,8 @@ import (
 // same content: Show, ReadDiff, Pull's PushText, ingest's StoreSource, a fork
 // cut through the round, and gc's tarball.
 func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 
 	report := []byte("round 1's report\n")
@@ -175,6 +177,8 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 // else, the empty directory goes too. An ACTIVE binding's directory stays, as
 // more rounds are coming.
 func TestSealPassEmptiesADoneDirOnly(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name     string
 		state    store.State

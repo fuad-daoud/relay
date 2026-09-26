@@ -22,6 +22,8 @@ const availTwoProviderJSON = `[
 // which is how a gate left behind by a candidate removed from
 // candidates.json stays clearable. Everything else is refused.
 func TestResolveClearSubject(t *testing.T) {
+	t.Parallel()
+
 	twoProviders := candidateSet(t, availTwoProviderJSON)
 	testOnly := candidateSet(t, `[{"harness":"opencode","provider":"test","model":"m","roles":["builder"]}]`)
 	goneGate := ledger.Ledger{Entries: []ledger.Entry{
@@ -114,6 +116,8 @@ func TestResolveClearSubject(t *testing.T) {
 // TestSuggestProvider: a refused subject offers the closest known provider
 // when one is close enough to be worth naming.
 func TestSuggestProvider(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		known   []string
@@ -139,6 +143,8 @@ func TestSuggestProvider(t *testing.T) {
 // TestResolveClearSubjectName pins A1 §4.2: `gate --clear <name>` clears that
 // candidate's provider, and a bare provider still clears the provider.
 func TestResolveClearSubjectName(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testTwoProviderJSON)
 
 	for _, tt := range []struct {

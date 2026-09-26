@@ -31,6 +31,8 @@ func revChanges(t *testing.T, r db.RevisionRow) []Change {
 }
 
 func TestPutRecordsRevision(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	if _, err := s.As("cli", "config set policy").Put(Policy, []byte(`{"max_switches":2}`)); err != nil {
@@ -74,6 +76,8 @@ func TestPutRecordsRevision(t *testing.T) {
 }
 
 func TestIdenticalPutRecordsNothing(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	for i := 0; i < 2; i++ {
@@ -99,6 +103,8 @@ func TestIdenticalPutRecordsNothing(t *testing.T) {
 }
 
 func TestFirstRevisionAddsBaseline(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	// Seed the section with raw Txs: no Store, so no revision. Two writes put
@@ -154,6 +160,8 @@ func TestFirstRevisionAddsBaseline(t *testing.T) {
 }
 
 func TestNoBaselineOnEmptyConfig(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	if _, err := s.As("cli", "config set policy").Put(Policy, []byte(`{"max_switches":1}`)); err != nil {
@@ -170,6 +178,8 @@ func TestNoBaselineOnEmptyConfig(t *testing.T) {
 }
 
 func TestPutDocOneRevision(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	doc := Doc{
@@ -200,6 +210,8 @@ func TestPutDocOneRevision(t *testing.T) {
 }
 
 func TestSecretRevisionHasNoValue(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 	value := []byte("super-secret-typesafe-value")
 
@@ -232,6 +244,8 @@ func TestSecretRevisionHasNoValue(t *testing.T) {
 }
 
 func TestRevisionInsertFailureRollsBackWrite(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	d, err := db.Open(path)
 	if err != nil {
@@ -273,6 +287,8 @@ func TestRevisionInsertFailureRollsBackWrite(t *testing.T) {
 }
 
 func TestRollbackRestoresAndDeletes(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	bodyA := []byte(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`)
@@ -332,6 +348,8 @@ func TestRollbackRestoresAndDeletes(t *testing.T) {
 }
 
 func TestRollbackNoChange(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 	if _, err := s.As("cli", "config set policy").Put(Policy, []byte(`{"max_switches":1}`)); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -353,6 +371,8 @@ func TestRollbackNoChange(t *testing.T) {
 }
 
 func TestRollbackUnknown(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	if _, err := s.Rollback(99); !errors.Is(err, ErrNoRevision) {
@@ -364,6 +384,8 @@ func TestRollbackUnknown(t *testing.T) {
 }
 
 func TestImportFilesRecordsImport(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 	dir := filepath.Join(t.TempDir(), "relevo")
 	seedConfigDir(t, dir)
@@ -397,6 +419,8 @@ func TestImportFilesRecordsImport(t *testing.T) {
 // RevisionDoc returns the document a known revision wrote, comparing bodies by
 // their compact encoding: a snapshot is re-indented, not stored verbatim.
 func TestRevisionDoc(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t).WithClock(atTime(revAt))
 
 	if _, err := s.As("cli", "config set policy").Put(Policy, []byte(`{"max_switches":2}`)); err != nil {

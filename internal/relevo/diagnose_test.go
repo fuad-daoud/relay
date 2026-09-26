@@ -9,6 +9,8 @@ import (
 )
 
 func TestDiagnoseBuilderDerivesBothFacts(t *testing.T) {
+	t.Parallel()
+
 	sent := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 
 	tests := []struct {
@@ -71,6 +73,8 @@ func TestDiagnoseBuilderDerivesBothFacts(t *testing.T) {
 }
 
 func TestBuilderDiagnosisDetail(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		d     BuilderDiagnosis
@@ -113,6 +117,8 @@ func TestBuilderDiagnosisDetail(t *testing.T) {
 // turn, so it is exactly the case this detail exists to warn about; it must
 // not be papered over with a nonsense round number.
 func TestDetailNeverNamesRoundZero(t *testing.T) {
+	t.Parallel()
+
 	for _, d := range []BuilderDiagnosis{{}, {RoundOpen: true}} {
 		got := d.Detail(1)
 		if strings.Contains(got, "round 0") {
@@ -125,6 +131,8 @@ func TestDetailNeverNamesRoundZero(t *testing.T) {
 }
 
 func TestDetailIsTotal(t *testing.T) {
+	t.Parallel()
+
 	for _, round := range []int{0, 1, 2, 7} {
 		for _, open := range []bool{true, false} {
 			d := BuilderDiagnosis{RoundOpen: open}

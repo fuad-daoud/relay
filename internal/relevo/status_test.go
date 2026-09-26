@@ -16,6 +16,8 @@ import (
 )
 
 func TestDoneKeepsRemoteWorktreeWhileRoundOpen(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	fg := &fakeGit{}
 	b := remoteBinding("contabo")
@@ -48,6 +50,8 @@ func TestDoneKeepsRemoteWorktreeWhileRoundOpen(t *testing.T) {
 }
 
 func TestRenderStatusShowsDetailLine(t *testing.T) {
+	t.Parallel()
+
 	out := RenderStatus(Report{Bindings: []BindingStatus{{
 		Name: "doctor", CWD: "/repo", Round: 3,
 		Display:          "NEEDS YOU",
@@ -73,6 +77,8 @@ func TestRenderStatusShowsDetailLine(t *testing.T) {
 // carries a chat label and a link shows them after its route, and a row that
 // carries neither is byte-identical to the line before these fields existed.
 func TestRenderStatusPlannerChat(t *testing.T) {
+	t.Parallel()
+
 	out := RenderStatus(Report{Bindings: []BindingStatus{
 		{
 			Name: "one", CWD: "/a", Round: 1, Display: "ACTIVE",
@@ -106,6 +112,8 @@ func TestRenderStatusPlannerChat(t *testing.T) {
 }
 
 func TestRenderStatusOmitsEmptyDetail(t *testing.T) {
+	t.Parallel()
+
 	out := RenderStatus(Report{Bindings: []BindingStatus{{
 		Name: "ok", CWD: "/repo", Round: 1, Display: "ACTIVE",
 		PlannerKind: "claude", BuilderKind: "agy", BuilderStatus: "working",
@@ -118,6 +126,8 @@ func TestRenderStatusOmitsEmptyDetail(t *testing.T) {
 }
 
 func TestRenderStatusOmitsTheConsultCountWhenZero(t *testing.T) {
+	t.Parallel()
+
 	r := Report{Bindings: []BindingStatus{{
 		Name: "webshop", State: "active", Round: 3, Consults: 0,
 	}}}
@@ -128,6 +138,8 @@ func TestRenderStatusOmitsTheConsultCountWhenZero(t *testing.T) {
 }
 
 func TestRenderStatusShowsSwitches(t *testing.T) {
+	t.Parallel()
+
 	r := Report{Bindings: []BindingStatus{{
 		Name: "webshop", State: "active", Round: 3, Switches: 1,
 	}}}
@@ -138,6 +150,8 @@ func TestRenderStatusShowsSwitches(t *testing.T) {
 }
 
 func TestRenderStatusOmitsSwitchedWhenZero(t *testing.T) {
+	t.Parallel()
+
 	r := Report{Bindings: []BindingStatus{{
 		Name: "webshop", State: "active", Round: 3, Switches: 0,
 	}}}
@@ -148,6 +162,8 @@ func TestRenderStatusOmitsSwitchedWhenZero(t *testing.T) {
 }
 
 func TestHideDoneRemovesOnlyDoneRows(t *testing.T) {
+	t.Parallel()
+
 	in := Report{
 		Bindings: []BindingStatus{
 			{Name: "first", State: string(store.StateActive)},
@@ -173,6 +189,8 @@ func TestHideDoneRemovesOnlyDoneRows(t *testing.T) {
 }
 
 func TestRenderStatusFooterCountsHidden(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		hidden    int
 		wantSub   string
@@ -201,6 +219,8 @@ func TestRenderStatusFooterCountsHidden(t *testing.T) {
 }
 
 func TestRenderStatusFooterOnlyWhenEverythingIsDone(t *testing.T) {
+	t.Parallel()
+
 	r := Report{
 		Bindings:   nil,
 		DoneHidden: 2,
@@ -254,6 +274,8 @@ func TestRenderStatusGatedBlock(t *testing.T) {
 // a gate with no name -- one built without a candidate set -- prints its
 // token.
 func TestRenderStatusGatedBlockFallsBackToToken(t *testing.T) {
+	t.Parallel()
+
 	r := Report{
 		Gated: []ledger.Gate{{Token: testAgyRef, Kind: ledger.RateLimited, Until: time.Time{}}},
 	}
@@ -325,6 +347,8 @@ func TestStatusJSONHasBuilderName(t *testing.T) {
 }
 
 func TestRenderStatusNoGatesIsUnchanged(t *testing.T) {
+	t.Parallel()
+
 	r := Report{
 		Bindings: []BindingStatus{{
 			Name: "webshop", CWD: "/repo", Round: 1, Display: "ACTIVE",
@@ -341,6 +365,8 @@ func TestRenderStatusNoGatesIsUnchanged(t *testing.T) {
 }
 
 func TestRenderStatusGatesWithNoBindings(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
 	r := Report{
 		Gated: []ledger.Gate{
@@ -355,6 +381,8 @@ func TestRenderStatusGatesWithNoBindings(t *testing.T) {
 }
 
 func TestBindingStatusKey(t *testing.T) {
+	t.Parallel()
+
 	if got := (BindingStatus{Name: "api"}).Key(); got != "api" {
 		t.Errorf("planner key = %q, want api", got)
 	}
@@ -368,6 +396,8 @@ func TestBindingStatusKey(t *testing.T) {
 // the prefix, is unchanged.
 
 func TestShortOwner(t *testing.T) {
+	t.Parallel()
+
 	if got := ShortOwner("SHA256:VLERFMZnvN5HSw/GCBr6FXPEgs4QeAfdU95BUhMMqI0"); got != "SHA256:VLERFMZnvN5H…" {
 		t.Errorf("ShortOwner(fingerprint) = %q", got)
 	}
@@ -384,6 +414,8 @@ func TestShortOwner(t *testing.T) {
 // RenderStatus, so a gate lost here never reaches the terminal.
 
 func TestHideDoneKeepsGated(t *testing.T) {
+	t.Parallel()
+
 	in := Report{
 		Bindings: []BindingStatus{{Name: "old", State: string(store.StateDone)}},
 		Gated:    []ledger.Gate{{Token: "agy/test/m", Kind: ledger.RateLimited}},
@@ -398,6 +430,8 @@ func TestHideDoneKeepsGated(t *testing.T) {
 }
 
 func TestRenderStatusShowsDirty(t *testing.T) {
+	t.Parallel()
+
 	r := Report{Bindings: []BindingStatus{{
 		Name: "webshop", State: "active", Display: "ACTIVE", Round: 2, Dirty: true, Consults: 1,
 	}}}
@@ -408,6 +442,8 @@ func TestRenderStatusShowsDirty(t *testing.T) {
 }
 
 func TestRenderStatusOmitsDirtyWhenClean(t *testing.T) {
+	t.Parallel()
+
 	r := Report{Bindings: []BindingStatus{{
 		Name: "webshop", State: "active", Display: "ACTIVE", Round: 2,
 		LastClose: &CloseInfo{Round: 1, Tree: "dirty"}, // the raw fact, without the rule applied
@@ -557,6 +593,8 @@ func TestStatusNoLiveUsageWhenPeekEmpty(t *testing.T) {
 }
 
 func TestStatusTextUsageRowPrefersLive(t *testing.T) {
+	t.Parallel()
+
 	rep := Report{Bindings: []BindingStatus{{
 		Name: "webshop", State: "active", Display: "ACTIVE", Round: 2,
 		LastUsage: &usage.Usage{Harness: "agy", Provider: "google", Model: "gemini-3-pro", DurationMS: 6 * 60_000,
@@ -582,6 +620,8 @@ func TestStatusTextUsageRowPrefersLive(t *testing.T) {
 }
 
 func TestStatusLiveUsageJSON(t *testing.T) {
+	t.Parallel()
+
 	with := BindingStatus{LiveUsage: &usage.Usage{Harness: "agy", Cost: usage.Cost{USD: 0.04, Basis: usage.Measured}}}
 	raw, err := json.Marshal(with)
 	if err != nil {
@@ -597,6 +637,8 @@ func TestStatusLiveUsageJSON(t *testing.T) {
 }
 
 func TestRenderStatusOutcome(t *testing.T) {
+	t.Parallel()
+
 	t.Run("prints outcome when halted", func(t *testing.T) {
 		ts := time.Date(2026, 9, 18, 15, 4, 5, 0, time.UTC)
 		rep := Report{
@@ -672,6 +714,8 @@ func statusLiveFixture(t *testing.T, fu *fakeUsage) (Runtime, store.Binding) {
 	return rt, b
 }
 func TestDoneStopsRelaying(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 
 	if _, err := Done(context.Background(), rt, b.Name); err != nil {
@@ -695,6 +739,8 @@ func TestDoneStopsRelaying(t *testing.T) {
 // from Done and this fails.
 
 func TestDoneRefusesQueued(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	b.Owner = "owner1"
 	b.QueuedAt = rt.Now()
@@ -718,6 +764,8 @@ func TestDoneRefusesQueued(t *testing.T) {
 }
 
 func TestDoneReleasesCleanWorktree(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	fg := &fakeGit{dirtyResult: false}
 	rt.Git = fg
@@ -756,6 +804,8 @@ func TestDoneReleasesCleanWorktree(t *testing.T) {
 }
 
 func TestDoneKeepsDirtyWorktree(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	fg := &fakeGit{dirtyResult: true}
 	rt.Git = fg
@@ -789,6 +839,8 @@ func TestDoneKeepsDirtyWorktree(t *testing.T) {
 // of pane builders.
 
 func TestDoneNoWorktreeIsZeroResult(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	fg := &fakeGit{}
 	rt.Git = fg
@@ -812,6 +864,8 @@ func TestDoneNoWorktreeIsZeroResult(t *testing.T) {
 }
 
 func TestDoneReportsGoneWorktree(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	fg := &fakeGit{}
 	rt.Git = fg
@@ -1972,6 +2026,8 @@ func TestStatusJSONCarriesStructuredFields(t *testing.T) {
 // binding (no branch) leaves it empty.
 
 func TestRoundFacts(t *testing.T) {
+	t.Parallel()
+
 	t0 := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
 	t1 := t0.Add(1 * time.Minute)
 	t2 := t0.Add(2 * time.Minute)
@@ -2148,6 +2204,8 @@ func TestStatusPlanRound(t *testing.T) {
 }
 
 func TestApplyRemoteLive(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	logPath := "/tmp/test.log"
 
@@ -2317,6 +2375,8 @@ func TestStatusRowRemoteUsesLiveNotLocalReaders(t *testing.T) {
 }
 
 func TestProcessWord(t *testing.T) {
+	t.Parallel()
+
 	rem := BindingStatus{Server: "contabo"}
 	if got := rem.ProcessWord(); got != "remote" {
 		t.Errorf("ProcessWord with server = %q, want remote", got)
@@ -2328,6 +2388,8 @@ func TestProcessWord(t *testing.T) {
 }
 
 func TestPriorTokensOf(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name    string
 		round   int

@@ -45,6 +45,8 @@ func (c *countingSecrets) SecretPut(name string, value []byte, now time.Time) er
 // TestValidConversationID pins relevo's own copy of the agy conversation id
 // rule. planner.Detect carries the same pattern for the environment it reads.
 func TestValidConversationID(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		id   string
 		want bool
@@ -69,6 +71,8 @@ func TestValidConversationID(t *testing.T) {
 // machine database: a complete environment is present, and every incomplete
 // one is not.
 func TestAgyEnvPresent(t *testing.T) {
+	t.Parallel()
+
 	if !AgyEnvPresent(agyEnv(fullAgyEnv())) {
 		t.Error("AgyEnvPresent(full env) = false, want true")
 	}
@@ -88,6 +92,8 @@ func TestAgyEnvPresent(t *testing.T) {
 // the credentials secret, and ReadAgyCreds gives back exactly what was
 // captured.
 func TestAgyCaptureWritesRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	secrets := testSecrets(t)
 	env := fullAgyEnv()
 
@@ -122,6 +128,8 @@ func TestAgyCaptureWritesRoundTrip(t *testing.T) {
 // TestAgyCaptureWritesNothingWithoutAllThree pins the gate: a missing or
 // invalid conversation id, address or token writes nothing at all.
 func TestAgyCaptureWritesNothingWithoutAllThree(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name   string
 		mutate func(map[string]string)
@@ -165,6 +173,8 @@ func TestAgyCaptureWritesNothingWithoutAllThree(t *testing.T) {
 // TestAgyCaptureSkipsIdenticalAndRewritesChangedToken pins the two halves of
 // the write rule: identical values are not rewritten, and a changed token is.
 func TestAgyCaptureSkipsIdenticalAndRewritesChangedToken(t *testing.T) {
+	t.Parallel()
+
 	secrets := &countingSecrets{SecretStore: testSecrets(t)}
 	env := fullAgyEnv()
 	conv := env[agyConversationEnv]
@@ -207,6 +217,8 @@ func TestAgyCaptureSkipsIdenticalAndRewritesChangedToken(t *testing.T) {
 // TestAgyCapturePrunesOldSiblings pins the prune: a write drops credentials
 // whose capture is older than a week, and keeps last night's.
 func TestAgyCapturePrunesOldSiblings(t *testing.T) {
+	t.Parallel()
+
 	secrets := testSecrets(t)
 	env := fullAgyEnv()
 
@@ -249,6 +261,8 @@ func TestAgyCapturePrunesOldSiblings(t *testing.T) {
 // TestAgyCredsNeverPrintsTheToken pins the redaction: every fmt spelling of an
 // AgyCreds, including %#v, renders the token as <redacted>.
 func TestAgyCredsNeverPrintsTheToken(t *testing.T) {
+	t.Parallel()
+
 	creds := AgyCreds{
 		ConversationID: "0f0e0d0c-0b0a-4998-8877-665544332211",
 		LSAddress:      "localhost:42139",
@@ -269,6 +283,8 @@ func TestAgyCredsNeverPrintsTheToken(t *testing.T) {
 // TestReadAgyCredsMissingSecretIsNotExist pins the error a caller keys on: a
 // conversation with no stored credentials reports os.ErrNotExist.
 func TestReadAgyCredsMissingSecretIsNotExist(t *testing.T) {
+	t.Parallel()
+
 	_, err := ReadAgyCreds(testSecrets(t), "0f0e0d0c-0b0a-4998-8877-665544332211")
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("ReadAgyCreds on a missing secret = %v, want os.ErrNotExist", err)
@@ -279,6 +295,8 @@ func TestReadAgyCredsMissingSecretIsNotExist(t *testing.T) {
 // planners/.agy/<conversation>.json is put to the secret agy/<conversation>
 // and removed, and the emptied .agy directory goes with it.
 func TestAgyCredsImportAdoptsFiles(t *testing.T) {
+	t.Parallel()
+
 	dir := filepath.Join(t.TempDir(), "planners", ".agy")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)

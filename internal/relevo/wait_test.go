@@ -14,6 +14,8 @@ import (
 )
 
 func TestDefaultWaitRound(t *testing.T) {
+	t.Parallel()
+
 	t.Run("no entries falls back to b.Round", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		if got := DefaultWaitRound(b, nil); got != 1 {
@@ -56,6 +58,8 @@ func TestDefaultWaitRound(t *testing.T) {
 }
 
 func TestWaitOutcome(t *testing.T) {
+	t.Parallel()
+
 	noQuestion := mapQuestion(nil)
 
 	t.Run("a marked close is WaitClosed", func(t *testing.T) {
@@ -257,6 +261,8 @@ func manualSent(t *testing.T, rt Runtime, name, cwd string) store.Binding {
 }
 
 func TestWaitAnyReturnsTheFirstThatCloses(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	manualSent(t, rt, "first", "/repo/first")
 	manualSent(t, rt, "second", "/repo/second")
@@ -282,6 +288,8 @@ func TestWaitAnyReturnsTheFirstThatCloses(t *testing.T) {
 }
 
 func TestWaitNamesUnknownBindingIsAnError(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -294,6 +302,8 @@ func TestWaitNamesUnknownBindingIsAnError(t *testing.T) {
 }
 
 func TestWaitReturnsAtOnceWhenAlreadyClosed(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 	reportPath := rt.Store.ReportPath("webshop", 1)
 	if err := rt.Store.AppendLog("webshop", store.LogEntry{
@@ -318,6 +328,8 @@ func TestWaitReturnsAtOnceWhenAlreadyClosed(t *testing.T) {
 }
 
 func TestWaitGoneWhenUnboundMidWait(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 
 	calls := 0
@@ -342,6 +354,8 @@ func TestWaitGoneWhenUnboundMidWait(t *testing.T) {
 }
 
 func TestWaitTimesOut(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 
 	tick := 0
@@ -368,6 +382,8 @@ func TestWaitTimesOut(t *testing.T) {
 }
 
 func TestWaitNotStartedReturnsAtOnce(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 
 	// A binding that was never sent: no log entries at all.
@@ -404,6 +420,8 @@ func TestWaitNotStartedReturnsAtOnce(t *testing.T) {
 }
 
 func TestWaitExplicitUnsentRoundReturnsAtOnce(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -438,6 +456,8 @@ func TestWaitExplicitUnsentRoundReturnsAtOnce(t *testing.T) {
 }
 
 func TestWaitDefaultRoundIsTheNewestPlanned(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	reportPath := rt.Store.ReportPath("webshop", 1)
 	if err := rt.Store.AppendLog("webshop", store.LogEntry{
@@ -470,6 +490,8 @@ func TestWaitDefaultRoundIsTheNewestPlanned(t *testing.T) {
 // with a queued report. Wait prints the outcome and then the report text, and
 // marks it delivered with route "wait".
 func TestWaitDeliversThePendingReport(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
@@ -504,6 +526,8 @@ func TestWaitDeliversThePendingReport(t *testing.T) {
 // TestWaitPeekLeavesTheReportPending: --peek reports the outcome only and
 // leaves the entry pending (§4.1).
 func TestWaitPeekLeavesTheReportPending(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
@@ -570,6 +594,8 @@ func seedTwoRounds(t *testing.T, rt Runtime) (round1Path, round2Path string) {
 // outcome line and round 2's report text last, carry round 1's under its own
 // header, name round 2 in Round, and leave nothing pending.
 func TestWaitDeliversTheWaitedRoundAfterAFailedOne(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	round1Path, round2Path := seedTwoRounds(t, rt)
 

@@ -52,6 +52,8 @@ func kvRowBytes(t *testing.T, rt Runtime, key string) []byte {
 // timer fires instead of failing fast, which is why the assertion is a
 // select against a timer rather than a bare call.
 func TestRecordSpawnFailureLockedUnderHeldLock(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	done := make(chan error, 1)
@@ -84,6 +86,8 @@ func TestRecordSpawnFailureLockedUnderHeldLock(t *testing.T) {
 }
 
 func TestUnavailableRecordsTheProvider(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	provider, err := Unavailable(rt, testClaudeRef, time.Time{}, "5h window")
@@ -117,6 +121,8 @@ func TestUnavailableRecordsTheProvider(t *testing.T) {
 }
 
 func TestUnavailableWithUntil(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	until := baseTime.Add(2 * time.Hour)
 
@@ -134,6 +140,8 @@ func TestUnavailableWithUntil(t *testing.T) {
 }
 
 func TestUnavailableRefusesAnUnknownToken(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, "claude/test/nope", time.Time{}, ""); !errors.Is(err, candidate.ErrUnknownCandidate) {
@@ -150,6 +158,8 @@ func TestUnavailableRefusesAnUnknownToken(t *testing.T) {
 }
 
 func TestAvailableByTokenAndByProvider(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "first"); err != nil {
@@ -184,6 +194,8 @@ func TestAvailableByTokenAndByProvider(t *testing.T) {
 }
 
 func TestAvailableLeavesSpawnFailures(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	recordSpawnFailure(rt, testClaudeRef, "webshop", errors.New("boom"))
@@ -209,6 +221,8 @@ func TestAvailableLeavesSpawnFailures(t *testing.T) {
 }
 
 func TestGatesEmptyWhenNoLedger(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	if got := Gates(rt); got != nil {
@@ -217,6 +231,8 @@ func TestGatesEmptyWhenNoLedger(t *testing.T) {
 }
 
 func TestGatesProjectsOntoCandidates(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
@@ -256,6 +272,8 @@ func TestGatesProjectsOntoCandidates(t *testing.T) {
 // medium's version of a hand-edited file) is simulated by a KV that returns
 // invalid bytes.
 func TestGatesToleratesABadLedger(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Gates = badJSONKV{}
 
@@ -268,6 +286,8 @@ func TestGatesToleratesABadLedger(t *testing.T) {
 // unknown kind or source rides through the Load -> Prune -> mutate -> Save
 // path mutateLedgerLocked takes, untouched.
 func TestMutateLedgerCarriesUnknownEntries(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	doc := `{"entries":[
@@ -303,6 +323,8 @@ func TestMutateLedgerCarriesUnknownEntries(t *testing.T) {
 // invisible to readers: Gates still returns exactly the known gates (#372
 // §4.2).
 func TestGatesIgnoresUnknownEntries(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	doc := `{"entries":[
@@ -329,6 +351,8 @@ func TestGatesIgnoresUnknownEntries(t *testing.T) {
 // gate renders through ErrAllGated and skipText (#191): it must never drift
 // from "exited without a report".
 func TestGateKindTextExitedNoReport(t *testing.T) {
+	t.Parallel()
+
 	if got := GateKindText(ledger.ExitedNoReport); got != "exited without a report" {
 		t.Errorf("GateKindText(ExitedNoReport) = %q, want %q", got, "exited without a report")
 	}
@@ -337,6 +361,8 @@ func TestGateKindTextExitedNoReport(t *testing.T) {
 // TestGateKindTextRolesMissing pins #238's wording in status, candidates and
 // doctor.
 func TestGateKindTextRolesMissing(t *testing.T) {
+	t.Parallel()
+
 	if got := GateKindText(ledger.RolesMissing); got != "roles missing" {
 		t.Errorf("GateKindText(RolesMissing) = %q, want %q", got, "roles missing")
 	}
@@ -384,6 +410,8 @@ func TestGateUntilText(t *testing.T) {
 }
 
 func TestGatedNoteEmptyWhenNotGated(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	if got := gatedNote(rt, testClaudeRef); got != "" {
@@ -395,6 +423,8 @@ func TestGatedNoteEmptyWhenNotGated(t *testing.T) {
 // the candidate's short name beside its canonical token, and a token no
 // longer configured reads as itself.
 func TestGatesCarryName(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "5h window"); err != nil {
@@ -416,6 +446,8 @@ func TestGatesCarryName(t *testing.T) {
 }
 
 func TestGatedNoteFormatsEveryGate(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "5h window"); err != nil {
@@ -442,6 +474,8 @@ func TestGatedNoteFormatsEveryGate(t *testing.T) {
 }
 
 func TestMutateLedgerPrunes(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	expired := ledger.Entry{
@@ -469,6 +503,8 @@ func TestMutateLedgerPrunes(t *testing.T) {
 }
 
 func TestUnavailableRecordsHistory(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "5h window"); err != nil {
@@ -494,6 +530,8 @@ func TestUnavailableRecordsHistory(t *testing.T) {
 // TestRecordSpawnFailureLockedUnderHeldLock's already-held-lock setup, since
 // that is the daemon-switch path recordSpawnFailureLocked serves.
 func TestSwitchSpawnFailureRecordsHistory(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	done := make(chan error, 1)
@@ -532,6 +570,8 @@ func TestSwitchSpawnFailureRecordsHistory(t *testing.T) {
 // Since is the At of the entry the clear removed, so At - Since is how long
 // the provider was blocked.
 func TestAvailableRecordsClear(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
@@ -578,6 +618,8 @@ func TestAvailableRecordsClear(t *testing.T) {
 // TestAvailableNothingClearedRecordsNothing: zero removed is not an error and
 // is not an observation either, so the history stays empty.
 func TestAvailableNothingClearedRecordsNothing(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	provider, removed, err := Available(rt, "test", ClearedByPlanner)
@@ -599,6 +641,8 @@ func TestAvailableNothingClearedRecordsNothing(t *testing.T) {
 // given an Until that has passed by the time the clear runs precisely so the
 // pruned-and-saved ledger would differ from the file the refusal must leave.
 func TestAvailableRefusesUnknownWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, baseTime.Add(time.Hour), "reason"); err != nil {
@@ -624,6 +668,8 @@ func TestAvailableRefusesUnknownWritesNothing(t *testing.T) {
 // TestAvailableRejectsBadSource: source is one of two constants, and a
 // caller that passes anything else has a bug -- nothing is written.
 func TestAvailableRejectsBadSource(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "reason"); err != nil {
@@ -646,6 +692,8 @@ func TestAvailableRejectsBadSource(t *testing.T) {
 }
 
 func TestHistoryFailureDoesNotFailTheLedger(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	// A KV whose availability write fails while the ledger write succeeds:
@@ -664,6 +712,8 @@ func TestHistoryFailureDoesNotFailTheLedger(t *testing.T) {
 }
 
 func TestBindingsOnProvider(t *testing.T) {
+	t.Parallel()
+
 	bindings := []store.Binding{
 		{
 			// active + open round on anthropic: in.
@@ -707,6 +757,8 @@ func TestBindingsOnProvider(t *testing.T) {
 // TestUnavailableByName pins A1 §4.2: a candidate name is accepted, and the
 // canonical candidate's provider is what the ledger records.
 func TestUnavailableByName(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	provider, err := Unavailable(rt, "claude-m", time.Time{}, "quota")

@@ -17,6 +17,8 @@ import (
 // the shape, the gate, the stored tier and roles.json as the source, and a kind
 // line carries the definition's agent, its requires and the custom marker.
 func TestFormatRolesFileMode(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesViewsCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{MaxTier: "yolo"}, map[string]roles.Row{
 		"builder": {
@@ -48,6 +50,8 @@ func TestFormatRolesFileMode(t *testing.T) {
 // the candidates line is the role's order as written, and a role with none says
 // so.
 func TestFormatRolesLegacy(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, `[
 	  {"harness":"claude","provider":"test","model":"m","roles":["builder"]}
 	]`)
@@ -74,6 +78,8 @@ func TestFormatRolesLegacy(t *testing.T) {
 // names it, so the legacy candidates line lists it, marked (unlisted), rather
 // than wrongly saying (none).
 func TestFormatRolesLegacyCandidatesFromRanked(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join("..", "roles", "testdata", "legacy-candidates.json")
 	set, err := candidate.Load(path)
 	if err != nil {

@@ -46,6 +46,8 @@ func (g *orderedGit) RemoveWorktree(ctx context.Context, dir, path string, force
 }
 
 func TestCreateScratchOrder(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fg := &fakeGit{headCommitID: "head1", snapshotTreeID: "tree1"}
 	og := &orderedGit{fakeGit: fg}
@@ -81,6 +83,8 @@ func TestCreateScratchOrder(t *testing.T) {
 }
 
 func TestCreateScratchMaterializeFailureRemoves(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fg := &fakeGit{headCommitID: "head1", snapshotTreeID: "tree1", materializeErr: errors.New("boom")}
 	rt := Runtime{Git: fg, Store: store.New(t.TempDir())}
@@ -110,6 +114,8 @@ func TestCreateScratchMaterializeFailureRemoves(t *testing.T) {
 }
 
 func TestCreateScratchRemovesLeftover(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fg := &fakeGit{headCommitID: "head1", snapshotTreeID: "tree1"}
 	og := &orderedGit{fakeGit: fg}
@@ -141,6 +147,8 @@ func TestCreateScratchRemovesLeftover(t *testing.T) {
 }
 
 func TestScratchPathShape(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	got := st.ScratchWorktreePath("api", 7)
 	want := filepath.Join(".worktrees", ".scratch", "api-007")
@@ -154,6 +162,8 @@ func TestScratchPathShape(t *testing.T) {
 // and a sweep over three leftovers removes exactly the two whose round is
 // closed.
 func TestScratchRealGit(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	repo := t.TempDir()

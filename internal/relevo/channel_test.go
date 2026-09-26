@@ -57,6 +57,8 @@ func alwaysAlive(int) bool { return true }
 func neverAlive(int) bool  { return false }
 
 func TestClaimLiveAbsent(t *testing.T) {
+	t.Parallel()
+
 	f, _, _ := testClaims(t)
 	c, err := f.Live(testClaimPlanner, time.Now())
 	if err != nil {
@@ -71,6 +73,8 @@ func TestClaimLiveAbsent(t *testing.T) {
 // written to the claim/<planner-id> row, is found by that id, and is not
 // found by another planner's id.
 func TestClaimKeyedByPlannerID(t *testing.T) {
+	t.Parallel()
+
 	f, d, _ := testClaims(t)
 	now := time.Now()
 
@@ -109,6 +113,8 @@ func TestClaimKeyedByPlannerID(t *testing.T) {
 // question about a pane it no longer has) and leave the row where it is:
 // nothing in this version rewrites or removes a pane-keyed row.
 func TestClaimLiveIgnoresPaneKeyedRow(t *testing.T) {
+	t.Parallel()
+
 	f, d, _ := testClaims(t)
 	now := time.Now()
 
@@ -131,6 +137,8 @@ func TestClaimLiveIgnoresPaneKeyedRow(t *testing.T) {
 }
 
 func TestPaneKeyedClaimDead(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		label string
 		raw   string
@@ -150,6 +158,8 @@ func TestPaneKeyedClaimDead(t *testing.T) {
 }
 
 func TestClaimLiveRemovesStaleTTL(t *testing.T) {
+	t.Parallel()
+
 	f, d, _ := testClaims(t)
 	start := time.Now()
 	seedClaim(t, d, testClaimPlanner, Claim{Planner: testClaimPlanner, PID: 123, StartedAt: start, SeenAt: start})
@@ -170,6 +180,8 @@ func TestClaimLiveRemovesStaleTTL(t *testing.T) {
 // TestClaimLiveRemovesDeadPID is the plan's required case: a claim with a
 // dead pid must read as not-live and the row must be gone afterward.
 func TestClaimLiveRemovesDeadPID(t *testing.T) {
+	t.Parallel()
+
 	f, d, _ := testClaims(t)
 	f.Alive = neverAlive
 	now := time.Now()
@@ -210,6 +222,8 @@ func (k *invalidJSONKV) KVDelete(key string) error {
 }
 
 func TestClaimLiveRemovesUnparseable(t *testing.T) {
+	t.Parallel()
+
 	d := testSecretDB(t)
 	kv := &invalidJSONKV{DBTxKV: db.TxKV{DB: d}, key: claimKey(testClaimPlanner)}
 	f := &KVClaims{KV: kv, Alive: alwaysAlive}
@@ -227,6 +241,8 @@ func TestClaimLiveRemovesUnparseable(t *testing.T) {
 }
 
 func TestClaimLiveEmptyPlanner(t *testing.T) {
+	t.Parallel()
+
 	f, _, _ := testClaims(t)
 	if _, err := f.Live("", time.Now()); err == nil {
 		t.Fatal("Live with an empty planner must error")
@@ -234,6 +250,8 @@ func TestClaimLiveEmptyPlanner(t *testing.T) {
 }
 
 func TestClaimWriteRefusesSecondLiveWriter(t *testing.T) {
+	t.Parallel()
+
 	f, _, _ := testClaims(t)
 	now := time.Now()
 	first := Claim{Planner: testClaimPlanner, PID: 111, StartedAt: now, SeenAt: now}
@@ -253,6 +271,8 @@ func TestClaimWriteRefusesSecondLiveWriter(t *testing.T) {
 // written again, so a claim whose key is not a planner id is refused rather
 // than silently creating a pane-keyed row.
 func TestClaimWriteRefusesANonPlannerID(t *testing.T) {
+	t.Parallel()
+
 	f, d, _ := testClaims(t)
 	now := time.Now()
 	err := f.Write(Claim{Planner: "wG:pQ", PID: 111, StartedAt: now, SeenAt: now}, now)
@@ -265,6 +285,8 @@ func TestClaimWriteRefusesANonPlannerID(t *testing.T) {
 }
 
 func TestClaimWriteSameWriterRefreshes(t *testing.T) {
+	t.Parallel()
+
 	f, _, _ := testClaims(t)
 	now := time.Now()
 	claim := Claim{Planner: testClaimPlanner, PID: 111, StartedAt: now, SeenAt: now}
@@ -288,6 +310,8 @@ func TestClaimWriteSameWriterRefreshes(t *testing.T) {
 }
 
 func TestClaimWriteOverwritesStaleClaim(t *testing.T) {
+	t.Parallel()
+
 	f, _, _ := testClaims(t)
 	start := time.Now()
 	first := Claim{Planner: testClaimPlanner, PID: 111, StartedAt: start, SeenAt: start}
@@ -311,6 +335,8 @@ func TestClaimWriteOverwritesStaleClaim(t *testing.T) {
 }
 
 func TestClaimRemoveOnlyMatchingPID(t *testing.T) {
+	t.Parallel()
+
 	f, _, _ := testClaims(t)
 	now := time.Now()
 	claim := Claim{Planner: testClaimPlanner, PID: 111, StartedAt: now, SeenAt: now}
@@ -334,6 +360,8 @@ func TestClaimRemoveOnlyMatchingPID(t *testing.T) {
 }
 
 func TestClaimRemoveAbsentIsNotAnError(t *testing.T) {
+	t.Parallel()
+
 	f, _, _ := testClaims(t)
 	if err := f.Remove(testClaimPlanner, 111); err != nil {
 		t.Fatalf("Remove on an absent claim must not error: %v", err)
@@ -344,6 +372,8 @@ func TestClaimRemoveAbsentIsNotAnError(t *testing.T) {
 // channels/<name>.json is put to claim/<name> and removed, and the emptied
 // directory goes with it.
 func TestClaimsImportAdoptsChannelFiles(t *testing.T) {
+	t.Parallel()
+
 	d := testSecretDB(t)
 	dir := filepath.Join(t.TempDir(), "channels")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
