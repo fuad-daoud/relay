@@ -293,3 +293,117 @@ docs/plans/2026-09-26-planner-actors-586.md   append this round as "## Round 2"
 ### Report must include
 
 `git diff --stat HEAD~1`, and the `make check` result.
+
+---
+
+## Round 3
+
+### #586 round 3: claude gives no builder candidate in config init
+
+Rounds 1-2 plus a README fix are committed on this branch (HEAD `a8493d6a`).
+This round is one more change in the same place. Stop and report instead of
+improvising if a location below does not match.
+
+### 1. System Overview
+
+Decision (user, 2026-09-26): claude plans and never builds by default.
+`relevo config init` no longer writes a claude builder candidate. Today
+`setup.Defaults["claude"]` = `{"anthropic","sonnet"}` makes `sonnet` a builder
+candidate whenever `claude` is on PATH.
+
+- Other harnesses on PATH: the builder gets one candidate per non-claude
+  harness, exactly as today.
+- Claude is the only harness on PATH: the builder actor is written with **no
+  candidates**. `roles.validateActor` accepts that, as a `planner` with no
+  candidates is valid today. init prints one note telling the user to add a
+  builder candidate.
+- `claude` still counts as a harness found. Its role definitions are still
+  installed (`Files.Kinds` keeps it), and it still gives the `planner` actor
+  its `opus:medium` candidate.
+
+### 2. Files
+
+```
+internal/setup/setup.go         remove Defaults["claude"]; skip kinds with no builder default; Files.CandidateNames
+internal/setup/setup_test.go    updated counts; new claude-only test
+cmd/relevo/init.go              candidates line lists names; claude-only note
+cmd/relevo/init_test.go         updated count and output
+README.md                       init description and example output
+docs/plans/2026-09-26-planner-actors-586.md   append as "## Round 3"
+```
+
+### 3. Contracts
+
+`internal/setup/setup.go`:
+- `Defaults`: delete the `"claude"` entry. Update its comment: it maps each
+  harness kind to its **builder** default, and `claude` has none because claude
+  plans (a *why* comment, one line).
+- `Plan` loop (currently `d := Defaults[h.Kind]`, ~line 54): a kind on PATH is
+  appended to `kinds` as today. A builder candidate is appended **only when**
+  `Defaults` has an entry for the kind (`d, ok := Defaults[h.Kind]`).
+  `builderCount` is the number of builder candidates appended (it may be 0).
+- The no-binaries error is unchanged (it keys on `kinds`, not on candidates).
+- `Files` gains `CandidateNames []string`: the names from the single
+  `candidate.DeriveNames` call, in candidate order. The builder actor gets
+  `names[:builderCount]`, which may be empty. The builder actor is always written.
+
+`cmd/relevo/init.go` (`cmdInit`, ~lines 71-77):
+- The candidates line becomes
+  `wrote candidates (<len(CandidateNames)>: <names joined ", ">)`, e.g.
+  `wrote candidates (3: glm-5.3-flash, opus, deepseek-v4.1-flash)` for
+  claude and opencode.
+- `actorSummary`: an actor with no candidates renders as `builder: none`.
+- When the builder actor has no candidates, print right after the actors line:
+  `note: no builder candidate (claude only plans); add one: relevo config set actors.builder.candidates '["<name>"]'`.
+
+### 4. Working Efficiently
+
+- Read `internal/setup/setup.go`, `internal/setup/setup_test.go`,
+  `cmd/relevo/init.go`, `cmd/relevo/init_test.go` and `README.md` 150-175 and
+  370-380 in one parallel batch. One edit call per file.
+- Focused: `go test ./internal/setup/ ./cmd/relevo/ -run 'Plan|Init'`.
+  Stub binaries only: CI has no harness binaries and no network.
+- Full check once at the end: `make check`, then `gofmt -l .`.
+
+### 5. Steps
+
+1. **setup.** Make the changes in §3. Update the tests:
+   - `TestPlanFindsBinariesInHarnessOrder` (claude and opencode): `Kinds` is still
+     `[claude opencode]`; there are 3 candidates; the builder's candidates are
+     exactly `["glm-5.3-flash"]`; `CandidateNames` equals `DeriveNames(cands)`.
+   - `TestPlanSeedsPlannerActors`: adjust any count or index that assumed a
+     claude builder candidate. Keep the model and name assertions.
+   - New `TestPlanClaudeOnlyHasNoBuilderCandidate`: only claude on PATH gives
+     no error, `Kinds == [claude]`, a builder actor with agent `plan-executor`
+     and zero candidates, and a `planner` actor with `["opus"]`. No candidate
+     has model `sonnet`.
+   - New `TestPlanNeverMakesClaudeABuilder`: every harness on PATH gives
+     builder candidates none of which has `Harness == "claude"`.
+   Verify: `go test ./internal/setup/`. Mutation-check it: temporarily re-add
+   `"claude": {"anthropic","sonnet"}` to `Defaults`, confirm
+   `TestPlanNeverMakesClaudeABuilder` fails, then restore.
+2. **init.** Make the changes in §3.
+   - `TestInitWritesConfigAndRoles`: the candidates count becomes 3.
+   - `TestInitReportsActors`: keep it building the expected actors line from
+     the stored actors. Also assert the candidates line
+     `wrote candidates (3: glm-5.3-flash, opus, deepseek-v4.1-flash)`.
+   - New `TestInitClaudeOnlyNotesMissingBuilder`: stub only `claude` on PATH.
+     Output contains `builder: none` and the `note: no builder candidate` line.
+     Use `initRoot`/`stubBinary`/`captureOutput` like the existing tests.
+   Verify: `go test ./cmd/relevo/ -run Init`.
+3. **README** (~lines 150-175 and ~375):
+   - The init description says it writes one builder candidate per harness
+     **except claude**, which only plans (it gets the `planner` actor).
+   - The example output becomes:
+     `wrote candidates (3: glm-5.3-flash, opus, deepseek-v4.1-flash)` and
+     `wrote actors (builder: glm-5.3-flash; planner: opus; lite-planner: deepseek-v4.1-flash)`.
+   - Add one sentence on the claude-only case: the builder has no candidates,
+     and init says how to add one.
+4. **Full check and commit.** Run `make check` and `gofmt -l .`. Append this plan
+   under `## Round 3` in `docs/plans/2026-09-26-planner-actors-586.md`. Commit
+   as a new commit (no amend) referencing #586.
+
+### Report must include
+
+`git diff --stat HEAD~1`, the step-1 mutation check and its result, and the
+`make check` result.

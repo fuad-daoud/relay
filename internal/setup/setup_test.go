@@ -39,8 +39,8 @@ func TestPlanFindsBinariesInHarnessOrder(t *testing.T) {
 	if err := json.Unmarshal(files.Candidates, &cands); err != nil {
 		t.Fatalf("unmarshal candidates: %v", err)
 	}
-	if len(cands) != 4 {
-		t.Fatalf("candidates = %d, want 4", len(cands))
+	if len(cands) != 3 {
+		t.Fatalf("candidates = %d, want 3", len(cands))
 	}
 	for _, c := range cands {
 		if c.Roles != nil || c.Tier != "" {
@@ -78,8 +78,11 @@ func TestPlanFindsBinariesInHarnessOrder(t *testing.T) {
 	for _, e := range builder.Candidates {
 		names = append(names, e.Candidate)
 	}
-	if want := candidate.DeriveNames(cands)[:2]; !reflect.DeepEqual(names, want) {
-		t.Errorf("builder candidates = %v, want the first two of the plan's names %v", names, want)
+	if want := []string{"glm-5.3-flash"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("builder candidates = %v, want %v", names, want)
+	}
+	if want := candidate.DeriveNames(cands); !reflect.DeepEqual(files.CandidateNames, want) {
+		t.Errorf("CandidateNames = %v, want %v", files.CandidateNames, want)
 	}
 }
 
@@ -143,6 +146,87 @@ func TestPlanSeedsPlannerActors(t *testing.T) {
 	}
 	if liteCand.Harness != "opencode" || liteCand.Provider != "openrouter" {
 		t.Errorf("lite-planner candidate = %+v, want harness opencode and provider openrouter", liteCand)
+	}
+}
+
+func TestPlanClaudeOnlyHasNoBuilderCandidate(t *testing.T) {
+	files, err := Plan(pathEnv{onPath: map[string]bool{"claude": true}})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if want := []string{"claude"}; !reflect.DeepEqual(files.Kinds, want) {
+		t.Fatalf("Kinds = %v, want %v", files.Kinds, want)
+	}
+	actorSet, _, err := roles.ParseActors(files.Actors)
+	if err != nil {
+		t.Fatalf("roles.ParseActors: %v", err)
+	}
+	builder, ok := actorSet["builder"]
+	if !ok {
+		t.Fatalf("actors = %v, want a builder", actorSet)
+	}
+	if builder.Agent != "plan-executor" {
+		t.Errorf("builder agent = %q, want plan-executor", builder.Agent)
+	}
+	if len(builder.Candidates) != 0 {
+		t.Errorf("builder candidates = %v, want none", builder.Candidates)
+	}
+	planner, ok := actorSet["planner"]
+	if !ok {
+		t.Fatalf("actors = %v, want a planner", actorSet)
+	}
+	var names []string
+	for _, e := range planner.Candidates {
+		names = append(names, e.Candidate)
+	}
+	if want := []string{"opus"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("planner candidates = %v, want %v", names, want)
+	}
+
+	var cands []candidate.Candidate
+	if err := json.Unmarshal(files.Candidates, &cands); err != nil {
+		t.Fatalf("unmarshal candidates: %v", err)
+	}
+	for _, c := range cands {
+		if c.Model == "sonnet" {
+			t.Errorf("candidate %s has model sonnet, want no claude builder candidate", c.Ref())
+		}
+	}
+}
+
+func TestPlanNeverMakesClaudeABuilder(t *testing.T) {
+	files, err := Plan(pathEnv{onPath: map[string]bool{"claude": true, "opencode": true, "agy": true, "codex": true}})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	actorSet, _, err := roles.ParseActors(files.Actors)
+	if err != nil {
+		t.Fatalf("roles.ParseActors: %v", err)
+	}
+	builder, ok := actorSet["builder"]
+	if !ok {
+		t.Fatalf("actors = %v, want a builder", actorSet)
+	}
+	if len(builder.Candidates) == 0 {
+		t.Fatal("builder candidates = none, want one per non-claude harness")
+	}
+	var cands []candidate.Candidate
+	if err := json.Unmarshal(files.Candidates, &cands); err != nil {
+		t.Fatalf("unmarshal candidates: %v", err)
+	}
+	byName := make(map[string]candidate.Candidate, len(cands))
+	for i, name := range candidate.DeriveNames(cands) {
+		byName[name] = cands[i]
+	}
+	for _, e := range builder.Candidates {
+		c, ok := byName[e.Candidate]
+		if !ok {
+			t.Errorf("builder candidate %q is not one of the plan's names", e.Candidate)
+			continue
+		}
+		if c.Harness == "claude" {
+			t.Errorf("builder candidate %s is a claude candidate, want none", e.Candidate)
+		}
 	}
 }
 

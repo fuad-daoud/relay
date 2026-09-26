@@ -15,9 +15,9 @@ import (
 
 type Default struct{ Provider, Model string }
 
-// Defaults is the README's documented example: relevo's real defaults, which pass candidate.Load as written.
+// Defaults maps each harness kind to its builder default. claude has none
+// because claude plans: it is seeded as a planner actor instead.
 var Defaults = map[string]Default{
-	"claude":   {"anthropic", "sonnet"},
 	"opencode": {"openrouter", "z-ai/glm-5.3-flash"},
 	"agy":      {"google", "gemini-3.8-flash-high"},
 	"codex":    {"openai", "gpt-5.6-terra:high"},
@@ -36,11 +36,12 @@ var PlannerDefaults = []PlannerDefault{
 
 // Files is the starter configuration Plan produced, ready to store.
 type Files struct {
-	Kinds      []string // harness kinds found on PATH, in harness.All() order
-	Candidates []byte   // JSON, indented two spaces, trailing newline
-	Policy     []byte   // JSON, indented two spaces, trailing newline
-	Actors     []byte   // JSON, the builder actor plus the planner actors whose harness is on PATH
-	ActorOrder []string // the actor names written: builder, then PlannerDefaults order (only those written)
+	Kinds          []string // harness kinds found on PATH, in harness.All() order
+	Candidates     []byte   // JSON, indented two spaces, trailing newline
+	Policy         []byte   // JSON, indented two spaces, trailing newline
+	Actors         []byte   // JSON, the builder actor plus the planner actors whose harness is on PATH
+	ActorOrder     []string // the actor names written: builder, then PlannerDefaults order (only those written)
+	CandidateNames []string // the names DeriveNames gave every candidate, in candidate order
 }
 
 // Plan builds starter candidates, a policy and starter actors for every harness binary on PATH, erroring when none is found.
@@ -51,8 +52,11 @@ func Plan(env harness.InstallEnv) (Files, error) {
 		if _, err := env.LookPath(h.Binary); err != nil {
 			continue
 		}
-		d := Defaults[h.Kind]
 		kinds = append(kinds, h.Kind)
+		d, ok := Defaults[h.Kind]
+		if !ok {
+			continue
+		}
 		candidates = append(candidates, candidate.Candidate{
 			Harness:  h.Kind,
 			Provider: d.Provider,
@@ -102,7 +106,7 @@ func Plan(env harness.InstallEnv) (Files, error) {
 		return Files{}, fmt.Errorf("marshal actors: %w", err)
 	}
 
-	return Files{Kinds: kinds, Candidates: candJSON, Policy: polJSON, Actors: actorsJSON, ActorOrder: order}, nil
+	return Files{Kinds: kinds, Candidates: candJSON, Policy: polJSON, Actors: actorsJSON, ActorOrder: order, CandidateNames: names}, nil
 }
 
 // starterActors assembles the builder actor and one reader actor per written

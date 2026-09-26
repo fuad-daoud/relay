@@ -69,12 +69,19 @@ func cmdInit(args []string) error {
 		return err
 	}
 
-	fmt.Printf("wrote candidates (%d: %s)\n", len(files.Kinds), strings.Join(files.Kinds, ", "))
+	fmt.Printf("wrote candidates (%d: %s)\n", len(files.CandidateNames), strings.Join(files.CandidateNames, ", "))
 	summary, err := actorSummary(files.Actors, files.ActorOrder)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("wrote actors (%s)\n", summary)
+	actorSet, _, err := roles.ParseActors(files.Actors)
+	if err != nil {
+		return err
+	}
+	if len(actorSet["builder"].Candidates) == 0 {
+		fmt.Println(`note: no builder candidate (claude only plans); add one: relevo config set actors.builder.candidates '["<name>"]'`)
+	}
 
 	if !*noRoles {
 		failed := false
@@ -100,8 +107,9 @@ func cmdInit(args []string) error {
 }
 
 // actorSummary renders every actor in order as the text inside the `wrote
-// actors (...)` line: `builder: a, b; planner: c`. Each actor's names come from
-// parsing the actors section Plan wrote.
+// actors (...)` line: `builder: a, b; planner: c`. An actor with no candidates
+// renders as `builder: none`. Each actor's names come from parsing the actors
+// section Plan wrote.
 func actorSummary(actors []byte, order []string) (string, error) {
 	set, _, err := roles.ParseActors(actors)
 	if err != nil {
@@ -117,7 +125,11 @@ func actorSummary(actors []byte, order []string) (string, error) {
 		for _, e := range a.Candidates {
 			names = append(names, e.Candidate)
 		}
-		parts = append(parts, name+": "+strings.Join(names, ", "))
+		rendered := strings.Join(names, ", ")
+		if len(names) == 0 {
+			rendered = "none"
+		}
+		parts = append(parts, name+": "+rendered)
 	}
 	return strings.Join(parts, "; "), nil
 }

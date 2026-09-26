@@ -61,8 +61,8 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 	}
 
 	L := storedConfig(t)
-	if L.Candidates.Len() != 4 {
-		t.Errorf("stored candidates = %v, want the two builder and two planner candidates", L.Candidates.Refs())
+	if L.Candidates.Len() != 3 {
+		t.Errorf("stored candidates = %v, want the one builder and two planner candidates", L.Candidates.Refs())
 	}
 	// R5: the candidates carry no roles/tier, the policy only max_tier, and a
 	// builder actor over the candidates' names is what says who serves what.
@@ -82,8 +82,8 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 	if builder.Agent != "plan-executor" || builder.Tier != "yolo" {
 		t.Errorf("builder actor = %+v, want plan-executor at tier yolo", builder)
 	}
-	if len(builder.Candidates) != 2 {
-		t.Errorf("builder candidates = %v, want the two plan names", builder.Candidates)
+	if len(builder.Candidates) != 1 {
+		t.Errorf("builder candidates = %v, want the one non-claude plan name", builder.Candidates)
 	}
 
 	for _, path := range []string{
@@ -138,6 +138,34 @@ func TestInitReportsActors(t *testing.T) {
 	out := string(stdout) + string(stderr)
 	if !strings.Contains(out, want) {
 		t.Errorf("output does not contain %q:\n%s", want, out)
+	}
+	if want := "wrote candidates (3: glm-5.3-flash, opus, deepseek-v4.1-flash)"; !strings.Contains(out, want) {
+		t.Errorf("output does not contain %q:\n%s", want, out)
+	}
+}
+
+// TestInitClaudeOnlyNotesMissingBuilder pins the claude-only case: the builder
+// is written with no candidates and init says how to add one.
+func TestInitClaudeOnlyNotesMissingBuilder(t *testing.T) {
+	initRoot(t)
+
+	bin := t.TempDir()
+	stubBinary(t, bin, "claude")
+	t.Setenv("PATH", bin)
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "init"})
+	})
+	if err != nil {
+		t.Fatalf("run init: %v (stderr: %s)", err, stderr)
+	}
+
+	out := string(stdout) + string(stderr)
+	if !strings.Contains(out, "builder: none") {
+		t.Errorf("output does not contain %q:\n%s", "builder: none", out)
+	}
+	if !strings.Contains(out, "note: no builder candidate") {
+		t.Errorf("output does not contain %q:\n%s", "note: no builder candidate", out)
 	}
 }
 
