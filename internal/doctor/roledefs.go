@@ -75,7 +75,8 @@ func pinMismatchCheck(kind string, r harness.Role, model, detail string) (Check,
 }
 
 // customRoleCheck probes one custom role definition on disk: the user's own
-// file, so no model-pin or drift check, and a missing file's fix is by hand.
+// file, so no model-pin or drift check, and a missing file's fix offers the
+// install verb and the by-hand path.
 func customRoleCheck(env Env, kind, name string) Check {
 	path, _ := harness.DefinitionPath(kind, name)
 	homeRel := "~/" + path
@@ -91,7 +92,7 @@ func customRoleCheck(env Env, kind, name string) Check {
 		return Check{
 			Group: kind, Name: name, Severity: SevWarn,
 			Detail: "missing: " + homeRel + " (custom)",
-			Fix:    "install your agent definition at " + homeRel + "; relevo never installs a custom definition",
+			Fix:    "run relevo config agents --kind " + kind + ", or install your agent definition at " + homeRel,
 		}
 	}
 	return Check{Group: kind, Name: name, Severity: SevOK, Detail: homeRel + " (custom)"}

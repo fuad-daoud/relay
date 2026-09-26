@@ -1221,6 +1221,12 @@ func TestGoldenViews(t *testing.T) {
 			},
 		},
 		{
+			name: "agents-custom-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				return candDown(t, goldenAgentsModel(t, 132, 34, sourceAgentFixture(t)), 4) // security-reviewer
+			},
+		},
+		{
 			name: "agent-researcher-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				fa := &fakeActions{doc: candFixtureDoc(t), files: agentFileFixtures(t)}

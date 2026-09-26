@@ -29,6 +29,7 @@ func cmdAgentInstall(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "dry run")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: relevo config agents [--kind <agy|claude|opencode>] [--role <name>] [--force] [--dry-run]")
+		fmt.Fprintln(fs.Output(), "Installs relevo's shipped agents and the custom agents in your config.")
 		fmt.Fprintln(fs.Output(), "For opencode it also installs the relevo OpenCode plugin (~/.config/opencode/plugins/relevo).")
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -53,10 +54,51 @@ func cmdAgentInstall(args []string) error {
 		return err
 	}
 
-	results, err := harness.Install(env, opts)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
-		return exitCodeErr{code: 2}
+	// The custom agents live in the machine config, which may be unreadable;
+	// that must not stop the shipped install, so a config failure is one
+	// warning on stderr and nothing more.
+	cfg, cfgErr := relevo.MachineConfig()
+	sourceRole := false
+	if cfgErr == nil && *role != "" {
+		loaded, lerr := cfg.Load()
+		if lerr != nil {
+			cfgErr = lerr
+		} else {
+			sourceRole = relevo.IsSourceAgent(loaded.Agents, *role)
+		}
+	}
+	if cfgErr != nil {
+		fmt.Fprintf(os.Stderr, "relevo: custom agents not installed: %v\n", cfgErr)
+	}
+
+	var results []harness.InstallResult
+	if sourceRole {
+		// harness.Install refuses a name it does not ship, so a source agent
+		// is installed by the custom path alone.
+		custom, cerr := relevo.InstallCustomAgents(cfg, env, opts)
+		if cerr != nil {
+			fmt.Fprintf(os.Stderr, "relevo: custom agents not installed: %v\n", cerr)
+		}
+		results = append(results, custom...)
+	} else {
+		shipped, serr := harness.Install(env, opts)
+		if serr != nil {
+			fmt.Fprintf(os.Stderr, "relevo: %v\n", serr)
+			return exitCodeErr{code: 2}
+		}
+		results = append(results, shipped...)
+		if cfgErr == nil && *role == "" {
+			// A --role names exactly the one agent to install, so the custom
+			// walk runs only with no role: it then installs every custom
+			// agent the kind and force flags select.
+			customOpts := opts
+			customOpts.Role = ""
+			custom, cerr := relevo.InstallCustomAgents(cfg, env, customOpts)
+			if cerr != nil {
+				fmt.Fprintf(os.Stderr, "relevo: custom agents not installed: %v\n", cerr)
+			}
+			results = append(results, custom...)
+		}
 	}
 
 	if len(results) == 0 {

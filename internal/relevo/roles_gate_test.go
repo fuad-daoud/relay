@@ -79,7 +79,9 @@ func TestRolesGateCustomBuilderGatesOnlyItsKindAndRole(t *testing.T) {
 	if gates[0].Token != testClaudeRef || gates[0].Role != "builder" || gates[0].Kind != availability.RolesMissing {
 		t.Fatalf("gate = %+v, want %s roles-missing for builder", gates[0], testClaudeRef)
 	}
-	if !strings.Contains(gates[0].Note, "roles missing for builder") || !strings.Contains(gates[0].Note, "yourself") {
+	if !strings.Contains(gates[0].Note, "roles missing for builder") ||
+		!strings.Contains(gates[0].Note, "run relevo config agents --kind claude for a custom agent relevo renders") ||
+		!strings.Contains(gates[0].Note, "yourself") {
 		t.Errorf("note = %q, want it to name builder and the custom fix", gates[0].Note)
 	}
 
@@ -159,7 +161,7 @@ func TestRolesMissingNoteWording(t *testing.T) {
 	}
 
 	custom := rolesMissingNote("builder", "claude", []string{"my-executor"}, []string{".claude/agents/my-executor.md"})
-	if !strings.Contains(custom, "yourself") {
+	if !strings.Contains(custom, "run relevo config agents --kind claude for a custom agent relevo renders") || !strings.Contains(custom, "yourself") {
 		t.Errorf("custom note = %q, want the custom fix", custom)
 	}
 	if strings.Contains(custom, "agent install") {

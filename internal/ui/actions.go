@@ -496,24 +496,38 @@ func (a *plannerActions) Probe(ctx context.Context, name string) Result {
 }
 
 // AgentFiles is one agent's definition state on every harness kind whose
-// binary is installed, in harness.All() order (§3): the same dry run
-// `relevo config agents --role <agent> --dry-run` prints. A custom agent has
-// no file state, so harness.AgentFiles answers nil, nil.
+// binary is installed, in harness.All() order: the same dry run `relevo config
+// agents --role <agent> --dry-run` prints. A source custom agent is rendered
+// from the live config; a native or unknown name has none.
 func (a *plannerActions) AgentFiles(agent string) ([]harness.AgentFile, error) {
 	env, err := relevo.AgentInstallEnv()
 	if err != nil {
 		return nil, err
 	}
-	return harness.AgentFiles(env, agent)
+	fs, err := harness.AgentFiles(env, agent)
+	if err != nil || fs != nil {
+		return fs, err
+	}
+	return relevo.CustomAgentFiles(a.runtime().Config, env, agent)
 }
 
 // ResetAgentFile overwrites agent's definition file on kind with the copy
-// relevo ships (§3). Its text is `reset <kind>'s <agent>`; Refresh asks the
-// shell to refetch status, which is what re-reads the view's rows.
+// relevo renders or ships: a source custom agent resets through
+// relevo.ResetCustomAgentFile, everything else through harness.ResetAgentFile.
+// Its text is `reset <kind>'s <agent>`; Refresh re-reads the view's rows.
 func (a *plannerActions) ResetAgentFile(ctx context.Context, kind, agent string) Result {
 	env, err := relevo.AgentInstallEnv()
 	if err != nil {
 		return Result{Err: err}
+	}
+	cfg := a.runtime().Config
+	if cfg != nil {
+		if loaded, lerr := cfg.Load(); lerr == nil && relevo.IsSourceAgent(loaded.Agents, agent) {
+			if _, err := relevo.ResetCustomAgentFile(cfg, env, kind, agent); err != nil {
+				return Result{Err: err}
+			}
+			return Result{Text: "reset " + kind + "'s " + agent, Refresh: true}
+		}
 	}
 	if _, err := harness.ResetAgentFile(env, kind, agent); err != nil {
 		return Result{Err: err}

@@ -3,6 +3,7 @@ package relevo
 import (
 	"path/filepath"
 
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -28,4 +29,19 @@ func AgentInstallEnv() (harness.InstallEnv, error) {
 		return nil, err
 	}
 	return harness.OSInstallEnvKV(d, filepath.Join(root, "agents-manifest.json")), nil
+}
+
+// MachineConfig opens the config store of the same machine database
+// AgentInstallEnv keeps the role manifest in: the custom agents live in the
+// config, so the surfaces that install them read both through one state root.
+func MachineConfig() (*config.Store, error) {
+	root, err := store.DefaultRoot()
+	if err != nil {
+		return nil, err
+	}
+	d, err := store.New(root).DB()
+	if err != nil {
+		return nil, err
+	}
+	return config.Open(d), nil
 }
