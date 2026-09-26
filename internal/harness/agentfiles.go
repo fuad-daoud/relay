@@ -7,10 +7,11 @@ import "fmt"
 type FileState string
 
 const (
-	FileUpToDate FileState = "up to date"
-	FileStale    FileState = "stale"
-	FileEdited   FileState = "your edit"
-	FileMissing  FileState = "missing"
+	FileUpToDate    FileState = "up to date"
+	FileStale       FileState = "stale"
+	FileEdited      FileState = "your edit"
+	FileEditedNewer FileState = "edit + newer"
+	FileMissing     FileState = "missing"
 )
 
 // AgentFile is one (agent, harness kind) definition file.
@@ -79,6 +80,9 @@ func fileState(res InstallResult) (FileState, error) {
 	case OutcomeWouldUpdate:
 		return FileStale, nil
 	case OutcomeKeptDiffers:
+		if res.NewerShipped {
+			return FileEditedNewer, nil
+		}
 		return FileEdited, nil
 	case OutcomeError:
 		return "", fmt.Errorf("%s %s: %s", res.Kind, res.Role, res.Err)

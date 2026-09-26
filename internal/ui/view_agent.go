@@ -100,13 +100,13 @@ func agentFileHeaderLine(nameW int, cols []candCol, cw int) string {
 	return candLine(cells, false, cw)
 }
 
-// agentStateStyle colours one row's STATE (§4): up to date muted, stale and
-// your edit amber, missing faint.
+// agentStateStyle colours one row's STATE (§4): up to date muted, stale, your
+// edit and edit + newer amber, missing faint.
 func agentStateStyle(state harness.FileState) lipgloss.Style {
 	switch state {
 	case harness.FileUpToDate:
 		return mutedStyle
-	case harness.FileStale, harness.FileEdited:
+	case harness.FileStale, harness.FileEdited, harness.FileEditedNewer:
 		return warnStyle
 	case harness.FileMissing:
 		return faintStyle
@@ -149,6 +149,16 @@ func (v agentView) bodyLines(env Env, width int) []string {
 	cur := candClamp(v.cur, len(rows))
 	for i, f := range rows {
 		lines = append(lines, agentFileLineOf(f, i == cur, nameW, cols, cw))
+	}
+	if cur < len(rows) && rows[cur].state == harness.FileEditedNewer {
+		// The cursor row's edit sits on an older copy: say so, and what e and
+		// r each do with it.
+		f := rows[cur]
+		lines = append(lines, "", "",
+			fit("   "+faintStyle.Bold(true).Render(f.kind)+"   "+mutedStyle.Render(tildePath(f.path)), width),
+			fit("   "+warnStyle.Render("edit + newer")+mutedStyle.Render("  you edited this file, and this relevo ships a newer copy"), width),
+			fit("   "+textStyle.Render("e")+mutedStyle.Render(" shows your edit; ")+textStyle.Render("r")+mutedStyle.Render(" replaces it with the newer copy"), width),
+		)
 	}
 	return lines
 }
@@ -321,7 +331,7 @@ func (v agentView) editCmd(env Env, f agentFileRow) tea.Cmd {
 // back. A missing file is a write rather than a reset: nothing is lost, the
 // confirm's title, label and note say so (§3, round 6).
 func (v agentView) resetCmd(env Env, f agentFileRow) tea.Cmd {
-	if f.state != harness.FileEdited && f.state != harness.FileStale && f.state != harness.FileMissing {
+	if f.state != harness.FileEdited && f.state != harness.FileEditedNewer && f.state != harness.FileStale && f.state != harness.FileMissing {
 		return notice(f.kind + "'s " + v.name + " is up to date")
 	}
 	kind, name := f.kind, v.name
@@ -331,6 +341,8 @@ func (v agentView) resetCmd(env Env, f agentFileRow) tea.Cmd {
 	switch f.state {
 	case harness.FileStale:
 		note = "with the copy this relevo ships; relevo has a newer copy"
+	case harness.FileEditedNewer:
+		note = "with the newer copy this relevo ships; your edit is lost"
 	case harness.FileMissing:
 		title = "Write " + kind + "'s " + accentStyle.Bold(true).Render(name) + "?"
 		label = "writes"
