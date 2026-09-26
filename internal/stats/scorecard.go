@@ -116,13 +116,13 @@ func buildScorecard(in Inputs, rows []db.RoundRow) []ScoreRow {
 	accs := map[string]*scoreAcc{}
 	var order []string
 	for _, r := range rows {
-		if r.BuilderCandidate == nil {
+		if r.Candidate == nil {
 			continue
 		}
 		if in.Keep != nil && !in.Keep(r) {
 			continue
 		}
-		tok := *r.BuilderCandidate
+		tok := *r.Candidate
 		a := accs[tok]
 		if a == nil {
 			a = &scoreAcc{}

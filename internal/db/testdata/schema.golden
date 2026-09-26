@@ -35,8 +35,8 @@ CREATE UNIQUE INDEX repo_origin_url_uidx ON repo(origin_url) WHERE origin_url IS
 index round_binding_number_uidx round
 CREATE UNIQUE INDEX round_binding_number_uidx ON round(binding_id, number)
 
-index round_builder_idx round
-CREATE INDEX round_builder_idx ON round(builder_harness, builder_provider, builder_model)
+index round_candidate_idx round
+CREATE INDEX round_candidate_idx ON round(harness, provider, model)
 
 index round_started_at_idx round
 CREATE INDEX round_started_at_idx ON round(started_at)
@@ -246,11 +246,11 @@ CREATE TABLE round (
     started_at TEXT NOT NULL,
     closed_at TEXT,
     outcome TEXT NOT NULL,
-    builder_candidate TEXT,
-    builder_harness TEXT,
-    builder_provider TEXT,
-    builder_model TEXT,
-    builder_mode TEXT,
+    candidate TEXT,
+    harness TEXT,
+    provider TEXT,
+    model TEXT,
+    mode TEXT,
     tier TEXT,
     commits INTEGER,
     tree TEXT,
@@ -265,7 +265,7 @@ CREATE TABLE round (
     cost_basis TEXT,
     report_outcome TEXT,
     switches INTEGER NOT NULL
-)
+, actor TEXT NOT NULL DEFAULT 'builder')
 
 table round_file round_file
 CREATE TABLE round_file (
@@ -301,4 +301,4 @@ CREATE TABLE transcript (
     rendered TEXT NOT NULL
 )
 
-schema_versions have=6 know=6
+schema_versions have=7 know=7

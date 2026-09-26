@@ -278,21 +278,21 @@ func dashRows() []db.RoundRow {
 		{
 			BindingID: "b1", BindingName: "persist",
 			Number: 5, StartedAt: railNow.Add(-2 * time.Hour), Outcome: db.OutcomeReported,
-			BuilderCandidate: s("claude/anthropic/sonnet"), Commits: i(1), Tree: s("clean"),
+			Candidate: s("claude/anthropic/sonnet"), Commits: i(1), Tree: s("clean"),
 			GateResult: s("pass"), InTokens: i64(1_000_000), OutTokens: i64(200_000),
 			CostUSD: f(0.42), CostBasis: s("measured"), DurationMS: i64(27 * 60_000),
 		},
 		{
 			BindingID: "b1", BindingName: "persist",
 			Number: 4, StartedAt: railNow.Add(-26 * time.Hour), Outcome: db.OutcomeHalted,
-			BuilderCandidate: s("claude/anthropic/sonnet"), Commits: i(0), Tree: s("dirty"),
+			Candidate: s("claude/anthropic/sonnet"), Commits: i(0), Tree: s("dirty"),
 			GateResult: s("fail"), InTokens: i64(400_000), CacheTokens: i64(100_000),
 			CostUSD: f(1.10), CostBasis: s("measured"), DurationMS: i64(12 * 60_000),
 		},
 		{
 			BindingID: "b2", BindingName: "api",
 			Number: 2, StartedAt: railNow.Add(-50 * time.Hour), Outcome: db.OutcomeReported,
-			BuilderCandidate: s("agy/antigravity/claude-sonnet-4-6"), Commits: i(3), Tree: s("clean"),
+			Candidate: s("agy/antigravity/claude-sonnet-4-6"), Commits: i(3), Tree: s("clean"),
 			GateResult: s("pass"), InTokens: i64(2_000_000),
 			CostUSD: f(9.10), CostBasis: s("unknown"),
 		},
@@ -608,7 +608,7 @@ func overviewRows() []db.RoundRow {
 	row := func(binding string, repo *string, started time.Time, cand *string, outcome string, t tokens, nilTokens bool) db.RoundRow {
 		r := db.RoundRow{
 			BindingID: binding, BindingName: binding, Repo: repo,
-			StartedAt: started, Outcome: outcome, BuilderCandidate: cand,
+			StartedAt: started, Outcome: outcome, Candidate: cand,
 		}
 		if !nilTokens {
 			r.InTokens, r.CacheTokens, r.WriteTokens, r.OutTokens =

@@ -3,6 +3,7 @@ package histq
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"testing"
 
@@ -12,8 +13,8 @@ import (
 // A = rows 1, 2, 7, 10; B = rows 3, 4, 9; C = rows 5, 6, 8. CostUSD sums only
 // the rows whose basis is not "unknown" (B skips row 3's 3.00, C skips row 8's
 // 1.50) and Unknown counts every such row.
-func TestGroupByBuilderSums(t *testing.T) {
-	groups := Group(fixtureRows(), AxisBuilder, fxLoc)
+func TestGroupByCandidateSums(t *testing.T) {
+	groups := Group(fixtureRows(), AxisCandidate, fxLoc)
 	if len(groups) != 3 {
 		t.Fatalf("len(Group) = %d, want 3", len(groups))
 	}
@@ -130,6 +131,7 @@ func TestGroupAxisKeys(t *testing.T) {
 		{AxisBinding, []string{"api", "infra", "web"}},
 		{AxisRepo, []string{fxRepoAPI, fxRepoWeb}},
 		{AxisFeature, []string{"checkout", "search"}},
+		{AxisCandidate, []string{fxBuilderAgy, fxBuilderClaude, fxBuilderOpencode}},
 		{AxisHarness, []string{"agy", "claude", "opencode"}},
 		{AxisProvider, []string{"antigravity", "anthropic", "openai"}},
 		{AxisModel, []string{"gpt", "opus", "sonnet"}},
@@ -174,6 +176,24 @@ func TestTotalsCounts(t *testing.T) {
 	}
 	if math.Abs(got.CostUSD-want.CostUSD) > 1e-9 {
 		t.Errorf("Totals.CostUSD = %v, want %v", got.CostUSD, want.CostUSD)
+	}
+}
+
+// TestGroupByActor regroups on the round's actor: the config name a runner
+// plays, not the candidate it runs on.
+func TestGroupByActor(t *testing.T) {
+	rows := []db.RoundRow{
+		{BindingName: "a", Actor: "builder", Candidate: fxStr("x/y/z")},
+		{BindingName: "b", Actor: "designer", Candidate: fxStr("x/y/z")},
+		{BindingName: "c", Actor: "designer", Candidate: fxStr("q/u/v")},
+	}
+	got := map[string]int{}
+	for _, g := range Group(rows, AxisActor, fxLoc) {
+		got[g.Key] = g.Rounds
+	}
+	want := map[string]int{"builder": 1, "designer": 2}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Group(by actor) = %v, want %v", got, want)
 	}
 }
 

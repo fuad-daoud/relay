@@ -42,8 +42,8 @@ func plannerBySession(ctx context.Context, q queryer, kind, session string) (Pla
 	return p, true, nil
 }
 
-const roundColumns = `id, binding_id, number, started_at, closed_at, outcome,
-	builder_candidate, builder_harness, builder_provider, builder_model, builder_mode, tier,
+const roundColumns = `id, binding_id, number, started_at, closed_at, outcome, actor,
+	candidate, harness, provider, model, mode, tier,
 	commits, tree, gate_result, gate_exit, gate_duration_ms,
 	in_tokens, cache_tokens, write_tokens, out_tokens, cost_usd, cost_basis,
 	report_outcome, switches`
@@ -61,7 +61,7 @@ func scanRound(s rowScanner) (Round, error) {
 	var costUSD sql.Null[float64]
 	var costBasis, reportOutcome sql.Null[string]
 
-	if err := s.Scan(&r.ID, &r.BindingID, &r.Number, &startedAt, &closedAt, &r.Outcome,
+	if err := s.Scan(&r.ID, &r.BindingID, &r.Number, &startedAt, &closedAt, &r.Outcome, &r.Actor,
 		&candidate, &harness, &provider, &model, &mode, &tier,
 		&commits, &tree, &gateResult, &gateExit, &gateDurationMS,
 		&inTokens, &cacheTokens, &writeTokens, &outTokens, &costUSD, &costBasis,
@@ -77,11 +77,11 @@ func scanRound(s rowScanner) (Round, error) {
 	if r.ClosedAt, err = nullTimeFrom(closedAt); err != nil {
 		return Round{}, fmt.Errorf("parse closed_at: %w", err)
 	}
-	r.BuilderCandidate = ptrIfValid(candidate)
-	r.BuilderHarness = ptrIfValid(harness)
-	r.BuilderProvider = ptrIfValid(provider)
-	r.BuilderModel = ptrIfValid(model)
-	r.BuilderMode = ptrIfValid(mode)
+	r.Candidate = ptrIfValid(candidate)
+	r.Harness = ptrIfValid(harness)
+	r.Provider = ptrIfValid(provider)
+	r.Model = ptrIfValid(model)
+	r.Mode = ptrIfValid(mode)
 	r.Tier = ptrIfValid(tier)
 	r.Commits = intPtr(commits)
 	r.Tree = ptrIfValid(tree)

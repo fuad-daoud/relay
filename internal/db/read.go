@@ -24,10 +24,10 @@ func queryRounds(ctx context.Context, q queryer, f Filter) ([]RoundRow, error) {
 	where, args := roundFilter(f)
 	query := `SELECT round.binding_id, binding.name, repo.origin_url, repo.common_dir, binding.feature,
 			round.number, round.started_at, round.closed_at, round.outcome,
-			round.builder_candidate, round.builder_harness, round.builder_provider, round.builder_model,
+			round.candidate, round.harness, round.provider, round.model, round.actor,
 			round.commits, round.tree, round.gate_result, round.cost_usd, round.cost_basis,
 			round.in_tokens, round.cache_tokens, round.write_tokens, round.out_tokens,
-			round.report_outcome, round.builder_mode, binding.server,
+			round.report_outcome, round.mode, binding.server,
 			binding.archived_at, round.switches
 		FROM round
 		JOIN binding ON binding.id = round.binding_id
@@ -75,16 +75,16 @@ func roundFilter(f Filter) (string, []any) {
 		add(`binding.planner_id IN (SELECT id FROM planner WHERE session_id = ?)`, f.Planner)
 	}
 	if f.Harness != "" {
-		add(`round.builder_harness = ?`, f.Harness)
+		add(`round.harness = ?`, f.Harness)
 	}
 	if f.Provider != "" {
-		add(`round.builder_provider = ?`, f.Provider)
+		add(`round.provider = ?`, f.Provider)
 	}
 	if f.Model != "" {
-		add(`round.builder_model = ?`, f.Model)
+		add(`round.model = ?`, f.Model)
 	}
 	if f.Candidate != "" {
-		add(`round.builder_candidate = ?`, f.Candidate)
+		add(`round.candidate = ?`, f.Candidate)
 	}
 	if f.Outcome != "" {
 		add(`round.outcome = ?`, f.Outcome)
@@ -135,15 +135,15 @@ func scanRoundRow(s rowScanner) (RoundRow, error) {
 	var costUSD sql.Null[float64]
 	var costBasis sql.Null[string]
 	var inTokens, cacheTokens, writeTokens, outTokens sql.Null[int64]
-	var reportOutcome, builderMode, server sql.Null[string]
+	var reportOutcome, mode, server sql.Null[string]
 	var archivedAt sql.Null[string]
 
 	if err := s.Scan(&row.BindingID, &row.BindingName, &origin, &commonDir, &feature,
 		&row.Number, &startedAt, &closedAt, &row.Outcome,
-		&candidate, &harness, &provider, &model,
+		&candidate, &harness, &provider, &model, &row.Actor,
 		&commits, &tree, &gateResult, &costUSD, &costBasis,
 		&inTokens, &cacheTokens, &writeTokens, &outTokens,
-		&reportOutcome, &builderMode, &server,
+		&reportOutcome, &mode, &server,
 		&archivedAt, &row.Switches); err != nil {
 		return RoundRow{}, fmt.Errorf("scan: %w", err)
 	}
@@ -162,10 +162,10 @@ func scanRoundRow(s rowScanner) (RoundRow, error) {
 		ms := row.ClosedAt.Sub(row.StartedAt).Milliseconds()
 		row.DurationMS = &ms
 	}
-	row.BuilderCandidate = ptrIfValid(candidate)
-	row.BuilderHarness = ptrIfValid(harness)
-	row.BuilderProvider = ptrIfValid(provider)
-	row.BuilderModel = ptrIfValid(model)
+	row.Candidate = ptrIfValid(candidate)
+	row.Harness = ptrIfValid(harness)
+	row.Provider = ptrIfValid(provider)
+	row.Model = ptrIfValid(model)
 	row.Commits = intPtr(commits)
 	row.Tree = ptrIfValid(tree)
 	row.GateResult = ptrIfValid(gateResult)
@@ -176,7 +176,7 @@ func scanRoundRow(s rowScanner) (RoundRow, error) {
 	row.WriteTokens = ptrIfValid(writeTokens)
 	row.OutTokens = ptrIfValid(outTokens)
 	row.ReportOutcome = ptrIfValid(reportOutcome)
-	row.BuilderMode = ptrIfValid(builderMode)
+	row.Mode = ptrIfValid(mode)
 	row.Server = ptrIfValid(server)
 	if archivedAt.Valid {
 		row.Archived = true

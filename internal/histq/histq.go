@@ -47,24 +47,25 @@ func ParseSince(s string, now time.Time) (time.Time, error) {
 type Axis string
 
 const (
-	AxisNone     Axis = "none"
-	AxisBinding  Axis = "binding"
-	AxisRepo     Axis = "repo"
-	AxisFeature  Axis = "feature"
-	AxisBuilder  Axis = "builder"
-	AxisHarness  Axis = "harness"
-	AxisProvider Axis = "provider"
-	AxisModel    Axis = "model"
-	AxisDay      Axis = "day"
-	AxisOutcome  Axis = "outcome"
+	AxisNone      Axis = "none"
+	AxisBinding   Axis = "binding"
+	AxisRepo      Axis = "repo"
+	AxisFeature   Axis = "feature"
+	AxisCandidate Axis = "candidate"
+	AxisActor     Axis = "actor"
+	AxisHarness   Axis = "harness"
+	AxisProvider  Axis = "provider"
+	AxisModel     Axis = "model"
+	AxisDay       Axis = "day"
+	AxisOutcome   Axis = "outcome"
 )
 
 var axes = []Axis{
-	AxisNone, AxisBinding, AxisRepo, AxisFeature, AxisBuilder,
+	AxisNone, AxisBinding, AxisRepo, AxisFeature, AxisCandidate, AxisActor,
 	AxisHarness, AxisProvider, AxisModel, AxisDay, AxisOutcome,
 }
 
-// Axes returns the ten axis names, none first. The caller owns the slice.
+// Axes returns the eleven axis names, none first. The caller owns the slice.
 func Axes() []Axis { return append([]Axis(nil), axes...) }
 
 func ParseAxis(s string) (Axis, bool) {

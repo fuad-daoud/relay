@@ -132,7 +132,7 @@ func seedTokenRounds(t *testing.T, d *DB) {
 	if _, err := d.UpsertRound(Round{
 		BindingID: bindingID, Number: 1, StartedAt: started, ClosedAt: &closed,
 		Outcome: OutcomeReported, InTokens: &in, CacheTokens: &cache,
-		WriteTokens: &write, OutTokens: &out, BuilderMode: &mode, ReportOutcome: &report,
+		WriteTokens: &write, OutTokens: &out, Mode: &mode, ReportOutcome: &report,
 	}); err != nil {
 		t.Fatalf("UpsertRound 1: %v", err)
 	}
@@ -170,8 +170,8 @@ func assertTokenRow(t *testing.T, got RoundRow) {
 	if got.ReportOutcome == nil || *got.ReportOutcome != "done" {
 		t.Errorf("ReportOutcome = %v, want done", got.ReportOutcome)
 	}
-	if got.BuilderMode == nil || *got.BuilderMode != "remote" {
-		t.Errorf("BuilderMode = %v, want remote", got.BuilderMode)
+	if got.Mode == nil || *got.Mode != "remote" {
+		t.Errorf("Mode = %v, want remote", got.Mode)
 	}
 	if got.Server == nil || *got.Server != "contabo" {
 		t.Errorf("Server = %v, want contabo", got.Server)
@@ -186,9 +186,9 @@ func assertOpenRoundRow(t *testing.T, open RoundRow) {
 	if open.ClosedAt != nil || open.DurationMS != nil {
 		t.Errorf("open round: ClosedAt = %v, DurationMS = %v; want both nil", open.ClosedAt, open.DurationMS)
 	}
-	if open.InTokens != nil || open.ReportOutcome != nil || open.BuilderMode != nil {
-		t.Errorf("open round: InTokens = %v, ReportOutcome = %v, BuilderMode = %v; want all nil",
-			open.InTokens, open.ReportOutcome, open.BuilderMode)
+	if open.InTokens != nil || open.ReportOutcome != nil || open.Mode != nil {
+		t.Errorf("open round: InTokens = %v, ReportOutcome = %v, Mode = %v; want all nil",
+			open.InTokens, open.ReportOutcome, open.Mode)
 	}
 }
 

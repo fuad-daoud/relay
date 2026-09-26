@@ -244,23 +244,24 @@ func (r *ingestRun) upsertRound(tx *db.Tx, bindingID string, n int, all []store.
 	rd.Outcome = deriveOutcome(all, n, r.b, r.members)
 	rd.Switches = switchesForRound(all, n)
 
-	if cand, ref, ok := builderForRound(all, n, r.b); ok {
+	rd.Actor = actorOf(r.b)
+	if cand, ref, ok := candidateForRound(all, n, r.b); ok {
 		candTok := cand
-		rd.BuilderCandidate = &candTok
+		rd.Candidate = &candTok
 		if ref.Harness != "" {
 			h := ref.Harness
-			rd.BuilderHarness = &h
+			rd.Harness = &h
 		}
 		if ref.Provider != "" {
 			p := ref.Provider
-			rd.BuilderProvider = &p
+			rd.Provider = &p
 		}
 		if ref.Model != "" {
 			m := ref.Model
-			rd.BuilderModel = &m
+			rd.Model = &m
 		}
 		mode := builderModeOf(r.b)
-		rd.BuilderMode = &mode
+		rd.Mode = &mode
 	}
 
 	roundID, err := tx.UpsertRound(rd)

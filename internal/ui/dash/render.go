@@ -407,10 +407,10 @@ func (m Model) roundLine(r db.RoundRow, cursor, indented bool) string {
 	// RND: r<n>, Dim, width 4
 	add(fmt.Sprintf("r%d", r.Number), 4, false, m.styles.Dim)
 
-	// CANDIDATE: nameOf(BuilderCandidate), · when nil, Dim, width 21
+	// CANDIDATE: nameOf(Candidate), · when nil, Dim, width 21
 	candText := "·"
-	if r.BuilderCandidate != nil {
-		candText = m.nameOf(*r.BuilderCandidate)
+	if r.Candidate != nil {
+		candText = m.nameOf(*r.Candidate)
 	}
 	add(candText, 21, false, m.styles.Dim)
 
@@ -591,7 +591,7 @@ func (m Model) groupHeader() string {
 	}
 
 	keyLabel := strings.ToUpper(string(m.query.By))
-	if m.query.By == histq.AxisBuilder {
+	if m.query.By == histq.AxisCandidate {
 		keyLabel = "CANDIDATE"
 	}
 	add(keyLabel, layout.keyWidth, false)
@@ -630,7 +630,7 @@ func (m Model) groupKeyLabel(key string) string {
 	switch m.query.By {
 	case histq.AxisRepo:
 		return ShortRepo(key)
-	case histq.AxisBuilder:
+	case histq.AxisCandidate:
 		return m.nameOf(key)
 	default:
 		return key
