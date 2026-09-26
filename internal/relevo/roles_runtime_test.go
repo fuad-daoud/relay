@@ -17,7 +17,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
-	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // rolesRuntimeCandidatesJSON is three claude candidates, all able to serve
@@ -257,63 +256,6 @@ func TestRolesRuntimeCustomBuilderLaunchesCustomAgent(t *testing.T) {
 	}
 	if !containsAdjacentPair(fr2.specs[0].Argv, "--agent", "plan-executor") {
 		t.Errorf("argv = %v, want --agent plan-executor", fr2.specs[0].Argv)
-	}
-}
-
-// TestRolesRuntimeCustomReaderRoleThroughAsk pins §5/§9 step 6.6: a role the
-// file adds is a real consult role -- Ask resolves it, spawns its definition,
-// and names it among the known roles when it refuses an unknown one.
-func TestRolesRuntimeCustomReaderRoleThroughAsk(t *testing.T) {
-	t.Parallel()
-
-	rt, _ := seedForAsk(t)
-	set := rt.Candidates
-	rt.Registry = rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
-		"security-reviewer": {
-			Shape:       ptr("reader"),
-			Definitions: map[string]roles.DefRow{"claude": {Agent: "sec-review"}},
-			Candidates:  []string{testClaudeRef},
-		},
-	})
-
-	// `security-reviewer` plus the 8-character consult id leaves five
-	// characters for the binding name, so this binding is not "webshop".
-	b := store.Binding{
-		Name:    "shop",
-		CWD:     "/ask-tree",
-		Planner: store.Endpoint{PaneID: "w2:p3"},
-		Builder: store.Endpoint{AgentName: "shop-builder", PaneID: "w2:p4", Kind: "agy"},
-		Round:   1,
-		State:   store.StateActive,
-	}
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("seed %s binding: %v", b.Name, err)
-	}
-
-	fr := newFakeRunner()
-	rt.Runner = fr
-	q := writeQuestion(t, "Review the auth change.")
-
-	if _, err := Ask(context.Background(), rt, AskOptions{
-		Role: "security-reviewer", File: q, Name: b.Name, PlannerID: testPlannerName,
-	}); err != nil {
-		t.Fatalf("Ask(security-reviewer): %v", err)
-	}
-	if len(fr.specs) != 1 {
-		t.Fatalf("got %d processes, want 1", len(fr.specs))
-	}
-	if !containsAdjacentPair(fr.specs[0].Argv, "--agent", "sec-review") {
-		t.Errorf("argv = %v, want --agent sec-review", fr.specs[0].Argv)
-	}
-
-	_, err := Ask(context.Background(), rt, AskOptions{
-		Role: "nope", File: q, Name: b.Name, PlannerID: testPlannerName,
-	})
-	if !errors.Is(err, ErrUnknownRole) {
-		t.Fatalf("Ask(nope) err = %v, want ErrUnknownRole", err)
-	}
-	if !strings.Contains(err.Error(), "security-reviewer") {
-		t.Errorf("err = %q, want it to list security-reviewer among the known roles", err.Error())
 	}
 }
 

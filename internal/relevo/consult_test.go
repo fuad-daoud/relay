@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/consult"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -201,24 +202,46 @@ func TestReconcileExpiresAStaleReservation(t *testing.T) {
 	}
 }
 
-// seedHeadlessConsult asks for a consult as a process on the webshop binding
-// and returns the runtime and the record relevo made.
-
-// seedHeadlessConsult asks for a consult as a process on the webshop binding
-// and returns the runtime and the record relevo made.
+// seedHeadlessConsult puts a running headless consult on the webshop binding
+// and returns the runtime and the record relevo made. The record is seeded
+// directly -- the consult machinery no longer has a verb to drive it -- with
+// fr standing in as the runtime's Runner.
 func seedHeadlessConsult(t *testing.T, fr *fakeRunner) (Runtime, store.Consult) {
 	t.Helper()
-	rt, _ := seedForAsk(t)
+	rt, _ := seedBound(t)
 	rt.Runner = fr
-	q := writeQuestion(t, "review it")
+	rt.NewID = func() string { return "7f2a3c1d" }
 
-	res, err := Ask(context.Background(), rt, AskOptions{
-		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
-	})
+	b, err := rt.Store.Load("webshop")
 	if err != nil {
-		t.Fatalf("Ask: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
-	return rt, res.Consult
+	handle, err := fr.Start(context.Background(), spawn.ProcSpec{Dir: b.CWD, LogPath: rt.Store.ConsultStreamPath(b.Name, b.Round, "7f2a3c1d")})
+	if err != nil {
+		t.Fatalf("start fake consult: %v", err)
+	}
+	c := store.Consult{
+		ID:           "7f2a3c1d",
+		Role:         "reviewer",
+		Round:        b.Round,
+		AskPath:      rt.Store.AskPath(b.Name, b.Round, "7f2a3c1d"),
+		FindingsPath: rt.Store.FindingsPath(b.Name, b.Round, "7f2a3c1d"),
+		Endpoint: store.Endpoint{
+			AgentName: b.Name + "-reviewer-7f2a3c1d",
+			Kind:      "claude",
+			Mode:      store.ModeHeadless,
+			PID:       handle.PID,
+			StartedAt: handle.StartedAt.Unix(),
+			LogPath:   rt.Store.ConsultStreamPath(b.Name, b.Round, "7f2a3c1d"),
+		},
+		State:     store.ConsultRunning,
+		SpawnedAt: rt.Now().UTC(),
+	}
+	b.Consults = append(b.Consults, c)
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	return rt, c
 }
 
 // TestHeadlessConsultFinalMessageBecomesFindings: the process's last

@@ -45,7 +45,6 @@ Commands:
               --worktree | --cwd DIR | --branch B | --server S
                         attach another runner to this planner, on its own worktree or tree
   send      stage a plan file as the current round and start the runner [--tier] [--dry-run] [--verify|--no-verify]
-  ask       spawn a one-shot consult and record it on the binding
   status    one row per binding: round, state, live pane status, what is pending [--all] [--line]
   history   round history as JSON [--here] [--binding B] [--planner P] [--since D] [--limit N] [-q QUERY] [--json]
   show      one round's plan, report, diff, drift, gate, findings, log or transcript, live or archived [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--json]
@@ -170,7 +169,8 @@ func run(args []string) error {
 	case "send":
 		return cmdSend(args[1:])
 	case "ask":
-		return cmdAsk(args[1:])
+		fmt.Fprintln(os.Stderr, "relevo ask is gone: bind a reader actor (relevo bind --actor reviewer) and send it a plan")
+		return exitCodeErr{code: 2}
 	case "status":
 		return cmdStatus(args[1:])
 	case "history":

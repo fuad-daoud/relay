@@ -5,37 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
-
-// noteConsultRolesTooLong prints, after a successful bind/add, the one
-// advisory line naming configured consult roles the binding's name is too long
-// for -- so a later `relevo ask` failing on the derived name is not a surprise
-// a day later. It is a note, not an error: a binding that can build is still
-// useful, and refusing would let the alias table dictate binding names.
-func noteConsultRolesTooLong(reg *roles.Registry, name string) {
-	roles := relevo.ConsultRolesTooLongFor(reg, name)
-	if len(roles) == 0 {
-		return
-	}
-	// The tightest limit is set by the longest role: relevo ask needs the
-	// binding name at most store.MaxAgentNameLen - 10 - len(role) characters.
-	longest := roles[0]
-	for _, r := range roles[1:] {
-		if len(r) > len(longest) {
-			longest = r
-		}
-	}
-	fmt.Printf("note: %s is too long for the %s consult role(s); relevo ask needs a binding name of at most %d characters for %s\n",
-		name, strings.Join(roles, ", "), store.MaxAgentNameLen-10-len(longest), longest)
-}
 
 // notePick prints why relevo chose the candidate it spawned. Silent for
 // an explicit token (the planner already knows) and for adoption
