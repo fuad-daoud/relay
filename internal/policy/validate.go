@@ -390,12 +390,9 @@ func validateNotify(path string, n *NotifyPolicy) error {
 	if n == nil {
 		return nil
 	}
-	knownEvents := map[string]bool{
-		"state_changed":   true,
-		"round_started":   true,
-		"fork_created":    true,
-		"builder_stalled": true,
-		"binding_stale":   true,
+	knownEvents := make(map[string]bool, len(WebhookEvents))
+	for _, name := range WebhookEvents {
+		knownEvents[name] = true
 	}
 
 	for i, hook := range n.Webhooks {
@@ -413,7 +410,7 @@ func validateNotify(path string, n *NotifyPolicy) error {
 		for j, ev := range hook.Events {
 			name, _, hasState := strings.Cut(ev, ":")
 			if !knownEvents[name] {
-				return fmt.Errorf("%s: notify.webhooks[%d].events[%d]: unknown event %q (known: state_changed, round_started, fork_created, builder_stalled, binding_stale): %w", path, i, j, ev, ErrBadPolicy)
+				return fmt.Errorf("%s: notify.webhooks[%d].events[%d]: unknown event %q (known: %s): %w", path, i, j, ev, strings.Join(WebhookEvents, ", "), ErrBadPolicy)
 			}
 			if hasState && name != "state_changed" {
 				return fmt.Errorf("%s: notify.webhooks[%d].events[%d]: %q: only state_changed accepts a :<state> suffix: %w", path, i, j, ev, ErrBadPolicy)
