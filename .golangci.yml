@@ -38,8 +38,6 @@ linters:
         text: '.*'
       - path: '^internal/e2e/'
         text: '.*'
-      - path: '^internal/git/'
-        text: '.*'
       - path: '^internal/harness/'
         text: '.*'
       - path: '^internal/history/'

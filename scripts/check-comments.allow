@@ -100,9 +100,6 @@ internal/e2e/fakes_test.go
 internal/e2e/headless_test.go
 internal/e2e/remote_test.go
 internal/e2e/tier_test.go
-internal/git/client.go
-internal/git/client_test.go
-internal/git/worktree_repair_test.go
 internal/harness/agents_test.go
 internal/harness/definition.go
 internal/harness/definition_test.go
