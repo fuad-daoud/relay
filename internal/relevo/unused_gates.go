@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 )
 
 // ProviderGate is one live rate-limit gate on a provider no configured
@@ -29,7 +29,7 @@ func UnusedProviderGates(rt Runtime) []ProviderGate {
 		return nil
 	}
 
-	l, err := ledger.LoadKV(rt.Gates, ledgerLegacyPath(rt))
+	l, err := availability.LoadLedger(rt.Gates, ledgerLegacyPath(rt))
 	if err != nil {
 		return nil
 	}
@@ -41,7 +41,7 @@ func UnusedProviderGates(rt Runtime) []ProviderGate {
 
 	var out []ProviderGate
 	for _, e := range l.Prune(rt.Now()).Entries {
-		if e.Kind != ledger.RateLimited || used[e.Subject] {
+		if e.Kind != availability.RateLimited || used[e.Subject] {
 			continue
 		}
 		out = append(out, ProviderGate{

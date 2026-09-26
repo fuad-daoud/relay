@@ -14,9 +14,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
@@ -75,8 +75,8 @@ func statsFixture() stats.Report {
 		Reliability: stats.Reliability{
 			Switches: 2, RoundsSwitched: 1, SwitchPct: 33, RateLimits: 3, SpawnFailures: 1,
 			ByHour: []stats.HourRow{{Provider: "google", Counts: counts}},
-			Active: []ledger.Gate{{
-				Token: "gemini-3.8-flash-high", Kind: ledger.RateLimited,
+			Active: []availability.Gate{{
+				Token: "gemini-3.8-flash-high", Kind: availability.RateLimited,
 				Since: at(24), Until: at(19).AddDate(0, 1, 0),
 			}},
 		},
@@ -1590,7 +1590,7 @@ func TestStatsCandidatesTabHaltedIsReportCount(t *testing.T) {
 func TestStatsCandidatesTabStatus(t *testing.T) {
 	rep := statsFixture()
 	rep.Reliability.Active = append(rep.Reliability.Active,
-		ledger.Gate{Token: rep.Scorecard[1].Token, Until: railNow.Add(26 * time.Hour)})
+		availability.Gate{Token: rep.Scorecard[1].Token, Until: railNow.Add(26 * time.Hour)})
 	env := statsTestEnv(t, 132, 40)
 	v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabCandidates}
 
@@ -1616,11 +1616,11 @@ func TestStatsCandidatesTabStatus(t *testing.T) {
 		{24*24*time.Hour + 5*time.Hour, "gated 24d"},
 	}
 	for _, c := range cases {
-		if got := statsGateLeft(ledger.Gate{Until: railNow.Add(c.left)}, railNow); got != c.want {
+		if got := statsGateLeft(availability.Gate{Until: railNow.Add(c.left)}, railNow); got != c.want {
 			t.Errorf("statsGateLeft(%v) = %q, want %q", c.left, got, c.want)
 		}
 	}
-	if got := statsGateLeft(ledger.Gate{}, railNow); got != "gated" {
+	if got := statsGateLeft(availability.Gate{}, railNow); got != "gated" {
 		t.Errorf("statsGateLeft(zero Until) = %q, want gated", got)
 	}
 }
@@ -2602,10 +2602,10 @@ func TestStatsReliabilityTab(t *testing.T) {
 	rep := statsFixture()
 	rep.Reliability.Switches = 5
 	rep.Reliability.RoundsSwitched = 3
-	rep.Reliability.Active = []ledger.Gate{
-		{Token: "opencode/google/gemini", Kind: ledger.RateLimited,
+	rep.Reliability.Active = []availability.Gate{
+		{Token: "opencode/google/gemini", Kind: availability.RateLimited,
 			Until: railNow.Add(3 * time.Hour), Note: "Individual quota reached"},
-		{Token: "claude/anthropic/haiku", Kind: ledger.RateLimited,
+		{Token: "claude/anthropic/haiku", Kind: availability.RateLimited,
 			Role: "reviewer", Until: railNow.Add(3 * time.Hour), Note: "not a builder"},
 	}
 	hours := [24]int{}
@@ -2680,8 +2680,8 @@ func TestStatsReliabilityEmpty(t *testing.T) {
 // the columns the formula predicts.
 func TestStatsReliabilityFillsWidth(t *testing.T) {
 	rep := statsFixture()
-	rep.Reliability.Active = []ledger.Gate{
-		{Token: "opencode/google/gemini", Kind: ledger.RateLimited,
+	rep.Reliability.Active = []availability.Gate{
+		{Token: "opencode/google/gemini", Kind: availability.RateLimited,
 			Until: railNow.Add(3 * time.Hour), Note: "Individual quota reached"},
 	}
 	hours := [24]int{}

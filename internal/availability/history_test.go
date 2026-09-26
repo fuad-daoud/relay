@@ -1,4 +1,4 @@
-package history
+package availability
 
 import (
 	"encoding/json"
@@ -11,15 +11,13 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 )
 
-// now is the fixed clock every test in this package reasons from.
-var now = time.Date(2026, 9, 11, 21, 15, 0, 0, time.UTC)
+// historyNow is the fixed clock every test in this package reasons from.
+var historyNow = time.Date(2026, 9, 11, 21, 15, 0, 0, time.UTC)
 
-// testKV is a real t.TempDir() database, the medium the history lives in from
-// this round (P3b plan §7).
-func testKV(t *testing.T) *db.DB {
+// testHistoryKV is a real t.TempDir() database, the medium the history lives in.
+func testHistoryKV(t *testing.T) *db.DB {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
@@ -30,19 +28,19 @@ func testKV(t *testing.T) *db.DB {
 }
 
 func TestRoundTrip(t *testing.T) {
-	kv := testKV(t)
+	kv := testHistoryKV(t)
 
 	h := History{}.
-		Append(Event{At: now, Kind: ledger.RateLimited, Provider: "anthropic", Source: "planner", Note: "5h"}).
-		Append(Event{At: now.Add(time.Minute), Kind: ledger.SpawnFailed, Provider: "anthropic", Token: "claude/anthropic/sonnet", Source: "relevo", Binding: "webshop"})
+		Append(Event{At: historyNow, Kind: RateLimited, Provider: "anthropic", Source: "planner", Note: "5h"}).
+		Append(Event{At: historyNow.Add(time.Minute), Kind: SpawnFailed, Provider: "anthropic", Token: "claude/anthropic/sonnet", Source: "relevo", Binding: "webshop"})
 
-	if err := SaveKV(kv, h); err != nil {
-		t.Fatalf("SaveKV: %v", err)
+	if err := SaveHistory(kv, h); err != nil {
+		t.Fatalf("SaveHistory: %v", err)
 	}
 
-	got, err := LoadKV(kv, "")
+	got, err := LoadHistory(kv, "")
 	if err != nil {
-		t.Fatalf("LoadKV: %v", err)
+		t.Fatalf("LoadHistory: %v", err)
 	}
 	if len(got.Events) != len(h.Events) {
 		t.Fatalf("got %d events, want %d: %+v", len(got.Events), len(h.Events), got.Events)
@@ -59,16 +57,16 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
-// TestLoadKVImportsLegacyHistoryFile pins the pre-#172 migration as an import
-// (P3b plan §8): a history.json file present, and no availability.json, is
-// imported into the kv row and removed.
+// TestLoadKVImportsLegacyHistoryFile pins the pre-rename migration as an
+// import: a history.json file present, and no availability.json, is imported
+// into the kv row and removed.
 func TestLoadKVImportsLegacyHistoryFile(t *testing.T) {
-	kv := testKV(t)
+	kv := testHistoryKV(t)
 	dir := t.TempDir()
 	legacyPath := filepath.Join(dir, "history.json")
 	newPath := filepath.Join(dir, "availability.json")
 
-	doc, err := json.Marshal(History{}.Append(Event{At: now, Kind: ledger.RateLimited, Provider: "anthropic", Source: "planner", Note: "5h"}))
+	doc, err := json.Marshal(History{}.Append(Event{At: historyNow, Kind: RateLimited, Provider: "anthropic", Source: "planner", Note: "5h"}))
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
@@ -76,9 +74,9 @@ func TestLoadKVImportsLegacyHistoryFile(t *testing.T) {
 		t.Fatalf("WriteFile(legacy): %v", err)
 	}
 
-	got, err := LoadKV(kv, newPath)
+	got, err := LoadHistory(kv, newPath)
 	if err != nil {
-		t.Fatalf("LoadKV: %v", err)
+		t.Fatalf("LoadHistory: %v", err)
 	}
 	if len(got.Events) != 1 || got.Events[0].Provider != "anthropic" {
 		t.Fatalf("got %+v, want the legacy event", got.Events)
@@ -94,18 +92,18 @@ func TestLoadKVImportsLegacyHistoryFile(t *testing.T) {
 
 // TestLoadKVPrefersRowOverFile: the kv row is the record; a legacy
 // availability.json beside it is ignored and removed, since nothing writes
-// these files any more (P3b plan §4.3).
+// these files any more.
 func TestLoadKVPrefersRowOverFile(t *testing.T) {
-	kv := testKV(t)
+	kv := testHistoryKV(t)
 	dir := t.TempDir()
 	newPath := filepath.Join(dir, "availability.json")
 
-	fresh := History{}.Append(Event{At: now, Kind: ledger.RateLimited, Provider: "fresh", Source: "planner"})
-	if err := SaveKV(kv, fresh); err != nil {
-		t.Fatalf("SaveKV(fresh): %v", err)
+	fresh := History{}.Append(Event{At: historyNow, Kind: RateLimited, Provider: "fresh", Source: "planner"})
+	if err := SaveHistory(kv, fresh); err != nil {
+		t.Fatalf("SaveHistory(fresh): %v", err)
 	}
 
-	doc, err := json.Marshal(History{}.Append(Event{At: now, Kind: ledger.RateLimited, Provider: "legacy", Source: "planner"}))
+	doc, err := json.Marshal(History{}.Append(Event{At: historyNow, Kind: RateLimited, Provider: "legacy", Source: "planner"}))
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
@@ -113,9 +111,9 @@ func TestLoadKVPrefersRowOverFile(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	got, err := LoadKV(kv, newPath)
+	got, err := LoadHistory(kv, newPath)
 	if err != nil {
-		t.Fatalf("LoadKV: %v", err)
+		t.Fatalf("LoadHistory: %v", err)
 	}
 	if len(got.Events) != 1 || got.Events[0].Provider != "fresh" {
 		t.Fatalf("got %+v, want the fresh row", got.Events)
@@ -127,12 +125,12 @@ func TestLoadKVPrefersRowOverFile(t *testing.T) {
 }
 
 func TestLoadKVMissingPath(t *testing.T) {
-	kv := testKV(t)
+	kv := testHistoryKV(t)
 	path := filepath.Join(t.TempDir(), "missing", "history.json")
 
-	got, err := LoadKV(kv, path)
+	got, err := LoadHistory(kv, path)
 	if err != nil {
-		t.Fatalf("LoadKV(missing): %v", err)
+		t.Fatalf("LoadHistory(missing): %v", err)
 	}
 	if len(got.Events) != 0 {
 		t.Errorf("got %d events, want 0: %+v", len(got.Events), got.Events)
@@ -140,11 +138,11 @@ func TestLoadKVMissingPath(t *testing.T) {
 }
 
 func TestPruneWindow(t *testing.T) {
-	kept := Event{At: now.Add(-RetainWindow), Kind: ledger.RateLimited, Provider: "test", Source: "planner"}
-	dropped := Event{At: now.Add(-RetainWindow - time.Second), Kind: ledger.RateLimited, Provider: "test", Source: "planner"}
+	kept := Event{At: historyNow.Add(-HistoryRetainWindow), Kind: RateLimited, Provider: "test", Source: "planner"}
+	dropped := Event{At: historyNow.Add(-HistoryRetainWindow - time.Second), Kind: RateLimited, Provider: "test", Source: "planner"}
 
 	h := History{}.Append(kept).Append(dropped)
-	pruned := h.Prune(now)
+	pruned := h.Prune(historyNow)
 
 	if len(pruned.Events) != 1 {
 		t.Fatalf("got %d events, want 1: %+v", len(pruned.Events), pruned.Events)
@@ -155,16 +153,16 @@ func TestPruneWindow(t *testing.T) {
 }
 
 func TestFromEntry(t *testing.T) {
-	rateLimited := ledger.Entry{Kind: ledger.RateLimited, Subject: "anthropic", At: now, Source: "planner", Note: "5h"}
+	rateLimited := Entry{Kind: RateLimited, Subject: "anthropic", At: historyNow, Source: "planner", Note: "5h"}
 	got := FromEntry(rateLimited, func(string) string { return "" })
-	want := Event{Provider: "anthropic", Token: "", Kind: ledger.RateLimited, Source: "planner", Note: "5h", At: now}
+	want := Event{Provider: "anthropic", Token: "", Kind: RateLimited, Source: "planner", Note: "5h", At: historyNow}
 	if got != want {
 		t.Errorf("FromEntry(rate_limited) = %+v, want %+v", got, want)
 	}
 
-	spawnFailed := ledger.Entry{Kind: ledger.SpawnFailed, Subject: "claude/anthropic/sonnet", Binding: "webshop", Source: "relevo"}
+	spawnFailed := Entry{Kind: SpawnFailed, Subject: "claude/anthropic/sonnet", Binding: "webshop", Source: "relevo"}
 	got = FromEntry(spawnFailed, func(string) string { return "anthropic" })
-	want = Event{Provider: "anthropic", Token: "claude/anthropic/sonnet", Kind: ledger.SpawnFailed, Binding: "webshop", Source: "relevo"}
+	want = Event{Provider: "anthropic", Token: "claude/anthropic/sonnet", Kind: SpawnFailed, Binding: "webshop", Source: "relevo"}
 	if got != want {
 		t.Errorf("FromEntry(spawn_failed) = %+v, want %+v", got, want)
 	}
@@ -178,13 +176,13 @@ func TestHourCounts(t *testing.T) {
 	otherKind := time.Date(2026, 9, 11, 21, 20, 0, 0, time.UTC)
 
 	h := History{}.
-		Append(Event{At: at2130, Kind: ledger.RateLimited, Provider: "test"}).
-		Append(Event{At: at2159, Kind: ledger.RateLimited, Provider: "test"}).
-		Append(Event{At: at2200, Kind: ledger.RateLimited, Provider: "test"}).
-		Append(Event{At: otherProvider, Kind: ledger.RateLimited, Provider: "other"}).
-		Append(Event{At: otherKind, Kind: ledger.SpawnFailed, Provider: "test"})
+		Append(Event{At: at2130, Kind: RateLimited, Provider: "test"}).
+		Append(Event{At: at2159, Kind: RateLimited, Provider: "test"}).
+		Append(Event{At: at2200, Kind: RateLimited, Provider: "test"}).
+		Append(Event{At: otherProvider, Kind: RateLimited, Provider: "other"}).
+		Append(Event{At: otherKind, Kind: SpawnFailed, Provider: "test"})
 
-	counts := HourCounts(h, "test", ledger.RateLimited, time.UTC)
+	counts := HourCounts(h, "test", RateLimited, time.UTC)
 	for hour, c := range counts {
 		want := 0
 		switch hour {
@@ -199,7 +197,7 @@ func TestHourCounts(t *testing.T) {
 	}
 
 	plus1 := time.FixedZone("plus1", 3600)
-	counts = HourCounts(h, "test", ledger.RateLimited, plus1)
+	counts = HourCounts(h, "test", RateLimited, plus1)
 	for hour, c := range counts {
 		want := 0
 		switch hour {
@@ -217,13 +215,13 @@ func TestHourCounts(t *testing.T) {
 // TestBlockedDurations: how long a block lasted is At - Since on the Cleared
 // event. A Cleared event with no Since (an older file, or a clear that
 // removed nothing), a RateLimited event and another provider's clear are all
-// skipped (#302).
+// skipped.
 func TestBlockedDurations(t *testing.T) {
 	h := History{}.
-		Append(Event{At: now, Kind: ledger.RateLimited, Provider: "test"}).
-		Append(Event{At: now, Kind: Cleared, Provider: "test"}).
-		Append(Event{At: now, Kind: Cleared, Provider: "other", Since: now.Add(-2 * time.Hour)}).
-		Append(Event{At: now, Kind: Cleared, Provider: "test", Since: now.Add(-5 * time.Hour)})
+		Append(Event{At: historyNow, Kind: RateLimited, Provider: "test"}).
+		Append(Event{At: historyNow, Kind: Cleared, Provider: "test"}).
+		Append(Event{At: historyNow, Kind: Cleared, Provider: "other", Since: historyNow.Add(-2 * time.Hour)}).
+		Append(Event{At: historyNow, Kind: Cleared, Provider: "test", Since: historyNow.Add(-5 * time.Hour)})
 
 	got := BlockedDurations(h, "test")
 	want := []time.Duration{5 * time.Hour}
@@ -240,7 +238,7 @@ func TestBlockedDurations(t *testing.T) {
 // kind marshals without the key; a Cleared event that has one survives
 // Save/Load unchanged.
 func TestSinceOmittedWhenZero(t *testing.T) {
-	plain, err := json.Marshal(Event{At: now, Kind: ledger.RateLimited, Provider: "test", Source: "planner"})
+	plain, err := json.Marshal(Event{At: historyNow, Kind: RateLimited, Provider: "test", Source: "planner"})
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
@@ -249,21 +247,21 @@ func TestSinceOmittedWhenZero(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), "availability.json")
-	kv := testKV(t)
+	kv := testHistoryKV(t)
 	h := History{}.Append(Event{
-		At:       now,
+		At:       historyNow,
 		Kind:     Cleared,
 		Provider: "test",
 		Source:   "planner",
-		Since:    now.Add(-5 * time.Hour),
+		Since:    historyNow.Add(-5 * time.Hour),
 	})
-	if err := SaveKV(kv, h); err != nil {
-		t.Fatalf("SaveKV: %v", err)
+	if err := SaveHistory(kv, h); err != nil {
+		t.Fatalf("SaveHistory: %v", err)
 	}
 
-	got, err := LoadKV(kv, path)
+	got, err := LoadHistory(kv, path)
 	if err != nil {
-		t.Fatalf("LoadKV: %v", err)
+		t.Fatalf("LoadHistory: %v", err)
 	}
 	if len(got.Events) != 1 {
 		t.Fatalf("got %d events, want 1: %+v", len(got.Events), got.Events)

@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -984,12 +984,12 @@ func TestAvailableClearsServerWideGate(t *testing.T) {
 		t.Errorf("available = %+v, want provider anthropic removed 1", resp)
 	}
 
-	l, err := ledger.LoadKV(s.DB(), "")
+	l, err := availability.LoadLedger(s.DB(), "")
 	if err != nil {
-		t.Fatalf("ledger.LoadKV: %v", err)
+		t.Fatalf("ledger.LoadLedger: %v", err)
 	}
 	for _, e := range l.Entries {
-		if e.Kind == ledger.RateLimited {
+		if e.Kind == availability.RateLimited {
 			t.Errorf("ledger still holds %+v, want the rate-limit gate gone", e)
 		}
 	}
@@ -2016,8 +2016,8 @@ func candidatesViewServer(t *testing.T) (*Server, remote.Keypair) {
 		"builder": {"claude/anthropic/haiku", "claude/anthropic/sonnet"},
 	}}
 	now := time.Now()
-	l := ledger.Ledger{Entries: []ledger.Entry{{
-		Kind:    ledger.SpawnFailed,
+	l := availability.Ledger{Entries: []availability.Entry{{
+		Kind:    availability.SpawnFailed,
 		Subject: "claude/anthropic/haiku",
 		Source:  "relevo",
 		At:      now,
@@ -2025,7 +2025,7 @@ func candidatesViewServer(t *testing.T) (*Server, remote.Keypair) {
 		Note:    "test failure",
 	}}}
 	seedDB := testServeDB(t)
-	if err := ledger.SaveKV(db.PrefixKV{KV: seedDB, Prefix: "serve."}, l); err != nil {
+	if err := availability.SaveLedger(db.PrefixKV{KV: seedDB, Prefix: "serve."}, l); err != nil {
 		t.Fatal(err)
 	}
 

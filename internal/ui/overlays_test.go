@@ -8,7 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -22,9 +22,9 @@ func TestCommandModalGroupsSections(t *testing.T) {
 			{Name: "serve", Round: 1, Display: "ACTIVE", BuilderStatus: "idle"},
 			{Name: "render", Round: 1, Display: "DONE"},
 		},
-		Gated: []ledger.Gate{{
+		Gated: []availability.Gate{{
 			Token: "agy/antigravity/gemini-3", Name: "gemini",
-			Kind: ledger.RateLimited, Until: railNow.Add(time.Hour),
+			Kind: availability.RateLimited, Until: railNow.Add(time.Hour),
 		}},
 	}
 	m := goldenActionModel(t, 140, 40, &fakeActions{}, rep)
@@ -287,9 +287,9 @@ func TestRetryListDisablesCurrentAndGated(t *testing.T) {
 	}
 	rep := relevo.Report{
 		Bindings: []relevo.BindingStatus{b},
-		Gated: []ledger.Gate{{
+		Gated: []availability.Gate{{
 			Token: "agy/provider/gated-g", Name: "gated-g",
-			Kind: ledger.RateLimited, Until: railNow.Add(time.Hour),
+			Kind: availability.RateLimited, Until: railNow.Add(time.Hour),
 		}},
 	}
 	m := goldenActionModel(t, 140, 40, fa, rep)

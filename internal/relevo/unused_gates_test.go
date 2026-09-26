@@ -5,15 +5,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 func TestUnusedProviderGatesListsOnlyProvidersNoCandidateUses(t *testing.T) {
 	rt := newRuntime(t)
 
-	live := ledger.Entry{
-		Kind:    ledger.RateLimited,
+	live := availability.Entry{
+		Kind:    availability.RateLimited,
 		Subject: "antigravity",
 		At:      baseTime.Add(-time.Hour),
 		Until:   baseTime.Add(2 * time.Hour),
@@ -21,13 +21,13 @@ func TestUnusedProviderGatesListsOnlyProvidersNoCandidateUses(t *testing.T) {
 		Source:  "relevo",
 		Binding: "oc-tui-a",
 	}
-	entries := []ledger.Entry{
+	entries := []availability.Entry{
 		live,
-		{Kind: ledger.RateLimited, Subject: "test", At: baseTime.Add(-2 * time.Hour), Source: "planner"},
-		{Kind: ledger.RateLimited, Subject: "other", At: baseTime.Add(-3 * time.Hour), Until: baseTime.Add(-time.Minute), Source: "relevo"},
-		{Kind: ledger.SpawnFailed, Subject: "opencode/unconfigured/m", At: baseTime, Until: baseTime.Add(time.Hour), Source: "relevo"},
+		{Kind: availability.RateLimited, Subject: "test", At: baseTime.Add(-2 * time.Hour), Source: "planner"},
+		{Kind: availability.RateLimited, Subject: "other", At: baseTime.Add(-3 * time.Hour), Until: baseTime.Add(-time.Minute), Source: "relevo"},
+		{Kind: availability.SpawnFailed, Subject: "opencode/unconfigured/m", At: baseTime, Until: baseTime.Add(time.Hour), Source: "relevo"},
 	}
-	if err := ledger.SaveKV(rt.Gates, ledger.Ledger{Entries: entries}); err != nil {
+	if err := availability.SaveLedger(rt.Gates, availability.Ledger{Entries: entries}); err != nil {
 		t.Fatalf("SaveKV: %v", err)
 	}
 
@@ -65,7 +65,7 @@ func TestHideDoneKeepsUnusedProviderGates(t *testing.T) {
 			{Name: "done-one", State: string(store.StateDone)},
 			{Name: "live-one", State: string(store.StateActive)},
 		},
-		Gated:  []ledger.Gate{{Token: "test/m"}},
+		Gated:  []availability.Gate{{Token: "test/m"}},
 		Unused: []ProviderGate{gate},
 	}
 

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 )
 
 // availTwoProviderJSON has candidates on the provider the CLI's own example
@@ -26,14 +26,14 @@ func TestResolveClearSubject(t *testing.T) {
 
 	twoProviders := candidateSet(t, availTwoProviderJSON)
 	testOnly := candidateSet(t, `[{"harness":"opencode","provider":"test","model":"m","roles":["builder"]}]`)
-	goneGate := ledger.Ledger{Entries: []ledger.Entry{
-		{Kind: ledger.RateLimited, Subject: "gone", At: baseTime, Source: "planner"},
+	goneGate := availability.Ledger{Entries: []availability.Entry{
+		{Kind: availability.RateLimited, Subject: "gone", At: baseTime, Source: "planner"},
 	}}
 
 	tests := []struct {
 		name       string
 		set        *candidate.Set
-		l          ledger.Ledger
+		l          availability.Ledger
 		subject    string
 		want       string
 		wantErr    error
@@ -154,7 +154,7 @@ func TestResolveClearSubjectName(t *testing.T) {
 		{"m", "test"},
 		{"agy-m", "other"},
 	} {
-		provider, err := ResolveClearSubject(set, ledger.Ledger{}, tt.subject)
+		provider, err := ResolveClearSubject(set, availability.Ledger{}, tt.subject)
 		if err != nil {
 			t.Fatalf("ResolveClearSubject(%s): %v", tt.subject, err)
 		}
@@ -163,7 +163,7 @@ func TestResolveClearSubjectName(t *testing.T) {
 		}
 	}
 
-	provider, err := ResolveClearSubject(set, ledger.Ledger{}, "other")
+	provider, err := ResolveClearSubject(set, availability.Ledger{}, "other")
 	if err != nil {
 		t.Fatalf("ResolveClearSubject(other): %v", err)
 	}

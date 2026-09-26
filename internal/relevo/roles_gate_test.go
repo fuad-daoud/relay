@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
@@ -76,7 +76,7 @@ func TestRolesGateCustomBuilderGatesOnlyItsKindAndRole(t *testing.T) {
 	if len(gates) != 1 {
 		t.Fatalf("gates = %+v, want one builder gate for claude", gates)
 	}
-	if gates[0].Token != testClaudeRef || gates[0].Role != "builder" || gates[0].Kind != ledger.RolesMissing {
+	if gates[0].Token != testClaudeRef || gates[0].Role != "builder" || gates[0].Kind != availability.RolesMissing {
 		t.Fatalf("gate = %+v, want %s roles-missing for builder", gates[0], testClaudeRef)
 	}
 	if !strings.Contains(gates[0].Note, "roles missing for builder") || !strings.Contains(gates[0].Note, "yourself") {
@@ -212,9 +212,9 @@ func TestRolesGateLegacyChecksEachRole(t *testing.T) {
 	}}
 
 	gates := Gates(rt)
-	var roleGates []ledger.Gate
+	var roleGates []availability.Gate
 	for _, g := range gates {
-		if g.Kind == ledger.RolesMissing {
+		if g.Kind == availability.RolesMissing {
 			roleGates = append(roleGates, g)
 		}
 	}
@@ -244,7 +244,7 @@ func TestRolesGateLegacyChecksEachRole(t *testing.T) {
 func TestGateRoleJSON(t *testing.T) {
 	t.Parallel()
 
-	rep := Report{Gated: []ledger.Gate{{Token: testClaudeRef, Kind: ledger.RolesMissing}}}
+	rep := Report{Gated: []availability.Gate{{Token: testClaudeRef, Kind: availability.RolesMissing}}}
 	raw, err := json.Marshal(rep)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)

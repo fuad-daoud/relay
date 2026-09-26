@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
@@ -56,21 +56,21 @@ func actorToken(doc relevo.ConfigDoc, name string) string {
 }
 
 // gateOn is the gate on token, ok false when none is.
-func gateOn(gated []ledger.Gate, token string) (ledger.Gate, bool) {
+func gateOn(gated []availability.Gate, token string) (availability.Gate, bool) {
 	if token == "" {
-		return ledger.Gate{}, false
+		return availability.Gate{}, false
 	}
 	for i := range gated {
 		if gated[i].Token == token {
 			return gated[i], true
 		}
 	}
-	return ledger.Gate{}, false
+	return availability.Gate{}, false
 }
 
 // nextPick is the actor's next pick (§3): the first entry, in order, that is on
 // and whose candidate token has no gate. "" when none.
-func nextPick(doc relevo.ConfigDoc, actor string, gated []ledger.Gate) string {
+func nextPick(doc relevo.ConfigDoc, actor string, gated []availability.Gate) string {
 	for _, e := range doc.Actors[actor].Candidates {
 		if e.Off {
 			continue
@@ -89,7 +89,7 @@ func nextPick(doc relevo.ConfigDoc, actor string, gated []ledger.Gate) string {
 
 // entryStatus is one entry's STATUS text and colour (§3): off in faint, else
 // the gate's time left in red, else ready in green.
-func entryStatus(doc relevo.ConfigDoc, e roles.Entry, gated []ledger.Gate, now time.Time) (string, lipgloss.Style) {
+func entryStatus(doc relevo.ConfigDoc, e roles.Entry, gated []availability.Gate, now time.Time) (string, lipgloss.Style) {
 	if e.Off {
 		return "off", faintStyle
 	}

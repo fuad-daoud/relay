@@ -8,9 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/muesli/termenv"
 )
@@ -60,7 +59,7 @@ func TestLogFoldsSend(t *testing.T) {
 		return token
 	}
 
-	entries := buildLogEntries(events, history.History{}, nil, nil, time.Time{}, name)
+	entries := buildLogEntries(events, availability.History{}, nil, nil, time.Time{}, name)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
@@ -106,7 +105,7 @@ func TestLogFoldsReport(t *testing.T) {
 		},
 	}
 
-	entries := buildLogEntries(events, history.History{}, nil, nil, time.Time{}, nil)
+	entries := buildLogEntries(events, availability.History{}, nil, nil, time.Time{}, nil)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
@@ -142,7 +141,7 @@ func TestLogFoldsReport(t *testing.T) {
 			Round:       &roundNum,
 		},
 	}
-	doneEntries := buildLogEntries(doneEvents, history.History{}, nil, nil, time.Time{}, nil)
+	doneEntries := buildLogEntries(doneEvents, availability.History{}, nil, nil, time.Time{}, nil)
 	if len(doneEntries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(doneEntries))
 	}
@@ -186,7 +185,7 @@ func TestLogSwitchAndExit(t *testing.T) {
 		},
 	}
 
-	entries := buildLogEntries(events, history.History{}, nil, nil, time.Time{}, nil)
+	entries := buildLogEntries(events, availability.History{}, nil, nil, time.Time{}, nil)
 	if len(entries) != 2 {
 		t.Fatalf("got %d entries, want 2", len(entries))
 	}
@@ -210,7 +209,7 @@ func TestLogSwitchAndExit(t *testing.T) {
 			Round:       &roundNum,
 		},
 	}
-	rlEntries := buildLogEntries(rateLimitSwitch, history.History{}, nil, nil, time.Time{}, nil)
+	rlEntries := buildLogEntries(rateLimitSwitch, availability.History{}, nil, nil, time.Time{}, nil)
 	if len(rlEntries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(rlEntries))
 	}
@@ -225,17 +224,17 @@ func TestLogGatesRevisionsActions(t *testing.T) {
 	now := time.Date(2026, 9, 25, 18, 11, 0, 0, time.UTC)
 	since := now.Add(-7 * 24 * time.Hour)
 
-	hist := history.History{
-		Events: []history.Event{
+	hist := availability.History{
+		Events: []availability.Event{
 			{
 				At:       now,
-				Kind:     ledger.RateLimited,
+				Kind:     availability.RateLimited,
 				Provider: "cline-pass",
 				Note:     "Error 429: weekly Clinepass limit reached, resets in 1d 4h",
 			},
 			{
 				At:       now.Add(-8 * 24 * time.Hour), // older than since
-				Kind:     ledger.RateLimited,
+				Kind:     availability.RateLimited,
 				Provider: "cline-pass",
 				Note:     "old limit",
 			},
@@ -288,9 +287,9 @@ func TestLogNewestFirst(t *testing.T) {
 	events := []db.EventLogRow{
 		{TS: now.Add(-4 * time.Minute), Seq: 1, Kind: "plan", BindingName: "atlas"},
 	}
-	hist := history.History{
-		Events: []history.Event{
-			{At: now.Add(-3 * time.Minute), Kind: history.Cleared, Provider: "google"},
+	hist := availability.History{
+		Events: []availability.Event{
+			{At: now.Add(-3 * time.Minute), Kind: availability.Cleared, Provider: "google"},
 		},
 	}
 	revs := []db.RevisionRow{
@@ -450,9 +449,9 @@ func TestLogViewEnterOpensRound(t *testing.T) {
 		events: []db.EventLogRow{
 			{TS: now.Add(-10 * time.Minute), Seq: 1, Kind: "plan", BindingName: "atlas", Round: &roundNum},
 		},
-		hist: history.History{
-			Events: []history.Event{
-				{At: now.Add(-20 * time.Minute), Kind: ledger.RateLimited, Provider: "cline-pass"},
+		hist: availability.History{
+			Events: []availability.Event{
+				{At: now.Add(-20 * time.Minute), Kind: availability.RateLimited, Provider: "cline-pass"},
 			},
 		},
 	}
@@ -538,7 +537,7 @@ func TestLogSwitchRateLimitedReason(t *testing.T) {
 		}
 		return token
 	}
-	entries := buildLogEntries(events, history.History{}, nil, nil, time.Time{}, name)
+	entries := buildLogEntries(events, availability.History{}, nil, nil, time.Time{}, name)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
@@ -552,9 +551,9 @@ func TestLogSwitchRateLimitedReason(t *testing.T) {
 // " · " from a reason that is not there (§2, round 7).
 func TestLogGateRowWithoutReason(t *testing.T) {
 	now := time.Date(2026, 9, 25, 18, 11, 0, 0, time.UTC)
-	hist := history.History{
-		Events: []history.Event{
-			{At: now, Kind: ledger.RateLimited, Provider: "cline-pass", Note: ""},
+	hist := availability.History{
+		Events: []availability.Event{
+			{At: now, Kind: availability.RateLimited, Provider: "cline-pass", Note: ""},
 		},
 	}
 

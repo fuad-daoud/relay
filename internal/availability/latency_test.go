@@ -1,4 +1,4 @@
-package latency
+package availability
 
 import (
 	"path/filepath"
@@ -8,9 +8,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// testKV is a real t.TempDir() database, the medium the latency history lives
-// in from this round (P3b plan §7).
-func testKV(t *testing.T) *db.DB {
+// testLatencyKV is a real t.TempDir() database, the medium the latency history lives in.
+func testLatencyKV(t *testing.T) *db.DB {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
@@ -20,34 +19,34 @@ func testKV(t *testing.T) *db.DB {
 	return d
 }
 
-func TestLoadKVMissingIsEmpty(t *testing.T) {
-	kv := testKV(t)
-	h, err := LoadKV(kv, filepath.Join(t.TempDir(), "latency.json"))
+func TestLoadLatencyMissingIsEmpty(t *testing.T) {
+	kv := testLatencyKV(t)
+	h, err := LoadLatency(kv, filepath.Join(t.TempDir(), "latency.json"))
 	if err != nil {
-		t.Fatalf("LoadKV(missing) error = %v, want nil", err)
+		t.Fatalf("LoadLatency(missing) error = %v, want nil", err)
 	}
 	if len(h.Samples) != 0 {
-		t.Errorf("LoadKV(missing).Samples = %+v, want empty", h.Samples)
+		t.Errorf("LoadLatency(missing).Samples = %+v, want empty", h.Samples)
 	}
 }
 
-func TestSaveKVLoadKVRoundTrip(t *testing.T) {
-	kv := testKV(t)
+func TestSaveLatencyLoadLatencyRoundTrip(t *testing.T) {
+	kv := testLatencyKV(t)
 	at := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
-	h := History{}.Append(Sample{
+	h := LatencyHistory{}.Append(Sample{
 		At: at, Token: "claude/test/m", Host: "box", TTFTMS: 640, TotalMS: 900,
 	})
 
-	if err := SaveKV(kv, h); err != nil {
-		t.Fatalf("SaveKV() error = %v", err)
+	if err := SaveLatency(kv, h); err != nil {
+		t.Fatalf("SaveLatency() error = %v", err)
 	}
 
-	got, err := LoadKV(kv, "")
+	got, err := LoadLatency(kv, "")
 	if err != nil {
-		t.Fatalf("LoadKV() error = %v", err)
+		t.Fatalf("LoadLatency() error = %v", err)
 	}
 	if len(got.Samples) != 1 {
-		t.Fatalf("LoadKV() = %+v, want 1 sample", got.Samples)
+		t.Fatalf("LoadLatency() = %+v, want 1 sample", got.Samples)
 	}
 	s := got.Samples[0]
 	if s.Token != "claude/test/m" || s.Host != "box" || s.TTFTMS != 640 || s.TotalMS != 900 || s.Err != "" {
@@ -60,7 +59,7 @@ func TestSaveKVLoadKVRoundTrip(t *testing.T) {
 
 func TestPruneDropsOlderThan30Days(t *testing.T) {
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
-	h := History{Samples: []Sample{
+	h := LatencyHistory{Samples: []Sample{
 		{At: now.Add(-31 * 24 * time.Hour), Token: "old"},
 		{At: now.Add(-29 * 24 * time.Hour), Token: "new"},
 	}}
@@ -76,7 +75,7 @@ func TestPruneDropsOlderThan30Days(t *testing.T) {
 
 func TestSummaryLowerMedianIgnoresErrors(t *testing.T) {
 	const token = "claude/test/m"
-	h := History{Samples: []Sample{
+	h := LatencyHistory{Samples: []Sample{
 		{Token: token, TTFTMS: 900},
 		{Token: token, TTFTMS: 600},
 		{Token: token, TTFTMS: 700},
@@ -91,7 +90,7 @@ func TestSummaryLowerMedianIgnoresErrors(t *testing.T) {
 
 func TestSummaryOtherTokenIgnored(t *testing.T) {
 	const token = "claude/test/m"
-	h := History{Samples: []Sample{
+	h := LatencyHistory{Samples: []Sample{
 		{Token: token, TTFTMS: 100},
 		{Token: "opencode/other/m", TTFTMS: 5000},
 	}}

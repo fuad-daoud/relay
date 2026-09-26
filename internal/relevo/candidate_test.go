@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
@@ -65,13 +65,13 @@ func orderOf(role string, toks ...string) policy.Policy {
 }
 
 // spawnGate is a SpawnFailed gate on token, for tests.
-func spawnGate(token string) ledger.Gate {
-	return ledger.Gate{Token: token, Kind: ledger.SpawnFailed, Until: baseTime.Add(10 * time.Minute)}
+func spawnGate(token string) availability.Gate {
+	return availability.Gate{Token: token, Kind: availability.SpawnFailed, Until: baseTime.Add(10 * time.Minute)}
 }
 
 // limit is a RateLimited gate on token with no Until, for tests.
-func limit(token string) ledger.Gate {
-	return ledger.Gate{Token: token, Kind: ledger.RateLimited}
+func limit(token string) availability.Gate {
+	return availability.Gate{Token: token, Kind: availability.RateLimited}
 }
 
 func TestResolveCandidate(t *testing.T) {
@@ -81,7 +81,7 @@ func TestResolveCandidate(t *testing.T) {
 		name            string
 		setBody         string
 		pol             policy.Policy
-		gates           []ledger.Gate
+		gates           []availability.Gate
 		token           string
 		role            string
 		wantRef         string
@@ -177,7 +177,7 @@ func TestResolveCandidate(t *testing.T) {
 			name:         "order, first gated",
 			setBody:      testCandidatesJSON,
 			pol:          orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef),
-			gates:        []ledger.Gate{spawnGate(testAgyRef)},
+			gates:        []availability.Gate{spawnGate(testAgyRef)},
 			token:        "",
 			role:         "builder",
 			wantRef:      testClaudeRef,
@@ -189,7 +189,7 @@ func TestResolveCandidate(t *testing.T) {
 			name:        "order, two gated, unlisted wins",
 			setBody:     testCandidatesJSON,
 			pol:         orderOf("builder", testAgyRef, testClaudeRef),
-			gates:       []ledger.Gate{spawnGate(testAgyRef), spawnGate(testClaudeRef)},
+			gates:       []availability.Gate{spawnGate(testAgyRef), spawnGate(testClaudeRef)},
 			token:       "",
 			role:        "builder",
 			wantRef:     testOpencodeRef,
@@ -200,7 +200,7 @@ func TestResolveCandidate(t *testing.T) {
 			name:    "order, all gated",
 			setBody: testCandidatesJSON,
 			pol:     orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef),
-			gates:   []ledger.Gate{limit(testAgyRef), limit(testClaudeRef), limit(testOpencodeRef)},
+			gates:   []availability.Gate{limit(testAgyRef), limit(testClaudeRef), limit(testOpencodeRef)},
 			token:   "",
 			role:    "builder",
 			wantErr: ErrAllGated,
@@ -244,7 +244,7 @@ func TestResolveCandidate(t *testing.T) {
 			name:         "order, two gates on one token",
 			setBody:      testCandidatesJSON,
 			pol:          orderOf("builder", testAgyRef, testClaudeRef),
-			gates:        []ledger.Gate{spawnGate(testAgyRef), limit(testAgyRef)},
+			gates:        []availability.Gate{spawnGate(testAgyRef), limit(testAgyRef)},
 			token:        "",
 			role:         "builder",
 			wantRef:      testClaudeRef,
@@ -255,7 +255,7 @@ func TestResolveCandidate(t *testing.T) {
 		{
 			name:    "sole, gated",
 			setBody: testCandidatesJSON,
-			gates:   []ledger.Gate{limit(testClaudeRef)},
+			gates:   []availability.Gate{limit(testClaudeRef)},
 			token:   "",
 			role:    "reviewer",
 			wantErr: ErrAllGated,
@@ -263,7 +263,7 @@ func TestResolveCandidate(t *testing.T) {
 		{
 			name:    "explicit, gated, proceeds",
 			setBody: testCandidatesJSON,
-			gates:   []ledger.Gate{limit(testAgyRef)},
+			gates:   []availability.Gate{limit(testAgyRef)},
 			token:   testAgyRef,
 			role:    "builder",
 			wantRef: testAgyRef,
@@ -280,7 +280,7 @@ func TestResolveCandidate(t *testing.T) {
 			name:         "order with gate on other provider",
 			setBody:      testTwoProviderJSON,
 			pol:          orderOf("builder", "agy/other/m", testClaudeRef),
-			gates:        []ledger.Gate{limit("agy/other/m")},
+			gates:        []availability.Gate{limit("agy/other/m")},
 			token:        "",
 			role:         "builder",
 			wantRef:      testClaudeRef,
@@ -403,7 +403,7 @@ func TestExplainResolution(t *testing.T) {
 				How:       HowOrder,
 				Position:  2,
 				Candidate: claude,
-				Skipped:   []Skip{{Token: testAgyRef, Kind: ledger.SpawnFailed, Until: until}},
+				Skipped:   []Skip{{Token: testAgyRef, Kind: availability.SpawnFailed, Until: until}},
 			},
 			want: "picked claude/test/m for builder: order #2; skipped " + testAgyRef + " (spawn failed " + untilText + ")",
 		},
@@ -414,8 +414,8 @@ func TestExplainResolution(t *testing.T) {
 				How:       HowUnlisted,
 				Candidate: opencode,
 				Skipped: []Skip{
-					{Token: testAgyRef, Kind: ledger.SpawnFailed, Until: until},
-					{Token: testClaudeRef, Kind: ledger.RateLimited},
+					{Token: testAgyRef, Kind: availability.SpawnFailed, Until: until},
+					{Token: testClaudeRef, Kind: availability.RateLimited},
 				},
 			},
 			want: "picked opencode/test/m for builder: unlisted, after order; skipped " + testAgyRef + " (spawn failed " + untilText + "), " + testClaudeRef + " (rate-limited until cleared)",
@@ -430,9 +430,9 @@ func TestExplainResolution(t *testing.T) {
 				Position:  2,
 				Candidate: claude,
 				Skipped: []Skip{
-					{Token: testAgyRef, Kind: ledger.RateLimited},
-					{Token: testAgyRef, Kind: ledger.RateLimited},
-					{Token: testAgyRef, Kind: ledger.RateLimited},
+					{Token: testAgyRef, Kind: availability.RateLimited},
+					{Token: testAgyRef, Kind: availability.RateLimited},
+					{Token: testAgyRef, Kind: availability.RateLimited},
 				},
 			},
 			want: "picked claude/test/m for builder: order #2; skipped " + testAgyRef + " (rate-limited until cleared)",
@@ -444,8 +444,8 @@ func TestExplainResolution(t *testing.T) {
 				How:       HowExplicit,
 				Candidate: agy,
 				Gates: []Skip{
-					{Token: testAgyRef, Kind: ledger.RateLimited},
-					{Token: testAgyRef, Kind: ledger.RateLimited},
+					{Token: testAgyRef, Kind: availability.RateLimited},
+					{Token: testAgyRef, Kind: availability.RateLimited},
 				},
 			},
 			want: "picked agy/test/m for builder: explicit, policy bypassed; gated: rate-limited until cleared",
@@ -463,7 +463,7 @@ func TestExplainResolution(t *testing.T) {
 				How:           HowExplicit,
 				Candidate:     agy,
 				InheritedFrom: "source",
-				Gates:         []Skip{{Token: testAgyRef, Kind: ledger.RateLimited}},
+				Gates:         []Skip{{Token: testAgyRef, Kind: availability.RateLimited}},
 			},
 			want: "picked agy/test/m for builder: explicit, inherited from source, policy bypassed; gated: rate-limited until cleared",
 		},
@@ -504,8 +504,8 @@ func TestPickTextUsesNamesStoredNoteUnchanged(t *testing.T) {
 		Position:  2,
 		Candidate: claude,
 		Skipped: []Skip{
-			{Token: testAgyRef, Kind: ledger.SpawnFailed, Until: until},
-			{Token: testOpencodeRef, Kind: ledger.RateLimited},
+			{Token: testAgyRef, Kind: availability.SpawnFailed, Until: until},
+			{Token: testOpencodeRef, Kind: availability.RateLimited},
 		},
 	}
 

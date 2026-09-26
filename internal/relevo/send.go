@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -90,12 +90,12 @@ type SendOptions struct {
 // about the state of the world (#149). A failed precondition is an error in
 // Send's exact wording.
 type preflight struct {
-	b    store.Binding // the binding as loaded (read-only; Send re-loads under the lock)
-	body []byte        // the plan file's bytes
-	tier harness.Tier  // effective tier for this round (opts.Tier parsed, or effectiveTier(b))
-	argv []string      // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
-	gate *ledger.Gate  // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
-	pick *Resolution   // --builder's resolution to apply under the lock; nil when the builder does not change
+	b    store.Binding      // the binding as loaded (read-only; Send re-loads under the lock)
+	body []byte             // the plan file's bytes
+	tier harness.Tier       // effective tier for this round (opts.Tier parsed, or effectiveTier(b))
+	argv []string           // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
+	gate *availability.Gate // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
+	pick *Resolution        // --builder's resolution to apply under the lock; nil when the builder does not change
 	// staleToken is the binding's old BuilderCandidate when the preflight
 	// re-picked because the token was stale; "" otherwise. When it is
 	// non-empty, pick is non-nil.
@@ -320,7 +320,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	// The gate is advisory only: a gated candidate can still be sent to, it
 	// just tells the human the daemon would switch away after the start.
 	for _, g := range Gates(rt) {
-		if g.Token == b.BuilderCandidate && (g.Kind == ledger.RateLimited || g.Kind == ledger.RolesMissing) {
+		if g.Token == b.BuilderCandidate && (g.Kind == availability.RateLimited || g.Kind == availability.RolesMissing) {
 			gate := g
 			pf.gate = &gate
 			break
@@ -708,8 +708,8 @@ func dryRunWhere(pf preflight) string {
 
 // dryRunGateNote is the advisory sentence for a gated candidate: what the gate
 // is, and that the daemon would switch the builder once the round started.
-func dryRunGateNote(g *ledger.Gate) string {
-	if g.Kind == ledger.RolesMissing {
+func dryRunGateNote(g *availability.Gate) string {
+	if g.Kind == availability.RolesMissing {
 		return g.Note + "; the daemon would switch after start"
 	}
 	return GateKindText(g.Kind) + " " + GateUntilText(g.Until) + "; the daemon would switch after start"

@@ -14,7 +14,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -663,7 +663,7 @@ func retryCmd(env Env, b relevo.BindingStatus) tea.Cmd {
 
 // gatedBy is the live gate on candidate name, matched by the gate's short
 // name (§3.5), or nil.
-func gatedBy(env Env, name string) *ledger.Gate {
+func gatedBy(env Env, name string) *availability.Gate {
 	for i := range env.Report.Gated {
 		if env.Report.Gated[i].Name == name {
 			return &env.Report.Gated[i]

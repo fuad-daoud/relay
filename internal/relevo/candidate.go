@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -51,7 +51,7 @@ const (
 // entry the pick must not take (A2 §4.3).
 type Skip struct {
 	Token string
-	Kind  ledger.Kind
+	Kind  availability.Kind
 	Until time.Time // zero = until cleared
 	// Off marks an entry skipped because it is off, not because a gate holds
 	// it. It renders as "<name> (off)".
@@ -148,7 +148,7 @@ func rankedList(set *candidate.Set, pol policy.Policy, role string) []rankedEntr
 }
 
 // skipsFor is one Skip per gate whose Token == token, in gates order.
-func skipsFor(gates []ledger.Gate, token string) []Skip {
+func skipsFor(gates []availability.Gate, token string) []Skip {
 	var out []Skip
 	for _, g := range gates {
 		if g.Token != token {
@@ -163,8 +163,8 @@ func skipsFor(gates []ledger.Gate, token string) []Skip {
 // (Role == "") and the ones scoped to role itself. A roles-missing gate for
 // another role must neither refuse nor skip this role's picks (#374 §5). It is
 // pure and returns a new slice.
-func gatesForRole(gates []ledger.Gate, role string) []ledger.Gate {
-	out := make([]ledger.Gate, 0, len(gates))
+func gatesForRole(gates []availability.Gate, role string) []availability.Gate {
+	out := make([]availability.Gate, 0, len(gates))
 	for _, g := range gates {
 		if g.Role == "" || g.Role == role {
 			out = append(out, g)
@@ -214,7 +214,7 @@ func uniqStrings(in []string) []string {
 //
 // It is the legacy registry's resolver: resolveRole over the derivation of
 // set and pol. It stays for tests and policy_view.go (#374 §4.3).
-func resolveCandidate(set *candidate.Set, pol policy.Policy, gates []ledger.Gate, token, role string) (Resolution, error) {
+func resolveCandidate(set *candidate.Set, pol policy.Policy, gates []availability.Gate, token, role string) (Resolution, error) {
 	return resolveRole(legacyRegistry(set, pol), set, gates, token, role)
 }
 
@@ -223,7 +223,7 @@ func resolveCandidate(set *candidate.Set, pol policy.Policy, gates []ledger.Gate
 // legacy derivation otherwise (#374 §4.3). Every error text is the legacy one
 // except where a candidate is refused for not being in the file's list, which
 // the registry can only know in file mode.
-func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, token, role string) (Resolution, error) {
+func resolveRole(reg *roles.Registry, set *candidate.Set, gates []availability.Gate, token, role string) (Resolution, error) {
 	gates = gatesForRole(gates, role)
 	if token != "" {
 		// The argument may be a candidate name or a canonical token (A1
@@ -246,7 +246,7 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, t
 		// every other explicit-pick gate does) would only spawn it to die
 		// within seconds (#238).
 		for _, g := range gates {
-			if g.Token == tok && g.Kind == ledger.RolesMissing {
+			if g.Token == tok && g.Kind == availability.RolesMissing {
 				return Resolution{}, fmt.Errorf("%s: %s", c.Name, g.Note)
 			}
 		}

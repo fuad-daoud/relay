@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/git"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -243,9 +243,9 @@ func TestRenderStatusGatedBlock(t *testing.T) {
 			PlannerKind: "claude", BuilderKind: "agy", BuilderStatus: "working",
 			BuilderCandidate: testAgyRef,
 		}},
-		Gated: []ledger.Gate{
-			{Token: testAgyRef, Name: "agy-m", Kind: ledger.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
-			{Token: testClaudeRef, Name: "claude-m", Kind: ledger.RateLimited, Since: now, Until: time.Time{}},
+		Gated: []availability.Gate{
+			{Token: testAgyRef, Name: "agy-m", Kind: availability.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
+			{Token: testClaudeRef, Name: "claude-m", Kind: availability.RateLimited, Since: now, Until: time.Time{}},
 		},
 	}
 
@@ -277,7 +277,7 @@ func TestRenderStatusGatedBlockFallsBackToToken(t *testing.T) {
 	t.Parallel()
 
 	r := Report{
-		Gated: []ledger.Gate{{Token: testAgyRef, Kind: ledger.RateLimited, Until: time.Time{}}},
+		Gated: []availability.Gate{{Token: testAgyRef, Kind: availability.RateLimited, Until: time.Time{}}},
 	}
 
 	out := RenderStatus(r)
@@ -369,8 +369,8 @@ func TestRenderStatusGatesWithNoBindings(t *testing.T) {
 
 	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
 	r := Report{
-		Gated: []ledger.Gate{
-			{Token: testAgyRef, Kind: ledger.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
+		Gated: []availability.Gate{
+			{Token: testAgyRef, Kind: availability.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
 		},
 	}
 
@@ -418,7 +418,7 @@ func TestHideDoneKeepsGated(t *testing.T) {
 
 	in := Report{
 		Bindings: []BindingStatus{{Name: "old", State: string(store.StateDone)}},
-		Gated:    []ledger.Gate{{Token: "agy/test/m", Kind: ledger.RateLimited}},
+		Gated:    []availability.Gate{{Token: "agy/test/m", Kind: availability.RateLimited}},
 	}
 	out := HideDone(in)
 	if out.DoneHidden != 1 || len(out.Bindings) != 0 {
