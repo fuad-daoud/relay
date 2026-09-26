@@ -1,7 +1,7 @@
-// Package ledger records when a candidate could not be used
-// and why: spawn failures relevo observed, rate limits the planner reported.
-// It records and answers; it never decides (#61 step 1).
-package ledger
+// Package availability records why a candidate could not be used, the 30-day
+// history and latency samples kept alongside that ledger, and the gate and
+// window questions renderers ask. It records and answers; it never decides.
+package availability
 
 import (
 	"encoding/json"
@@ -16,7 +16,7 @@ import (
 )
 
 // Kind classifies why a candidate could not be used.
-// Each kind fixes what its Subject means (#61 step 1).
+// Each kind fixes what its Subject means.
 type Kind string
 
 const (
@@ -31,14 +31,14 @@ const (
 	// ExitedNoReport records that a headless builder exited without a
 	// report during the current round. It is never written to the ledger
 	// file: it is synthesised in memory, per round, by switchBuilder from
-	// Binding.RoundExcluded (#191), so Load never needs to validate it.
+	// Binding.RoundExcluded, so Load never needs to validate it.
 	ExitedNoReport Kind = "exited_no_report"
 
 	// RolesMissing records that a candidate's harness kind is missing role
 	// files (definitions) relevo needs to run it as a builder. Like
 	// ExitedNoReport, it is never written to the ledger file: it is
 	// synthesised in memory by relevo.Gates from an injectable
-	// Runtime.Roles checker, so Load never needs to validate it (#238).
+	// Runtime.Roles checker, so Load never needs to validate it.
 	RolesMissing Kind = "roles_missing"
 )
 
@@ -66,7 +66,7 @@ func (e Entry) Expired(now time.Time) bool {
 //
 // Entries are the ones this binary understands. Other holds entries with an
 // unknown kind or source, preserved verbatim so an older relevo never erases a
-// newer one's records (#372 §4.2): they are invisible to every reader, never
+// newer one's records: they are invisible to every reader, never
 // pruned or cleared, and written back byte-for-byte.
 type Ledger struct {
 	Entries []Entry           `json:"-"`
@@ -86,26 +86,25 @@ func knownSource(s string) bool {
 	return s == "relevo" || s == "planner"
 }
 
-// ledgerKey is the kv row the ledger document lives in (P3b plan §1).
+// ledgerKey is the kv row the ledger document lives in.
 const ledgerKey = "ledger"
 
-// LoadKV reads and validates the availability ledger from the store database's
+// LoadLedger reads and validates the availability ledger from the store database's
 // kv row "ledger", importing a present legacyPath file (ledger.json) on first
-// read (P3b plan §4.3, §4.4). An absent row with no file behind it returns an
-// empty Ledger without error, as a fresh install records no events yet. LoadKV
+// read. An absent row with no file behind it returns an
+// empty Ledger without error, as a fresh install records no events yet. LoadLedger
 // validates entry schema but does not prune expired entries; callers prune
-// against their own notion of time (#61 step 1).
+// against their own notion of time.
 //
 // An entry whose kind or source is unknown to this binary is preserved raw in
 // Other rather than rejected, so a ledger written by a newer relevo survives a
-// rollback (#372 §4.2). Malformed JSON is still an error.
+// rollback. Malformed JSON is still an error.
 //
-// An entry recorded before the rename carries Source "relay": LoadKV reads it as // name-guard: legacy
+// An entry recorded before the rename carries Source "relay": LoadLedger reads // name-guard: legacy
 // relevo's own, rewriting the source to "relevo" before the knownKind and
 // knownSource test, so a pre-cutover rate-limit gate keeps gating instead of
-// lapsing into Other (#292 §1). A later SaveKV then writes "relevo", which is
-// the only change #292 makes to a stored entry.
-func LoadKV(kv db.KV, legacyPath string) (Ledger, error) {
+// lapsing into Other. A later SaveLedger then writes "relevo".
+func LoadLedger(kv db.KV, legacyPath string) (Ledger, error) {
 	data, ok, err := db.KVImportFile(kv, ledgerKey, legacyPath)
 	if err != nil {
 		return Ledger{}, err
@@ -134,7 +133,7 @@ func decode(data []byte) (Ledger, error) {
 		}
 
 		// A pre-rename entry is relevo's own, written before the cutover: it
-		// reads as "relevo" so knownSource accepts it (#292 §1).
+		// reads as "relevo" so knownSource accepts it.
 		if e.Source == legacy.LedgerSource {
 			e.Source = "relevo"
 		}
@@ -162,10 +161,10 @@ func decode(data []byte) (Ledger, error) {
 	return l, nil
 }
 
-// SaveKV writes the whole ledger document to the kv row "ledger". The known
+// SaveLedger writes the whole ledger document to the kv row "ledger". The known
 // entries are marshalled as before; Other's raw bytes follow verbatim
-// (#372 §4.2). The row holds the same JSON document the file did.
-func SaveKV(kv db.KV, l Ledger) error {
+// The row holds the same JSON document the file did.
+func SaveLedger(kv db.KV, l Ledger) error {
 	var entries []json.RawMessage
 	for _, e := range l.Entries {
 		raw, err := json.Marshal(e)
@@ -190,7 +189,7 @@ func SaveKV(kv db.KV, l Ledger) error {
 
 // Prune returns a new Ledger containing every non-expired entry, in order.
 // It does not mutate the receiver's slice. Other is carried through untouched:
-// it is never pruned (#372 §4.2).
+// it is never pruned.
 func (l Ledger) Prune(now time.Time) Ledger {
 	var kept []Entry
 	for _, e := range l.Entries {
@@ -210,7 +209,7 @@ func (l Ledger) Append(e Entry) Ledger {
 }
 
 // Clear returns a new Ledger without every entry whose Kind == kind and Subject == subject.
-// It does not mutate the receiver's slice. Other is never cleared (#372 §4.2).
+// It does not mutate the receiver's slice. Other is never cleared.
 func (l Ledger) Clear(kind Kind, subject string) Ledger {
 	var kept []Entry
 	for _, e := range l.Entries {
@@ -227,7 +226,7 @@ func (l Ledger) Clear(kind Kind, subject string) Ledger {
 // renderer shows them all.
 type Gate struct {
 	Token string // the gated candidate, canonical ref
-	// Name is the gated candidate's short name (A1 §4.4), filled by
+	// Name is the gated candidate's short name, filled by
 	// relevo.Gates for display only: every lookup and comparison stays on
 	// Token. Empty when no set was available to resolve it through.
 	Name    string `json:",omitempty"`
@@ -237,7 +236,7 @@ type Gate struct {
 	Note    string
 	Source  string
 	Binding string // Entry.Binding; "" for planner entries
-	// Role scopes this gate to one role (#374 §5): non-empty means it applies
+	// Role scopes this gate to one role: non-empty means it applies
 	// only to that role, "" means every role -- which covers every gate read
 	// from the ledger file and every gate Gated produces. Only
 	// rolesMissingGates sets it.
@@ -247,7 +246,7 @@ type Gate struct {
 // Gated is the one view every renderer uses: for each live entry, which
 // configured candidates it gates. A spawn failure gates its own token; a
 // rate limit gates every candidate of its provider, because the quota is
-// the provider's, not the model's (spec §1).
+// the provider's, not the model's.
 func Gated(l Ledger, refs []string, providerOf func(string) string, now time.Time) []Gate {
 	var gates []Gate
 

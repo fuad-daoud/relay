@@ -50,12 +50,6 @@ internal/e2e/fakes_test.go
 internal/e2e/headless_test.go
 internal/e2e/remote_test.go
 internal/e2e/tier_test.go
-internal/history/history.go
-internal/history/history_test.go
-internal/latency/latency.go
-internal/latency/latency_test.go
-internal/ledger/ledger.go
-internal/ledger/ledger_test.go
 internal/legacy/legacy.go
 internal/legacy/legacy_test.go
 internal/pick/confirm.go

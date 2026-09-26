@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -398,7 +398,7 @@ func ledgerRuntime(s *Server) relevo.Runtime {
 	}
 }
 
-func AdminGates(s *Server) []ledger.Gate {
+func AdminGates(s *Server) []availability.Gate {
 	return relevo.Gates(ledgerRuntime(s))
 }
 
@@ -412,7 +412,7 @@ func AdminUnavailable(s *Server, token string, until time.Time, reason string) (
 
 // RenderGates formats `relevo serve gates`, printing the candidate's short name
 // when the gate carries one.
-func RenderGates(gates []ledger.Gate, now time.Time) string {
+func RenderGates(gates []availability.Gate, now time.Time) string {
 	if len(gates) == 0 {
 		return "no gates\n"
 	}

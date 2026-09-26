@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/doctor"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -163,9 +163,9 @@ func TestAssembleDefinitionsNilSet(t *testing.T) {
 
 func TestLedgerChecks(t *testing.T) {
 	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
-	gates := []ledger.Gate{
-		{Token: "claude/anthropic/sonnet", Kind: ledger.RateLimited, Since: now, Until: time.Time{}},
-		{Token: "agy/google/m", Kind: ledger.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
+	gates := []availability.Gate{
+		{Token: "claude/anthropic/sonnet", Kind: availability.RateLimited, Since: now, Until: time.Time{}},
+		{Token: "agy/google/m", Kind: availability.SpawnFailed, Since: now, Until: now.Add(10 * time.Minute)},
 	}
 
 	checks := ledgerChecks(gates)

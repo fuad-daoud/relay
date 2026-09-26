@@ -10,8 +10,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
@@ -40,7 +40,7 @@ type candRow struct {
 	c     candidate.Candidate
 	slots []relevo.ActorSlot // CandidateSlots(doc, c.Name), on entries only, for SERVES
 	on    bool               // some actor has it on
-	gate  *ledger.Gate       // the gate on its token from env.Report.Gated, nil when none
+	gate  *availability.Gate // the gate on its token from env.Report.Gated, nil when none
 }
 
 // newCandidatesView builds ':candidates' and the command that loads its doc
@@ -94,7 +94,7 @@ func candName(doc relevo.ConfigDoc, ref string) string {
 // each actor's entries in order, emitting each candidate the first time it is
 // seen (including off entries); then every remaining candidate in stored
 // order.
-func candRows(doc relevo.ConfigDoc, gated []ledger.Gate) []candRow {
+func candRows(doc relevo.ConfigDoc, gated []availability.Gate) []candRow {
 	byName := make(map[string]candidate.Candidate, len(doc.Candidates))
 	for _, c := range doc.Candidates {
 		byName[c.Name] = c
@@ -124,7 +124,7 @@ func candRows(doc relevo.ConfigDoc, gated []ledger.Gate) []candRow {
 }
 
 // candRowWith computes one row's slots, on flag and gate.
-func candRowWith(doc relevo.ConfigDoc, c candidate.Candidate, gated []ledger.Gate) candRow {
+func candRowWith(doc relevo.ConfigDoc, c candidate.Candidate, gated []availability.Gate) candRow {
 	r := candRow{c: c}
 	for _, s := range relevo.CandidateSlots(doc, c.Name) {
 		if s.Off {
@@ -306,7 +306,7 @@ func candSince(t, now time.Time) string {
 
 // candUntilText is a gate's expiry text (§4): "until cleared" for a gate with
 // no expiry, else "until " and statsGateUntil's time.
-func candUntilText(g ledger.Gate, now time.Time) string {
+func candUntilText(g availability.Gate, now time.Time) string {
 	if g.Until.IsZero() {
 		return "until cleared"
 	}

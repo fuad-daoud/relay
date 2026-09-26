@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -214,7 +214,7 @@ func TestCandidateFormGatedProviderLine(t *testing.T) {
 	fa := &fakeActions{doc: formDoc(t)}
 	f := newCandidateForm(formEnv(fa), fa.doc, "deepseek-v4.1-flash", "builder 3", "")
 
-	var gate ledger.Gate
+	var gate availability.Gate
 	for _, g := range candFixtureGates() {
 		if g.Token == "opencode/cline-pass/cline-pass/deepseek-v4.1-flash#high" {
 			gate = g

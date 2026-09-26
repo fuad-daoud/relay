@@ -4,9 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 )
 
 // stNow is the fixture's "now": every window below is relative to it.
@@ -476,20 +475,20 @@ func TestReliabilityWindowAndHours(t *testing.T) {
 		{BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 2},
 		{BuilderCandidate: stStr("b"), Outcome: db.OutcomeReported},
 	}
-	gates := []ledger.Gate{{Token: "a"}}
-	hist := history.History{Events: []history.Event{
+	gates := []availability.Gate{{Token: "a"}}
+	hist := availability.History{Events: []availability.Event{
 		// In the window: 01:30 UTC is 03:30 local.
-		{At: time.Date(2026, 9, 24, 1, 30, 0, 0, time.UTC), Kind: ledger.RateLimited, Provider: "google"},
+		{At: time.Date(2026, 9, 24, 1, 30, 0, 0, time.UTC), Kind: availability.RateLimited, Provider: "google"},
 		// After Until: excluded.
-		{At: time.Date(2026, 9, 24, 23, 30, 0, 0, time.UTC), Kind: ledger.RateLimited, Provider: "google"},
+		{At: time.Date(2026, 9, 24, 23, 30, 0, 0, time.UTC), Kind: availability.RateLimited, Provider: "google"},
 		// Before Since: excluded.
-		{At: time.Date(2026, 9, 19, 23, 0, 0, 0, time.UTC), Kind: ledger.RateLimited, Provider: "google"},
+		{At: time.Date(2026, 9, 19, 23, 0, 0, 0, time.UTC), Kind: availability.RateLimited, Provider: "google"},
 		// In the window: 08:00 UTC is 10:00 local.
-		{At: time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC), Kind: ledger.RateLimited, Provider: "openai"},
+		{At: time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC), Kind: availability.RateLimited, Provider: "openai"},
 		// In the window.
-		{At: time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC), Kind: ledger.SpawnFailed, Provider: "google"},
+		{At: time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC), Kind: availability.SpawnFailed, Provider: "google"},
 		// Before Since: excluded.
-		{At: time.Date(2026, 9, 19, 23, 0, 0, 0, time.UTC), Kind: ledger.SpawnFailed, Provider: "openai"},
+		{At: time.Date(2026, 9, 19, 23, 0, 0, 0, time.UTC), Kind: availability.SpawnFailed, Provider: "openai"},
 	}}
 	rep := Build(Inputs{
 		Rows:    rows,

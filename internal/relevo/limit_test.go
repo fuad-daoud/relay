@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
@@ -343,10 +343,10 @@ func gateHeadless(t *testing.T, rt Runtime, b store.Binding, text string, closeO
 	return next, m, handled, err
 }
 
-func rateLimitedEntries(l ledger.Ledger) []ledger.Entry {
-	var out []ledger.Entry
+func rateLimitedEntries(l availability.Ledger) []availability.Entry {
+	var out []availability.Entry
 	for _, e := range l.Entries {
-		if e.Kind == ledger.RateLimited {
+		if e.Kind == availability.RateLimited {
 			out = append(out, e)
 		}
 	}

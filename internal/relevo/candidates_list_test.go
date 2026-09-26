@@ -5,8 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/latency"
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
@@ -45,8 +44,8 @@ func TestFormatCandidatesMarksGated(t *testing.T) {
 	t.Parallel()
 
 	set := candidateSet(t, testCandidatesJSON)
-	gates := []ledger.Gate{
-		{Token: testClaudeRef, Kind: ledger.RateLimited, Until: time.Time{}},
+	gates := []availability.Gate{
+		{Token: testClaudeRef, Kind: availability.RateLimited, Until: time.Time{}},
 	}
 	got := FormatCandidates(set, gates)
 	want := "agy-m" + strings.Repeat(" ", 5) + "agy/test/m     " + "  builder   [--dangerously-skip-permissions]   note: extra_args carries --dangerously-skip-permissions; launches at tier harness only -- move it to \"tier\"\n" +
@@ -82,7 +81,7 @@ func TestFormatCandidatesLatencySuffix(t *testing.T) {
   {"harness":"opencode","provider":"test","model":"m","roles":["builder"]}
 ]`
 	set := candidateSet(t, twoCandidates)
-	lat := map[string]latency.Summary{"claude/test/m": {N: 3, TTFTP50MS: 640}}
+	lat := map[string]availability.Summary{"claude/test/m": {N: 3, TTFTP50MS: 640}}
 
 	got := FormatCandidatesLatency(set, nil, lat)
 	want := "m" + strings.Repeat(" ", 11) + "claude/test/m  " + "  builder   ttft p50 640ms (n=3, 30d)\n" +

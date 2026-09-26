@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 )
 
 // ErrUnknownProvider is returned when a clear names a provider that no
@@ -39,7 +39,7 @@ const (
 //	  known if provider is in set.Providers(),
 //	     or if l has a RateLimited entry whose Subject == provider
 //	  otherwise: return an error wrapping ErrUnknownProvider
-func ResolveClearSubject(set *candidate.Set, l ledger.Ledger, subject string) (provider string, err error) {
+func ResolveClearSubject(set *candidate.Set, l availability.Ledger, subject string) (provider string, err error) {
 	// A name is a candidate, and clears that candidate's provider (A1
 	// §4.2). A provider name is never also a candidate name (candidate
 	// names must not equal a configured provider), so this cannot shadow
@@ -81,9 +81,9 @@ func ResolveClearSubject(set *candidate.Set, l ledger.Ledger, subject string) (p
 // gatesProvider reports whether l carries a rate-limit gate on provider. The
 // caller passes an already-pruned ledger, so this is exactly the set of
 // entries a clear would remove.
-func gatesProvider(l ledger.Ledger, provider string) bool {
+func gatesProvider(l availability.Ledger, provider string) bool {
 	for _, e := range l.Entries {
-		if e.Kind == ledger.RateLimited && e.Subject == provider {
+		if e.Kind == availability.RateLimited && e.Subject == provider {
 			return true
 		}
 	}

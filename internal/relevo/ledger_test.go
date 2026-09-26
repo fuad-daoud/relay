@@ -8,16 +8,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // loadLedger reads the runtime's ledger for assertions.
-func loadLedger(t *testing.T, rt Runtime) ledger.Ledger {
+func loadLedger(t *testing.T, rt Runtime) availability.Ledger {
 	t.Helper()
-	l, err := ledger.LoadKV(rt.Gates, "")
+	l, err := availability.LoadLedger(rt.Gates, "")
 	if err != nil {
 		t.Fatalf("LoadKV ledger: %v", err)
 	}
@@ -25,9 +24,9 @@ func loadLedger(t *testing.T, rt Runtime) ledger.Ledger {
 }
 
 // loadHistory reads the runtime's history for assertions.
-func loadHistory(t *testing.T, rt Runtime) history.History {
+func loadHistory(t *testing.T, rt Runtime) availability.History {
 	t.Helper()
-	h, err := history.LoadKV(rt.Gates, "")
+	h, err := availability.LoadHistory(rt.Gates, "")
 	if err != nil {
 		t.Fatalf("LoadKV history: %v", err)
 	}
@@ -76,7 +75,7 @@ func TestRecordSpawnFailureLockedUnderHeldLock(t *testing.T) {
 	l := loadLedger(t, rt)
 	count := 0
 	for _, e := range l.Entries {
-		if e.Kind == ledger.SpawnFailed && e.Subject == testAgyRef {
+		if e.Kind == availability.SpawnFailed && e.Subject == testAgyRef {
 			count++
 		}
 	}
@@ -103,7 +102,7 @@ func TestUnavailableRecordsTheProvider(t *testing.T) {
 		t.Fatalf("got %d ledger entries, want 1: %+v", len(l.Entries), l.Entries)
 	}
 	e := l.Entries[0]
-	if e.Kind != ledger.RateLimited || e.Subject != "test" {
+	if e.Kind != availability.RateLimited || e.Subject != "test" {
 		t.Errorf("entry = %+v, want RateLimited for provider test", e)
 	}
 	if !e.Until.IsZero() {
@@ -215,7 +214,7 @@ func TestAvailableLeavesSpawnFailures(t *testing.T) {
 	if len(l.Entries) != 1 {
 		t.Fatalf("got %d ledger entries, want 1: %+v", len(l.Entries), l.Entries)
 	}
-	if l.Entries[0].Kind != ledger.SpawnFailed {
+	if l.Entries[0].Kind != availability.SpawnFailed {
 		t.Errorf("remaining entry kind = %v, want SpawnFailed", l.Entries[0].Kind)
 	}
 }
@@ -248,21 +247,21 @@ func TestGatesProjectsOntoCandidates(t *testing.T) {
 	// The first two gates are both for agy/test/m: one RateLimited (from
 	// the provider-wide gate) and one SpawnFailed. Both have Since ==
 	// baseTime, so the sort between them is not guaranteed; assert as a set.
-	agyKinds := map[ledger.Kind]bool{}
+	agyKinds := map[availability.Kind]bool{}
 	for _, g := range gates[:2] {
 		if g.Token != testAgyRef {
 			t.Errorf("gate = %+v, want token %q", g, testAgyRef)
 		}
 		agyKinds[g.Kind] = true
 	}
-	if !agyKinds[ledger.RateLimited] || !agyKinds[ledger.SpawnFailed] {
+	if !agyKinds[availability.RateLimited] || !agyKinds[availability.SpawnFailed] {
 		t.Errorf("first two gates = %+v, want one RateLimited and one SpawnFailed for %q", gates[:2], testAgyRef)
 	}
 
-	if gates[2].Token != testClaudeRef || gates[2].Kind != ledger.RateLimited {
+	if gates[2].Token != testClaudeRef || gates[2].Kind != availability.RateLimited {
 		t.Errorf("gate 2 = %+v, want RateLimited for %q", gates[2], testClaudeRef)
 	}
-	if gates[3].Token != testOpencodeRef || gates[3].Kind != ledger.RateLimited {
+	if gates[3].Token != testOpencodeRef || gates[3].Kind != availability.RateLimited {
 		t.Errorf("gate 3 = %+v, want RateLimited for %q", gates[3], testOpencodeRef)
 	}
 }
@@ -298,9 +297,9 @@ func TestMutateLedgerCarriesUnknownEntries(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	err := mutateLedgerLocked(rt, func(l ledger.Ledger) ledger.Ledger {
-		return l.Append(ledger.Entry{
-			Kind:    ledger.RateLimited,
+	err := mutateLedgerLocked(rt, func(l availability.Ledger) availability.Ledger {
+		return l.Append(availability.Entry{
+			Kind:    availability.RateLimited,
 			Subject: "test",
 			At:      baseTime,
 			Source:  "planner",
@@ -311,7 +310,7 @@ func TestMutateLedgerCarriesUnknownEntries(t *testing.T) {
 	}
 
 	l := loadLedger(t, rt)
-	if len(l.Entries) != 1 || l.Entries[0].Kind != ledger.RateLimited {
+	if len(l.Entries) != 1 || l.Entries[0].Kind != availability.RateLimited {
 		t.Fatalf("Entries = %+v, want the one appended rate_limited", l.Entries)
 	}
 	if len(l.Other) != 2 {
@@ -341,7 +340,7 @@ func TestGatesIgnoresUnknownEntries(t *testing.T) {
 		t.Fatalf("got %d gates, want 3 (one per candidate on provider test): %+v", len(gates), gates)
 	}
 	for _, g := range gates {
-		if g.Kind != ledger.RateLimited {
+		if g.Kind != availability.RateLimited {
 			t.Errorf("gate = %+v, want only the known rate_limited gate", g)
 		}
 	}
@@ -353,7 +352,7 @@ func TestGatesIgnoresUnknownEntries(t *testing.T) {
 func TestGateKindTextExitedNoReport(t *testing.T) {
 	t.Parallel()
 
-	if got := GateKindText(ledger.ExitedNoReport); got != "exited without a report" {
+	if got := GateKindText(availability.ExitedNoReport); got != "exited without a report" {
 		t.Errorf("GateKindText(ExitedNoReport) = %q, want %q", got, "exited without a report")
 	}
 }
@@ -363,7 +362,7 @@ func TestGateKindTextExitedNoReport(t *testing.T) {
 func TestGateKindTextRolesMissing(t *testing.T) {
 	t.Parallel()
 
-	if got := GateKindText(ledger.RolesMissing); got != "roles missing" {
+	if got := GateKindText(availability.RolesMissing); got != "roles missing" {
 		t.Errorf("GateKindText(RolesMissing) = %q, want %q", got, "roles missing")
 	}
 }
@@ -433,7 +432,7 @@ func TestGatesCarryName(t *testing.T) {
 	recordSpawnFailure(rt, testAgyRef, "webshop", errors.New("boom"))
 
 	gates := Gates(rt)
-	byToken := make(map[string]ledger.Gate, len(gates))
+	byToken := make(map[string]availability.Gate, len(gates))
 	for _, g := range gates {
 		byToken[g.Token] = g
 	}
@@ -478,14 +477,14 @@ func TestMutateLedgerPrunes(t *testing.T) {
 
 	rt := newRuntime(t)
 
-	expired := ledger.Entry{
-		Kind:    ledger.RateLimited,
+	expired := availability.Entry{
+		Kind:    availability.RateLimited,
 		Subject: "stale",
 		At:      baseTime.Add(-time.Hour),
 		Until:   baseTime.Add(-time.Minute),
 		Source:  "planner",
 	}
-	if err := ledger.SaveKV(rt.Gates, ledger.Ledger{Entries: []ledger.Entry{expired}}); err != nil {
+	if err := availability.SaveLedger(rt.Gates, availability.Ledger{Entries: []availability.Entry{expired}}); err != nil {
 		t.Fatalf("SaveKV: %v", err)
 	}
 
@@ -520,7 +519,7 @@ func TestUnavailableRecordsHistory(t *testing.T) {
 	if len(h.Events) != 1 {
 		t.Fatalf("got %d history events, want 1: %+v", len(h.Events), h.Events)
 	}
-	want := history.Event{Kind: ledger.RateLimited, Provider: "test", Token: "", Source: "planner", Note: "5h window", At: baseTime}
+	want := availability.Event{Kind: availability.RateLimited, Provider: "test", Token: "", Source: "planner", Note: "5h window", At: baseTime}
 	if h.Events[0] != want {
 		t.Errorf("history event = %+v, want %+v", h.Events[0], want)
 	}
@@ -560,7 +559,7 @@ func TestSwitchSpawnFailureRecordsHistory(t *testing.T) {
 	if len(h.Events) != 1 {
 		t.Fatalf("got %d history events, want 1: %+v", len(h.Events), h.Events)
 	}
-	if h.Events[0].Kind != ledger.SpawnFailed || h.Events[0].Token != testAgyRef {
+	if h.Events[0].Kind != availability.SpawnFailed || h.Events[0].Token != testAgyRef {
 		t.Errorf("history event = %+v, want SpawnFailed for %q", h.Events[0], testAgyRef)
 	}
 }
@@ -598,8 +597,8 @@ func TestAvailableRecordsClear(t *testing.T) {
 		t.Fatalf("got %d history events, want 2: %+v", len(h.Events), h.Events)
 	}
 	ev := h.Events[1]
-	if ev.Kind != history.Cleared {
-		t.Errorf("kind = %q, want %q", ev.Kind, history.Cleared)
+	if ev.Kind != availability.Cleared {
+		t.Errorf("kind = %q, want %q", ev.Kind, availability.Cleared)
 	}
 	if ev.Provider != "test" {
 		t.Errorf("provider = %q, want test", ev.Provider)

@@ -1,9 +1,4 @@
-// Package latency keeps, for 30 days, how long each candidate took to
-// produce its first model output, so a listing can show what a candidate
-// costs to start before relevo moves a provider or a region (#324 part 1).
-// It is a record, not a policy: nothing here decides which candidate relevo
-// runs, and nothing loads it on a spawn path.
-package latency
+package availability
 
 import (
 	"encoding/json"
@@ -14,9 +9,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// RetainWindow is how long a sample is kept before Prune drops it, matching
-// history.RetainWindow so both records age out together.
-const RetainWindow = 30 * 24 * time.Hour
+// LatencyRetainWindow is how long a sample is kept before Prune drops it,
+// matching HistoryRetainWindow so both records age out together.
+const LatencyRetainWindow = 30 * 24 * time.Hour
 
 // Sample records one probe: how long a candidate took to produce its first
 // model output, and how long the whole run took. Err is "" on success; a
@@ -30,8 +25,8 @@ type Sample struct {
 	Err     string    `json:"err,omitempty"`
 }
 
-// History holds every sample in the 30-day window, oldest first.
-type History struct {
+// LatencyHistory holds every sample in the 30-day window, oldest first.
+type LatencyHistory struct {
 	Samples []Sample `json:"samples"`
 }
 
@@ -43,33 +38,33 @@ type Summary struct {
 	TTFTP50MS int64
 }
 
-// latencyKey is the kv row the latency document lives in (P3b plan §1).
+// latencyKey is the kv row the latency document lives in.
 const latencyKey = "latency"
 
-// LoadKV reads the latency history from the kv row "latency", importing a
-// present legacyPath file (latency.json) on first read (P3b plan §4.3, §4.4).
-// An absent row with no file behind it is an empty History and no error: a
+// LoadLatency reads the latency history from the kv row "latency", importing a
+// present legacyPath file (latency.json) on first read. An absent row with no
+// file behind it is an empty LatencyHistory and no error: a
 // fresh install has probed nothing yet. Invalid JSON is an error, so a torn or
 // hand-edited document is reported rather than read as empty.
-func LoadKV(kv db.KV, legacyPath string) (History, error) {
+func LoadLatency(kv db.KV, legacyPath string) (LatencyHistory, error) {
 	data, ok, err := db.KVImportFile(kv, latencyKey, legacyPath)
 	if err != nil {
-		return History{}, err
+		return LatencyHistory{}, err
 	}
 	if !ok {
-		return History{}, nil
+		return LatencyHistory{}, nil
 	}
 
-	var h History
+	var h LatencyHistory
 	if err := json.Unmarshal(data, &h); err != nil {
-		return History{}, fmt.Errorf("decode latency: %w", err)
+		return LatencyHistory{}, fmt.Errorf("decode latency: %w", err)
 	}
 
 	return h, nil
 }
 
-// SaveKV writes the whole history document to the kv row "latency".
-func SaveKV(kv db.KV, h History) error {
+// SaveLatency writes the whole history document to the kv row "latency".
+func SaveLatency(kv db.KV, h LatencyHistory) error {
 	data, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal latency: %w", err)
@@ -77,30 +72,30 @@ func SaveKV(kv db.KV, h History) error {
 	return kv.KVPut(latencyKey, data)
 }
 
-// Prune returns a new History containing every sample no older than
-// RetainWindow, in order. It does not mutate the receiver's slice.
-func (h History) Prune(now time.Time) History {
-	cutoff := now.Add(-RetainWindow)
+// Prune returns a new LatencyHistory containing every sample no older than
+// LatencyRetainWindow, in order. It does not mutate the receiver's slice.
+func (h LatencyHistory) Prune(now time.Time) LatencyHistory {
+	cutoff := now.Add(-LatencyRetainWindow)
 	var kept []Sample
 	for _, s := range h.Samples {
 		if !s.At.Before(cutoff) {
 			kept = append(kept, s)
 		}
 	}
-	return History{Samples: append([]Sample(nil), kept...)}
+	return LatencyHistory{Samples: append([]Sample(nil), kept...)}
 }
 
-// Append returns a new History with s added to the end. It performs no
+// Append returns a new LatencyHistory with s added to the end. It performs no
 // deduplication and does not mutate the receiver's slice.
-func (h History) Append(s Sample) History {
+func (h LatencyHistory) Append(s Sample) LatencyHistory {
 	cp := append([]Sample(nil), h.Samples...)
-	return History{Samples: append(cp, s)}
+	return LatencyHistory{Samples: append(cp, s)}
 }
 
 // Summary summarises token over every sample in h. The caller prunes first,
 // so the window is the caller's choice. Errored samples count in Errors and
 // are excluded from TTFTP50MS; with no successful sample the p50 is 0.
-func (h History) Summary(token string) Summary {
+func (h LatencyHistory) Summary(token string) Summary {
 	ttfts := make([]int64, 0, len(h.Samples))
 	var sum Summary
 	for _, s := range h.Samples {

@@ -11,9 +11,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
@@ -125,7 +125,7 @@ func statsCandNameW(width int, visible []statsCandCol) int {
 // statsGateLeft is a gate's STATUS text (§4.1): "gated" when it has no expiry,
 // else the time left rounded down -- minutes (at least 1m) under an hour,
 // hours under a day, then days.
-func statsGateLeft(g ledger.Gate, now time.Time) string {
+func statsGateLeft(g availability.Gate, now time.Time) string {
 	if g.Until.IsZero() {
 		return "gated"
 	}
@@ -2173,8 +2173,8 @@ func (v statsView) tokensTabLines(env Env, width, height int) []string {
 // statsReliableGates is the gates the reliability tab counts and shows (§5.1):
 // the active gates that scope to the builder role. A gate scoped to another
 // role is not a builder waiting on a limit.
-func (v statsView) statsReliableGates() []ledger.Gate {
-	var out []ledger.Gate
+func (v statsView) statsReliableGates() []availability.Gate {
+	var out []availability.Gate
 	for _, g := range v.rep.Reliability.Active {
 		if g.Role == "" || g.Role == "builder" {
 			out = append(out, g)
@@ -2186,7 +2186,7 @@ func (v statsView) statsReliableGates() []ledger.Gate {
 // statsGateUntil is a gate row's UNTIL text (§5.1): the time of day when the
 // expiry is today, the date and time otherwise, and "until cleared" for a gate
 // with no expiry.
-func statsGateUntil(g ledger.Gate, now time.Time) string {
+func statsGateUntil(g availability.Gate, now time.Time) string {
 	if g.Until.IsZero() {
 		return "until cleared"
 	}

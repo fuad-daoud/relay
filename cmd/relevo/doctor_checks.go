@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/doctor"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -61,7 +61,7 @@ func databaseCheck(st *store.Store) doctor.Check {
 // ledgerChecks turns live gates into doctor rows under the candidate's
 // harness. They warn, never fail: a gated provider is a fact about right
 // now, not a broken install, and must not change doctor's exit code.
-func ledgerChecks(gates []ledger.Gate) []doctor.Check {
+func ledgerChecks(gates []availability.Gate) []doctor.Check {
 	checks := make([]doctor.Check, 0, len(gates))
 	for _, g := range gates {
 		ref, err := candidate.ParseRef(g.Token)
@@ -73,7 +73,7 @@ func ledgerChecks(gates []ledger.Gate) []doctor.Check {
 		}
 
 		fix := "wait until " + relevo.GateTimeText(g.Until)
-		if g.Kind == ledger.RateLimited {
+		if g.Kind == availability.RateLimited {
 			fix = "relevo gate --clear " + provider
 		}
 

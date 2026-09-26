@@ -4,8 +4,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 )
 
 type Reliability struct {
@@ -16,7 +16,7 @@ type Reliability struct {
 	SpawnFailures  int     // history SpawnFailed events in [Since, Until)
 	// ByHour is the providers with a rate limit in the window, sorted.
 	ByHour []HourRow
-	Active []ledger.Gate
+	Active []availability.Gate
 }
 
 type HourRow struct {
@@ -45,7 +45,7 @@ func buildReliability(in Inputs, rows []db.RoundRow, loc *time.Location) Reliabi
 			continue
 		}
 		switch e.Kind {
-		case ledger.RateLimited:
+		case availability.RateLimited:
 			rel.RateLimits++
 			c := hours[e.Provider]
 			if c == nil {
@@ -53,7 +53,7 @@ func buildReliability(in Inputs, rows []db.RoundRow, loc *time.Location) Reliabi
 				hours[e.Provider] = c
 			}
 			c[e.At.In(loc).Hour()]++
-		case ledger.SpawnFailed:
+		case availability.SpawnFailed:
 			rel.SpawnFailures++
 		}
 	}

@@ -9,8 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
@@ -71,9 +70,9 @@ func TestFormatPolicyOrderWithGatedFirst(t *testing.T) {
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef)
 	until := baseTime.Add(10 * time.Minute)
-	gates := []ledger.Gate{{Token: testAgyRef, Kind: ledger.SpawnFailed, Until: until}}
+	gates := []availability.Gate{{Token: testAgyRef, Kind: availability.SpawnFailed, Until: until}}
 
-	got := FormatPolicy(set, pol, gates, history.History{}, baseTime, time.UTC)
+	got := FormatPolicy(set, pol, gates, availability.History{}, baseTime, time.UTC)
 
 	want := strings.Join([]string{
 		"builder  (order set in config policy)",
@@ -99,7 +98,7 @@ func TestFormatPolicyNoOrderTwoServeRefuses(t *testing.T) {
 
 	set := candidateSet(t, testCandidatesJSON)
 
-	got := FormatPolicy(set, policy.Policy{}, nil, history.History{}, baseTime, time.UTC)
+	got := FormatPolicy(set, policy.Policy{}, nil, availability.History{}, baseTime, time.UTC)
 
 	want := strings.Join([]string{
 		"builder  (no order set)",
@@ -124,9 +123,9 @@ func TestFormatPolicyAllGated(t *testing.T) {
 
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
-	gates := []ledger.Gate{limit(testAgyRef), limit(testClaudeRef), limit(testOpencodeRef)}
+	gates := []availability.Gate{limit(testAgyRef), limit(testClaudeRef), limit(testOpencodeRef)}
 
-	got := FormatPolicy(set, pol, gates, history.History{}, baseTime, time.UTC)
+	got := FormatPolicy(set, pol, gates, availability.History{}, baseTime, time.UTC)
 
 	want := strings.Join([]string{
 		"builder  (order set in config policy)",
@@ -151,7 +150,7 @@ func TestFormatPolicyEmptySet(t *testing.T) {
 
 	set := candidateSet(t, "[]")
 
-	got := FormatPolicy(set, orderOf("builder", testAgyRef), nil, history.History{}, baseTime, time.UTC)
+	got := FormatPolicy(set, orderOf("builder", testAgyRef), nil, availability.History{}, baseTime, time.UTC)
 
 	want := "no candidates configured; set one with relevo config set candidates (see README \"Candidates\")\n"
 	if got != want {
@@ -171,7 +170,7 @@ func TestFormatPolicySoleWithOrder(t *testing.T) {
 	set := candidateSet(t, testClaudeOnlyJSON)
 	pol := orderOf("reviewer", testClaudeRef)
 
-	got := FormatPolicy(set, pol, nil, history.History{}, baseTime, time.UTC)
+	got := FormatPolicy(set, pol, nil, availability.History{}, baseTime, time.UTC)
 
 	want := strings.Join([]string{
 		"builder  (no order set)",
@@ -201,7 +200,7 @@ func wantHourRuler() string {
 // wantHourRow renders one formatHistory data row from a provider, kind and
 // a [24]int of hour counts, matching formatHistory's exact cell format, so
 // tests state counts, not spacing.
-func wantHourRow(provider string, kind ledger.Kind, counts [24]int) string {
+func wantHourRow(provider string, kind availability.Kind, counts [24]int) string {
 	row := fmt.Sprintf("  %-10s %-13s", provider, GateKindText(kind))
 	for _, n := range counts {
 		cell := "."
@@ -220,12 +219,12 @@ func TestFormatPolicyPeakColumn(t *testing.T) {
 	pol := orderOf("builder", testAgyRef, testClaudeRef)
 	now := time.Date(2026, 9, 11, 21, 15, 0, 0, time.UTC)
 
-	hist := history.History{Events: []history.Event{
-		{At: time.Date(2026, 9, 11, 20, 10, 0, 0, time.UTC), Kind: ledger.RateLimited, Provider: "test"},
-		{At: time.Date(2026, 9, 11, 21, 40, 0, 0, time.UTC), Kind: ledger.RateLimited, Provider: "test"},
-		{At: time.Date(2026, 9, 11, 22, 5, 0, 0, time.UTC), Kind: ledger.RateLimited, Provider: "test"},
-		{At: time.Date(2026, 9, 11, 21, 0, 0, 0, time.UTC).AddDate(0, 0, -31), Kind: ledger.RateLimited, Provider: "test"},
-		{At: time.Date(2026, 9, 11, 21, 30, 0, 0, time.UTC), Kind: ledger.SpawnFailed, Provider: "test"},
+	hist := availability.History{Events: []availability.Event{
+		{At: time.Date(2026, 9, 11, 20, 10, 0, 0, time.UTC), Kind: availability.RateLimited, Provider: "test"},
+		{At: time.Date(2026, 9, 11, 21, 40, 0, 0, time.UTC), Kind: availability.RateLimited, Provider: "test"},
+		{At: time.Date(2026, 9, 11, 22, 5, 0, 0, time.UTC), Kind: availability.RateLimited, Provider: "test"},
+		{At: time.Date(2026, 9, 11, 21, 0, 0, 0, time.UTC).AddDate(0, 0, -31), Kind: availability.RateLimited, Provider: "test"},
+		{At: time.Date(2026, 9, 11, 21, 30, 0, 0, time.UTC), Kind: availability.SpawnFailed, Provider: "test"},
 	}}.Prune(now)
 
 	got := FormatPolicy(set, pol, nil, hist, now, time.UTC)
@@ -249,8 +248,8 @@ func TestFormatPolicyPeakColumn(t *testing.T) {
 		"",
 		"history (30d, local hours)",
 		wantHourRuler(),
-		wantHourRow("test", ledger.RateLimited, rlCounts),
-		wantHourRow("test", ledger.SpawnFailed, sfCounts),
+		wantHourRow("test", availability.RateLimited, rlCounts),
+		wantHourRow("test", availability.SpawnFailed, sfCounts),
 	}, "\n") + "\n"
 
 	if got != want {
@@ -265,9 +264,9 @@ func TestFormatPolicyPeakWrapsMidnight(t *testing.T) {
 	pol := orderOf("builder", testAgyRef, testClaudeRef)
 	now := time.Date(2026, 9, 11, 23, 50, 0, 0, time.UTC)
 
-	hist := history.History{Events: []history.Event{
-		{At: time.Date(2026, 9, 11, 23, 30, 0, 0, time.UTC), Kind: ledger.RateLimited, Provider: "test"},
-		{At: time.Date(2026, 9, 12, 0, 20, 0, 0, time.UTC), Kind: ledger.RateLimited, Provider: "test"},
+	hist := availability.History{Events: []availability.Event{
+		{At: time.Date(2026, 9, 11, 23, 30, 0, 0, time.UTC), Kind: availability.RateLimited, Provider: "test"},
+		{At: time.Date(2026, 9, 12, 0, 20, 0, 0, time.UTC), Kind: availability.RateLimited, Provider: "test"},
 	}}.Prune(now)
 
 	got := FormatPolicy(set, pol, nil, hist, now, time.UTC)
@@ -284,7 +283,7 @@ func TestFormatPolicyNoHistoryNoBlock(t *testing.T) {
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef)
 
-	got := FormatPolicy(set, pol, nil, history.History{}, baseTime, time.UTC)
+	got := FormatPolicy(set, pol, nil, availability.History{}, baseTime, time.UTC)
 
 	if strings.Contains(got, "limited") {
 		t.Errorf("FormatPolicy with empty history contains %q:\n%s", "limited", got)
@@ -302,9 +301,9 @@ func TestFormatPolicyGateAndPeakOrder(t *testing.T) {
 	now := time.Date(2026, 9, 11, 21, 0, 0, 0, time.UTC)
 	until := now.Add(10 * time.Minute)
 
-	gates := []ledger.Gate{{Token: testAgyRef, Kind: ledger.SpawnFailed, Until: until}}
-	hist := history.History{Events: []history.Event{
-		{At: now, Kind: ledger.RateLimited, Provider: "test"},
+	gates := []availability.Gate{{Token: testAgyRef, Kind: availability.SpawnFailed, Until: until}}
+	hist := availability.History{Events: []availability.Event{
+		{At: now, Kind: availability.RateLimited, Provider: "test"},
 	}}
 
 	got := FormatPolicy(set, pol, gates, hist, now, time.UTC)
@@ -322,13 +321,13 @@ func TestFormatPolicyRepeatedGateRendersOnce(t *testing.T) {
 	// leaves three live ledger entries on one token. The row says it once.
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef)
-	gates := []ledger.Gate{
-		{Token: testAgyRef, Kind: ledger.RateLimited},
-		{Token: testAgyRef, Kind: ledger.RateLimited},
-		{Token: testAgyRef, Kind: ledger.RateLimited},
+	gates := []availability.Gate{
+		{Token: testAgyRef, Kind: availability.RateLimited},
+		{Token: testAgyRef, Kind: availability.RateLimited},
+		{Token: testAgyRef, Kind: availability.RateLimited},
 	}
 
-	got := FormatPolicy(set, pol, gates, history.History{}, baseTime, time.UTC)
+	got := FormatPolicy(set, pol, gates, availability.History{}, baseTime, time.UTC)
 
 	wantRow := "  1  agy-m     order     rate-limited until cleared\n"
 	if !strings.Contains(got, wantRow) {
@@ -344,9 +343,9 @@ func TestAllGatedErrorNamesEachGateOnce(t *testing.T) {
 
 	// The refusal text goes through the same renderer as the pick line.
 	set := candidateSet(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"]}]`)
-	gates := []ledger.Gate{
-		{Token: testAgyRef, Kind: ledger.RateLimited},
-		{Token: testAgyRef, Kind: ledger.RateLimited},
+	gates := []availability.Gate{
+		{Token: testAgyRef, Kind: availability.RateLimited},
+		{Token: testAgyRef, Kind: availability.RateLimited},
 	}
 
 	_, err := resolveCandidate(set, policy.Policy{}, gates, "", "builder")
@@ -392,7 +391,7 @@ func TestRoleRefusalsAllGated(t *testing.T) {
 
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
-	gates := []ledger.Gate{limit(testAgyRef), limit(testClaudeRef), limit(testOpencodeRef)}
+	gates := []availability.Gate{limit(testAgyRef), limit(testClaudeRef), limit(testOpencodeRef)}
 
 	got := RoleRefusals(set, pol, gates)
 
@@ -416,10 +415,10 @@ func TestRoleRefusalsEmptySet(t *testing.T) {
 }
 
 // clearedEvent is a Cleared event recording a block of d that ended at at.
-func clearedEvent(provider string, at time.Time, d time.Duration) history.Event {
-	return history.Event{
+func clearedEvent(provider string, at time.Time, d time.Duration) availability.Event {
+	return availability.Event{
 		At:       at,
-		Kind:     history.Cleared,
+		Kind:     availability.Cleared,
 		Provider: provider,
 		Source:   "planner",
 		Since:    at.Add(-d),
@@ -435,12 +434,12 @@ func TestFormatHistoryBlockedFor(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		clears  []history.Event
+		clears  []availability.Event
 		blocked string
 	}{
 		{
 			name: "odd count",
-			clears: []history.Event{
+			clears: []availability.Event{
 				clearedEvent("cline-pass", baseTime.Add(time.Hour), time.Hour),
 				clearedEvent("cline-pass", baseTime.Add(7*time.Hour), 5*time.Hour),
 				clearedEvent("cline-pass", baseTime.Add(100*time.Hour), 72*time.Hour),
@@ -450,7 +449,7 @@ func TestFormatHistoryBlockedFor(t *testing.T) {
 		},
 		{
 			name: "even count takes the lower middle",
-			clears: []history.Event{
+			clears: []availability.Event{
 				clearedEvent("cline-pass", baseTime.Add(time.Hour), time.Hour),
 				clearedEvent("cline-pass", baseTime.Add(6*time.Hour), 5*time.Hour),
 			},
@@ -461,16 +460,16 @@ func TestFormatHistoryBlockedFor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			hist := history.History{}.Append(history.Event{
-				At: baseTime, Kind: ledger.RateLimited, Provider: "cline-pass", Source: "planner",
+			hist := availability.History{}.Append(availability.Event{
+				At: baseTime, Kind: availability.RateLimited, Provider: "cline-pass", Source: "planner",
 			})
 			for _, ev := range tt.clears {
 				hist = hist.Append(ev)
 			}
 			// test is gated but never cleared: it belongs in the grid and
 			// must stay out of the block.
-			hist = hist.Append(history.Event{
-				At: baseTime, Kind: ledger.RateLimited, Provider: "test", Source: "planner",
+			hist = hist.Append(availability.Event{
+				At: baseTime, Kind: availability.RateLimited, Provider: "test", Source: "planner",
 			})
 
 			got := formatHistory(hist, time.UTC)

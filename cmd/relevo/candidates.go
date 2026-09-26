@@ -8,8 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/latency"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -124,9 +123,9 @@ func cmdCandidates(args []string) error {
 // formatCandidates renders the candidate table cmdCandidates' non-probe form
 // prints -- the candidates block `relevo config` shows.
 func formatCandidates(rt relevo.Runtime) string {
-	h := latency.History{}
+	h := availability.LatencyHistory{}
 	if rt.Latency != nil {
-		loaded, err := latency.LoadKV(rt.Latency, legacyGatesPath(rt.GatesDir, "latency.json"))
+		loaded, err := availability.LoadLatency(rt.Latency, legacyGatesPath(rt.GatesDir, "latency.json"))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "relevo: could not read latency: %v\n", err)
 		} else {
@@ -135,7 +134,7 @@ func formatCandidates(rt relevo.Runtime) string {
 	}
 	h = h.Prune(rt.Now())
 
-	lat := make(map[string]latency.Summary)
+	lat := make(map[string]availability.Summary)
 	for _, ref := range rt.Candidates.Refs() {
 		lat[ref] = h.Summary(ref)
 	}
@@ -153,11 +152,11 @@ func legacyGatesPath(dir, name string) string {
 // unreadable record as empty after one stderr line -- the same rule Gates
 // applies to the ledger. The body moved to relevo.LoadHistory (cockpit C2b
 // §4.1); this keeps the stderr line for its other callers.
-func loadHistory(rt relevo.Runtime) history.History {
+func loadHistory(rt relevo.Runtime) availability.History {
 	h, err := relevo.LoadHistory(rt)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not read history: %v\n", err)
-		return history.History{}
+		return availability.History{}
 	}
 	return h
 }

@@ -7,9 +7,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 )
 
 // Inputs is everything Build reads. A nil func or missing map selects its
@@ -17,8 +16,8 @@ import (
 type Inputs struct {
 	Rows    []db.RoundRow
 	Landed  map[string]bool // binding IDs whose binding reached DONE
-	History history.History
-	Gates   []ledger.Gate
+	History availability.History
+	Gates   []availability.Gate
 	// TTFT is a candidate's median first-token time in ms; nil means never set.
 	TTFT func(token string) (ms int64, ok bool)
 	// IsPlan is nil-safe: nil means no token is a plan.
