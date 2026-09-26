@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -361,6 +362,162 @@ func TestWithLockSerializesLoadModifySave(t *testing.T) {
 	}
 	if final.Round != n+1 { // started at 1, incremented n times
 		t.Errorf("Round = %d, want %d (lost updates detected)", final.Round, n+1)
+	}
+}
+
+// TestReadsDoNotWaitForTheStateLock pins the reader-facing half of fix #513:
+// while another goroutine holds the state lock, Load, List, ReadLog and
+// FindByCWD each return without waiting on it. Mutation: make read always call
+// WithLock and every check here times out.
+func TestReadsDoNotWaitForTheStateLock(t *testing.T) {
+	s := New(t.TempDir())
+	b := newBinding("frozen", "/repo")
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	entry := LogEntry{Round: 1, Direction: DirToPlanner, Kind: KindPlan, Payload: "hello"}
+	if err := s.AppendLog("frozen", entry); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	holding := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- s.WithLock(func(tx *Tx) error {
+			once.Do(func() { close(holding) })
+			<-release
+			return nil
+		})
+	}()
+	<-holding
+
+	// Each read is bounded by a goroutine and a timeout rather than the lock's
+	// own 90s bound, so a regression fails fast instead of hanging the suite.
+	check := func(name string, fn func() error) {
+		done := make(chan error, 1)
+		go func() { done <- fn() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("%s: %v", name, err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Errorf("%s waited for the state lock", name)
+		}
+	}
+
+	check("Load", func() error {
+		got, err := s.Load("frozen")
+		if err != nil {
+			return err
+		}
+		if got.Name != b.Name || got.CWD != b.CWD {
+			return fmt.Errorf("Load = %+v, want %q at %q", got, b.Name, b.CWD)
+		}
+		return nil
+	})
+	check("List", func() error {
+		got, err := s.List()
+		if err != nil {
+			return err
+		}
+		if len(got) != 1 || got[0].Name != b.Name {
+			return fmt.Errorf("List = %+v, want one binding %q", got, b.Name)
+		}
+		return nil
+	})
+	check("ReadLog", func() error {
+		got, err := s.ReadLog("frozen")
+		if err != nil {
+			return err
+		}
+		if len(got) != 1 || got[0].Payload != entry.Payload {
+			return fmt.Errorf("ReadLog = %+v, want one entry %q", got, entry.Payload)
+		}
+		return nil
+	})
+	check("FindByCWD", func() error {
+		got, ok, err := s.FindByCWD(b.CWD)
+		if err != nil {
+			return err
+		}
+		if !ok || got.Name != b.Name {
+			return fmt.Errorf("FindByCWD = (%+v, %v), want %q", got, ok, b.Name)
+		}
+		return nil
+	})
+
+	close(release)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("WithLock holder: %v", err)
+	}
+}
+
+// TestReadImportsLegacyFileUnderTheLock pins that the unlocked read is
+// conditional: a legacy bind.json still means an import, and an import writes,
+// so the read waits for the state lock and then adopts the file. Mutation:
+// make legacyPresent always return false and the Load returns while the lock
+// is held; make the import disappear and the file and record checks fail.
+func TestReadImportsLegacyFileUnderTheLock(t *testing.T) {
+	s := New(t.TempDir())
+	dir := s.Dir("old")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := `{"name":"old","cwd":"/repo","planner":{"pane_id":"w2:p3","kind":"claude"},"builder":{"pane_id":"w2:p4","kind":"agy"},"round":1,"state":"active","round_cap":20,"round_timeout_ms":1800000}`
+	legacy := filepath.Join(dir, "bind.json")
+	if err := os.WriteFile(legacy, []byte(body), 0o644); err != nil {
+		t.Fatalf("write bind.json: %v", err)
+	}
+
+	holding := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- s.WithLock(func(tx *Tx) error {
+			once.Do(func() { close(holding) })
+			<-release
+			return nil
+		})
+	}()
+	<-holding
+
+	loaded := make(chan error, 1)
+	go func() {
+		got, err := s.Load("old")
+		if err != nil {
+			loaded <- err
+			return
+		}
+		if got.Name != "old" || got.CWD != "/repo" {
+			loaded <- fmt.Errorf("Load = %+v, want the legacy record", got)
+			return
+		}
+		loaded <- nil
+	}()
+
+	select {
+	case err := <-loaded:
+		t.Fatalf("Load returned while the state lock was held: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	close(release)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("WithLock holder: %v", err)
+	}
+	if err := <-loaded; err != nil {
+		t.Fatalf("Load after release: %v", err)
+	}
+
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("legacy bind.json survived the import: %v", err)
+	}
+	if raw := bindingRecordJSON(t, s, "old"); len(raw) == 0 {
+		t.Error("no record was written for the imported binding")
 	}
 }
 

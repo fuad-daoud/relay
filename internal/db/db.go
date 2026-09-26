@@ -54,17 +54,22 @@ type DB struct {
 	know  int // highest migration this binary embeds
 }
 
+// journalSizeLimit caps the -wal file after a checkpoint resets it, in bytes.
+// Without it sqlite keeps the file at the high-water size a burst of writes
+// reached, so the file never shrinks for the rest of the process's life.
+const journalSizeLimit = 64 << 20
+
 // Open opens (creating if needed) the sqlite database at path, applying
 // every pending migration before returning. path's directory must already
-// exist. The connection runs with WAL journaling, a 5s busy timeout, and
-// foreign keys on.
+// exist. The connection runs with WAL journaling, a 5s busy timeout, foreign
+// keys on, and the WAL capped at journalSizeLimit.
 //
 // A database whose schema is newer than this binary's embedded migrations is
 // left untouched -- never migrated, never written -- and returned with
 // Newer() == true, so an older relevo can read it without downgrading it
 // (#372 §4.5).
 func Open(path string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)", path, busyTimeoutMS)
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(%d)", path, busyTimeoutMS, journalSizeLimit)
 
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -103,7 +108,6 @@ func Open(path string) (*DB, error) {
 	if have > know {
 		return &DB{sqlDB: sqlDB, newer: true, have: have, know: know}, nil
 	}
-
 	// A current schema needs no write: taking BEGIN IMMEDIATE here made every
 	// command take the write lock before doing anything, and fail under load.
 	if have == know {

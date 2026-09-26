@@ -282,6 +282,21 @@ func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 	}
 }
 
+// TestOpenSetsJournalSizeLimit pins the WAL cap: every connection Open makes
+// carries journal_size_limit, so sqlite truncates the -wal file back to it
+// after a checkpoint instead of leaving it at a write burst's high-water size.
+func TestOpenSetsJournalSizeLimit(t *testing.T) {
+	d := openTestDB(t)
+
+	var limit int
+	if err := d.sqlDB.QueryRow(`PRAGMA journal_size_limit`).Scan(&limit); err != nil {
+		t.Fatalf("PRAGMA journal_size_limit: %v", err)
+	}
+	if limit != journalSizeLimit {
+		t.Errorf("journal_size_limit = %d, want %d", limit, journalSizeLimit)
+	}
+}
+
 // TestTxRefusesANewerSchema pins §6: a writer on a schema a newer relevo wrote
 // refuses with ErrNewerSchema instead of downgrading it.
 func TestTxRefusesANewerSchema(t *testing.T) {

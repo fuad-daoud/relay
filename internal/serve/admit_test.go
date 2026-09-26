@@ -884,14 +884,19 @@ func TestHeldCPUsSkipsAFailingOwner(t *testing.T) {
 	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
 	requireCreated(t, respB, bodyB, "B")
 
-	// A third owner whose state lock is a directory: OpenFile on it fails for
-	// any uid, so its List errors where B's does not.
+	// A third owner with a legacy binding file that cannot be imported:
+	// bind.json holds invalid JSON, so the import fails and its List errors
+	// where B's does not.
 	ownerC := addOwner(t, env, "carol")
 	cDir, ok := ownerC.id.Dir()
 	if !ok {
 		t.Fatal("carol's client id has no dir")
 	}
-	if err := os.MkdirAll(filepath.Join(env.srv.cfg.Root, "bindings", cDir, ".lock"), 0o755); err != nil {
+	brokenDir := filepath.Join(env.srv.cfg.Root, "bindings", cDir, "broken")
+	if err := os.MkdirAll(brokenDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(brokenDir, "bind.json"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
