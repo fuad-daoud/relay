@@ -28,6 +28,13 @@ import (
 // edits.
 var ErrBuilderBusy = errors.New("builder's previous process is still running; wait for its report, or relevo done")
 
+// ErrReportPending reports a send refused because the current round already
+// has its completion marker or report on disk, but the daemon has not yet
+// ingested the close. The round is over: restaging its plan and starting a
+// second builder would make the daemon close on the stale marker and deliver
+// the old report. The caller retries once the report is delivered.
+var ErrReportPending = errors.New("the round's report is on disk but not yet delivered; relevo wait delivers it, then send the next plan")
+
 // ErrScopeActive reports a send refused because this round's systemd scope
 // unit is still loaded: a builder for the round is already alive, most
 // likely started by an earlier send whose bookkeeping failed (#445). Nothing

@@ -109,6 +109,20 @@ type preflight struct {
 	remoteBuilder string
 }
 
+// pendingRoundFile returns the round's completion marker or report if either
+// is already on disk: the round's work is finished and the daemon has not yet
+// ingested the close, so a send into this round would race it. The done marker
+// is checked first because the close keys on it. Any stat error, not-exist
+// included, counts as absent: an unreadable directory must not block a send.
+func pendingRoundFile(rt Runtime, name string, round int) (string, bool) {
+	for _, path := range []string{rt.Store.DonePath(name, round), rt.Store.ReportPath(name, round)} {
+		if _, err := os.Stat(path); err == nil {
+			return path, true
+		}
+	}
+	return "", false
+}
+
 // sendPreflight runs Send's read-only preconditions in Send's exact order and
 // error wording. It makes no write: Store.Load takes the store lock briefly
 // (it always has) but that is a read. CaptureBaseline is deliberately not here:
@@ -277,6 +291,12 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 			return preflight{}, fmt.Errorf("binding %q (pid %d): %w", name, b.Builder.PID, ErrBuilderBusy)
 		}
 	}
+	// A round whose marker or report is already on disk is finished: the
+	// daemon has simply not closed it yet (it is busy, or the process that
+	// wrote the file just exited).
+	if path, found := pendingRoundFile(rt, name, b.Round); found {
+		return preflight{}, fmt.Errorf("binding %q round %d: %s exists: %w", name, b.Round, filepath.Base(path), ErrReportPending)
+	}
 	ref, err := candidate.ParseRef(b.BuilderCandidate)
 	if err != nil {
 		return preflight{}, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
@@ -382,6 +402,16 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			if alive {
 				return fmt.Errorf("binding %q (pid %d): %w", name, b.Builder.PID, ErrBuilderBusy)
 			}
+		}
+
+		// Re-check under the lock: the daemon may have closed the round
+		// between the preflight and this lock, in which case b.Round here is
+		// already the next round and its files do not exist, so the send
+		// proceeds. The other order -- a marker appearing after the preflight
+		// -- is what this guards: the round is over and nothing may be staged
+		// or spawned for it.
+		if path, found := pendingRoundFile(rt, name, b.Round); found {
+			return fmt.Errorf("binding %q round %d: %s exists: %w", name, b.Round, filepath.Base(path), ErrReportPending)
 		}
 
 		// --builder is re-applied under the lock, against the fresh binding:

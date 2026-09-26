@@ -2063,6 +2063,65 @@ func TestRoundStartWhileRunningIs409(t *testing.T) {
 	}
 }
 
+// TestRoundStartWithUndeliveredDoneMarkerIs409 pins that a start for a round
+// whose marker is already on disk -- with the daemon not yet ticked -- is
+// refused as an open round: Send wraps ErrReportPending and the handler maps it
+// to 409 round_open, the same refusal the local send gives.
+func TestRoundStartWithUndeliveredDoneMarkerIs409(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     env.repoID,
+		BaseCommit: env.headSHA,
+	})
+	doSigned(t, env.ts, env.kp, "POST", "/v1/bindings", createBody, "application/json")
+
+	outRef := "refs/relevo/api/out"
+	_ = env.gitClient.UpdateRef(ctx, env.clientDir, outRef, env.headSHA, "")
+	snap, _ := env.transport.Snapshot(ctx, env.clientDir, []string{outRef}, "")
+	bundleBytes, _ := io.ReadAll(snap.Body)
+	_ = snap.Body.Close()
+
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, _ := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("first start status = %d, want 201", resp.StatusCode)
+	}
+
+	// Round 1's builder writes its report and marker and exits; the tick
+	// closes the round, so the binding advances to round 2.
+	rt := env.runtime(t)
+	_ = os.WriteFile(rt.Store.ReportPath("api", 1), []byte("# Report 1\n"), 0o644)
+	_ = os.WriteFile(rt.Store.DonePath("api", 1), nil, 0o644)
+	env.runner.setAlive(false)
+	if err := env.srv.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	b, err := rt.Store.Load("api")
+	if err != nil {
+		t.Fatalf("load binding: %v", err)
+	}
+	if b.Round != 2 {
+		t.Fatalf("round = %d, want 2 after the close", b.Round)
+	}
+	// Round 2's marker is on disk with the daemon not yet ticked: the window
+	// a new start must refuse.
+	_ = os.WriteFile(rt.Store.DonePath("api", 2), nil, 0o644)
+
+	bytes2, ct2 := makeRoundForm(t, 2, "# Plan 2", nil)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", bytes2, ct2)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("start status = %d, want 409; body: %s", resp.StatusCode, string(body))
+	}
+	var errBody remote.ErrorBody
+	_ = json.Unmarshal(body, &errBody)
+	if errBody.Code != remote.CodeRoundOpen {
+		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeRoundOpen)
+	}
+}
+
 // TestRoundStartRunningSamePlanIs200 is #373 §4.2's open-round idempotent
 // send: a repeated identical start-round request for the round that is
 // running returns 200 with the current view and changes nothing -- no new log

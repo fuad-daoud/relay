@@ -267,6 +267,10 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, remote.CodeRoundOpen, sendErr.Error())
 			return
 		}
+		if errors.Is(sendErr, relevo.ErrReportPending) {
+			writeErr(w, http.StatusConflict, remote.CodeRoundOpen, sendErr.Error())
+			return
+		}
 		if errors.Is(sendErr, relevo.ErrTierAboveMax) {
 			writeErr(w, http.StatusUnprocessableEntity, remote.CodeTierAboveMax, sendErr.Error())
 			return
