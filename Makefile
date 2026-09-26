@@ -10,7 +10,7 @@ UNAME_S := $(shell uname -s)
 BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo devel)
 LDFLAGS := -X main.version=$(if $(VERSION),$(VERSION),$(BUILD_VERSION))
 
-.PHONY: check lint build install service uninstall release jev
+.PHONY: check check-static check-scripts check-test lint build install service uninstall release jev
 
 # lint runs golangci-lint with .golangci.yml. The binary is not vendored and
 # CI installs it in a setup step, so a machine without it still gets the rest
@@ -28,13 +28,15 @@ lint:
 	fi
 
 check:
+	$(MAKE) check-static
+	$(MAKE) check-test
+
+check-static:
 	@test -z "$$(gofmt -l $$(git ls-files '*.go'))" || { gofmt -l $$(git ls-files '*.go'); exit 1; }
 	go vet ./...
 	$(MAKE) lint
 	sh scripts/check-comments.sh
 	sh scripts/check-filesize.sh
-	@go test -race -count=1 -cover ./... > .coverage.txt 2>&1; st=$$?; cat .coverage.txt; exit $$st
-	sh scripts/check-coverage.sh
 	@cp go.mod go.mod.check && cp go.sum go.sum.check && \
 	if ! go mod tidy || ! cmp -s go.mod go.mod.check || ! cmp -s go.sum go.sum.check; then \
 		mv go.mod.check go.mod && mv go.sum.check go.sum; \
@@ -44,12 +46,19 @@ check:
 	rm -f go.mod.check go.sum.check
 	sh scripts/check-plugin-version.sh
 	sh scripts/check-name.sh
+	$(MAKE) check-scripts
+
+check-scripts:
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck scripts/*.sh; \
 	else \
 		echo "shellcheck not installed; skipping shell lint"; \
 	fi
 	@for t in scripts/*_test.sh; do echo "==> $$t"; sh "$$t" || exit 1; done
+
+check-test:
+	@go test -race -count=1 -cover ./... > .coverage.txt 2>&1; st=$$?; cat .coverage.txt; exit $$st
+	sh scripts/check-coverage.sh
 
 # e2e runs one headless relevo round end to end (internal/e2e/headless_test.go).
 # CI runs it; it needs no session manager on PATH and is not part of check.
