@@ -669,12 +669,13 @@ func (f fleetView) cardLines(env Env, b relevo.BindingStatus, width int) []strin
 	g := groupOf(b)
 
 	// Top line
+	sr := shownRound(b)
 	rn := rowNow(b, env.Now)
-	if b.Round > 0 {
-		rn = strings.TrimPrefix(rn, fmt.Sprintf("r%d · ", b.Round))
+	if sr > 0 {
+		rn = strings.TrimPrefix(rn, fmt.Sprintf("r%d · ", sr))
 	}
-	roundPart := fmt.Sprintf("round %d · %s", b.Round, rn)
-	if b.Round == 0 {
+	roundPart := fmt.Sprintf("round %d · %s", sr, rn)
+	if sr == 0 {
 		roundPart = rn
 	}
 	title := accentStyle.Bold(true).Render(b.Key()) + "  " + faintStyle.Render(roundPart)
@@ -786,7 +787,7 @@ func gatedLine(env Env, width int) string {
 	line := "   " + redStyle.Render("◌") + faintStyle.Render(" gated  ") +
 		strings.Join(entries, faintStyle.Render("  ·  ")) +
 		faintStyle.Render("  ·  the pick skips them")
-	return fit(line, width)
+	return fit(clipName(line, width), width)
 }
 
 // fleetLine is one drawn body line and the row it belongs to.

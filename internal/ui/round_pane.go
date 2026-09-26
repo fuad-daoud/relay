@@ -401,9 +401,17 @@ func (p roundPane) sourceLine() string {
 	var s string
 	switch p.detail.active {
 	case tabPlan:
-		s = fmt.Sprintf("plan r%d · %s", c.round, c.at.Local().Format("15:04"))
+		if c.at.IsZero() {
+			s = fmt.Sprintf("plan r%d", c.round)
+		} else {
+			s = fmt.Sprintf("plan r%d · %s", c.round, c.at.Local().Format("15:04"))
+		}
 	case tabReport:
-		s = fmt.Sprintf("report r%d · %s", c.round, c.at.Local().Format("15:04"))
+		if c.at.IsZero() {
+			s = fmt.Sprintf("report r%d", c.round)
+		} else {
+			s = fmt.Sprintf("report r%d · %s", c.round, c.at.Local().Format("15:04"))
+		}
 	case tabTerminal:
 		n := strings.Count(strings.TrimRight(c.body, "\n"), "\n") + 1
 		r := row(p.report, p.detail.name)

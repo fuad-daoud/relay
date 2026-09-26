@@ -332,8 +332,32 @@ func goldenArchivedRoundModel(t *testing.T, width, height int) Model {
 	h := histRows()[0]
 	v, _ := newHistRoundView(m.env(), h, 0)
 	m.stack = append(m.stack, v)
-	res, _ = m.Update(tabMsg{name: h.Name, round: 3, t: tabPlan, content: tabContent{loaded: true, round: 3, at: railNow, body: "# Round 3 plan\n\nDo the thing.\n"}})
+	res, _ = m.Update(tabMsg{name: h.Name, round: 3, t: tabPlan, content: tabContent{loaded: true, round: 3, body: "# Round 3 plan\n\nDo the thing.\n"}})
 	return res.(Model)
+}
+
+// seedPlanFixture writes name's round plan file and the plan log entry that
+// recorded it, so a fixture's plan tab reads its body and its sent time from
+// the store rather than from an injected tabMsg.
+func seedPlanFixture(t *testing.T, st *store.Store, name string, round int, ts time.Time, body string) {
+	t.Helper()
+	b := newTestBinding(name)
+	b.Round = round
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	p := st.PlanPath(name, round)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AppendLog(name, store.LogEntry{
+		TS: ts, Round: round, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: p,
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
 }
 
 // realRoundModel pushes the round view for spool-db with realistic data (§8).
@@ -367,19 +391,14 @@ func realRoundModel(t *testing.T, width, height int) Model {
 			break
 		}
 	}
-	m := goldenActionModel(t, width, height, &fakeActions{}, rep)
+	planBody := "# Round diff and consult findings go straight into round_file\n\nDate: 2026-09-24. Base: origin/main `b66c6fcc` (#441).\nThere is **one round** in this plan. builder.log, NNN-<id>-ask.md and NNN-plan.md\nare out of scope. Do not touch them.\n\n## Scope\n\n- builder.log is out of scope.\n- Do not touch them.\n\n```go\nfunc main() {}\n```\n"
+	st := store.New(t.TempDir())
+	seedPlanFixture(t, st, "spool-db", 1, railNow.Add(-5*time.Minute), planBody)
+
+	m := goldenActionModelWithStore(t, width, height, &fakeActions{}, rep, st)
 	m = pointer(t, m, "spool-db")
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = drain(t, res.(Model), cmd)
-
-	planBody := "# Round diff and consult findings go straight into round_file\n\nDate: 2026-09-24. Base: origin/main `b66c6fcc` (#441).\nThere is **one round** in this plan. builder.log, NNN-<id>-ask.md and NNN-plan.md\nare out of scope. Do not touch them.\n\n## Scope\n\n- builder.log is out of scope.\n- Do not touch them.\n\n```go\nfunc main() {}\n```\n"
-	res, _ = m.Update(tabMsg{
-		name:    "spool-db",
-		round:   1,
-		t:       tabPlan,
-		content: tabContent{loaded: true, round: 1, at: railNow.Add(-5 * time.Minute), body: planBody},
-	})
-	return res.(Model)
+	return drain(t, res.(Model), cmd)
 }
 
 // realRoundNeedsYouModel pushes the round view for fix-433 in NEEDS YOU state (§8).
@@ -392,19 +411,14 @@ func realRoundNeedsYouModel(t *testing.T, width, height int) Model {
 			break
 		}
 	}
-	m := goldenActionModel(t, width, height, &fakeActions{}, rep)
+	planBody := "# Fix 433 Plan\n\nDedupe bindings across stores.\n"
+	st := store.New(t.TempDir())
+	seedPlanFixture(t, st, "fix-433", 2, railNow.Add(-3*time.Minute), planBody)
+
+	m := goldenActionModelWithStore(t, width, height, &fakeActions{}, rep, st)
 	m = pointer(t, m, "fix-433")
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = drain(t, res.(Model), cmd)
-
-	planBody := "# Fix 433 Plan\n\nDedupe bindings across stores.\n"
-	res, _ = m.Update(tabMsg{
-		name:    "fix-433",
-		round:   2,
-		t:       tabPlan,
-		content: tabContent{loaded: true, round: 2, at: railNow.Add(-3 * time.Minute), body: planBody},
-	})
-	return res.(Model)
+	return drain(t, res.(Model), cmd)
 }
 
 // goldenRoundsModel hosts the dashboard with its rows fed, reached through
