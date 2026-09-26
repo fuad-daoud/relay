@@ -97,7 +97,18 @@ jobs:
             sudo apt-get update && sudo apt-get install -y shellcheck
           fi
 
+      # The linter is installed only on the leg that must run it, and only that
+      # leg requires it (RELEVO_REQUIRE_LINT). CI has no network at test time,
+      # so the install is a setup step, not something make check fetches.
+      - name: install golangci-lint
+        if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - name: make check
+        env:
+          RELEVO_REQUIRE_LINT: ${{ matrix.os == 'ubuntu-latest' && matrix.go == 'stable' && '1' || '' }}
         run: make check
 
   portability:

@@ -55,6 +55,25 @@ without the logic is not pinning anything.
   Compose relevo config paths through `userConfigRoot()` (`cmd/relevo/main.go`),
   never by hand -- see #42 for what hand-rolling one costs.
 
+### Code style
+
+- A package comment is 1-3 lines saying what the package owns. A comment says
+  *why*, and only where the code cannot: a non-obvious constraint, where a
+  number comes from, an ordering that matters, a hazard. It never restates the
+  code, and a doc comment on an exported name is written only when it adds
+  something the name and signature do not.
+- No history in the code: no issue or PR numbers, no spec sections, no
+  "round N", "used to", "pre-#NNN". Git and the issues hold history. Tests
+  follow the same rules, and a test's name says what it pins.
+- The dexpace Go styleguide applies, with two exceptions: no "two assertions
+  per function" rule, and no mandatory doc comment on an exported name.
+  Functions are at most 70 lines; non-test files at most 600; one package per
+  concept.
+- `make check` enforces this with golangci-lint (`.golangci.yml`) and
+  `scripts/check-comments.sh` / `scripts/check-filesize.sh`. Packages and files
+  not yet cleaned are listed as exclusions; a round that finishes a package
+  removes its entries, and a new exclusion is never added to get a round green.
+
 ## Merging and CI
 
 - Merge only after `gh pr checks <n> --watch` has finished with every job
