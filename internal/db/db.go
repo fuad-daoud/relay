@@ -58,6 +58,7 @@ func Open(path string) (*DB, error) {
 }
 
 func open(path string) (_ *DB, err error) {
+	seedFromTemplate(path)
 	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(%d)", path, busyTimeoutMS, journalSizeLimit)
 
 	sqlDB, err := sql.Open("sqlite", dsn)
