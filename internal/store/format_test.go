@@ -17,16 +17,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/jsonshape"
 )
 
-// update rewrites the golden file, but only when BindingFormat was bumped:
-// see goldenDecision.
+// update rewrites the golden file, but only when BindingFormat was bumped: see
+// goldenDecision.
 var update = flag.Bool("update", false, "rewrite testdata/binding-shape.golden when BindingFormat was bumped")
 
-// bindingGoldenPath is the golden file TestBindingShapeMatchesFormat compares
-// against, and the one -update rewrites.
 const bindingGoldenPath = "testdata/binding-shape.golden"
 
-// The messages #372's spec §4.1 names, plus the stale-format-line case it
-// leaves open.
 const (
 	bindingShapeMsg   = "store.Binding's JSON shape changed: bump store.BindingFormat, then run go test ./internal/store -run TestBindingShapeMatchesFormat -update"
 	bindingRefusalMsg = "bump store.BindingFormat first; an older relevo would erase the new fields"
@@ -39,8 +35,6 @@ type goldenFile struct {
 	keys   []string
 }
 
-// parseGolden reads the golden file format: "format <N>" on the first line,
-// then one key path per line.
 func parseGolden(raw []byte) (goldenFile, error) {
 	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
 	if len(lines) == 0 || lines[0] == "" {
@@ -57,7 +51,6 @@ func parseGolden(raw []byte) (goldenFile, error) {
 	return goldenFile{format: n, keys: lines[1:]}, nil
 }
 
-// marshalGolden writes the golden file format.
 func marshalGolden(format int, keys []string) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "format %d\n", format)
@@ -68,13 +61,10 @@ func marshalGolden(format int, keys []string) []byte {
 	return []byte(b.String())
 }
 
-// goldenDecision is the -update rule as a pure function: write rewrites the
-// golden and a non-empty msg fails the test instead. same reports whether the
-// key paths already match the golden.
-//
-// A rewrite needs BindingFormat to be greater than the golden's format line,
-// so a mismatch with no bump fails rather than silently accepting a shape an
-// older relevo would erase.
+// goldenDecision is the -update rule as a pure function. A rewrite needs
+// BindingFormat to be greater than the golden's format line, so a mismatch
+// with no bump fails rather than accepting a shape an older relevo would
+// erase.
 func goldenDecision(goldenFormat, codeFormat int, same bool) (write bool, msg string) {
 	if same && goldenFormat == codeFormat {
 		return false, ""
@@ -86,8 +76,7 @@ func goldenDecision(goldenFormat, codeFormat int, same bool) (write bool, msg st
 }
 
 // checkBindingShape compares keys against the golden and returns the message
-// to fail with, or "" when all is well. When update is true it rewrites the
-// golden whenever goldenDecision allows it.
+// to fail with, or "" when all is well.
 func checkBindingShape(g goldenFile, codeFormat int, keys []string, update bool) string {
 	same := slices.Equal(g.keys, keys)
 	if update {
@@ -114,8 +103,6 @@ func checkBindingShape(g goldenFile, codeFormat int, keys []string, update bool)
 	return ""
 }
 
-// readBindingGolden reads the golden, treating a missing file as the
-// pre-creation state: format 0 and no keys, which any real shape differs from.
 func readBindingGolden(t *testing.T) goldenFile {
 	t.Helper()
 	raw, err := os.ReadFile(bindingGoldenPath)
@@ -132,9 +119,8 @@ func readBindingGolden(t *testing.T) goldenFile {
 	return g
 }
 
-// TestBindingShapeMatchesFormat pins Binding's JSON shape against the golden
-// file: a new field is a new key path, and that fails until BindingFormat is
-// bumped and the golden regenerated.
+// TestBindingShapeMatchesFormat pins that a new field is a new key path, which
+// fails until BindingFormat is bumped and the golden regenerated.
 func TestBindingShapeMatchesFormat(t *testing.T) {
 	g := readBindingGolden(t)
 	keys := jsonshape.Keys(reflect.TypeOf(Binding{}))
@@ -147,9 +133,8 @@ func TestBindingShapeMatchesFormat(t *testing.T) {
 	}
 }
 
-// TestBindingShapeFailurePath exercises the golden test's failure path without
-// mutating the real type: a struct with one extra field is a key-path mismatch
-// and fails with the bump message, and -update without a bump refuses.
+// TestBindingShapeFailurePath exercises the golden failure path without
+// mutating the real type.
 func TestBindingShapeFailurePath(t *testing.T) {
 	type bindingWithANewField struct {
 		Binding
@@ -204,7 +189,7 @@ func TestStoredFormat(t *testing.T) {
 	}
 }
 
-// TestSaveOmitsTheFormatKeyForFormat1 pins §3: format 1 is stored as an absent
+// TestSaveOmitsTheFormatKeyForFormat1 pins that format 1 is stored as an absent
 // field, so a binding saved today is byte-identical to one saved before the
 // field existed.
 func TestSaveOmitsTheFormatKeyForFormat1(t *testing.T) {
@@ -218,15 +203,13 @@ func TestSaveOmitsTheFormatKeyForFormat1(t *testing.T) {
 	}
 }
 
-// TestSaveRefusesANewerFormat pins §4.1: a binding written by a newer relevo
-// is refused with ErrNewerFormat, both when Save is handed one and when the
-// import meets one on disk, leaving the file byte-for-byte as it was.
+// TestSaveRefusesANewerFormat pins that a binding written by a newer relevo is
+// refused, both by Save and by the import, leaving the file byte-for-byte.
 func TestSaveRefusesANewerFormat(t *testing.T) {
 	s := New(t.TempDir())
 	b := newBinding("webshop", "/home/dev/projects/webshop")
 	b.Format = BindingFormat + 1
 
-	// Save refuses it outright, before it writes or imports anything.
 	err := s.Save(b)
 	var newer *ErrNewerFormat
 	if !errors.As(err, &newer) {
@@ -243,8 +226,7 @@ func TestSaveRefusesANewerFormat(t *testing.T) {
 		t.Errorf("ErrNewerFormat text = %q, want %q", err.Error(), wantText)
 	}
 
-	// A bind.json a newer relevo left on disk is refused by the import, and
-	// the file is not touched.
+	// A bind.json a newer relevo left on disk is refused and left untouched.
 	if err := os.MkdirAll(s.Dir(b.Name), 0o755); err != nil {
 		t.Fatal(err)
 	}

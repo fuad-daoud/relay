@@ -13,10 +13,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// testNow is the pinned clock every planner test writes records at.
 var testNow = time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 
-// testDB is a fresh temp database, the store the registry's rows live in.
 func testDB(t *testing.T) *db.DB {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -27,14 +25,13 @@ func testDB(t *testing.T) *db.DB {
 	return d
 }
 
-// testRegistry is a DBRegistry over a fresh temp database with a pinned clock.
 func testRegistry(t *testing.T) *DBRegistry {
 	t.Helper()
 	return testRegistryOn(t, testDB(t))
 }
 
-// testRegistryOn is a DBRegistry over an existing database handle. Two of them
-// over one handle share a database, the way two processes do.
+// testRegistryOn is a DBRegistry over an existing database handle, so two
+// registries over one handle share a database like two processes do.
 func testRegistryOn(t *testing.T, d *db.DB) *DBRegistry {
 	t.Helper()
 	return &DBRegistry{
@@ -44,7 +41,6 @@ func testRegistryOn(t *testing.T, d *db.DB) *DBRegistry {
 	}
 }
 
-// mustCreate creates a record and fails the test if it is refused.
 func mustCreate(t *testing.T, reg *DBRegistry, rec Record) Record {
 	t.Helper()
 	got, err := reg.Create(rec)
@@ -54,7 +50,6 @@ func mustCreate(t *testing.T, reg *DBRegistry, rec Record) Record {
 	return got
 }
 
-// record is a valid record with the given id, name, session and host.
 func record(id, name, kind, session string, host int) Record {
 	return Record{
 		ID:            id,
@@ -70,8 +65,7 @@ func record(id, name, kind, session string, host int) Record {
 }
 
 func TestNewIDShape(t *testing.T) {
-	// A pinned reader makes the id exactly predictable, which pins the
-	// alphabet and the 12-character width, not merely the prefix.
+	// A pinned reader makes the id exactly predictable.
 	if got, err := NewID(bytes.NewReader(make([]byte, 8))); err != nil {
 		t.Fatalf("NewID: %v", err)
 	} else if got != "pl_aaaaaaaaaaaa" {
@@ -146,7 +140,6 @@ func TestValidName(t *testing.T) {
 	if err := ValidID("pl_aaaaaaaaaaaa"); err != nil {
 		t.Errorf("ValidID(valid) = %v, want nil", err)
 	}
-	// Uppercase base32, the wrong length and the wrong prefix are all out.
 	for _, id := range []string{"pl_AAAAAAAAAAAA", "pl_aaaaaaaaaaa", "pl_aaaaaaaaaaaaa", "aaaaaaaaaaaa", "pl_aaaaaaaaaab1"} {
 		if err := ValidID(id); err == nil {
 			t.Errorf("ValidID(%q) = nil, want an error", id)
@@ -154,10 +147,8 @@ func TestValidName(t *testing.T) {
 	}
 }
 
-// TestValidIDAcceptsLegacyULID pins both id shapes §3.5 needs: the `pl_` ids
-// NewID mints, and the 26-character Crockford base32 ULID every planner id
-// already in a real relevo.db has (internal/db/ulid.go's alphabet). A ULID is
-// uppercase, so it can never collide with a name.
+// TestValidIDAcceptsLegacyULID pins both id shapes: the `pl_` ids NewID
+// mints, and a legacy ULID.
 func TestValidIDAcceptsLegacyULID(t *testing.T) {
 	valid := []string{
 		"pl_aaaaaaaaaaaa",
@@ -208,7 +199,6 @@ func TestDefaultNamePicksSmallestFree(t *testing.T) {
 	if got := DefaultName("architect", "claude", nil); got != "architect-1" {
 		t.Errorf("DefaultName with nothing taken = %q, want architect-1", got)
 	}
-	// An agent that cannot be a name prefix falls back to the harness kind.
 	for _, agent := range []string{"", "My Agent", "1agent", "agent_1", strings.Repeat("a", 31)} {
 		if got := DefaultName(agent, "claude", nil); got != "claude-1" {
 			t.Errorf("DefaultName(%q, claude) = %q, want claude-1", agent, got)
@@ -219,9 +209,9 @@ func TestDefaultNamePicksSmallestFree(t *testing.T) {
 	}
 }
 
-// wantHookJSON marshals context through the hook envelope's exact JSON shape,
-// written out literally here so this test keeps asserting the field names
-// hook.go encodes rather than trusting the package's own struct tags.
+// wantHookJSON marshals context through the envelope shape written out
+// literally, so the test asserts hook.go's field names rather than trusting
+// its own struct tags.
 func wantHookJSON(t *testing.T, context string) string {
 	t.Helper()
 	var env struct {
@@ -258,9 +248,7 @@ func TestHookOutputExactJSON(t *testing.T) {
 	}
 }
 
-// TestHookOutputNoEnvExactJSON is §3.4's unset-$CLAUDE_ENV_FILE golden: the
-// same envelope and sentence as HookOutput, followed by one space and the note
-// that RELEVO_PLANNER could not be exported.
+// TestHookOutputNoEnvExactJSON is the unset-$CLAUDE_ENV_FILE golden.
 func TestHookOutputNoEnvExactJSON(t *testing.T) {
 	rec := Record{ID: "pl_aaaaaaaaaaaa", Name: "architect-1"}
 
@@ -270,7 +258,6 @@ func TestHookOutputNoEnvExactJSON(t *testing.T) {
 		t.Errorf("HookOutputNoEnv:\n got %s\nwant %s", got, want)
 	}
 
-	// The two answers agree up to the note, so only the export news differs.
 	normal := hookContext(rec)
 	noEnv := hookContext(rec) + " " + noEnvNote
 	if !strings.HasPrefix(noEnv, normal+" ") || noEnv != normal+" "+noEnvNote {
@@ -302,7 +289,6 @@ func TestParseHookInputRequiresSessionAndCWD(t *testing.T) {
 		}
 	}
 
-	// An unknown source reads as startup (§3.4).
 	in, err = ParseHookInput(strings.NewReader(`{"session_id":"s","cwd":"/tmp/p","source":"something-new"}`))
 	if err != nil {
 		t.Fatalf("ParseHookInput: %v", err)
@@ -317,14 +303,12 @@ func TestRecordValidate(t *testing.T) {
 		t.Fatalf("valid record: %v", err)
 	}
 
-	// host_started_at must be 0 whenever host_pid is 0.
 	bad := record("pl_aaaaaaaaaaaa", "architect-1", "claude", "sess-1", 0)
 	bad.HostStartedAt = 42
 	if err := bad.Validate(); !errors.Is(err, ErrInvalid) {
 		t.Errorf("host_started_at with host_pid 0: %v, want ErrInvalid", err)
 	}
 
-	// The opencode session rule.
 	oc := record("pl_aaaaaaaaaaaa", "oc-1", "opencode", "not-a-session", 0)
 	if err := oc.Validate(); !errors.Is(err, ErrInvalid) {
 		t.Errorf("opencode session: %v, want ErrInvalid", err)
@@ -334,7 +318,6 @@ func TestRecordValidate(t *testing.T) {
 		t.Errorf("valid opencode session: %v", err)
 	}
 
-	// cwd must be absolute.
 	rel := record("pl_aaaaaaaaaaaa", "architect-1", "claude", "sess-1", 0)
 	rel.CWD = "relative/path"
 	if err := rel.Validate(); !errors.Is(err, ErrInvalid) {
@@ -356,8 +339,8 @@ func TestErrUnknownPlannerNamesTheRef(t *testing.T) {
 	}
 }
 
-// TestListReadsEveryRecord pins the row layout and the sort order: one
-// planner/<id> row per record, by name.
+// TestListReadsEveryRecord pins one planner/<id> row per record, sorted by
+// name.
 func TestListReadsEveryRecord(t *testing.T) {
 	reg := testRegistry(t)
 	mustCreate(t, reg, record("pl_bbbbbbbbbbbb", "zeta", "claude", "s-b", 0))

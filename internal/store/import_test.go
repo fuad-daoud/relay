@@ -11,65 +11,16 @@ import (
 	"time"
 )
 
-// legacyFixture returns the ingest package's binding fixture, the legacy
-// bind.json + log.jsonl pair the import must adopt.
-func legacyFixture(t *testing.T, base string) []byte {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "ingest", "testdata", "binding-three-rounds", base))
-	if err != nil {
-		t.Fatalf("read fixture %s: %v", base, err)
-	}
-	return raw
-}
-
-// seedLegacyDir writes a legacy binding directory named name, holding the
-// fixture's bind.json (renamed to the directory, as the store always wrote it)
-// and its log.jsonl, optionally patched by patchLog. It returns the log bytes
-// it wrote.
-func seedLegacyDir(t *testing.T, root, name string, patchLog func([]byte) []byte) []byte {
-	t.Helper()
-
-	dir := filepath.Join(root, name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	var doc map[string]any
-	if err := json.Unmarshal(legacyFixture(t, "bind.json"), &doc); err != nil {
-		t.Fatalf("decode fixture bind.json: %v", err)
-	}
-	doc["name"] = name
-	bindJSON, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "bind.json"), bindJSON, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	logJSON := legacyFixture(t, "log.jsonl")
-	if patchLog != nil {
-		logJSON = patchLog(logJSON)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "log.jsonl"), logJSON, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return logJSON
-}
-
-// TestImportPresentAdoptsLegacyDirs is P3a §8 step 2's case: a root holding two
-// legacy binding directories (bind.json + log.jsonl, from
-// internal/ingest/testdata) lists both, the files are gone, and ReadLog
-// returns the same entries -- Seq, Confirmed, DeliveredAt, Route, and a key
-// this binary does not know kept in entry_json.
+// TestImportPresentAdoptsLegacyDirs pins the adoption of legacy binding
+// directories: both list, the files are gone, and the entries -- including a
+// key this binary does not know -- read back unchanged.
 func TestImportPresentAdoptsLegacyDirs(t *testing.T) {
 	root := t.TempDir()
 	s := New(root)
 
 	logOne := seedLegacyDir(t, root, "one", nil)
 	seedLegacyDir(t, root, "two", func(raw []byte) []byte {
-		// One entry as a newer relevo might have written it: an unknown key,
-		// a route and a delivery stamp.
+		// One entry as a newer relevo might have written it.
 		patched := bytes.Replace(raw, []byte(`"kind":"pick"`),
 			[]byte(`"kind":"pick","future_key":"kept","route":"channel","delivered_at":"2026-09-10T10:00:04.000Z"`), 1)
 		if bytes.Equal(patched, raw) {
@@ -107,23 +58,7 @@ func TestImportPresentAdoptsLegacyDirs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadLog(one): %v", err)
 	}
-	if len(entries) != len(want) {
-		t.Fatalf("ReadLog(one) returned %d entries, want %d", len(entries), len(want))
-	}
-	for i := range entries {
-		if entries[i].Seq != want[i].Seq {
-			t.Errorf("entry %d Seq = %d, want %d", i, entries[i].Seq, want[i].Seq)
-		}
-		if entries[i].Confirmed != want[i].Confirmed {
-			t.Errorf("entry %d Confirmed = %v, want %v", i, entries[i].Confirmed, want[i].Confirmed)
-		}
-		if (entries[i].DeliveredAt == nil) != (want[i].DeliveredAt == nil) {
-			t.Errorf("entry %d DeliveredAt = %v, want %v", i, entries[i].DeliveredAt, want[i].DeliveredAt)
-		}
-		if entries[i].Route != want[i].Route {
-			t.Errorf("entry %d Route = %q, want %q", i, entries[i].Route, want[i].Route)
-		}
-	}
+	checkEntriesEqual(t, entries, want)
 
 	// The patched entry keeps its key, its route and its delivery stamp.
 	two, err := s.ReadLog("two")
@@ -145,44 +80,29 @@ func TestImportPresentAdoptsLegacyDirs(t *testing.T) {
 	}
 }
 
-// TestImportPresentKeepsANewerFormatFile is the other half of §8 step 2: a
-// format-3 bind.json is refused with ErrNewerFormat and the file stays.
-func TestImportPresentKeepsANewerFormatFile(t *testing.T) {
-	root := t.TempDir()
-	s := New(root)
-
-	b := newBinding("webshop", "/home/dev/projects/webshop")
-	b.Format = BindingFormat + 1
-	if err := os.MkdirAll(s.Dir(b.Name), 0o755); err != nil {
-		t.Fatal(err)
+func checkEntriesEqual(t *testing.T, got, want []LogEntry) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %d entries, want %d", len(got), len(want))
 	}
-	raw, err := json.MarshalIndent(b, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(s.Dir(b.Name), "bind.json")
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = s.Load(b.Name)
-	var newer *ErrNewerFormat
-	if !errors.As(err, &newer) {
-		t.Fatalf("Load of a format-%d binding = %v, want *ErrNewerFormat", BindingFormat+1, err)
-	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(raw, after) {
-		t.Errorf("the refused import changed the file:\nbefore:\n%s\nafter:\n%s", raw, after)
+	for i := range got {
+		if got[i].Seq != want[i].Seq {
+			t.Errorf("entry %d Seq = %d, want %d", i, got[i].Seq, want[i].Seq)
+		}
+		if got[i].Confirmed != want[i].Confirmed {
+			t.Errorf("entry %d Confirmed = %v, want %v", i, got[i].Confirmed, want[i].Confirmed)
+		}
+		if (got[i].DeliveredAt == nil) != (want[i].DeliveredAt == nil) {
+			t.Errorf("entry %d DeliveredAt = %v, want %v", i, got[i].DeliveredAt, want[i].DeliveredAt)
+		}
+		if got[i].Route != want[i].Route {
+			t.Errorf("entry %d Route = %q, want %q", i, got[i].Route, want[i].Route)
+		}
 	}
 }
 
-// TestListSkipsANewerFormatBinding pins §B4: one bind.json written by a newer
-// relevo must not break List for the bindings this binary understands. The
-// import leaves the newer file exactly where it is and skips that name, while
-// load() for it still refuses it with ErrNewerFormat.
+// TestListSkipsANewerFormatBinding pins that one bind.json written by a newer
+// relevo must not break List for the other bindings.
 func TestListSkipsANewerFormatBinding(t *testing.T) {
 	root := t.TempDir()
 	s := New(root)
@@ -225,10 +145,8 @@ func TestListSkipsANewerFormatBinding(t *testing.T) {
 	}
 }
 
-// TestImportPresentAdoptsViewedSidecar pins the .viewed sidecar import (#143):
-// a pre-P3a <dir>/.viewed becomes the record's viewed_at -- the file's mtime
-// when the record has no stamp -- and the file goes; a stamp the record
-// already has is kept and the file still goes.
+// TestImportPresentAdoptsViewedSidecar pins the .viewed sidecar import: the
+// file becomes the record's viewed_at and goes; an existing stamp is kept.
 func TestImportPresentAdoptsViewedSidecar(t *testing.T) {
 	root := t.TempDir()
 	s := New(root)
@@ -248,7 +166,6 @@ func TestImportPresentAdoptsViewedSidecar(t *testing.T) {
 		t.Fatalf("chtimes .viewed: %v", err)
 	}
 
-	// ViewedAt imports the sidecar: the mtime is the stamp and the file goes.
 	got, ok := s.ViewedAt("webshop")
 	if !ok || !got.Equal(stamp) {
 		t.Fatalf("ViewedAt after the import = (%v, %v), want (%v, true)", got, ok, stamp)
