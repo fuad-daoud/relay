@@ -90,10 +90,15 @@ func TestTabBarWordsAndUnderline(t *testing.T) {
 	if strings.ContainsAny(words, "12345") {
 		t.Errorf("tabs must not carry numbers: %q", words)
 	}
-	for _, title := range tabTitles {
-		if !strings.Contains(plain, title) {
+	// A writer round draws today's five tabs; the artifacts tab is a
+	// reader round's (round 5b), so it is not among them.
+	for _, tb := range writerTabs {
+		if title := tabTitles[tb]; !strings.Contains(plain, title) {
 			t.Errorf("tabs missing %q: %q", title, plain)
 		}
+	}
+	if strings.Contains(plain, tabTitles[tabArtifacts]) {
+		t.Errorf("writer tabs must not carry the artifacts tab: %q", plain)
 	}
 	if !strings.Contains(tabs, chip(chipAccentStyle, "diff")) {
 		t.Errorf("active tab not chipAccentStyle: %q", tabs)

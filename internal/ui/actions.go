@@ -60,6 +60,12 @@ type Actions interface {
 	AgentFiles(agent string) ([]harness.AgentFile, error)          // the dry-run install state of one agent
 	ResetAgentFile(ctx context.Context, kind, agent string) Result // overwrite one definition file
 	AgentEditor(path string) (*exec.Cmd, error)                    // the user's editor on one file
+
+	// The round view's artifacts tab (round 5b): the pager, browser or
+	// editor for one artifact. Like Shell and AgentEditor it returns the
+	// command without running it, so the cockpit can run the pager and the
+	// editor under tea.ExecProcess and start the browser detached.
+	OpenArtifact(path, kind string) (*exec.Cmd, error)
 }
 
 // BindInput is one b key's answers (§3): the new binding's name, the
@@ -534,22 +540,6 @@ func (a *plannerActions) ResetAgentFile(ctx context.Context, kind, agent string)
 		return Result{Err: err}
 	}
 	return Result{Text: "reset " + kind + "'s " + agent, Refresh: true}
-}
-
-// AgentEditor is the user's editor on path (§3): $VISUAL, else $EDITOR, else
-// vi, split with strings.Fields, path last. It mirrors runEditor
-// (cmd/relevo/config.go:445) but returns the *exec.Cmd without running it, so
-// the cockpit can hand it to tea.ExecProcess and suspend while it runs.
-func (a *plannerActions) AgentEditor(path string) (*exec.Cmd, error) {
-	editor := os.Getenv("VISUAL")
-	if editor == "" {
-		editor = os.Getenv("EDITOR")
-	}
-	if editor == "" {
-		editor = "vi"
-	}
-	argv := append(strings.Fields(editor), path)
-	return exec.Command(argv[0], argv[1:]...), nil
 }
 
 // actionMsg is what an action's tea.Cmd returns (§3).

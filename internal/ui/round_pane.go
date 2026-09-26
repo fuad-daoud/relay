@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -31,13 +31,45 @@ type roundPane struct {
 	// can block.
 	tabInFlight bool
 
+	// reader is the row's shape: true for a reader round, whose tabs are
+	// plan, artifacts, log and transcript (round 5b). artifactSel is the
+	// artifacts tab's cursor, an index into the fetched list, and
+	// baselineHead is the binding's RoundBaselineHead for line 1's scratch
+	// cell.
+	reader       bool
+	artifactSel  int
+	baselineHead string
+
 	// width and rows are the pane's geometry: today's Model.paneWidth()
 	// and Model.bodyRows().
 	width int
 	rows  int
 }
 
-// headRows returns the number of furniture rows before the viewport (§2.5).
+// tabs is the tab bar's tabs in the order it draws them: a reader round shows
+// plan, artifacts, log and transcript; a writer round keeps today's plan,
+// report, transcript, diff and log.
+func (p roundPane) tabs() []tab {
+	if p.reader {
+		return readerTabs
+	}
+	return writerTabs
+}
+
+// tabLabel is one tab's label: the artifacts tab names the file count once its
+// list has been fetched ("artifacts 2"), every other tab is its own title.
+func (p roundPane) tabLabel(t tab) string {
+	if t == tabArtifacts {
+		if n := artifactCount(p.detail.cache[tabArtifacts]); n > 0 {
+			return fmt.Sprintf("%s %d", tabTitles[t], n)
+		}
+	}
+	return tabTitles[t]
+}
+
+// headRows returns the number of furniture rows before the viewport: the
+// tokens line, the tab bar and the source line. Both shapes of round draw
+// the same head (round 5b).
 func (p roundPane) headRows() int {
 	return 6
 }
@@ -73,12 +105,47 @@ func (p roundPane) visibleTabFetch() tea.Cmd {
 		// refetches on every visible tick regardless of cache; a hist
 		// row's terminal is transcript rows already in the database --
 		// static, fetched once like every other tab (not tail-following).
-		return fetchFor(p.ctx, p.src, tabTerminal, p.detail.name, p.detail.round, lines, p.detail.live)
+		return fetchFor(p.ctx, p.src, tabTerminal, p.detail.name, p.detail.round, lines, p.artifactSel, p.detail.live)
 	}
 	if !p.detail.cache[t].loaded {
-		return fetchFor(p.ctx, p.src, t, p.detail.name, p.detail.round, lines, p.detail.live)
+		return fetchFor(p.ctx, p.src, t, p.detail.name, p.detail.round, lines, p.artifactSel, p.detail.live)
 	}
 	return nil
+}
+
+// artifactsFetch is the reader round's artifact-list fetch, issued alongside
+// the visible tab's so the tab's label and the card know the count and the
+// total size before the human opens the tab. A writer round has none, and the
+// visible fetch already covers the artifacts tab when it is the one on
+// screen.
+func (p roundPane) artifactsFetch() tea.Cmd {
+	if !p.reader || p.detail.active == tabArtifacts || p.detail.cache[tabArtifacts].loaded {
+		return nil
+	}
+	return fetchFor(p.ctx, p.src, tabArtifacts, p.detail.name, p.detail.round, 1, p.artifactSel, p.detail.live)
+}
+
+// startFetch issues whatever the pane must read now: the visible tab's fetch,
+// and a reader round's artifact list, in one command. It is a no-op while a
+// fetch is in flight, and marks the pane in flight when it returns one.
+func (p *roundPane) startFetch() tea.Cmd {
+	if p.tabInFlight {
+		return nil
+	}
+	cmd := p.visibleTabFetch()
+	extra := p.artifactsFetch()
+	if cmd == nil && extra == nil {
+		return nil
+	}
+	p.tabInFlight = true
+	switch {
+	case cmd == nil:
+		return extra
+	case extra == nil:
+		return cmd
+	default:
+		return tea.Batch(cmd, extra)
+	}
 }
 
 // pointDetailAt re-targets the pane at the row keyed: key, round
@@ -111,15 +178,23 @@ func (p roundPane) pointDetailAt(key string) (roundPane, tea.Cmd) {
 		headless: r.Headless != nil,
 		follow:   true,
 	}
+	// The row's shape and its round's baseline head live on the binding,
+	// not the status document: a reader round's tabs, card and context row
+	// are keyed on them (round 5b). A key the runtime cannot resolve, or a
+	// read that fails, leaves the pane a writer's.
+	p.reader, p.baselineHead = false, ""
+	if rt, name, ok := p.src.Runtime(key); ok && rt.Store != nil {
+		if b, err := rt.Store.Load(name); err == nil {
+			p.reader = b.Shape == store.ShapeReader
+			p.baselineHead = b.RoundBaselineHead
+		}
+	}
+	p.artifactSel = 0
 	if r.Last != nil {
 		p.detail.lastLogTS = r.Last.TS
 	}
 	p.fillViewport()
-	if p.tabInFlight {
-		return p, nil
-	}
-	if cmd := p.visibleTabFetch(); cmd != nil {
-		p.tabInFlight = true
+	if cmd := p.startFetch(); cmd != nil {
 		return p, cmd
 	}
 	return p, nil
@@ -147,12 +222,11 @@ func (p roundPane) pointDetailAtHist(h relevo.HistoryBinding) (roundPane, tea.Cm
 		vp:         vp,
 		follow:     false,
 	}
+	p.reader = false
+	p.baselineHead = ""
+	p.artifactSel = 0
 	p.fillViewport()
-	if p.tabInFlight {
-		return p, nil
-	}
-	if cmd := p.visibleTabFetch(); cmd != nil {
-		p.tabInFlight = true
+	if cmd := p.startFetch(); cmd != nil {
 		return p, cmd
 	}
 	return p, nil
@@ -199,16 +273,16 @@ func (p roundPane) invalidate() (roundPane, tea.Cmd, bool) {
 	p.detail.lastLogTS = r.Last.TS
 	p.detail.round = paneRound(*r)
 	p.detail.rounds = roundsOf(*r)
-	for _, t := range []tab{tabPlan, tabReport, tabDiff, tabLog} {
+	for _, t := range p.tabs() {
+		if t == tabTerminal {
+			// A terminal refetches on every visible tick.
+			continue
+		}
 		p.detail.cache[t] = tabContent{} // loaded=false
 		p.detail.scroll[t] = 0           // reset parked offset on invalidation
 	}
-	if !p.tabInFlight {
-		cmd := p.visibleTabFetch()
-		if cmd != nil {
-			p.tabInFlight = true
-			return p, cmd, false
-		}
+	if cmd := p.startFetch(); cmd != nil {
+		return p, cmd, false
 	}
 	return p, nil, false
 }
@@ -224,16 +298,13 @@ func (p roundPane) stepRound(delta int) (roundPane, tea.Cmd) {
 		return p, nil
 	}
 	p.detail.round = next
+	p.artifactSel = 0
 	for t := tab(0); t < tabCount; t++ {
 		p.detail.cache[t] = tabContent{} // loaded=false
 		p.detail.scroll[t] = 0           // reset parked offset on invalidation
 	}
 	p.fillViewport()
-	if p.tabInFlight {
-		return p, nil
-	}
-	if cmd := p.visibleTabFetch(); cmd != nil {
-		p.tabInFlight = true
+	if cmd := p.startFetch(); cmd != nil {
 		return p, cmd
 	}
 	return p, nil
@@ -254,6 +325,16 @@ func (p roundPane) onTab(msg tabMsg) roundPane {
 	if msg.round != p.detail.round {
 		return p
 	}
+	// A reader round's artifact reply carries the list in order; keep the
+	// cursor on the file it names, so a refetch never moves it.
+	if msg.t == tabArtifacts {
+		for i, f := range msg.content.artifacts {
+			if f.Rel == msg.content.artifactRel {
+				p.artifactSel = i
+				break
+			}
+		}
+	}
 	if msg.t != p.detail.active {
 		p.detail.cache[msg.t] = msg.content
 		return p
@@ -266,12 +347,20 @@ func (p roundPane) onTab(msg tabMsg) roundPane {
 	return p
 }
 
-// cycleTab is tab / shift+tab.
+// cycleTab is tab / shift+tab, over the shape's own tabs.
 func (p roundPane) cycleTab(msg tea.KeyMsg) (roundPane, tea.Cmd) {
-	if msg.Type == tea.KeyShiftTab || msg.String() == "shift+tab" || msg.String() == "back_tab" {
-		return p.switchTab((p.detail.active - 1 + tabCount) % tabCount)
+	tabs := p.tabs()
+	i := 0
+	for j, t := range tabs {
+		if t == p.detail.active {
+			i = j
+			break
+		}
 	}
-	return p.switchTab((p.detail.active + 1) % tabCount)
+	if msg.Type == tea.KeyShiftTab || msg.String() == "shift+tab" || msg.String() == "back_tab" {
+		return p.switchTab(tabs[(i-1+len(tabs))%len(tabs)])
+	}
+	return p.switchTab(tabs[(i+1)%len(tabs)])
 }
 
 func (p roundPane) switchTab(next tab) (roundPane, tea.Cmd) {
@@ -290,7 +379,7 @@ func (p roundPane) switchTab(next tab) (roundPane, tea.Cmd) {
 			lines = 1
 		}
 		return p, fetchFor(p.ctx, p.src, next, p.detail.name,
-			p.detail.round, lines, p.detail.live)
+			p.detail.round, lines, p.artifactSel, p.detail.live)
 	}
 	return p, nil
 }
@@ -312,84 +401,6 @@ func (p roundPane) detailHeader() string {
 	return s
 }
 
-// tokensLine renders the tokens and facts row at the top of the body (§3.3).
-func (p roundPane) tokensLine(b *view.BindingStatus) string {
-	if b == nil || !p.detail.live {
-		left := "   " + faintStyle.Render("no live facts for a released binding")
-		return spread(left, "", p.width)
-	}
-
-	var rawParts []string
-	if b.LiveUsage != nil {
-		rawParts = usage.LiveParts(*b.LiveUsage)
-	} else if b.LastUsage != nil {
-		rawParts = usage.Parts(*b.LastUsage)
-	}
-
-	body := "tokens "
-	if len(rawParts) > 0 {
-		var filtered []string
-		for i, part := range rawParts {
-			isLast := i == len(rawParts)-1
-			if isLast && strings.HasPrefix(part, "unknown") {
-				part = "no price"
-			}
-			if strings.HasPrefix(part, "in ") ||
-				strings.HasPrefix(part, "cache ") ||
-				strings.HasPrefix(part, "out ") ||
-				(strings.HasPrefix(part, "write ") && part != "write 0") ||
-				isLast {
-				filtered = append(filtered, part)
-			}
-		}
-		if len(filtered) > 0 {
-			body += strings.Join(filtered, " · ")
-		} else {
-			body += "no usage yet"
-		}
-	} else {
-		body += "no usage yet"
-	}
-
-	if b.LastClose != nil && b.LastClose.Commits > 0 {
-		unit := "commits"
-		if b.LastClose.Commits == 1 {
-			unit = "commit"
-		}
-		body += fmt.Sprintf(" · +%d %s", b.LastClose.Commits, unit)
-	}
-	if s := spendCell(*b); s != "" {
-		body += " · spend " + s
-	}
-
-	left := "   " + faintStyle.Render(body)
-
-	var right string
-	if b.Headless != nil && b.Headless.PID != 0 {
-		right = faintStyle.Render(fmt.Sprintf("pid %d since %s", b.Headless.PID, b.Headless.StartedAt.Local().Format("15:04"))) + "  "
-	}
-
-	return spread(left, right, p.width)
-}
-
-// tabsRow renders the pill tabs and the round stepper on the right (§2.4).
-func (p roundPane) tabsRow() string {
-	words := make([]string, len(tabTitles))
-	for i, t := range tabTitles {
-		if tab(i) == p.detail.active {
-			words[i] = chip(chipAccentStyle, t)
-		} else {
-			words[i] = mutedStyle.Render(chip(normalStyle, t))
-		}
-	}
-	left := "  " + strings.Join(words, "   ")
-
-	rightText := fmt.Sprintf("  r%d of %d  ", p.detail.round, p.detail.rounds)
-	right := faintStyle.Render("round  ") + chip(kbdStyle, "[") + textStyle.Bold(true).Render(rightText) + chip(kbdStyle, "]") + "  "
-
-	return spread(left, right, p.width)
-}
-
 // sourceLine says, in one faint line, what the viewport is showing.
 func (p roundPane) sourceLine() string {
 	if p.detail.name == "" {
@@ -398,6 +409,11 @@ func (p roundPane) sourceLine() string {
 	c := p.detail.cache[p.detail.active]
 	if !c.loaded {
 		return faintStyle.Render("loading…")
+	}
+	if p.detail.active == tabArtifacts {
+		// The header carries the count and the total size (round 5b); a
+		// source line here would only repeat them.
+		return ""
 	}
 	var s string
 	switch p.detail.active {
@@ -483,13 +499,11 @@ func (p roundPane) hintLine(b *view.BindingStatus) (string, bool) {
 // view draws exactly rows rows at width (§2.5, §5).
 func (p roundPane) view(width int) string {
 	b := row(p.report, p.detail.name)
-	out := []string{
-		p.tokensLine(b),
-		"",
-		p.tabsRow(),
-		"",
-		"     " + p.sourceLine(),
-		"",
+	out := []string{p.tokensLine(b), "", p.tabsRow(), ""}
+	// A reader round's artifacts tab draws no source line: the header
+	// already carries the count and the size (round 5b).
+	if s := p.sourceLine(); s != "" {
+		out = append(out, "     "+s, "")
 	}
 
 	budget := p.rows - len(out)

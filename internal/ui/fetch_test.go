@@ -29,7 +29,7 @@ func TestTabOrderStartsWithPlan(t *testing.T) {
 	if tabPlan != 0 {
 		t.Fatalf("tabPlan = %d, want 0 (first in the tab order)", tabPlan)
 	}
-	wantOrder := [tabCount]string{"plan", "report", "transcript", "diff", "log"}
+	wantOrder := [tabCount]string{"plan", "report", "transcript", "diff", "log", "artifacts"}
 	if tabTitles != wantOrder {
 		t.Fatalf("tabTitles = %v, want %v", tabTitles, wantOrder)
 	}
@@ -401,8 +401,8 @@ func TestFetchForRouting(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	for _, tab := range []tab{tabPlan, tabReport, tabTerminal, tabDiff, tabLog} {
-		cmd := fetchFor(context.Background(), plannerSource{rt}, tab, name, 1, 24, true)
+	for _, tab := range []tab{tabPlan, tabReport, tabTerminal, tabDiff, tabLog, tabArtifacts} {
+		cmd := fetchFor(context.Background(), plannerSource{rt}, tab, name, 1, 24, 0, true)
 		if cmd == nil {
 			t.Fatalf("fetchFor returned nil for tab %v", tab)
 		}
