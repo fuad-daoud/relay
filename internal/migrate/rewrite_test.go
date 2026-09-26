@@ -12,19 +12,23 @@ const (
 	testNewRoot = "/n/r"
 )
 
-// TestRewriteJSON covers the rewrite contract: only JSON files change, only
-// values that start with the old root change, the skipped subtrees are skipped,
-// and an untouched file keeps its mtime.
+// TestRewriteJSON pins the rewrite contract: only JSON files and only values
+// starting with the old root change; an untouched file keeps its mtime.
 func TestRewriteJSON(t *testing.T) {
 	root := t.TempDir()
 
-	bindPath := writeFixture(t, root, "bind.json", `{"cwd":"/o/r/.worktrees/x","root":"/o/r"}`)
-	logPath := writeFixture(t, root, "log.jsonl", "{\"a\":\"/o/r/one\"}\n{\"b\":\"other\"}\n")
-	notesPath := writeFixture(t, root, ".worktrees/x/notes.json", `{"cwd":"/o/r/.worktrees/x"}`)
-	servePath := writeFixture(t, root, "serve/repos/o/r.git/config.json", `{"cwd":"/o/r/.worktrees/x"}`)
-	txtPath := writeFixture(t, root, "other.txt", "/o/r/.worktrees/x")
-	gitPath := writeFixture(t, root, "work/.git", "gitdir: /somewhere\n")
-	gitConfigPath := writeFixture(t, root, "work/config.json", `{"cwd":"/o/r/.worktrees/x"}`)
+	fixture := func(rel, data string) string {
+		path := filepath.Join(root, rel)
+		mustWrite(t, path, data)
+		return path
+	}
+	bindPath := fixture("bind.json", `{"cwd":"/o/r/.worktrees/x","root":"/o/r"}`)
+	logPath := fixture("log.jsonl", "{\"a\":\"/o/r/one\"}\n{\"b\":\"other\"}\n")
+	notesPath := fixture(".worktrees/x/notes.json", `{"cwd":"/o/r/.worktrees/x"}`)
+	servePath := fixture("serve/repos/o/r.git/config.json", `{"cwd":"/o/r/.worktrees/x"}`)
+	txtPath := fixture("other.txt", "/o/r/.worktrees/x")
+	gitPath := fixture("work/.git", "gitdir: /somewhere\n")
+	gitConfigPath := fixture("work/config.json", `{"cwd":"/o/r/.worktrees/x"}`)
 
 	old := time.Now().Add(-time.Hour).Truncate(time.Second)
 	for _, p := range []string{bindPath, logPath, notesPath, servePath, txtPath, gitPath, gitConfigPath} {
@@ -65,25 +69,4 @@ func TestRewriteJSON(t *testing.T) {
 			t.Errorf("%s mtime = %v, want untouched %v", c.path, fi.ModTime(), old)
 		}
 	}
-}
-
-func writeFixture(t *testing.T, root, rel, data string) string {
-	t.Helper()
-	path := filepath.Join(root, rel)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
-	}
-	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-	return path
-}
-
-func readFixture(t *testing.T, path string) string {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	return string(data)
 }

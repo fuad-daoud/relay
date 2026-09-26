@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -177,8 +176,7 @@ func TestRunRefusalsAllAtOnce(t *testing.T) {
 	mustWrite(t, filepath.Join(stateTo, "keep.txt"), "x")
 
 	pid := 4242
-	// The daemon pointer is a kv row now (P5 §4.6); this writes the legacy
-	// file a pre-P5 daemon left, which migrate's detect step still reads (D1).
+	// migrate's detect step reads this pointer file directly, not via the daemon's API.
 	ptrDir := filepath.Join(stateFrom, "serve")
 	if err := os.MkdirAll(ptrDir, 0o755); err != nil {
 		t.Fatalf("mkdir pointer dir: %v", err)
@@ -258,89 +256,98 @@ func TestRunNothing(t *testing.T) {
 	}
 }
 
+// TestRunConfigMerge pins the three merge outcomes: identical bytes merge, a
+// slice-rename-only difference merges, else refuse.
 func TestRunConfigMerge(t *testing.T) {
-	t.Run("identical file merges", func(t *testing.T) {
-		base := t.TempDir()
-		stateFrom := filepath.Join(base, "oldstate")
-		stateTo := filepath.Join(base, "newstate")
-		configFrom := filepath.Join(base, "oldconfig")
-		configTo := filepath.Join(base, "newconfig")
+	newPolicy := `{"slice": "relevo.slice"}`
+	oldPolicy := strings.Replace(newPolicy, `"relevo.slice"`, `"`+legacy.Slice+`"`, 1)
 
-		saveBinding(t, stateFrom, "one", filepath.Join(stateFrom, ".worktrees", "one"), "", store.StateDone)
-		mustWrite(t, filepath.Join(configFrom, "candidates.json"), "same")
-		mustWrite(t, filepath.Join(configFrom, "policy.json"), "policy")
-		mustWrite(t, filepath.Join(configTo, "candidates.json"), "same")
+	tests := []struct {
+		name    string
+		from    map[string]string
+		to      map[string]string
+		wantErr string // substring the refusal reasons must contain; "" means Run succeeds
+		check   func(t *testing.T, configTo string)
+	}{
+		{
+			name: "identical file merges",
+			from: map[string]string{"candidates.json": "same", "policy.json": "policy"},
+			to:   map[string]string{"candidates.json": "same"},
+			check: func(t *testing.T, configTo string) {
+				if got := readFixture(t, filepath.Join(configTo, "candidates.json")); got != "same" {
+					t.Errorf("candidates.json = %q, want %q", got, "same")
+				}
+				if got := readFixture(t, filepath.Join(configTo, "policy.json")); got != "policy" {
+					t.Errorf("policy.json = %q, want %q", got, "policy")
+				}
+			},
+		},
+		{
+			name: "slice rename only merges",
+			from: map[string]string{"policy.json": oldPolicy},
+			to:   map[string]string{"policy.json": newPolicy},
+			check: func(t *testing.T, configTo string) {
+				if got := readFixture(t, filepath.Join(configTo, "policy.json")); got != newPolicy {
+					t.Errorf("policy.json = %q, want %q", got, newPolicy)
+				}
+			},
+		},
+		{
+			name:    "differing file refuses",
+			from:    map[string]string{"candidates.json": "left"},
+			to:      map[string]string{"candidates.json": "right"},
+			wantErr: "differ",
+		},
+	}
 
-		f := newFakes()
-		var out bytes.Buffer
-		if _, err := Run(context.Background(), f.options(stateFrom, stateTo, configFrom, configTo, &out)); err != nil {
-			t.Fatalf("Run: %v", err)
-		}
-		if got := readFixture(t, filepath.Join(configTo, "candidates.json")); got != "same" {
-			t.Errorf("candidates.json = %q, want %q", got, "same")
-		}
-		if got := readFixture(t, filepath.Join(configTo, "policy.json")); got != "policy" {
-			t.Errorf("policy.json = %q, want %q", got, "policy")
-		}
-		if _, err := os.Stat(configFrom); !errors.Is(err, fs.ErrNotExist) {
-			t.Errorf("old config root still exists: %v", err)
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { runConfigMergeCase(t, tt.from, tt.to, tt.wantErr, tt.check) })
+	}
+}
 
-	t.Run("slice rename only merges", func(t *testing.T) {
-		base := t.TempDir()
-		stateFrom := filepath.Join(base, "oldstate")
-		stateTo := filepath.Join(base, "newstate")
-		configFrom := filepath.Join(base, "oldconfig")
-		configTo := filepath.Join(base, "newconfig")
+func runConfigMergeCase(t *testing.T, from, to map[string]string, wantErr string, check func(t *testing.T, configTo string)) {
+	t.Helper()
+	base := t.TempDir()
+	stateFrom := filepath.Join(base, "oldstate")
+	stateTo := filepath.Join(base, "newstate")
+	configFrom := filepath.Join(base, "oldconfig")
+	configTo := filepath.Join(base, "newconfig")
 
-		saveBinding(t, stateFrom, "one", filepath.Join(stateFrom, ".worktrees", "one"), "", store.StateDone)
-		newPolicy := `{"slice": "relevo.slice"}`
-		oldPolicy := strings.Replace(newPolicy, `"relevo.slice"`, `"`+legacy.Slice+`"`, 1)
-		mustWrite(t, filepath.Join(configFrom, "policy.json"), oldPolicy)
-		mustWrite(t, filepath.Join(configTo, "policy.json"), newPolicy)
+	saveBinding(t, stateFrom, "one", filepath.Join(stateFrom, ".worktrees", "one"), "", store.StateDone)
+	for name, data := range from {
+		mustWrite(t, filepath.Join(configFrom, name), data)
+	}
+	for name, data := range to {
+		mustWrite(t, filepath.Join(configTo, name), data)
+	}
 
-		f := newFakes()
-		var out bytes.Buffer
-		if _, err := Run(context.Background(), f.options(stateFrom, stateTo, configFrom, configTo, &out)); err != nil {
-			t.Fatalf("Run: %v", err)
-		}
-		if got := readFixture(t, filepath.Join(configTo, "policy.json")); got != newPolicy {
-			t.Errorf("policy.json = %q, want %q", got, newPolicy)
-		}
-		if _, err := os.Stat(configFrom); !errors.Is(err, fs.ErrNotExist) {
-			t.Errorf("old config root still exists: %v", err)
-		}
-	})
+	f := newFakes()
+	var out bytes.Buffer
+	_, err := Run(context.Background(), f.options(stateFrom, stateTo, configFrom, configTo, &out))
 
-	t.Run("differing file refuses", func(t *testing.T) {
-		base := t.TempDir()
-		stateFrom := filepath.Join(base, "oldstate")
-		stateTo := filepath.Join(base, "newstate")
-		configFrom := filepath.Join(base, "oldconfig")
-		configTo := filepath.Join(base, "newconfig")
-
-		saveBinding(t, stateFrom, "one", filepath.Join(stateFrom, ".worktrees", "one"), "", store.StateDone)
-		mustWrite(t, filepath.Join(configFrom, "candidates.json"), "left")
-		mustWrite(t, filepath.Join(configTo, "candidates.json"), "right")
-
-		f := newFakes()
-		var out bytes.Buffer
-		_, err := Run(context.Background(), f.options(stateFrom, stateTo, configFrom, configTo, &out))
-
+	if wantErr != "" {
 		var ref *Refusal
 		if !errors.As(err, &ref) {
 			t.Fatalf("err = %v, want *Refusal", err)
 		}
 		joined := strings.Join(ref.Reasons, "; ")
 		wantName := filepath.Join(configFrom, "candidates.json")
-		if !strings.Contains(joined, wantName) || !strings.Contains(joined, "differ") {
-			t.Errorf("reasons = %v, want one naming %s", ref.Reasons, wantName)
+		if !strings.Contains(joined, wantName) || !strings.Contains(joined, wantErr) {
+			t.Errorf("reasons = %v, want one naming %s and %q", ref.Reasons, wantName, wantErr)
 		}
 		if _, err := os.Stat(configFrom); err != nil {
 			t.Errorf("old config root moved: %v", err)
 		}
-	})
+		return
+	}
+
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	check(t, configTo)
+	if _, err := os.Stat(configFrom); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("old config root still exists: %v", err)
+	}
 }
 
 func TestRunExplicitPair(t *testing.T) {
@@ -379,7 +386,7 @@ func TestRunSkipDaemonCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AcquireDaemonLock: %v", err)
 	}
-	defer lock.Close()
+	defer func() { _ = lock.Close() }()
 
 	f := newFakes()
 	var out bytes.Buffer
@@ -456,9 +463,7 @@ func TestRunWarnings(t *testing.T) {
 	})
 }
 
-// TestRunRepairsOrphanWorktree covers a worktree directory no binding records:
-// the binding pass never sees it, so the orphan pass must repair it from the
-// gitdir line of its .git file, mapped onto the new state root (#385).
+// TestRunRepairsOrphanWorktree pins repair of a worktree no binding records.
 func TestRunRepairsOrphanWorktree(t *testing.T) {
 	base := t.TempDir()
 	stateFrom := filepath.Join(base, "oldstate")
@@ -495,8 +500,7 @@ func TestRunRepairsOrphanWorktree(t *testing.T) {
 	}
 }
 
-// TestRunOrphanNotRepairedTwice checks the binding pass records what it
-// repaired, so the orphan pass leaves that same worktree alone (#385).
+// TestRunOrphanNotRepairedTwice pins that the orphan pass skips an already-repaired worktree.
 func TestRunOrphanNotRepairedTwice(t *testing.T) {
 	base := t.TempDir()
 	stateFrom := filepath.Join(base, "oldstate")
@@ -523,8 +527,7 @@ func TestRunOrphanNotRepairedTwice(t *testing.T) {
 	}
 }
 
-// TestRunOrphanDryRun checks the orphan pass counts a would-be repair without
-// calling Repair (#385).
+// TestRunOrphanDryRun pins that a dry run counts the repair without calling Repair.
 func TestRunOrphanDryRun(t *testing.T) {
 	base := t.TempDir()
 	stateFrom := filepath.Join(base, "oldstate")
@@ -551,78 +554,4 @@ func TestRunOrphanDryRun(t *testing.T) {
 	if s.Detail != "repaired 1 worktree(s)" {
 		t.Errorf("repair-worktrees detail = %q, want %q", s.Detail, "repaired 1 worktree(s)")
 	}
-}
-
-func mustMkdir(t *testing.T, path string) {
-	t.Helper()
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", path, err)
-	}
-}
-
-func mustWrite(t *testing.T, path, data string) {
-	t.Helper()
-	mustMkdir(t, filepath.Dir(path))
-	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-}
-
-// saveBinding seeds what stands for an old, pre-DB legacy root: it writes the
-// pre-P3a layout directly, <root>/<name>/bind.json, rather than going through
-// the now DB-backed store (P3a round 4, C1).
-func saveBinding(t *testing.T, root, name, cwd, repo string, state store.State) {
-	t.Helper()
-	b := store.Binding{Name: name, CWD: cwd, Worktree: cwd, Repo: repo, State: state}
-	dir := filepath.Join(root, name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("create binding dir %s: %v", name, err)
-	}
-	raw, err := json.MarshalIndent(b, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal binding %s: %v", name, err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "bind.json"), raw, 0o644); err != nil {
-		t.Fatalf("write binding %s: %v", name, err)
-	}
-}
-
-// treeSnapshot maps every regular file under root to its mode and bytes, which
-// is what "the dry run wrote nothing" has to mean.
-func treeSnapshot(t *testing.T, root string) map[string]string {
-	t.Helper()
-	snap := map[string]string{}
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		snap[path] = fmt.Sprintf("%v|%s", info.Mode(), data)
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("snapshot %s: %v", root, err)
-	}
-	return snap
-}
-
-func findStep(t *testing.T, res Result, name string) Step {
-	t.Helper()
-	for _, s := range res.Steps {
-		if s.Name == name {
-			return s
-		}
-	}
-	t.Fatalf("no step named %q in %v", name, res.Steps)
-	return Step{}
 }

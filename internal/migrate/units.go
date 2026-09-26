@@ -14,10 +14,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
-// ClientUnits is the pair of user-level client services `relevo migrate`
-// swaps: the relay-era unit and the relevo-era unit it becomes. Platform is // name-guard: legacy
-// the GOOS they belong to; a platform with no units leaves both zero, so every
-// function here is a no-op on it.
+// ClientUnits is the pair of client services `relevo migrate` swaps. A
+// platform with no units leaves both zero.
 type ClientUnits struct {
 	Platform string // "linux" | "darwin"; anything else: no units
 	Old, New Unit
@@ -30,9 +28,7 @@ type OldUnit struct {
 	WasEnabled bool
 }
 
-// UnitOptions is everything the unit steps need: the units themselves, the
-// service manager, the embedded unit texts, where relevo runs, and where the
-// report goes.
+// UnitOptions is everything the unit steps need.
 type UnitOptions struct {
 	Units          ClientUnits
 	Services       Services
@@ -43,10 +39,8 @@ type UnitOptions struct {
 	Out            io.Writer
 }
 
-// DefaultClientUnits resolves the old and the new client unit paths for goos.
-// configHome is $XDG_CONFIG_HOME, where systemd keeps user units; home is
-// $HOME, where launchd keeps LaunchAgents. Every relay-era spelling comes from // name-guard: legacy
-// internal/legacy, the only home of the old names.
+// DefaultClientUnits resolves the old and new client unit paths for goos:
+// configHome for systemd, home for launchd.
 func DefaultClientUnits(goos, configHome, home string) ClientUnits {
 	switch goos {
 	case "linux":
@@ -80,8 +74,7 @@ func DefaultClientUnits(goos, configHome, home string) ClientUnits {
 	}
 }
 
-// step records one line of the unit report and writes it, with the same
-// dry-run prefix Run uses so a report cannot be mistaken for work done.
+// step records one line of the unit report, dry-run prefixed like addStep.
 func (o UnitOptions) step(name, detail string, skipped bool) Step {
 	s := Step{Name: name, Detail: detail, Skipped: skipped}
 	if o.Out != nil {
@@ -89,13 +82,11 @@ func (o UnitOptions) step(name, detail string, skipped bool) Step {
 		if o.DryRun {
 			prefix = "(dry run) "
 		}
-		fmt.Fprintf(o.Out, "%s%s: %s\n", prefix, s.Name, s.Detail)
+		_, _ = fmt.Fprintf(o.Out, "%s%s: %s\n", prefix, s.Name, s.Detail)
 	}
 	return s
 }
 
-// newUnitContent renders the new client unit: dist.ClientUnit on Linux, the
-// plist template with @BIN@ and @HOME@ substituted on macOS.
 func (o UnitOptions) newUnitContent() ([]byte, error) {
 	switch o.Units.Platform {
 	case "linux":
@@ -109,15 +100,9 @@ func (o UnitOptions) newUnitContent() ([]byte, error) {
 	}
 }
 
-// StopOld stops the old client service when it is installed and running, and
-// reports what it found. An installed but inactive unit is left alone: a host
-// with an installed-but-inactive, disabled relay.service (contabo) must not // name-guard: legacy
-// get a relevo daemon nobody asked for. An absent unit file is a skipped step
-// and a zero OldUnit.
-//
-// A dry run makes no Services call at all -- the report describes the stop it
-// would make, and WasActive/WasEnabled stay false because they cannot be known
-// without asking the service manager.
+// StopOld stops the old client service when installed and running. An
+// installed but inactive unit is left alone, and a dry run never calls
+// Services at all.
 func StopOld(ctx context.Context, o UnitOptions) (Step, OldUnit, error) {
 	var old OldUnit
 
@@ -148,26 +133,27 @@ func StopOld(ctx context.Context, o UnitOptions) (Step, OldUnit, error) {
 	return o.step("stop", fmt.Sprintf("stopped %s", o.Units.Old.Name), false), old, nil
 }
 
-// SwapClient installs the new client unit and retires the old one, in that
-// order, and returns one step per thing it did. With no old unit installed it
-// is a single skipped step and touches nothing: relevo must not install a
-// daemon on a host that never ran one.
-//
-// The new unit is enabled only when the old one was active or enabled; a
-// migration preserves the old host's intent rather than inventing one. The
-// install is idempotent: a unit file already equal to what would be written is
-// not rewritten, and an absent old file skips the retire.
+// SwapClient installs the new client unit and retires the old one. With no
+// old unit installed it is a single skipped step.
 func SwapClient(ctx context.Context, o UnitOptions, old OldUnit) ([]Step, error) {
 	if !old.Installed {
 		return []Step{o.step("install", "no client unit was installed", true)}, nil
 	}
 
-	var steps []Step
-
-	// Install.
-	content, err := o.newUnitContent()
+	steps, err := installClientUnit(ctx, o, old)
 	if err != nil {
 		return steps, err
+	}
+	retireSteps, err := retireOldUnit(ctx, o)
+	return append(steps, retireSteps...), err
+}
+
+// installClientUnit writes the new unit, skipping an already-equal file, and
+// enables it only when the old one was active or enabled.
+func installClientUnit(ctx context.Context, o UnitOptions, old OldUnit) ([]Step, error) {
+	content, err := o.newUnitContent()
+	if err != nil {
+		return nil, err
 	}
 	current, readErr := os.ReadFile(o.Units.New.Path)
 	unchanged := readErr == nil && bytes.Equal(current, content)
@@ -182,68 +168,63 @@ func SwapClient(ctx context.Context, o UnitOptions, old OldUnit) ([]Step, error)
 		} else {
 			detail += "; enable and start it if the old unit was active or enabled"
 		}
-		steps = append(steps, o.step("install", detail, unchanged))
-	} else {
-		if !unchanged {
-			if err := os.MkdirAll(filepath.Dir(o.Units.New.Path), 0o755); err != nil {
-				return steps, fmt.Errorf("install: %w", err)
-			}
-			if err := os.WriteFile(o.Units.New.Path, content, 0o644); err != nil {
-				return steps, fmt.Errorf("install: %w", err)
-			}
-			if o.Units.Platform == "linux" {
-				if err := o.Services.Reload(ctx); err != nil {
-					return steps, fmt.Errorf("install: %w", err)
-				}
-			}
-		}
+		return []Step{o.step("install", detail, unchanged)}, nil
+	}
 
-		if old.WasActive || old.WasEnabled {
-			if err := o.Services.Enable(ctx, o.Units.New); err != nil {
-				return steps, fmt.Errorf("install: %w", err)
+	if !unchanged {
+		if err := os.MkdirAll(filepath.Dir(o.Units.New.Path), 0o755); err != nil {
+			return nil, fmt.Errorf("install: %w", err)
+		}
+		if err := os.WriteFile(o.Units.New.Path, content, 0o644); err != nil {
+			return nil, fmt.Errorf("install: %w", err)
+		}
+		if o.Units.Platform == "linux" {
+			if err := o.Services.Reload(ctx); err != nil {
+				return nil, fmt.Errorf("install: %w", err)
 			}
-			steps = append(steps, o.step("install",
-				fmt.Sprintf("installed and enabled %s", o.Units.New.Name), false))
-		} else {
-			steps = append(steps, o.step("install",
-				fmt.Sprintf("installed %s, left disabled like the old unit", o.Units.New.Name), false))
 		}
 	}
 
-	// Retire: an absent old file skips it.
+	if old.WasActive || old.WasEnabled {
+		if err := o.Services.Enable(ctx, o.Units.New); err != nil {
+			return nil, fmt.Errorf("install: %w", err)
+		}
+		return []Step{o.step("install", fmt.Sprintf("installed and enabled %s", o.Units.New.Name), false)}, nil
+	}
+	return []Step{o.step("install",
+		fmt.Sprintf("installed %s, left disabled like the old unit", o.Units.New.Name), false)}, nil
+}
+
+// retireOldUnit disables and removes the old unit file, if any.
+func retireOldUnit(ctx context.Context, o UnitOptions) ([]Step, error) {
 	if _, err := os.Stat(o.Units.Old.Path); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return steps, nil
+			return nil, nil
 		}
-		return steps, fmt.Errorf("retire: stat %s: %w", o.Units.Old.Path, err)
+		return nil, fmt.Errorf("retire: stat %s: %w", o.Units.Old.Path, err)
 	}
 
 	if o.DryRun {
-		steps = append(steps, o.step("retire",
-			fmt.Sprintf("disable and remove %s", o.Units.Old.Path), false))
-		return steps, nil
+		return []Step{o.step("retire", fmt.Sprintf("disable and remove %s", o.Units.Old.Path), false)}, nil
 	}
 
 	if err := o.Services.Disable(ctx, o.Units.Old); err != nil {
-		return steps, fmt.Errorf("retire: %w", err)
+		return nil, fmt.Errorf("retire: %w", err)
 	}
 	if err := os.Remove(o.Units.Old.Path); err != nil {
-		return steps, fmt.Errorf("retire: %w", err)
+		return nil, fmt.Errorf("retire: %w", err)
 	}
 	if o.Units.Platform == "linux" {
 		if err := o.Services.Reload(ctx); err != nil {
-			return steps, fmt.Errorf("retire: %w", err)
+			return nil, fmt.Errorf("retire: %w", err)
 		}
 	}
-	steps = append(steps, o.step("retire",
-		fmt.Sprintf("disabled and removed %s", o.Units.Old.Path), false))
-	return steps, nil
+	return []Step{o.step("retire", fmt.Sprintf("disabled and removed %s", o.Units.Old.Path), false)}, nil
 }
 
-// RemoveOldBinary removes the old `relay` binary that sits beside the running // name-guard: legacy
-// relevo, unless --keep-old-binary is given. A sibling that is absent, is not
-// a regular file, or is the running binary itself is a skipped step. A dry run
-// reports the removal without making it.
+// RemoveOldBinary removes the old `relay` binary beside the running relevo, // name-guard: legacy
+// unless --keep-old-binary is given. An absent, non-regular, or self-same
+// sibling is a skipped step.
 func RemoveOldBinary(exe string, keep, dryRun bool) (Step, error) {
 	sibling := filepath.Join(filepath.Dir(exe), legacy.Binary)
 
@@ -272,14 +253,9 @@ func RemoveOldBinary(exe string, keep, dryRun bool) (Step, error) {
 	return Step{Name: "old-binary", Detail: fmt.Sprintf("removed %s", sibling)}, nil
 }
 
-// RenameSliceValue replaces the exact JSON string value `"relay.slice"` with // name-guard: legacy
-// `"relevo.slice"` in <configDir>/policy.json. serve.scope.slice holds
-// "relay.slice" on the laptop and on contabo, where the old 6G slice is // name-guard: legacy
-// retired and relevo.slice replaces it (#292 §3 step 6).
-//
-// Only the quoted value changes, so `"relay.slicer"` is left alone. The write // name-guard: legacy
-// is atomic and keeps the file's mode; an unchanged or absent file is
-// untouched, mtime included. A dry run reports the step only.
+// RenameSliceValue replaces the exact quoted value `"relay.slice"` with // name-guard: legacy
+// `"relevo.slice"` in <configDir>/policy.json (so `"relay.slicer"` is left // name-guard: legacy
+// alone), atomically and only when the value is present.
 func RenameSliceValue(configDir string, dryRun bool) (Step, error) {
 	path := filepath.Join(configDir, "policy.json")
 
@@ -310,17 +286,16 @@ func RenameSliceValue(configDir string, dryRun bool) (Step, error) {
 	return Step{Name: "rename-slice", Detail: fmt.Sprintf("renamed slice in %s", path)}, nil
 }
 
-// writeFileAtomic replaces path with data through a temp file in the same
-// directory, so a crash cannot truncate the record it rewrites.
+// writeFileAtomic replaces path with data via a temp file so a crash cannot truncate it.
 func writeFileAtomic(path string, data []byte, mode fs.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }()
 
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {

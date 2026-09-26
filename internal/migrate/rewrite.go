@@ -10,26 +10,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
-// RewriteJSON rewrites every old-root path prefix inside the JSON records
-// under root, in place, and returns how many files changed.
+// RewriteJSON rewrites every old-root path prefix inside the *.json and
+// *.jsonl records under root, in place, and returns how many files changed.
+// It skips whole subtrees that hold user repositories rather than relevo
+// records: any .worktrees directory, repos/worktrees directly under a
+// directory named serve, and any directory containing a .git entry.
 //
-// Only regular files named *.json or *.jsonl are candidates. Whole subtrees
-// that hold user repositories rather than relevo records are skipped:
-//
-//   - any directory named .worktrees;
-//   - the repos and worktrees directories directly under a directory named
-//     serve;
-//   - any directory containing a .git entry.
-//
-// In each candidate file, for each pair, the byte sequence `"<Old>/` becomes
-// `"<New>/` and `"<Old>"` becomes `"<New>"`. Only a JSON string value that
-// starts with the path changes, and nothing else moves.
-//
-// A changed file is replaced atomically -- a temp file in the same directory,
-// the original's mode, then a rename -- so a crash cannot truncate a record.
-// An unchanged file is never touched, mtime included. The walk stops at the
-// first I/O error; files already rewritten stay rewritten, and a re-run is
-// idempotent.
+// For each pair, `"<Old>/` becomes `"<New>/` and `"<Old>"` becomes `"<New>"`.
+// A changed file is replaced atomically; an unchanged file is never touched,
+// mtime included, which keeps a re-run after a walk error idempotent.
 func RewriteJSON(root string, pairs []Prefix) (files int, err error) {
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -63,8 +52,6 @@ func RewriteJSON(root string, pairs []Prefix) (files int, err error) {
 	return files, nil
 }
 
-// skipJSONDir reports whether a directory is one of the whole subtrees the
-// rewrite must not enter.
 func skipJSONDir(path, name string) bool {
 	if name == ".worktrees" {
 		return true
@@ -80,8 +67,6 @@ func skipJSONDir(path, name string) bool {
 	return false
 }
 
-// rewriteJSONFile applies every pair to one file and replaces it atomically if
-// anything changed. It reports whether the file changed.
 func rewriteJSONFile(path string, pairs []Prefix) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -103,10 +88,10 @@ func rewriteJSONFile(path string, pairs []Prefix) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }()
 
 	if _, err := tmp.Write(out); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return false, err
 	}
 	if err := tmp.Close(); err != nil {
