@@ -1154,6 +1154,22 @@ func TestGoldenViews(t *testing.T) {
 			},
 		},
 		{
+			name: "settings-scope-form-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})
+				m = candDown(t, m, 13) // serve.scope
+				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			},
+		},
+		{
+			name: "settings-classify-form-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})
+				m = candDown(t, m, 15) // classify
+				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			},
+		},
+		{
 			name: "settings-reset-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				// No actor's tier is above edit here, so the reset behind r

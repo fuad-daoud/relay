@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -457,6 +458,37 @@ func EditPolicy(d ConfigDoc, sets []PolicySet, message string) (ConfigEdit, erro
 		Sections: map[config.Section]json.RawMessage{config.Policy: body},
 		Message:  message,
 	}, nil
+}
+
+// tierExceedsMaxPattern matches an actor's tier-above-max_tier rejection, from
+// either roles.json's build-time check or policy.json's own tier.<role> cap,
+// and captures the actor, its tier and the max it exceeds.
+var tierExceedsMaxPattern = regexp.MustCompile(`(?:^|: )(\w[\w-]*)\.tier: (\w+) exceeds max_tier (\w+)`)
+
+// policyFilePrefixPattern is the leading "<name>.json: " every validation
+// error from EditPolicy's dry run carries, naming the section it failed.
+var policyFilePrefixPattern = regexp.MustCompile(`^(?:roles|policy|actors|candidates|agents)\.json: `)
+
+// badWordSuffixPattern is the trailing ": bad <word>" a wrapped sentinel
+// (ErrBadRoles, ErrBadPolicy, ...) adds to its error text.
+var badWordSuffixPattern = regexp.MustCompile(`: bad \w+$`)
+
+// HumanPolicyError turns a validation error from EditPolicy, ResetSetting or
+// dryRun into plain words: no JSON path, no file name, no wrapped sentinel.
+// A tier-above-max_tier rejection is reworded first; any other error has its
+// leading "<name>.json: " and trailing ": bad <word>" stripped, in that
+// order, and is otherwise returned as it stands.
+func HumanPolicyError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if m := tierExceedsMaxPattern.FindStringSubmatch(msg); m != nil {
+		return m[1] + " runs at " + m[2] + ", above " + m[3] + "; lower its tier in :actors first"
+	}
+	msg = policyFilePrefixPattern.ReplaceAllString(msg, "")
+	msg = badWordSuffixPattern.ReplaceAllString(msg, "")
+	return msg
 }
 
 // ResetSetting resets key to its default by clearing the paths from SettingPaths(key).

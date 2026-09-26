@@ -194,6 +194,34 @@ func TestResetSetting(t *testing.T) {
 	})
 }
 
+// TestHumanPolicyError pins the three rewrite rules: a tier-above-max_tier
+// rejection becomes a sentence naming the actor; anything else has its
+// leading "<name>.json: " and trailing ": bad <word>" stripped; anything that
+// matches neither passes through unchanged.
+func TestHumanPolicyError(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{
+			in:   `roles.json: builder.tier: yolo exceeds max_tier edit: bad roles`,
+			want: "builder runs at yolo, above edit; lower its tier in :actors first",
+		},
+		{
+			in:   `policy.json: serve.scope.slice: must end in ".slice", got "x": bad policy`,
+			want: `serve.scope.slice: must end in ".slice", got "x"`,
+		},
+		{
+			in:   "something else",
+			want: "something else",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			if got := HumanPolicyError(errors.New(tc.in)); got != tc.want {
+				t.Errorf("HumanPolicyError(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	cases := []struct {
 		d    time.Duration

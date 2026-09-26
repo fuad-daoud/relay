@@ -35,6 +35,7 @@ type settingField struct {
 	hint         string                    // "default 10m": shown right of the input, faint
 	parse        func(string) (any, error) // text rows: "" -> (nil, nil) means delete; else the JSON value or an error
 	value        func(sel int) any         // chip rows: the JSON value for a selection
+	disabled     func(f settingsForm) bool // nil = never; true = drawn faint, skipped by focus, validation and sets()
 }
 
 // settingsForm is the group form overlay: one form per group of plain
@@ -141,7 +142,7 @@ func parseCommand(s string) (any, error) {
 
 // newSettingsForm builds the form named form, focused on focusKey's field.
 // form is one of the closed list: rounds, check, timing,
-// max_builders.
+// max_builders, scope, serve.scope, classify.
 func newSettingsForm(env Env, doc relevo.ConfigDoc, form, focusKey string) settingsForm {
 	cpus := numCPU()
 	byKey := func(key string) relevo.Setting { return settingByKey(doc, cpus, key) }
@@ -239,6 +240,12 @@ func newSettingsForm(env Env, doc relevo.ConfigDoc, form, focusKey string) setti
 		f.path = "serve.max_builders"
 		fields = []settingField{f}
 		focus = 0
+
+	case "scope", "serve.scope":
+		fields, note, title = newScopeFields(doc, form)
+
+	case "classify":
+		fields, note, title = newClassifyFields(doc)
 	}
 
 	f := settingsForm{
@@ -302,6 +309,25 @@ func (f settingsForm) moveChip(delta int) settingsForm {
 	return f
 }
 
+// nextFocusable is the next field index in direction delta (+1 for tab, -1
+// for shift+tab) that is not disabled, wrapping around at most once through
+// every field; it returns from unchanged when every field is disabled.
+func (f settingsForm) nextFocusable(from, delta int) int {
+	n := len(f.fields)
+	if n == 0 {
+		return from
+	}
+	i := from
+	for range f.fields {
+		i = ((i+delta)%n + n) % n
+		fld := f.fields[i]
+		if fld.disabled == nil || !fld.disabled(f) {
+			return i
+		}
+	}
+	return from
+}
+
 // update handles one key: esc cancels, tab moves focus, left/right
 // move a chip row's selection, typing edits a text field, enter submits.
 func (f settingsForm) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
@@ -309,9 +335,9 @@ func (f settingsForm) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
 	case "esc":
 		return f, nil, true
 	case "tab":
-		return f.setFocus(f.focus + 1), nil, false
+		return f.setFocus(f.nextFocusable(f.focus, 1)), nil, false
 	case "shift+tab", "back_tab":
-		return f.setFocus(f.focus - 1), nil, false
+		return f.setFocus(f.nextFocusable(f.focus, -1)), nil, false
 	case "enter":
 		return f.submit()
 	case "left":
@@ -340,21 +366,34 @@ func (f settingsForm) fieldError(i int) error {
 	if fld.chips != nil || fld.parse == nil {
 		return nil
 	}
+	if fld.disabled != nil && fld.disabled(f) {
+		return nil
+	}
 	_, err := fld.parse(fld.input.Value())
 	return err
 }
 
 // validSets is every changed field's PolicySet: a text field
 // is changed when its value differs from its prefill, a chip row when its
-// selection differs from its start. ok is false when a text field's value
-// fails to parse.
+// selection differs from its start. A disabled field is skipped entirely, so
+// a pending edit made before its field became disabled cannot slip through.
+// Turning classify's provider chip off writes classify itself, not
+// classify.provider, so a stored model or threshold does not linger behind
+// it. ok is false when a text field's value fails to parse.
 func (f settingsForm) validSets() ([]relevo.PolicySet, bool) {
 	var out []relevo.PolicySet
 	ok := true
 	for _, fld := range f.fields {
+		if fld.disabled != nil && fld.disabled(f) {
+			continue
+		}
 		if fld.chips != nil {
 			if fld.sel != fld.origSel {
-				out = append(out, relevo.PolicySet{Path: fld.path, Value: fld.value(fld.sel)})
+				path, val := fld.path, fld.value(fld.sel)
+				if path == "classify.provider" && val == nil {
+					path = "classify"
+				}
+				out = append(out, relevo.PolicySet{Path: path, Value: val})
 			}
 			continue
 		}
@@ -368,7 +407,38 @@ func (f settingsForm) validSets() ([]relevo.PolicySet, bool) {
 		}
 		out = append(out, relevo.PolicySet{Path: fld.path, Value: val})
 	}
+	if ok {
+		out = f.scopeBlockPrune(out)
+	}
 	return out, ok
+}
+
+// scopeBlockPrune collapses the scope and serve.scope forms' per-field deltas
+// into one delete of the whole block when every field but enabled ends empty
+// and enabled ends on: the row then returns to its plain default instead of
+// leaving an explicit {"enabled":true} behind that EditPolicy's per-key
+// pruning, which only removes a parent once every one of its keys is gone,
+// cannot see past.
+func (f settingsForm) scopeBlockPrune(out []relevo.PolicySet) []relevo.PolicySet {
+	if len(out) == 0 || (f.title != "scope" && f.title != "serve.scope") {
+		return out
+	}
+	var enabled *settingField
+	allEmpty := true
+	for i := range f.fields {
+		fld := &f.fields[i]
+		if fld.chips != nil {
+			enabled = fld
+			continue
+		}
+		if strings.TrimSpace(fld.input.Value()) != "" {
+			allEmpty = false
+		}
+	}
+	if enabled == nil || !allEmpty || enabled.value(enabled.sel) != true {
+		return out
+	}
+	return []relevo.PolicySet{{Path: strings.TrimSuffix(enabled.path, ".enabled"), Value: nil}}
 }
 
 // settingsMessageKey is a PolicySet path's setting key for the submit
@@ -382,6 +452,9 @@ func settingsMessageKey(path string) string { return strings.TrimSuffix(path, "_
 func (f settingsForm) message() string {
 	var parts []string
 	for _, fld := range f.fields {
+		if fld.disabled != nil && fld.disabled(f) {
+			continue
+		}
 		key := settingsMessageKey(fld.path)
 		if fld.chips != nil {
 			if fld.sel == fld.origSel {
@@ -455,7 +528,7 @@ func (f settingsForm) modal(width int) (string, []string, int, bool) {
 		if _, err := relevo.EditPolicy(f.doc, sets, "x"); err != nil && !errors.Is(err, relevo.ErrNoChange) {
 			var fe *relevo.FieldError
 			if errors.As(err, &fe) {
-				formErr = fe.Msg
+				formErr = relevo.HumanPolicyError(fe)
 			}
 		}
 	}
@@ -463,11 +536,15 @@ func (f settingsForm) modal(width int) (string, []string, int, bool) {
 	rows := []string{""}
 	for i, fld := range f.fields {
 		focused := i == f.focus
+		disabled := fld.disabled != nil && fld.disabled(f)
 		var valuePart string
 		if fld.chips != nil {
-			valuePart = formChips(fld.chips, fld.sel, false)
+			valuePart = formChips(fld.chips, fld.sel, disabled)
 		} else {
 			valuePart = formInput(fld.input, focused, "", fieldW)
+			if disabled {
+				valuePart = faintStyle.Render(valuePart)
+			}
 			if fld.hint != "" {
 				valuePart += "   " + faintStyle.Render(fld.hint)
 			}

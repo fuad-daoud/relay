@@ -427,10 +427,10 @@ func (v settingsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		}
 		row := settings[candClamp(v.cur, n)]
 		switch row.Form {
-		case "rounds", "check", "timing", "max_builders":
+		case "rounds", "check", "timing", "max_builders", "scope", "serve.scope", "classify":
 			return v, openOverlay(newSettingsForm(env, v.doc, row.Form, row.Key))
 		default:
-			return v, notice(row.Key + " opens its own editor in the next round")
+			return v, notice(row.Key + " opens its own editor soon")
 		}
 	case "r":
 		if n == 0 {
@@ -458,7 +458,7 @@ func (v settingsView) resetCmd(env Env, row relevo.Setting) tea.Cmd {
 		if errors.Is(err, relevo.ErrNoChange) {
 			return notice(row.Key + " is already the default")
 		}
-		return notice("can't reset " + row.Key + ": " + err.Error())
+		return notice("can't reset " + row.Key + ": " + relevo.HumanPolicyError(err))
 	}
 	return openOverlay(confirmBox{
 		kind:   "reset",

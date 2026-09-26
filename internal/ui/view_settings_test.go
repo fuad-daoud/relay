@@ -270,6 +270,240 @@ func TestSettingsResetUnsetNotices(t *testing.T) {
 	}
 }
 
+// a. serve.scope form: prefilled slice = relevo.slice. Typing 200% into
+// cpu_quota and enter writes serve.scope.cpu_quota, keeping serve.scope.slice.
+func TestSettingsServeScopeFormSetsCPUQuota(t *testing.T) {
+	fa := &fakeActions{doc: settingsFixtureDoc(t)}
+	env := candActionEnv(fa, relevo.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 13 // serve.scope
+
+	f := settingsFormFrom(t, v, env)
+	if f.title != "serve.scope" {
+		t.Fatalf("title = %q, want serve.scope", f.title)
+	}
+	if f.fields[1].label != "slice" || f.fields[1].orig != "relevo.slice" {
+		t.Fatalf("slice field = %+v, want prefilled relevo.slice", f.fields[1])
+	}
+	f = f.setFocus(4) // cpu_quota
+	f = settingsFormType(f, "200%")
+
+	_, cmd, closed := f.update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !closed {
+		t.Fatal("a valid submit must close the form")
+	}
+	runCmd(t, cmd)
+
+	if len(fa.configEdits) != 1 {
+		t.Fatalf("configEdits = %d, want one", len(fa.configEdits))
+	}
+	body := string(fa.configEdits[0].Sections[config.Policy])
+	if !strings.Contains(body, `"cpu_quota": "200%"`) {
+		t.Errorf("body = %s, want serve.scope.cpu_quota 200%%", body)
+	}
+	if !strings.Contains(body, `"slice": "relevo.slice"`) {
+		t.Errorf("body = %s, want serve.scope.slice kept", body)
+	}
+}
+
+// b. serve.scope form: clearing slice, its only stored field, and pressing
+// enter removes serve entirely -- the empty scope block and its now-empty
+// parent both prune away.
+func TestSettingsServeScopeFormClearingSliceRemovesServe(t *testing.T) {
+	fa := &fakeActions{doc: settingsFixtureDoc(t)}
+	env := candActionEnv(fa, relevo.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 13 // serve.scope
+
+	f := settingsFormFrom(t, v, env)
+	f = f.setFocus(1) // slice
+	orig := f.fields[1].orig
+	for range orig {
+		next, _, _ := f.update(tea.KeyMsg{Type: tea.KeyBackspace})
+		f = next.(settingsForm)
+	}
+	if f.fields[1].input.Value() != "" {
+		t.Fatalf("slice = %q, want cleared", f.fields[1].input.Value())
+	}
+
+	_, cmd, closed := f.update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !closed {
+		t.Fatal("a valid submit must close the form")
+	}
+	runCmd(t, cmd)
+
+	if len(fa.configEdits) != 1 {
+		t.Fatalf("configEdits = %d, want one", len(fa.configEdits))
+	}
+	body := string(fa.configEdits[0].Sections[config.Policy])
+	if strings.Contains(body, "serve") {
+		t.Errorf("body = %s, must not contain serve", body)
+	}
+}
+
+// c. scope form: 8 into cpu_weight is valid, abc into memory_max is not; the
+// form shows the memory_max error and enter records no edit.
+func TestSettingsScopeFormBadMemoryMax(t *testing.T) {
+	fa := &fakeActions{doc: settingsFixtureDoc(t)}
+	env := candActionEnv(fa, relevo.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 11 // scope
+
+	f := settingsFormFrom(t, v, env)
+	if f.title != "scope" {
+		t.Fatalf("title = %q, want scope", f.title)
+	}
+	f = f.setFocus(2) // cpu_weight
+	f = settingsFormType(f, "8")
+	f = f.setFocus(3) // memory_max
+	f = settingsFormType(f, "abc")
+
+	view := stripANSI(strings.Join(f.view(90), "\n"))
+	if !strings.Contains(view, "a size like 8G or 512M") {
+		t.Errorf("view = %s, want the memory_max error shown", view)
+	}
+
+	_, cmd, closed := f.update(tea.KeyMsg{Type: tea.KeyEnter})
+	if closed {
+		t.Fatal("an invalid submit must keep the form open")
+	}
+	if cmd != nil {
+		t.Errorf("an invalid submit must return no command: %T", cmd())
+	}
+	if len(fa.configEdits) != 0 {
+		t.Error("an invalid submit must not write an edit")
+	}
+}
+
+// d. classify form on a policy without classify: moving provider to jev and
+// pressing enter writes classify.provider = "jev" and nothing else under
+// classify.
+func TestSettingsClassifyFormTurnsOn(t *testing.T) {
+	fa := &fakeActions{doc: settingsFixtureDoc(t)}
+	env := candActionEnv(fa, relevo.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 15 // classify
+
+	f := settingsFormFrom(t, v, env)
+	if f.title != "classify" {
+		t.Fatalf("title = %q, want classify", f.title)
+	}
+	next, _, _ := f.update(tea.KeyMsg{Type: tea.KeyRight}) // off -> jev
+	f = next.(settingsForm)
+
+	_, cmd, closed := f.update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !closed {
+		t.Fatal("a valid submit must close the form")
+	}
+	runCmd(t, cmd)
+
+	if len(fa.configEdits) != 1 {
+		t.Fatalf("configEdits = %d, want one", len(fa.configEdits))
+	}
+	body := string(fa.configEdits[0].Sections[config.Policy])
+	var m map[string]any
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cl, ok := m["classify"].(map[string]any)
+	if !ok {
+		t.Fatalf("classify is not a map: %v", m["classify"])
+	}
+	if len(cl) != 1 || cl["provider"] != "jev" {
+		t.Errorf("classify = %v, want only provider jev", cl)
+	}
+}
+
+// e. classify form on a policy with classify.provider = "jev": a pending edit
+// to model, made while it is enabled, is dropped once provider moves to off,
+// and the whole classify block is deleted. M1: skip the disabled-fields
+// exclusion in validSets and the model edit survives, so classify reappears
+// (EditPolicy's own set-after-delete recreates it) and this test fails.
+func TestSettingsClassifyFormTurnsOffIgnoresPendingFields(t *testing.T) {
+	doc := settingsFixtureDoc(t)
+	raw := `{"max_switches":2,"max_tier":"yolo","serve":{"scope":{"slice":"relevo.slice"}},"classify":{"provider":"jev"}}`
+	p, _, err := policy.Parse(config.FileName(config.Policy), []byte(raw))
+	if err != nil {
+		t.Fatalf("policy.Parse: %v", err)
+	}
+	doc.Policy = p
+	doc.PolicyRaw = json.RawMessage(raw)
+
+	fa := &fakeActions{doc: doc}
+	env := candActionEnv(fa, relevo.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 15 // classify
+
+	f := settingsFormFrom(t, v, env)
+	if f.fields[0].sel != 1 {
+		t.Fatalf("provider sel = %d, want 1 (jev)", f.fields[0].sel)
+	}
+	f = f.setFocus(1) // model, enabled while provider is jev
+	f = settingsFormType(f, "should-be-ignored")
+	f = f.setFocus(0)
+	next, _, _ := f.update(tea.KeyMsg{Type: tea.KeyLeft}) // jev -> off
+	f = next.(settingsForm)
+
+	_, cmd, closed := f.update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !closed {
+		t.Fatal("a valid submit must close the form")
+	}
+	runCmd(t, cmd)
+
+	if len(fa.configEdits) != 1 {
+		t.Fatalf("configEdits = %d, want one", len(fa.configEdits))
+	}
+	body := string(fa.configEdits[0].Sections[config.Policy])
+	if strings.Contains(body, "classify") {
+		t.Errorf("body = %s, must not contain classify", body)
+	}
+	if strings.Contains(body, "should-be-ignored") {
+		t.Errorf("body = %s, must not contain the pending model edit", body)
+	}
+}
+
+// f. classify form, provider off: tab never focuses model, threshold or
+// timeout, all disabled while provider stays off.
+func TestSettingsClassifyFormTabSkipsDisabledFields(t *testing.T) {
+	fa := &fakeActions{doc: settingsFixtureDoc(t)}
+	env := candActionEnv(fa, relevo.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 15 // classify
+
+	f := settingsFormFrom(t, v, env)
+	for i := 0; i < 5; i++ {
+		next, _, _ := f.update(tea.KeyMsg{Type: tea.KeyTab})
+		f = next.(settingsForm)
+		if f.focus != 0 {
+			t.Fatalf("tab %d landed on focus %d (%s), want to stay on provider (0)", i, f.focus, f.fields[f.focus].label)
+		}
+	}
+}
+
+// g. r on max_tier is refused in plain words: builder and reviewer run at
+// yolo, above the edit default a reset would restore. M2: remove
+// HumanPolicyError's tier rule and this test fails.
+func TestSettingsResetRefusalIsPlainWords(t *testing.T) {
+	fa := &fakeActions{doc: settingsFixtureDoc(t)}
+	env := candActionEnv(fa, relevo.Report{})
+	v := settingsFixtureView(t, fa)
+	v.cur = 1 // max_tier
+
+	_, cmd := v.Update(key('r'), env)
+	if cmd == nil {
+		t.Fatal("r must return a command")
+	}
+	msg := cmd()
+	n, ok := msg.(noticeMsg)
+	if !ok {
+		t.Fatalf("r on a refused reset gave %T, want a notice", msg)
+	}
+	want := "can't reset max_tier: builder runs at yolo, above edit; lower its tier in :actors first"
+	if n.text != want {
+		t.Errorf("notice = %q, want %q", n.text, want)
+	}
+}
+
 // f. down from verify.default lands on gate.default, never on a rule line.
 func TestSettingsDownSkipsRule(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
