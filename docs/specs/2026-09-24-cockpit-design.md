@@ -344,6 +344,12 @@ session id `tui`.
 
 ### 6.4 Drafts and revisions
 
+> **Amended 2026-09-26: drafts are dropped.** The config views save each edit at once
+> as its own revision (`source` `ui`), and `:audit` rolls any revision back. There is no
+> `config_draft`, no save step and no conflict list. `config_revision`, `config log` and
+> `config rollback` below stand as built. The draft parts of this section, and the
+> draft rows in §7 and §8, are kept for the record only.
+
 - **Tables:**
   - `config_draft`: one row with `base_version`, `changes` (JSON list of typed
     changes) and `updated_at`.
@@ -421,7 +427,7 @@ Two tracks run in parallel on separate worktrees, then join. Each item is one pl
 |---|---|---|---|
 | A1 | Candidate names | §3.1: the `name` field, derivation, `Resolve` everywhere a token is accepted, `NameOf` on every display surface, `name` beside tokens in `--json`, the A1 migration | — |
 | A2 | Agents + actors | §3.2, §3.3, §3.5: `agents`/`actors` sections replace `roles`; `internal/agentsrc`; `internal/actors`; `--actor` on bind/ask; the A2 migration; `config init` seeds three actors | A1 |
-| A3 | Revisions + draft engine | §6.4 without the TUI: `config_revision`, `config_draft`, `internal/draft`, one commit path, `config log` / `config rollback` | A2 |
+| A3 | Revisions (drafts dropped, see §6.4) | §6.4 without the TUI: `config_revision`, `config_draft`, `internal/draft`, one commit path, `config log` / `config rollback` | A2 |
 | A4 | State rename | §3.7: the binding `actor` + round `candidate`; `--candidate`; artifact dirs for writers (`report.md`, `summary.md`); `wait` output, MCP tools, the plugin and `architect.*.md` "Handing off" in the new words; the A4 migration | A2 |
 | A5 | Reader rounds | §3.4: any actor can be bound; scratch worktrees; reader artifact dirs; the size cap; the e2e reader round | A4 |
 | B1 | Shell | §4.1, §4.2: the frame, `:` command line, view stack, keymap, `?` help; `fleet`, `rounds` and round detail moved onto it, still read-only; bare `relevo` and `relevo ui :view` | — |
