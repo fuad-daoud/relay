@@ -480,6 +480,29 @@ func TestBuildEmpty(t *testing.T) {
 	}
 }
 
+// TestBuildUndatedRowsKeepSinceAtUntil pins that a row with no StartedAt does
+// not stretch Since back to year 1, which would build one spend day per day
+// since then.
+func TestBuildUndatedRowsKeepSinceAtUntil(t *testing.T) {
+	t.Parallel()
+
+	rows := []db.RoundRow{{Outcome: db.OutcomeReported}, {Outcome: db.OutcomeOpen}}
+	rep := Build(Inputs{Rows: rows, Until: stNow, Loc: time.UTC})
+
+	if !rep.Since.Equal(stNow) {
+		t.Errorf("Since = %v, want Until when no row has a StartedAt", rep.Since)
+	}
+	if len(rep.Spend.Days) != 1 {
+		t.Errorf("len(Spend.Days) = %d, want 1", len(rep.Spend.Days))
+	}
+
+	dated := stNow.Add(-48 * time.Hour)
+	rows = append(rows, db.RoundRow{Outcome: db.OutcomeReported, StartedAt: dated})
+	if got := Build(Inputs{Rows: rows, Until: stNow, Loc: time.UTC}).Since; !got.Equal(dated) {
+		t.Errorf("Since = %v, want the dated row's StartedAt %v", got, dated)
+	}
+}
+
 // TestTokenKindsSumAndCache pins §2's TokenCounts: the four kinds are summed
 // over every row, Measured counts only the rows with a token field, Tokens
 // stays equal to Total, and CachePct is cache over input.
