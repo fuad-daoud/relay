@@ -249,7 +249,7 @@ func TestReaderDoneRemovesTheScratch(t *testing.T) {
 }
 
 // TestSweepScratchKeepsOpenReaderRounds checks that the daemon's sweep removes
-// every scratch except the one an open reader round still needs.
+// every scratch except the one the binding's current round still needs.
 func TestSweepScratchKeepsOpenReaderRounds(t *testing.T) {
 	t.Parallel()
 
@@ -258,12 +258,18 @@ func TestSweepScratchKeepsOpenReaderRounds(t *testing.T) {
 	rt := newRuntime(t)
 	rt.Git = git.NewClient("git", 0, 0)
 
-	for _, name := range []string{"open-reader", "closed-reader"} {
+	// open-reader is still on round 1, whose scratch it needs. closed-reader
+	// has closed round 1 and advanced to round 2, so round 1's scratch is a
+	// leftover the sweep must take. ghost has no binding at all.
+	for _, b := range []struct {
+		name  string
+		round int
+	}{{"open-reader", 1}, {"closed-reader", 2}} {
 		if err := rt.Store.Save(store.Binding{
-			Name: name, CWD: repo, Shape: store.ShapeReader,
-			Round: 1, State: store.StateActive,
+			Name: b.name, CWD: repo, Shape: store.ShapeReader,
+			Round: b.round, State: store.StateActive,
 		}); err != nil {
-			t.Fatalf("Save(%s): %v", name, err)
+			t.Fatalf("Save(%s): %v", b.name, err)
 		}
 	}
 	seedLog(t, rt, "open-reader",
@@ -287,6 +293,44 @@ func TestSweepScratchKeepsOpenReaderRounds(t *testing.T) {
 		if _, err := os.Stat(rt.Store.ScratchWorktreePath(name, 1)); !os.IsNotExist(err) {
 			t.Errorf("%s's scratch is still present after the sweep: %v", name, err)
 		}
+	}
+}
+
+// TestSweepKeepsTheCurrentRoundsScratchBeforeItOpens checks the send race: a
+// reader binding is on round 2 with a closed round 1 in its log and no round-2
+// plan entry yet, because send creates round 2's scratch before it logs the
+// plan. The sweep must keep round 2's scratch and take round 1's.
+func TestSweepKeepsTheCurrentRoundsScratchBeforeItOpens(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	repo := readerRepo(t)
+	rt := newRuntime(t)
+	rt.Git = git.NewClient("git", 0, 0)
+
+	if err := rt.Store.Save(store.Binding{
+		Name: "reader-bind", CWD: repo, Shape: store.ShapeReader,
+		Round: 2, State: store.StateActive,
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	seedLog(t, rt, "reader-bind",
+		store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
+		store.LogEntry{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport})
+
+	for _, round := range []int{1, 2} {
+		if _, err := CreateScratch(ctx, rt, store.Binding{Name: "reader-bind", CWD: repo}, round); err != nil {
+			t.Fatalf("CreateScratch(%d): %v", round, err)
+		}
+	}
+
+	sweepReaderScratch(ctx, rt)
+
+	if _, err := os.Stat(rt.Store.ScratchWorktreePath("reader-bind", 2)); err != nil {
+		t.Errorf("the current round's scratch was removed before its plan entry: %v", err)
+	}
+	if _, err := os.Stat(rt.Store.ScratchWorktreePath("reader-bind", 1)); !os.IsNotExist(err) {
+		t.Errorf("round 1's scratch is still present after the sweep: %v", err)
 	}
 }
 

@@ -413,11 +413,15 @@ func mirrorArchived(ctx context.Context, rt Runtime) {
 }
 
 // sweepReaderScratch removes the scratch worktrees whose reader round is no
-// longer open -- the daemon's cleanup of leftovers a crash left behind. It
-// keeps exactly the scratch of each open reader round: a reader whose round is
-// open needs its tree, and every other entry, including one whose binding is
-// gone, goes. Errors are logged per entry by SweepScratch's own join and never
-// fail the tick.
+// longer needed -- the daemon's cleanup of leftovers a crash left behind. For
+// each reader binding that is not DONE it keeps the entries whose round is the
+// binding's current round or later. A scratch for the current round is kept
+// even before the round is open, because send makes the scratch before it logs
+// the plan. Every other entry goes, including one whose binding is gone, DONE,
+// or not a reader. A leftover for the current round that no round needs is
+// removed by the close, the done or the unbind that already calls
+// removeReaderScratch. Errors are logged per entry by SweepScratch's own join
+// and never fail the tick.
 func sweepReaderScratch(ctx context.Context, rt Runtime) {
 	if rt.Git == nil {
 		return
@@ -429,22 +433,15 @@ func sweepReaderScratch(ctx context.Context, rt Runtime) {
 		return
 	}
 	for _, b := range bindings {
-		if b.Shape != store.ShapeReader {
+		if b.Shape != store.ShapeReader || b.State == store.StateDone {
 			continue
 		}
-		entries, err := rt.Store.ReadLog(b.Name)
-		if err != nil {
-			slog.Warn("scratch sweep: read log", "binding", b.Name, "err", err)
-			continue
-		}
-		if roundOpenIn(entries, b.Round) {
-			keep[b.Name] = b.Round
-		}
+		keep[b.Name] = b.Round
 	}
 
 	removed, err := SweepScratch(ctx, rt, func(name string, round int) bool {
 		r, ok := keep[name]
-		return ok && r == round
+		return ok && round >= r
 	})
 	if err != nil {
 		slog.Warn("scratch sweep", "err", err)
