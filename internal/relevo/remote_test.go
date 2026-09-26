@@ -2516,6 +2516,62 @@ func TestMirrorLogShrankRefetches(t *testing.T) {
 	}
 }
 
+func TestMirrorLogUnchangedLogWritesNothing(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := st.BuilderLogPath("api", 1)
+	base := filepath.Base(logPath)
+
+	d, err := db.Open(st.DBPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	rec, ok, err := d.RecordGet("", "api")
+	if err != nil || !ok {
+		t.Fatalf("RecordGet: ok=%v err=%v", ok, err)
+	}
+	// Seed the row with a stamp far from now, so a rewrite during the mirror
+	// shows up as a changed mtime even though the bytes are identical.
+	if err := d.Tx(func(tx *db.Tx) error {
+		return tx.RoundFilePut(rec.ID, base, 1, []byte("abc"), baseTime, baseTime)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{
+		getBindingResp:     remote.BindingView{RoundState: remote.RoundRunning},
+		roundFileFromResp:  io.NopCloser(strings.NewReader("")),
+		roundFileFromRange: remote.FileRange{Honored: true, From: 3, Size: 3},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	body, mtime, ok, err := d.RoundFileGet(rec.ID, base)
+	if err != nil {
+		t.Fatalf("RoundFileGet: %v", err)
+	}
+	if !ok {
+		t.Fatalf("round file row %q missing", base)
+	}
+	if string(body) != "abc" {
+		t.Fatalf("row body = %q, want %q", string(body), "abc")
+	}
+	if !mtime.Equal(baseTime) {
+		t.Fatalf("row mtime = %v, want unchanged %v: the row was rewritten", mtime, baseTime)
+	}
+	if len(fr.roundFileFromCalls) != 1 || fr.roundFileFromCalls[0] != 3 {
+		t.Fatalf("roundFileFromCalls = %v, want [3]", fr.roundFileFromCalls)
+	}
+}
+
 func TestMirrorLogWritesARow(t *testing.T) {
 	st := store.New(t.TempDir())
 	b := remoteBinding("zen")
@@ -3475,6 +3531,98 @@ func TestSyncRemoteSkipsDoneAndLocal(t *testing.T) {
 	}
 	if len(fr.calls) != 0 {
 		t.Fatalf("fakeRemote calls = %v, want none: SyncRemote must not touch the network for a skipped binding", fr.calls)
+	}
+}
+
+// TestSyncRemoteSkipsPausedBinding checks that a paused remote binding is
+// skipped like a DONE one: a paused binding is not being relayed, and the
+// daemon's Reconcile skips it too.
+func TestSyncRemoteSkipsPausedBinding(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.State = store.StatePaused
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	synced, err := SyncRemote(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+	if synced != 0 {
+		t.Fatalf("synced = %d, want 0: a paused binding must be skipped", synced)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "GetBinding:") {
+			t.Fatalf("fakeRemote calls = %v, want no GetBinding for a paused binding", fr.calls)
+		}
+	}
+}
+
+// TestSyncRemoteUnlessDaemonSkipsWhileDaemonRuns checks that a held daemon
+// lock makes the read verbs leave remote sync entirely to the daemon: no
+// network call, no state lock.
+func TestSyncRemoteUnlessDaemonSkipsWhileDaemonRuns(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	lock, err := st.AcquireDaemonLock()
+	if err != nil {
+		t.Fatalf("AcquireDaemonLock: %v", err)
+	}
+	t.Cleanup(func() { _ = lock.Close() })
+
+	fr := &fakeRemote{}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	synced, skipped, err := SyncRemoteUnlessDaemon(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("SyncRemoteUnlessDaemon: %v", err)
+	}
+	if !skipped {
+		t.Fatal("skipped = false, want true while a daemon holds the lock")
+	}
+	if synced != 0 {
+		t.Fatalf("synced = %d, want 0", synced)
+	}
+	if len(fr.calls) != 0 {
+		t.Fatalf("fakeRemote calls = %v, want none: a running daemon means no network", fr.calls)
+	}
+}
+
+// TestSyncRemoteUnlessDaemonSyncsWithoutDaemon checks that with no daemon
+// lock the read verbs sync as before: the poll is the only collector.
+func TestSyncRemoteUnlessDaemonSyncsWithoutDaemon(t *testing.T) {
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingResp: remote.BindingView{RoundState: remote.RoundRunning}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	_, skipped, err := SyncRemoteUnlessDaemon(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("SyncRemoteUnlessDaemon: %v", err)
+	}
+	if skipped {
+		t.Fatal("skipped = true, want false with no daemon running")
+	}
+	found := false
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "GetBinding:") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("fakeRemote calls = %v, want a GetBinding call", fr.calls)
 	}
 }
 
