@@ -180,7 +180,7 @@ func skipText(s Skip, name func(string) string) string {
 	if s.Off {
 		return name(s.Token) + " (off)"
 	}
-	return fmt.Sprintf("%s (%s %s)", name(s.Token), GateKindText(s.Kind), GateUntilText(s.Until))
+	return fmt.Sprintf("%s (%s %s)", name(s.Token), availability.GateKindText(s.Kind), availability.GateUntilText(s.Until))
 }
 
 // uniqStrings drops later duplicates, keeping first occurrences in order.
@@ -400,7 +400,7 @@ func explainResolution(role string, res Resolution, name func(string) string) st
 	if res.How == HowExplicit && len(res.Gates) > 0 {
 		texts := make([]string, 0, len(res.Gates))
 		for _, g := range res.Gates {
-			texts = append(texts, GateKindText(g.Kind)+" "+GateUntilText(g.Until))
+			texts = append(texts, availability.GateKindText(g.Kind)+" "+availability.GateUntilText(g.Until))
 		}
 		out += "; gated: " + strings.Join(uniqStrings(texts), ", ")
 	}
@@ -453,7 +453,7 @@ func CandidateKind(rt Runtime, token string) string {
 // error is reported as "" because the real resolution happens inside Bind and
 // says why.
 func CandidateKindFor(rt Runtime, token, role string) string {
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), token, role)
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), token, role)
 	if err != nil {
 		return ""
 	}

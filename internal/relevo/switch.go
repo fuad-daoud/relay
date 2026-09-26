@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 // a spawn-failure gate recorded against this same token by an earlier switch
 // attempt must not itself trigger another switch.
 func gatedBuilder(rt Runtime, b store.Binding) (availability.Gate, bool) {
-	for _, g := range ledgerGates(rt, []string{b.BuilderCandidate}) {
+	for _, g := range availability.LedgerGates(AvailabilityDeps(rt), []string{b.BuilderCandidate}) {
 		if g.Token == b.BuilderCandidate && g.Kind == availability.RateLimited {
 			return g, true
 		}
@@ -102,7 +103,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 			b.Name, reason, b.BuilderCandidate, b.RoundSwitches, limit))
 	}
 
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, append(Gates(rt), roundExclusionGates(b)...), "", bindingRole(b))
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, append(availability.Gates(AvailabilityDeps(rt)), roundExclusionGates(b)...), "", bindingRole(b))
 	if err != nil {
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
 			"%s: builder %s (%s); cannot switch: %v",
@@ -178,4 +179,63 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		"from", old, "to", res.Token(), "reason", reason, "switches", b.RoundSwitches)
 
 	return b, nil
+}
+
+// limitText is the text a decision point scans for rate-limit patterns: the
+// tail of the current builder process's output -- its log when the round has
+// one, otherwise the bytes it appended to the round's stream. A local builder
+// is always headless since #303.
+func limitText(ctx context.Context, rt Runtime, b store.Binding) string {
+	return currentBuilderTail(rt, b, availability.LimitScanLines)
+}
+
+// gateOnLimit is the one helper every decision point calls (spec §4.4).
+// Preconditions: the round is open and the caller holds the store lock.
+//
+// It applies the switchable guard itself -- the same one the existing
+// gatedBuilder triggers use -- and returns handled=false without reading the
+// ledger when it fails: an adopted builder is never gated by relevo, and no
+// call site has to repeat the check.
+//
+// On a match it records one rate_limited ledger entry (source relevo), warns,
+// marks a headless builder's log, then checks whether this round already has
+// a report on disk: if so the gate is recorded but the round is left for the
+// caller to close as it would have (handled=false, m.Line set); otherwise it
+// switches the builder uncounted (handled=true) and returns the replacement.
+func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string, closeOld bool) (next store.Binding, m availability.LimitMatch, handled bool, err error) {
+	switchable := b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero()
+	if !switchable {
+		return b, availability.LimitMatch{}, false, nil
+	}
+
+	now := rt.Now()
+	patterns := availability.LimitPatterns(AvailabilityDeps(rt), b.BuilderCandidate)
+	m, ok := availability.MatchLimit(text, patterns, now, rt.Policy.LimitGateDefault())
+	if !ok {
+		return b, availability.LimitMatch{}, false, nil
+	}
+
+	entry := availability.Entry{
+		Kind:    availability.RateLimited,
+		Subject: availability.ProviderOf(b.BuilderCandidate),
+		At:      now,
+		Until:   m.Until,
+		Note:    m.Line,
+		Source:  "relevo",
+		Binding: b.Name,
+	}
+	if err := availability.AppendEntryLocked(AvailabilityDeps(rt), entry); err != nil {
+		fmt.Fprintf(os.Stderr, "relevo: could not record rate limit gate: %v\n", err)
+	}
+
+	slog.Warn("provider rate-limited",
+		"binding", b.Name, "round", b.Round, "provider", entry.Subject,
+		"until", m.Until, "parsed", m.Parsed, "line", m.Line)
+
+	if _, _, ok, _ := rt.Store.StatFile(rt.Store.ReportPath(b.Name, b.Round)); ok {
+		return b, m, false, nil
+	}
+
+	next, err = switchBuilder(ctx, rt, tx, b, "rate-limited: "+m.Line, closeOld, false)
+	return next, m, true, err
 }

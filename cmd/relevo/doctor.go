@@ -11,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
@@ -388,7 +389,7 @@ func cmdDoctor(args []string) error {
 	}
 	rep.Checks = append(rep.Checks, doctor.ScopeChecks(env, scopeBlocks, doctor.UserManagerControllersPath(os.Getuid()), runtime.NumCPU())...)
 
-	rep.Checks = append(rep.Checks, ledgerChecks(relevo.Gates(rt))...)
+	rep.Checks = append(rep.Checks, ledgerChecks(availability.Gates(relevo.AvailabilityDeps(rt)))...)
 	rep.Checks = append(rep.Checks, policyChecks(relevo.PolicyWarningsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy))...)
 	rep.Checks = append(rep.Checks, roleSourceChecks(rt.RoleRegistry(), rt.Candidates, rt.Policy)...)
 	// #382 §5.4: a binding whose role roles.json no longer defines fails at
@@ -402,7 +403,7 @@ func cmdDoctor(args []string) error {
 	}
 	_, st := classify.Resolve(rt.Policy.Classify, L.Typesafe, os.Getenv)
 	rep.Checks = append(rep.Checks, doctor.ClassifyCheck(st))
-	refusals := relevo.RoleRefusalsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, relevo.Gates(rt))
+	refusals := relevo.RoleRefusalsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, availability.Gates(relevo.AvailabilityDeps(rt)))
 	rep.Checks = append(rep.Checks, refusalChecks(refusals)...)
 	for _, r := range refusals {
 		if r.Role == "builder" {

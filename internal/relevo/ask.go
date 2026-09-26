@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -174,7 +175,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		// runtime with no Runner refuses before anything is reserved.
 		return AskResult{}, spawn.ErrRunnerUnavailable
 	}
-	res, err := resolveRole(reg, rt.Candidates, Gates(rt), opts.Candidate, opts.Role)
+	res, err := resolveRole(reg, rt.Candidates, availability.Gates(AvailabilityDeps(rt)), opts.Candidate, opts.Role)
 	if err != nil {
 		return AskResult{}, err
 	}
@@ -234,7 +235,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	// trailer, and Endpoint.LogPath names it so consultSource's headless
 	// branch reads the stream (#147, #144).
 	streamPath := rt.Store.ConsultStreamPath(opts.Name, consult.Round, consult.ID)
-	argv, err := headlessLaunch(c, role, tier, consultTimeout,
+	argv, err := spawn.HeadlessLaunch(c, role, tier, consultTimeout,
 		prompt, cwd, rt.Store.Dir(opts.Name))
 	if err != nil {
 		consult.State = store.ConsultSilent

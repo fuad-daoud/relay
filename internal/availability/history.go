@@ -41,7 +41,7 @@ type History struct {
 // availabilityKey is the kv row the availability document lives in.
 const availabilityKey = "availability"
 
-// LoadHistory reads the availability history from the kv row "availability". An
+// loadHistory reads the availability history from the kv row "availability". An
 // absent row with neither legacy file behind it returns an empty History
 // without error, as a fresh install has recorded nothing yet.
 //
@@ -49,7 +49,7 @@ const availabilityKey = "availability"
 // (availability.json) exists, KVImportFile adopts it; when that too is absent,
 // <dir>/history.json -- the pre-rename name -- is tried the same way. Either
 // way the file is removed once its row is written.
-func LoadHistory(kv db.KV, legacyPath string) (History, error) {
+func loadHistory(kv db.KV, legacyPath string) (History, error) {
 	data, ok, err := db.KVImportFile(kv, availabilityKey, legacyPath)
 	if err != nil {
 		return History{}, err

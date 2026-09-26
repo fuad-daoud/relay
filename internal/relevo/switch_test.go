@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -54,7 +55,7 @@ func TestGatedSwitchesAtOnce(t *testing.T) {
 	t.Parallel()
 
 	rt, b := sentSwitchable(t)
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -106,7 +107,7 @@ func TestGatedSwitchDoesNotCount(t *testing.T) {
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -130,7 +131,7 @@ func TestGatedSwitchDoesNotCount(t *testing.T) {
 	if err := rt2.Store.Save(b2); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if _, err := Unavailable(rt2, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt2), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 	got2, err := reconcile(t, rt2, b2)
@@ -149,7 +150,7 @@ func TestGatedIgnoresSpawnFailedGate(t *testing.T) {
 	t.Parallel()
 
 	rt, b := sentSwitchable(t)
-	recordSpawnFailure(rt, "agy/other/m", "webshop", errors.New("x"))
+	availability.RecordSpawnFailure(AvailabilityDeps(rt), "agy/other/m", "webshop", errors.New("x"))
 
 	got, err := reconcile(t, rt, b)
 	if err != nil {
@@ -172,7 +173,7 @@ func TestNoOrderHalts(t *testing.T) {
 
 	rt, b := sentSwitchable(t)
 	rt.Policy = policy.Policy{}
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -199,7 +200,7 @@ func TestMaxSwitchesZeroHalts(t *testing.T) {
 	rt, b := sentSwitchable(t)
 	zero := 0
 	rt.Policy.MaxSwitches = &zero
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -401,10 +402,10 @@ func TestAllGatedHalts(t *testing.T) {
 	t.Parallel()
 
 	rt, b := sentSwitchable(t)
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
-	if _, err := Unavailable(rt, testClaudeRef, time.Time{}, "quota"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), testClaudeRef, time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -443,7 +444,7 @@ func TestSwitchRecordsOutgoingUsage(t *testing.T) {
 	}
 	rt.Usage = fu
 
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "rate-limited"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "rate-limited"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 
@@ -509,7 +510,7 @@ func TestSwitchKeepsTheStreamCursor(t *testing.T) {
 	// The switch replaces the endpoint mid-round with a different kind. Gate
 	// the provider first, exactly as the rate-limit path does, so
 	// resolveBuilder has to walk to a different candidate.
-	if _, err := Unavailable(rt, "agy/other/m", time.Time{}, "rate-limited"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "rate-limited"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 	var switched store.Binding

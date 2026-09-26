@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -33,30 +34,30 @@ func TestLimitScanIgnoresThePreviousBuildersLines(t *testing.T) {
 	// The stale line is Google's agy quota failure; the current builder is
 	// agy/other/m on provider "other", so a match would gate the wrong
 	// provider.
-	if got := providerOf(b.BuilderCandidate); got != "other" {
+	if got := availability.ProviderOf(b.BuilderCandidate); got != "other" {
 		t.Fatalf("BuilderCandidate provider = %q, want the other provider", got)
 	}
 	outgoing := jsonlLine(t, "agy-errors/results.jsonl", 0)
 	current := jsonlLine(t, "agy-errors/results.jsonl", 5)
 	b = scanScopeBinding(t, rt, b, outgoing, current)
 
-	patterns := limitPatterns(rt, b.BuilderCandidate)
-	if _, ok := matchLimit(builderTail(rt, b, limitScanLines), patterns, rt.Now(), rt.Policy.LimitGateDefault()); !ok {
+	patterns := availability.LimitPatterns(AvailabilityDeps(rt), b.BuilderCandidate)
+	if _, ok := availability.MatchLimit(builderTail(rt, b, availability.LimitScanLines), patterns, rt.Now(), rt.Policy.LimitGateDefault()); !ok {
 		t.Fatal("the outgoing line does not match the current builder's patterns: the fixture no longer exercises the bug")
 	}
 
 	text := limitText(context.Background(), rt, b)
-	if _, ok := matchLimit(text, patterns, rt.Now(), rt.Policy.LimitGateDefault()); ok {
+	if _, ok := availability.MatchLimit(text, patterns, rt.Now(), rt.Policy.LimitGateDefault()); ok {
 		t.Errorf("limitText = %q, want no limit line: it must not read the outgoing builder's bytes", text)
 	}
 
-	if _, _, handled, err := gateHeadless(t, rt, b, currentBuilderTail(rt, b, limitScanLines), false); err != nil {
+	if _, _, handled, err := gateHeadless(t, rt, b, currentBuilderTail(rt, b, availability.LimitScanLines), false); err != nil {
 		t.Fatalf("gateOnLimit: %v", err)
 	} else if handled {
 		t.Error("handled = true, want false: the current builder wrote no limit line")
 	}
 	if rl := rateLimitedEntries(loadLedger(t, rt)); len(rl) != 0 {
-		t.Errorf("rate_limited entries = %+v, want none for provider %q", rl, providerOf(b.BuilderCandidate))
+		t.Errorf("rate_limited entries = %+v, want none for provider %q", rl, availability.ProviderOf(b.BuilderCandidate))
 	}
 }
 
@@ -70,8 +71,8 @@ func TestLimitScanStillSeesTheCurrentBuildersLimit(t *testing.T) {
 	current := jsonlLine(t, "agy-errors/results.jsonl", 1)
 	b = scanScopeBinding(t, rt, b, outgoing, current)
 
-	patterns := limitPatterns(rt, b.BuilderCandidate)
-	m, ok := matchLimit(limitText(context.Background(), rt, b), patterns, rt.Now(), rt.Policy.LimitGateDefault())
+	patterns := availability.LimitPatterns(AvailabilityDeps(rt), b.BuilderCandidate)
+	m, ok := availability.MatchLimit(limitText(context.Background(), rt, b), patterns, rt.Now(), rt.Policy.LimitGateDefault())
 	if !ok {
 		t.Fatal("limitText has no limit line, want the current builder's own")
 	}
@@ -79,14 +80,14 @@ func TestLimitScanStillSeesTheCurrentBuildersLimit(t *testing.T) {
 		t.Errorf("matched line = %q, want the current process's quota line", m.Line)
 	}
 
-	if _, _, handled, err := gateHeadless(t, rt, b, currentBuilderTail(rt, b, limitScanLines), false); err != nil {
+	if _, _, handled, err := gateHeadless(t, rt, b, currentBuilderTail(rt, b, availability.LimitScanLines), false); err != nil {
 		t.Fatalf("gateOnLimit: %v", err)
 	} else if !handled {
 		t.Fatal("handled = false, want true: the current builder's own limit line gates it")
 	}
 	rl := rateLimitedEntries(loadLedger(t, rt))
-	if len(rl) != 1 || rl[0].Subject != providerOf(b.BuilderCandidate) {
-		t.Errorf("rate_limited entries = %+v, want one for %q", rl, providerOf(b.BuilderCandidate))
+	if len(rl) != 1 || rl[0].Subject != availability.ProviderOf(b.BuilderCandidate) {
+		t.Errorf("rate_limited entries = %+v, want one for %q", rl, availability.ProviderOf(b.BuilderCandidate))
 	}
 }
 
@@ -110,10 +111,10 @@ func TestDenialScanIgnoresThePreviousBuildersLines(t *testing.T) {
 		t.Fatal(err)
 	}
 	patterns := denialPatterns(c, h)
-	if _, ok := matchDenial(builderTail(rt, b, limitScanLines), patterns); !ok {
+	if _, ok := matchDenial(builderTail(rt, b, availability.LimitScanLines), patterns); !ok {
 		t.Fatal("the outgoing line does not match the denial patterns: the fixture no longer exercises the bug")
 	}
-	if line, ok := matchDenial(currentBuilderTail(rt, b, limitScanLines), patterns); ok {
+	if line, ok := matchDenial(currentBuilderTail(rt, b, availability.LimitScanLines), patterns); ok {
 		t.Errorf("matchDenial = %q, want none: it must not read the outgoing builder's bytes", line)
 	}
 }
@@ -129,8 +130,8 @@ func TestCurrentBuilderTailFromStaleRoundIsWholeStream(t *testing.T) {
 	b = scanScopeBinding(t, rt, b, outgoing, current)
 	b.Builder.StreamRound = b.Round + 1
 
-	got := currentBuilderTail(rt, b, limitScanLines)
-	want := builderTail(rt, b, limitScanLines)
+	got := currentBuilderTail(rt, b, availability.LimitScanLines)
+	want := builderTail(rt, b, availability.LimitScanLines)
 	if got != want {
 		t.Errorf("currentBuilderTail = %q, want builderTail's whole-stream tail %q", got, want)
 	}
@@ -149,7 +150,7 @@ func TestStreamTailReadFallbackHonoursFrom(t *testing.T) {
 	read := func(string) ([]byte, error) { return data, nil }
 	path := filepath.Join(t.TempDir(), "absent.jsonl")
 
-	got := streamTail(path, read, nil, "agy", limitScanLines, int64(len(outgoing)))
+	got := streamTail(path, read, nil, "agy", availability.LimitScanLines, int64(len(outgoing)))
 	if !strings.Contains(got, "Resets in 1h43m8s") {
 		t.Errorf("streamTail = %q, want the current bytes after from", got)
 	}
@@ -157,7 +158,7 @@ func TestStreamTailReadFallbackHonoursFrom(t *testing.T) {
 		t.Errorf("streamTail = %q, want it to ignore the bytes before from", got)
 	}
 
-	if got := streamTail(path, read, nil, "agy", limitScanLines, int64(len(data)+5)); got != "" {
+	if got := streamTail(path, read, nil, "agy", availability.LimitScanLines, int64(len(data)+5)); got != "" {
 		t.Errorf("streamTail(from past the end) = %q, want empty", got)
 	}
 }

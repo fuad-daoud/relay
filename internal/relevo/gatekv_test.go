@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/planner"
@@ -97,3 +98,13 @@ func (k failPutKV) KVPut(key string, v []byte) error {
 	return k.inner.KVPut(key, v)
 }
 func (k failPutKV) KVDelete(key string) error { return k.inner.KVDelete(key) }
+
+// loadLedger reads a runtime's ledger for assertions.
+func loadLedger(t *testing.T, rt Runtime) availability.Ledger {
+	t.Helper()
+	l, err := availability.LoadLedger(rt.Gates, "")
+	if err != nil {
+		t.Fatalf("LoadKV ledger: %v", err)
+	}
+	return l
+}

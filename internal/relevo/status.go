@@ -353,7 +353,7 @@ func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding) (Rep
 	rows = SortRows(rows, true)
 
 	rep := Report{Bindings: rows}
-	rep.Gated = Gates(rt)
+	rep.Gated = availability.Gates(AvailabilityDeps(rt))
 	rep.Unused = UnusedProviderGates(rt)
 	return rep, nil
 }
@@ -818,7 +818,7 @@ func writeGatedBlock(sb *strings.Builder, gates []availability.Gate, trailingBla
 
 	for _, g := range gates {
 		fmt.Fprintf(sb, "  %-*s  %-12s  %s  %s",
-			width, gateLabel(g), GateKindText(g.Kind), GateTimeText(g.Since), GateUntilText(g.Until))
+			width, gateLabel(g), availability.GateKindText(g.Kind), availability.GateTimeText(g.Since), availability.GateUntilText(g.Until))
 		if g.Note != "" {
 			fmt.Fprintf(sb, "  %s", g.Note)
 		}

@@ -312,7 +312,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	if err != nil {
 		return preflight{}, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}
-	argv, err := headlessLaunch(c, role, tier, roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
+	argv, err := spawn.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
 	if err != nil {
 		return preflight{}, err
 	}
@@ -320,7 +320,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 
 	// The gate is advisory only: a gated candidate can still be sent to, it
 	// just tells the human the daemon would switch away after the start.
-	for _, g := range Gates(rt) {
+	for _, g := range availability.Gates(AvailabilityDeps(rt)) {
 		if g.Token == b.BuilderCandidate && (g.Kind == availability.RateLimited || g.Kind == availability.RolesMissing) {
 			gate := g
 			pf.gate = &gate
@@ -713,7 +713,7 @@ func dryRunGateNote(g *availability.Gate) string {
 	if g.Kind == availability.RolesMissing {
 		return g.Note + "; the daemon would switch after start"
 	}
-	return GateKindText(g.Kind) + " " + GateUntilText(g.Until) + "; the daemon would switch after start"
+	return availability.GateKindText(g.Kind) + " " + availability.GateUntilText(g.Until) + "; the daemon would switch after start"
 }
 
 // promptHead is the prompt's first two non-empty lines: enough for a human to

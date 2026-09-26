@@ -29,7 +29,7 @@ func UnusedProviderGates(rt Runtime) []ProviderGate {
 		return nil
 	}
 
-	l, err := availability.LoadLedger(rt.Gates, ledgerLegacyPath(rt))
+	l, err := availability.LoadLedger(rt.Gates, availability.LegacyGatesPath(rt.GatesDir, "ledger.json"))
 	if err != nil {
 		return nil
 	}

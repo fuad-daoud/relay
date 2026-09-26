@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
@@ -281,7 +282,7 @@ func TestSwitchPicksFromRoleList(t *testing.T) {
 		t.Fatalf("BuilderCandidate = %q, want claude/p1/b", b.BuilderCandidate)
 	}
 
-	if _, err := Unavailable(rt, "claude/p1/b", time.Time{}, "5h window"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "claude/p1/b", time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 	got, err := reconcile(t, rt, b)

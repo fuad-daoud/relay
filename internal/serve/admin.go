@@ -399,15 +399,15 @@ func ledgerRuntime(s *Server) relevo.Runtime {
 }
 
 func AdminGates(s *Server) []availability.Gate {
-	return relevo.Gates(ledgerRuntime(s))
+	return availability.Gates(relevo.AvailabilityDeps(ledgerRuntime(s)))
 }
 
 func AdminAvailable(s *Server, subject string) (provider string, removed int, err error) {
-	return relevo.Available(ledgerRuntime(s), subject, relevo.ClearedByServer)
+	return availability.Available(relevo.AvailabilityDeps(ledgerRuntime(s)), subject, availability.ClearedByServer)
 }
 
 func AdminUnavailable(s *Server, token string, until time.Time, reason string) (provider string, err error) {
-	return relevo.Unavailable(ledgerRuntime(s), token, until, reason)
+	return availability.Unavailable(relevo.AvailabilityDeps(ledgerRuntime(s)), token, until, reason)
 }
 
 // RenderGates formats `relevo serve gates`, printing the candidate's short name
@@ -423,7 +423,7 @@ func RenderGates(gates []availability.Gate, now time.Time) string {
 		if g.Name != "" {
 			label = g.Name
 		}
-		fmt.Fprintf(&sb, "%s  %s  %s  %s\n", label, relevo.GateKindText(g.Kind), relevo.GateUntilText(g.Until), g.Note)
+		fmt.Fprintf(&sb, "%s  %s  %s  %s\n", label, availability.GateKindText(g.Kind), availability.GateUntilText(g.Until), g.Note)
 	}
 	return sb.String()
 }

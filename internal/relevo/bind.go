@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/planner"
@@ -301,7 +302,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 		// A resume re-points the binding at a builder; it keeps its stored
 		// writer role (#382 §2), so BindOptions.Role is ignored here.
 		opts.Role = b.Role
-		resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, bindingRole(b))
+		resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), opts.Candidate, bindingRole(b))
 		if err != nil {
 			return store.Binding{}, Resolution{}, err
 		}
@@ -557,7 +558,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 
 	var tier harness.Tier
 	roleName := bindingRole(store.Binding{Role: normRole(opts.Role)})
-	resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, roleName)
+	resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), opts.Candidate, roleName)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
 	}
@@ -643,7 +644,7 @@ func builderAgentName(name string) (string, error) {
 // The second return is the resolution, for the pick line.
 func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOptions, name string) (store.Endpoint, Resolution, error) {
 	roleName := bindingRole(store.Binding{Role: opts.Role})
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, roleName)
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), opts.Candidate, roleName)
 	if err != nil {
 		return store.Endpoint{}, Resolution{}, err
 	}
@@ -662,7 +663,7 @@ func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOpti
 	if tier == "" {
 		tier = harness.TierHarness
 	}
-	if _, err := headlessLaunch(c, role, tier, 0, "", opts.CWD, rt.Store.Dir(name)); err != nil {
+	if _, err := spawn.HeadlessLaunch(c, role, tier, 0, "", opts.CWD, rt.Store.Dir(name)); err != nil {
 		return store.Endpoint{}, Resolution{}, err
 	}
 

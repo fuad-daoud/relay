@@ -91,7 +91,7 @@ func fetchEventLog(ctx context.Context, rt relevo.Runtime, now time.Time) tea.Cm
 		if err != nil {
 			return eventLogMsg{err: err, at: now}
 		}
-		hist, err := relevo.LoadHistory(rt)
+		hist, err := availability.LoadHistory(relevo.AvailabilityDeps(rt))
 		if err != nil {
 			hist = availability.History{}
 		}

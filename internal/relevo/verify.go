@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -244,7 +245,7 @@ func startVerifyConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 		return skip("worktree: " + err.Error())
 	}
 
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), "", "reviewer")
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), "", "reviewer")
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -317,7 +318,7 @@ func startVerifyConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	}
 
 	streamPath := rt.Store.ConsultStreamPath(b.Name, round, id)
-	argv, err := headlessLaunch(c, role, tier, consultTimeout,
+	argv, err := spawn.HeadlessLaunch(c, role, tier, consultTimeout,
 		prompt, wt, rt.Store.Dir(b.Name))
 	if err != nil {
 		b.Consults = b.Consults[:len(b.Consults)-1]

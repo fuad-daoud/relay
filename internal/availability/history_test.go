@@ -38,7 +38,7 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatalf("SaveHistory: %v", err)
 	}
 
-	got, err := LoadHistory(kv, "")
+	got, err := loadHistory(kv, "")
 	if err != nil {
 		t.Fatalf("LoadHistory: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestLoadKVImportsLegacyHistoryFile(t *testing.T) {
 		t.Fatalf("WriteFile(legacy): %v", err)
 	}
 
-	got, err := LoadHistory(kv, newPath)
+	got, err := loadHistory(kv, newPath)
 	if err != nil {
 		t.Fatalf("LoadHistory: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestLoadKVPrefersRowOverFile(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	got, err := LoadHistory(kv, newPath)
+	got, err := loadHistory(kv, newPath)
 	if err != nil {
 		t.Fatalf("LoadHistory: %v", err)
 	}
@@ -128,9 +128,9 @@ func TestLoadKVMissingPath(t *testing.T) {
 	kv := testHistoryKV(t)
 	path := filepath.Join(t.TempDir(), "missing", "history.json")
 
-	got, err := LoadHistory(kv, path)
+	got, err := loadHistory(kv, path)
 	if err != nil {
-		t.Fatalf("LoadHistory(missing): %v", err)
+		t.Fatalf("loadHistory(missing): %v", err)
 	}
 	if len(got.Events) != 0 {
 		t.Errorf("got %d events, want 0: %+v", len(got.Events), got.Events)
@@ -259,7 +259,7 @@ func TestSinceOmittedWhenZero(t *testing.T) {
 		t.Fatalf("SaveHistory: %v", err)
 	}
 
-	got, err := LoadHistory(kv, path)
+	got, err := loadHistory(kv, path)
 	if err != nil {
 		t.Fatalf("LoadHistory: %v", err)
 	}

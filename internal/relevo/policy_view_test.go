@@ -76,7 +76,7 @@ func TestFormatPolicyOrderWithGatedFirst(t *testing.T) {
 
 	want := strings.Join([]string{
 		"builder  (order set in config policy)",
-		"  1  agy-m     order     spawn failed " + GateUntilText(until),
+		"  1  agy-m     order     spawn failed " + availability.GateUntilText(until),
 		"  2  claude-m  order     <- would pick",
 		"  3  m         unlisted",
 		"reviewer  (no order set)",
@@ -201,7 +201,7 @@ func wantHourRuler() string {
 // a [24]int of hour counts, matching formatHistory's exact cell format, so
 // tests state counts, not spacing.
 func wantHourRow(provider string, kind availability.Kind, counts [24]int) string {
-	row := fmt.Sprintf("  %-10s %-13s", provider, GateKindText(kind))
+	row := fmt.Sprintf("  %-10s %-13s", provider, availability.GateKindText(kind))
 	for _, n := range counts {
 		cell := "."
 		if n != 0 {
@@ -308,7 +308,7 @@ func TestFormatPolicyGateAndPeakOrder(t *testing.T) {
 
 	got := FormatPolicy(set, pol, gates, hist, now, time.UTC)
 
-	wantTail := "limited 1x around 21:00 (30d); spawn failed " + GateUntilText(until)
+	wantTail := "limited 1x around 21:00 (30d); spawn failed " + availability.GateUntilText(until)
 	if !strings.Contains(got, wantTail) {
 		t.Errorf("FormatPolicy =\n%s\nwant a row containing %q", got, wantTail)
 	}

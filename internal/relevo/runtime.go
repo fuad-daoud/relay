@@ -9,6 +9,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/classify"
@@ -300,6 +301,27 @@ func IngestDeps(rt Runtime) ingest.Deps {
 		Git:      rt.Git,
 		Sessions: ingest.SessionLocator(rt.Sessions),
 		Now:      time.Now,
+	}
+}
+
+// AvailabilityDeps builds internal/availability's Deps from rt. Now carries
+// through nil-safe as time.Now, since a zero Runtime (a test) has no clock; the
+// roles registry is passed as the lazy builder rt.RoleRegistry, so availability
+// never builds it eagerly.
+func AvailabilityDeps(rt Runtime) availability.Deps {
+	now := rt.Now
+	if now == nil {
+		now = time.Now
+	}
+	return availability.Deps{
+		Store:        rt.Store,
+		Candidates:   rt.Candidates,
+		Gates:        rt.Gates,
+		GatesDir:     rt.GatesDir,
+		Latency:      rt.Latency,
+		Now:          now,
+		Roles:        rt.Roles,
+		RoleRegistry: rt.RoleRegistry,
 	}
 }
 

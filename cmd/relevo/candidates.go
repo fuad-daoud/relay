@@ -108,10 +108,10 @@ func cmdCandidates(args []string) error {
 				names = append(names, rt.Candidates.NameOf(ref))
 			}
 		}
-		width := relevo.ProbeNameWidth(names)
+		width := availability.ProbeNameWidth(names)
 
-		_, err := relevo.Probe(context.Background(), rt, lineExec{}, tokens, host, func(r relevo.ProbeResult) {
-			fmt.Println(relevo.FormatProbe(r, width))
+		_, err := availability.Probe(context.Background(), relevo.AvailabilityDeps(rt), lineExec{}, tokens, host, func(r availability.ProbeResult) {
+			fmt.Println(availability.FormatProbe(r, width))
 		})
 		return err
 	}
@@ -139,13 +139,13 @@ func formatCandidates(rt relevo.Runtime) string {
 		lat[ref] = h.Summary(ref)
 	}
 
-	return relevo.FormatCandidatesLatencyFor(rt.RoleRegistry(), rt.Candidates, relevo.Gates(rt), lat)
+	return relevo.FormatCandidatesLatencyFor(rt.RoleRegistry(), rt.Candidates, availability.Gates(relevo.AvailabilityDeps(rt)), lat)
 }
 
 // legacyGatesPath is <dir>/<name> for the pre-kv gate documents, moved to
 // internal/relevo (cockpit C2b §4.1) so the stats input assembly shares it.
 func legacyGatesPath(dir, name string) string {
-	return relevo.LegacyGatesPath(dir, name)
+	return availability.LegacyGatesPath(dir, name)
 }
 
 // loadHistory reads the availability history for display, treating an
@@ -153,7 +153,7 @@ func legacyGatesPath(dir, name string) string {
 // applies to the ledger. The body moved to relevo.LoadHistory (cockpit C2b
 // §4.1); this keeps the stderr line for its other callers.
 func loadHistory(rt relevo.Runtime) availability.History {
-	h, err := relevo.LoadHistory(rt)
+	h, err := availability.LoadHistory(relevo.AvailabilityDeps(rt))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not read history: %v\n", err)
 		return availability.History{}
@@ -164,5 +164,5 @@ func loadHistory(rt relevo.Runtime) availability.History {
 // formatPolicy renders the per-role pick explanation the `pick` block of
 // `relevo config` shows.
 func formatPolicy(rt relevo.Runtime) string {
-	return relevo.FormatPolicyFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, relevo.Gates(rt), loadHistory(rt), rt.Now(), time.Local)
+	return relevo.FormatPolicyFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, availability.Gates(relevo.AvailabilityDeps(rt)), loadHistory(rt), rt.Now(), time.Local)
 }

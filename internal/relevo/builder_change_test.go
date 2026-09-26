@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -60,7 +61,7 @@ func TestResolveSendBuilderGatedResolves(t *testing.T) {
 	t.Parallel()
 
 	rt := newRuntime(t)
-	if _, err := Unavailable(rt, testAgyRef, time.Time{}, "quota"); err != nil {
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), testAgyRef, time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 

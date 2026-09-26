@@ -72,7 +72,7 @@ func ledgerChecks(gates []availability.Gate) []doctor.Check {
 			provider = ref.Provider
 		}
 
-		fix := "wait until " + relevo.GateTimeText(g.Until)
+		fix := "wait until " + availability.GateTimeText(g.Until)
 		if g.Kind == availability.RateLimited {
 			fix = "relevo gate --clear " + provider
 		}
@@ -82,7 +82,7 @@ func ledgerChecks(gates []availability.Gate) []doctor.Check {
 			Name:     "ledger",
 			Severity: doctor.SevWarn,
 			Detail: fmt.Sprintf("%s: %s since %s (%s)",
-				g.Token, relevo.GateKindText(g.Kind), relevo.GateTimeText(g.Since), relevo.GateUntilText(g.Until)),
+				g.Token, availability.GateKindText(g.Kind), availability.GateTimeText(g.Since), availability.GateUntilText(g.Until)),
 			Fix: fix,
 		})
 	}

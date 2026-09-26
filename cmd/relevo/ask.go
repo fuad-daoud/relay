@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
@@ -96,7 +97,7 @@ func cmdAsk(args []string) error {
 	fmt.Printf("asked %s consult %s on %s (pid %d)\nfindings: %s\n",
 		res.Consult.Role, res.Consult.ID, res.Binding, res.Consult.Endpoint.PID,
 		delivery.FindingsCommand(res.Binding, res.Consult.Round, res.Consult.ID))
-	if n := relevo.GatedNote(rt, res.Candidate); n != "" {
+	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), res.Candidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
 	notePick(rt, *role, res.Resolution)

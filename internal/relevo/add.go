@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -136,7 +137,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// Resolve before AddWorktree for the same reason builderAgentName runs
 	// here -- a refused add must leave no worktree.
 	roleName := bindingRole(store.Binding{Role: normRole(opts.Role)})
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, Gates(rt), opts.Candidate, roleName)
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), opts.Candidate, roleName)
 	if err != nil {
 		return AddResult{}, err
 	}

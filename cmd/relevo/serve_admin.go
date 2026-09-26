@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -465,6 +466,6 @@ func serveGateUnavailable(fs *flag.FlagSet, token, forFlag, reason string) error
 		}
 	}
 
-	fmt.Printf("gated %s (%d candidates) %s\n", provider, count, relevo.GateUntilText(until))
+	fmt.Printf("gated %s (%d candidates) %s\n", provider, count, availability.GateUntilText(until))
 	return nil
 }

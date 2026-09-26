@@ -870,7 +870,7 @@ func goldenAgentResearcherModel(t *testing.T, width, height int, fa *fakeActions
 }
 
 func TestGoldenViews(t *testing.T) {
-	t.Cleanup(relevo.SetGateClock(func() time.Time { return railNow }))
+	t.Cleanup(availability.SetGateClock(func() time.Time { return railNow }))
 
 	cases := []struct {
 		name          string

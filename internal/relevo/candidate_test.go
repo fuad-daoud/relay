@@ -382,7 +382,7 @@ func TestExplainResolution(t *testing.T) {
 	opencode := lookup(testOpencodeRef)
 
 	until := baseTime.Add(10 * time.Minute)
-	untilText := GateUntilText(until)
+	untilText := availability.GateUntilText(until)
 
 	tests := []struct {
 		name string
@@ -497,7 +497,7 @@ func TestPickTextUsesNamesStoredNoteUnchanged(t *testing.T) {
 	}
 
 	until := baseTime.Add(10 * time.Minute)
-	untilText := GateUntilText(until)
+	untilText := availability.GateUntilText(until)
 
 	res := Resolution{
 		How:       HowOrder,
@@ -573,7 +573,7 @@ func TestRolesMissingSkipsInOrder(t *testing.T) {
 	rt.Policy = orderOf("builder", testOpencodeRef, testClaudeRef)
 	rt.Roles = fakeRoleChecker{"opencode": {".config/opencode/agents/researcher.md"}}
 
-	res, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), "", "builder")
+	res, err := resolveCandidate(rt.Candidates, rt.Policy, availability.Gates(AvailabilityDeps(rt)), "", "builder")
 	if err != nil {
 		t.Fatalf("resolveCandidate: %v", err)
 	}
@@ -588,7 +588,7 @@ func TestRolesMissingSkipsInOrder(t *testing.T) {
 	// gated and the first candidate in order is picked -- today's
 	// behaviour.
 	rt.Roles = nil
-	res2, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), "", "builder")
+	res2, err := resolveCandidate(rt.Candidates, rt.Policy, availability.Gates(AvailabilityDeps(rt)), "", "builder")
 	if err != nil {
 		t.Fatalf("resolveCandidate (rt.Roles == nil): %v", err)
 	}
@@ -606,7 +606,7 @@ func TestRolesMissingRefusesExplicit(t *testing.T) {
 	rt := newRuntime(t)
 	rt.Roles = fakeRoleChecker{"opencode": {".config/opencode/agents/researcher.md"}}
 
-	_, err := resolveCandidate(rt.Candidates, rt.Policy, Gates(rt), testOpencodeRef, "builder")
+	_, err := resolveCandidate(rt.Candidates, rt.Policy, availability.Gates(AvailabilityDeps(rt)), testOpencodeRef, "builder")
 	if err == nil {
 		t.Fatal("resolveCandidate succeeded, want a refusal")
 	}
