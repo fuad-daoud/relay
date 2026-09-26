@@ -40,16 +40,14 @@ func newRoundView(env Env, key string, round int) (View, tea.Cmd) {
 	p, cmd = p.pointDetailAt(key)
 	if round > 0 {
 		p.detail.round = round
+		p.artifactSel = 0
 		for t := tab(0); t < tabCount; t++ {
 			p.detail.cache[t] = tabContent{}
 			p.detail.scroll[t] = 0
 		}
 		p.fillViewport()
-		if !p.tabInFlight {
-			if c := p.visibleTabFetch(); c != nil {
-				p.tabInFlight = true
-				cmd = tea.Batch(cmd, c)
-			}
+		if c := p.startFetch(); c != nil {
+			cmd = tea.Batch(cmd, c)
 		}
 	}
 	// Opening a binding whose report is ready is what delivers it to the
@@ -70,16 +68,14 @@ func newHistRoundView(env Env, h relevo.HistoryBinding, round int) (View, tea.Cm
 	p, cmd = p.pointDetailAtHist(h)
 	if round > 0 {
 		p.detail.round = round
+		p.artifactSel = 0
 		for t := tab(0); t < tabCount; t++ {
 			p.detail.cache[t] = tabContent{}
 			p.detail.scroll[t] = 0
 		}
 		p.fillViewport()
-		if !p.tabInFlight {
-			if c := p.visibleTabFetch(); c != nil {
-				p.tabInFlight = true
-				cmd = tea.Batch(cmd, c)
-			}
+		if c := p.startFetch(); c != nil {
+			cmd = tea.Batch(cmd, c)
 		}
 	}
 	return roundView{pane: p}, cmd
@@ -143,6 +139,25 @@ func (r roundView) Context(env Env) (string, string) {
 
 	if b == nil || !r.pane.detail.live {
 		left := "   " + mutedStyle.Render(r.pane.detailHeader())
+		if lipgloss.Width(left)+1+lipgloss.Width(right) > env.Width {
+			right = ""
+		}
+		return left, right
+	}
+
+	// A reader round's context row names the actor, its shape and its
+	// scratch worktree rather than the state and the branch: the state chip
+	// and the artifact facts live on its card (round 5b).
+	if r.pane.reader {
+		plannerWord := "planner " + plannerCell(*b)
+		if b.OwnerLabel != "" {
+			plannerWord = "client " + b.OwnerLabel
+		}
+		left := "   " + textStyle.Render(actorCell(*b)) + faintStyle.Render(" on ") +
+			textStyle.Render(candidateText(*b)) +
+			faintStyle.Render("  ·  ") + mutedStyle.Render("reader") +
+			faintStyle.Render("  ·  ") + mutedStyle.Render(plannerWord) +
+			faintStyle.Render("  ·  ") + mutedStyle.Render(scratchText(r.pane.baselineHead))
 		if lipgloss.Width(left)+1+lipgloss.Width(right) > env.Width {
 			right = ""
 		}
@@ -262,7 +277,38 @@ func (r roundView) Context(env Env) (string, string) {
 	return left, right
 }
 
+// scratchText names a reader round's throwaway worktree: the head its
+// baseline was cut from (the binding's RoundBaselineHead, shortened) and the
+// uncommitted diff it carried. A round with no recorded head names the
+// worktree alone.
+func scratchText(head string) string {
+	if head == "" {
+		return "scratch worktree + dirty diff"
+	}
+	if len(head) > 7 {
+		head = head[:7]
+	}
+	return "scratch worktree @ " + head + " + dirty diff"
+}
+
 func (r roundView) Keys() []KeyHelp {
+	// A reader round's footer is its own (round 5b): no x stop, no g gate,
+	// no o shell; enter opens the artifacts tab's selected file, and send
+	// next and retry on are the reader's actions.
+	if r.pane.reader {
+		var keys []KeyHelp
+		if r.pane.detail.active == tabArtifacts {
+			keys = append(keys, KeyHelp{"enter", "open file"})
+		}
+		keys = append(keys, KeyHelp{"tab", "next tab"}, KeyHelp{"[ ]", "round"})
+		if r.pane.detail.active == tabArtifacts {
+			keys = append(keys, KeyHelp{"↑↓", "move"})
+		}
+		if r.actions {
+			keys = append(keys, KeyHelp{"s", "send next"}, KeyHelp{"r", "retry on…"})
+		}
+		return keys
+	}
 	keys := []KeyHelp{
 		{"tab", "next tab"},
 		{"[ ]", "round"},
@@ -386,12 +432,42 @@ func (r roundView) updateKey(msg tea.KeyMsg, env Env) (View, tea.Cmd) {
 			return r, cmd
 		}
 	}
+	// The artifacts tab's own keys (round 5b): enter opens the selected
+	// file, the arrows move the cursor between files.
+	if r.pane.reader && r.pane.detail.active == tabArtifacts {
+		switch msg.String() {
+		case "enter":
+			return r, r.pane.openCmd(env)
+		case "up", "down":
+			delta := 1
+			if msg.String() == "up" {
+				delta = -1
+			}
+			var cmd tea.Cmd
+			r.pane, cmd = r.pane.moveArtifact(delta)
+			return r, cmd
+		}
+	}
 	switch msg.String() {
 	case "tab", "shift+tab", "back_tab":
 		var cmd tea.Cmd
 		r.pane, cmd = r.pane.cycleTab(msg)
 		return r, cmd
 	case "1", "2", "3", "4", "5":
+		if r.pane.reader {
+			// A reader's tabs are its own list, in its own order.
+			tabs := r.pane.tabs()
+			i := int(msg.String()[0] - '1')
+			if i >= len(tabs) {
+				return r, nil
+			}
+			if tabs[i] != r.pane.detail.active {
+				var cmd tea.Cmd
+				r.pane, cmd = r.pane.switchTab(tabs[i])
+				return r, cmd
+			}
+			return r, nil
+		}
 		t := tab(msg.String()[0] - '1')
 		if t != r.pane.detail.active {
 			var cmd tea.Cmd

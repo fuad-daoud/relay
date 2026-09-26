@@ -31,6 +31,9 @@ type sendCall struct{ key, file string }
 // retryCall is one Retry invocation, recorded by fakeActions.
 type retryCall struct{ key, candidate string }
 
+// openCall is one OpenArtifact invocation, recorded by fakeActions (round 5b).
+type openCall struct{ path, kind string }
+
 // fakeActions is the double every key -> confirm -> action path is tested
 // against (§7): it records every call with its arguments and returns scripted
 // Results.
@@ -69,6 +72,10 @@ type fakeActions struct {
 	edited   []string
 	resets   [][2]string
 	filesErr error
+
+	// The artifacts tab (round 5b): the (path, kind) pairs OpenArtifact was
+	// asked for.
+	opened []openCall
 
 	// The audit view (round 6) (§3.3): the revision rows, each revision's
 	// changes, the scripted roll back preview and its error, and the
@@ -172,6 +179,13 @@ func (f *fakeActions) ResetAgentFile(_ context.Context, kind, agent string) Resu
 // starts a real editor (§7).
 func (f *fakeActions) AgentEditor(path string) (*exec.Cmd, error) {
 	f.edited = append(f.edited, path)
+	return exec.Command("true"), nil
+}
+
+// OpenArtifact records the (path, kind) pair the view opened (round 5b) and
+// returns a command no test ever runs.
+func (f *fakeActions) OpenArtifact(path, kind string) (*exec.Cmd, error) {
+	f.opened = append(f.opened, openCall{path: path, kind: kind})
 	return exec.Command("true"), nil
 }
 

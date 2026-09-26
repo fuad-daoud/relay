@@ -23,11 +23,19 @@ const (
 	tabTerminal
 	tabDiff
 	tabLog
+	tabArtifacts
 	tabCount
 )
 
 // tabTitles indexes by tab and is used by both the tab bar and the tests.
-var tabTitles = [tabCount]string{"plan", "report", "transcript", "diff", "log"}
+var tabTitles = [tabCount]string{"plan", "report", "transcript", "diff", "log", "artifacts"}
+
+// writerTabs is the tab bar a writer round draws: today's tabs, unchanged.
+var writerTabs = []tab{tabPlan, tabReport, tabTerminal, tabDiff, tabLog}
+
+// readerTabs is the tab bar a reader round draws (round 5b): no report and
+// no diff, and the artifacts tab instead.
+var readerTabs = []tab{tabPlan, tabArtifacts, tabLog, tabTerminal}
 
 // tabContent is one tab's rendered body plus why it might be empty.
 //
@@ -50,6 +58,16 @@ type tabContent struct {
 	// logName is the base name of that log ("003-builder.log"); "" for a
 	// capture.
 	logName string
+
+	// The artifacts tab (round 5b): the files RoundArtifacts listed for
+	// the round, in its order; artifactRel the selected file, artifactBody
+	// its raw bytes, artifactActor the binding's actor (whose final message
+	// summary.md is) and artifactErr a failed read of the selected file.
+	artifacts     []relevo.ArtifactFile
+	artifactRel   string
+	artifactBody  string
+	artifactActor string
+	artifactErr   error
 }
 
 // headlessLogLines caps how much of a round log the terminal tab holds:
@@ -624,6 +642,98 @@ func fetchLog(ctx context.Context, src Source, key string, round int) tea.Cmd {
 	}
 }
 
+// fetchArtifacts reads a reader round's artifact directory for the artifacts
+// tab (round 5b): the file list RoundArtifacts orders, and the sel-th file's
+// bytes through ReadArtifact. Both answer a live round's files on disk and a
+// sealed round's round_file rows, so the tab renders the same either way.
+func fetchArtifacts(ctx context.Context, src Source, key string, round, sel int) tea.Cmd {
+	return func() tea.Msg {
+		rt, name, ok := src.Runtime(key)
+		if !ok {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabArtifacts,
+				content: tabContent{
+					loaded: true,
+					round:  round,
+					err:    unresolvedKey(key),
+				},
+			}
+		}
+		if round < 1 {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabArtifacts,
+				content: tabContent{
+					loaded: true,
+					round:  round,
+					empty:  "no completed round yet",
+				},
+			}
+		}
+		b, err := rt.Store.Load(name)
+		if err != nil {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabArtifacts,
+				content: tabContent{
+					loaded: true,
+					round:  round,
+					err:    err,
+				},
+			}
+		}
+		actor := relevo.BindingRole(b)
+		files, err := relevo.RoundArtifacts(rt, name, round, actor)
+		if err != nil {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabArtifacts,
+				content: tabContent{
+					loaded: true,
+					round:  round,
+					err:    err,
+				},
+			}
+		}
+		if len(files) == 0 {
+			return tabMsg{
+				name:  key,
+				round: round,
+				t:     tabArtifacts,
+				content: tabContent{
+					loaded: true,
+					round:  round,
+					at:     time.Now(),
+					empty:  fmt.Sprintf("no artifacts for round %d", round),
+				},
+			}
+		}
+		if sel < 0 || sel >= len(files) {
+			sel = 0
+		}
+		content := tabContent{
+			loaded:        true,
+			round:         round,
+			at:            time.Now(),
+			artifacts:     files,
+			artifactRel:   files[sel].Rel,
+			artifactActor: actor,
+		}
+		data, rerr := relevo.ReadArtifact(rt, name, round, actor, files[sel].Rel)
+		if rerr != nil {
+			content.artifactErr = rerr
+		} else {
+			content.artifactBody = string(data)
+		}
+		return tabMsg{name: key, round: round, t: tabArtifacts, content: content}
+	}
+}
+
 // sectionForTab maps a ui tab to the relevo.ShowSection fetchShow reads for
 // it -- terminal -> transcript, everything else its own name (§5.8).
 func sectionForTab(t tab) relevo.ShowSection {
@@ -638,6 +748,8 @@ func sectionForTab(t tab) relevo.ShowSection {
 		return relevo.ShowDiff
 	case tabLog:
 		return relevo.ShowLog
+	case tabArtifacts:
+		return relevo.ShowArtifacts
 	default:
 		return relevo.ShowPlan
 	}
@@ -657,6 +769,8 @@ func tabForSection(s relevo.ShowSection) tab {
 		return tabDiff
 	case relevo.ShowLog:
 		return tabLog
+	case relevo.ShowArtifacts:
+		return tabArtifacts
 	default:
 		return tabPlan
 	}
@@ -715,12 +829,13 @@ func fetchShow(ctx context.Context, rt relevo.Runtime, name string, round int, s
 // live is false for a hist row's detail (#172, §5.8): every tab goes
 // through fetchShow instead of live's own fetchers. A hist row's key is
 // its bare name (hist rows are planner-only; the server never has them),
-// read through src.Base().
+// read through src.Base(). sel is the artifacts tab's cursor, ignored by
+// every other tab.
 //
 // It takes explicit parameters rather than a Model: fetch.go is built in
 // Step 2 and Model does not exist until Step 3, so a Model parameter here
 // would not compile in the step that introduces it.
-func fetchFor(ctx context.Context, src Source, t tab, key string, round, lines int, live bool) tea.Cmd {
+func fetchFor(ctx context.Context, src Source, t tab, key string, round, lines, sel int, live bool) tea.Cmd {
 	if !live {
 		return fetchShow(ctx, src.Base(), key, round, sectionForTab(t))
 	}
@@ -735,6 +850,8 @@ func fetchFor(ctx context.Context, src Source, t tab, key string, round, lines i
 		return fetchDiff(ctx, src, key, round)
 	case tabLog:
 		return fetchLog(ctx, src, key, round)
+	case tabArtifacts:
+		return fetchArtifacts(ctx, src, key, round, sel)
 	default:
 		return nil
 	}

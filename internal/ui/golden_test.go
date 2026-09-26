@@ -336,6 +336,54 @@ func goldenArchivedRoundModel(t *testing.T, width, height int) Model {
 	return res.(Model)
 }
 
+// roundReaderFiles is the round-reader-artifacts goldens' artifact directory:
+// summary.md and findings.md, sized so the card reads the board's
+// "2 artifacts · 12.4k".
+func roundReaderFiles() map[string]string {
+	summary := "# Review of round 1\n\n" +
+		"The diff is **small** and the tests pass: `go test ./...` is green.\n" +
+		"Nothing in the scratch worktree is worth flagging.\n\n" +
+		"## Notes\n\n" +
+		"- the worktree is thrown away at close\n" +
+		"- the repository is left as it was\n\n"
+	findings := "## findings\n\n" +
+		"- nothing to flag\n" +
+		"- the artifact directory survives the seal\n\n"
+	return map[string]string{
+		"summary.md":  padBytes(summary, 1126),
+		"findings.md": padBytes(strings.Repeat(findings, 60), 11300),
+	}
+}
+
+// padBytes pads s with spaces to exactly n bytes, or cuts it there.
+func padBytes(s string, n int) string {
+	if len(s) >= n {
+		return s[:n]
+	}
+	return s + strings.Repeat(" ", n-len(s))
+}
+
+// roundReaderArtifactsModel pushes the round view for a closed reader round
+// with its artifacts tab open and the cursor on summary.md (round 5b).
+func roundReaderArtifactsModel(t *testing.T, width, height int) Model {
+	t.Helper()
+	const (
+		name  = "review-568"
+		actor = "reviewer"
+	)
+	st := store.New(t.TempDir())
+	seedReaderArtifacts(t, st, name, actor, 1, roundReaderFiles(), railNow.Add(-2*time.Minute))
+
+	m := goldenActionModelWithStore(t, width, height, &fakeActions{},
+		view.Report{Bindings: []view.BindingStatus{readerRoundRow(name, actor)}}, st)
+	m = pointer(t, m, name)
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = drain(t, res.(Model), cmd)
+	// The reader's second tab is its artifacts tab.
+	res, cmd = m.Update(key('2'))
+	return drain(t, res.(Model), cmd)
+}
+
 // seedPlanFixture writes name's round plan file and the plan log entry that
 // recorded it, so a fixture's plan tab reads its body and its sent time from
 // the store rather than from an injected tabMsg.
@@ -1013,6 +1061,14 @@ func TestGoldenViews(t *testing.T) {
 		{
 			name: "round-needs-you", width: 132, height: 34,
 			build: func(t *testing.T) Model { return realRoundNeedsYouModel(t, 132, 34) },
+		},
+		{
+			name: "round-reader-artifacts-132", width: 132, height: 34,
+			build: func(t *testing.T) Model { return roundReaderArtifactsModel(t, 132, 34) },
+		},
+		{
+			name: "round-reader-artifacts-100", width: 100, height: 30,
+			build: func(t *testing.T) Model { return roundReaderArtifactsModel(t, 100, 30) },
 		},
 		{
 			name: "rounds", width: 160, height: 40,
