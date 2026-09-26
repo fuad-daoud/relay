@@ -34,6 +34,9 @@ import (
 // Git is the slice of the git CLI relevo needs. *git.Client satisfies it.
 type Git interface {
 	SnapshotTree(ctx context.Context, dir string) (string, error)
+	// MaterializeTree writes tree into dir's working files without committing,
+	// leaving every difference unstaged and files outside HEAD untracked.
+	MaterializeTree(ctx context.Context, dir, tree string) error
 	DiffTrees(ctx context.Context, dir, from, to string) (git.Diff, error)
 	// DiffWorktreeStat compares tree against dir's current working tree and
 	// returns just the stat, no patch (#143): the live "+N/-M in F" a status

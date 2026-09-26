@@ -230,3 +230,16 @@ func parseNumstat(out []byte) (Stat, error) {
 	}
 	return stat, nil
 }
+
+// MaterializeTree writes tree into dir's working files without committing:
+// `read-tree --reset -u` deletes files missing from the tree, then a mixed reset
+// leaves the index equal to HEAD, so every difference is an unstaged change and
+// files not in HEAD are untracked. On error dir may be partly written; the
+// caller removes it.
+func (c *Client) MaterializeTree(ctx context.Context, dir, tree string) error {
+	if _, err := c.run(ctx, dir, nil, "read-tree", "--reset", "-u", tree); err != nil {
+		return err
+	}
+	_, err := c.run(ctx, dir, nil, "reset", "-q")
+	return err
+}
