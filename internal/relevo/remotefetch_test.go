@@ -3,11 +3,14 @@ package relevo
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -289,5 +292,225 @@ func TestFetchMatchesOnlyTheSameRoundAndServer(t *testing.T) {
 				t.Fatalf("matches = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// notFound is a round file the round does not carry.
+func notFound(kind string) *client.HTTPError {
+	return &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
+}
+
+// roundClosedRemote is a remote whose round 1 the server reports closed, with
+// a report file and no diff, log or stream. Callers override roundFileFunc to
+// fail a download or roundBundleResp to drop the bundle.
+func roundClosedRemote() *fakeRemote {
+	return &fakeRemote{
+		getBindingResp:  remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1, ResultCommit: "c0ffee"},
+		roundBundleResp: io.NopCloser(strings.NewReader("bundle")),
+		roundFileFunc: func(_ context.Context, _, _ string, _ int, kind string) (io.ReadCloser, error) {
+			if kind == "report" {
+				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+			}
+			return nil, notFound(kind)
+		},
+	}
+}
+
+// assertNoFetchTemps fails when a download temp file survives beside the
+// round's files: the fetch's release or the apply's rename must have consumed
+// every one of them.
+func assertNoFetchTemps(t *testing.T, st *store.Store, name string, round int) {
+	t.Helper()
+	dir := filepath.Dir(st.ReportPath(name, round))
+	left, err := filepath.Glob(filepath.Join(dir, "*.fetch.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 0 {
+		t.Fatalf("download temp files left behind: %v", left)
+	}
+}
+
+// TestTickCatchesUpWithoutTheStateLock pins the round-close catch-up as a
+// fetch without the lock: every download and the absorb see the state lock
+// free, and the apply installs the report and queues it under the lock.
+func TestTickCatchesUpWithoutTheStateLock(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	fr := roundClosedRemote()
+	fr.beforeCall = func(call string) {
+		if strings.HasPrefix(call, "RoundFile:") || strings.HasPrefix(call, "RoundBundle:") {
+			if !lockFreeWithin(t, st, 2*time.Second) {
+				t.Errorf("%s ran while the state lock was held", call)
+			}
+		}
+	}
+	tr := &fakeTransport{beforeAbsorb: func() {
+		if !lockFreeWithin(t, st, 2*time.Second) {
+			t.Errorf("Absorb ran while the state lock was held")
+		}
+	}}
+	rt := Runtime{Store: st, Remote: fr, Transport: tr, Now: func() time.Time { return baseTime }}
+
+	if err := NewDaemon(rt, time.Second).Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if _, err := os.Stat(st.ReportPath("api", 1)); err != nil {
+		t.Fatalf("round 1 report not installed: %v", err)
+	}
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+		t.Fatalf("no round 1 report entry: %+v", entries)
+	}
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Round != 2 {
+		t.Errorf("Round = %d, want 2", got.Round)
+	}
+	if got.Builder.LastKnown != "c0ffee" {
+		t.Errorf("LastKnown = %q, want the view's result commit", got.Builder.LastKnown)
+	}
+	if n := countCalls(fr, "Ack:"); n != 1 {
+		t.Errorf("Ack calls = %d, want 1", n)
+	}
+	if n := countCalls(fr, "RoundBundle:"); n != 1 {
+		t.Errorf("RoundBundle calls = %d, want 1", n)
+	}
+	assertNoFetchTemps(t, st, "api", 1)
+}
+
+// TestCatchUpDiscardedWhenDoneMidFetch pins that a binding marked DONE while
+// the catch-up is still downloading is left alone: the report stays a temp
+// file, no ack goes out, and nothing is queued.
+func TestCatchUpDiscardedWhenDoneMidFetch(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	fr := roundClosedRemote()
+	tr := &fakeTransport{beforeAbsorb: func() {
+		if err := st.WithLock(func(tx *store.Tx) error {
+			cur, err := tx.Load("api")
+			if err != nil {
+				return err
+			}
+			cur.State = store.StateDone
+			return tx.Save(cur)
+		}); err != nil {
+			t.Fatalf("mark done mid-fetch: %v", err)
+		}
+	}}
+	rt := Runtime{Store: st, Remote: fr, Transport: tr, Now: func() time.Time { return baseTime }}
+
+	if err := NewDaemon(rt, time.Second).Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != store.StateDone {
+		t.Fatalf("state = %s, want done", got.State)
+	}
+	if _, err := os.Stat(st.ReportPath("api", 1)); err == nil {
+		t.Fatalf("a report was installed for a discarded fetch")
+	}
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+		t.Fatalf("a report entry exists for a discarded fetch: %+v", entries)
+	}
+	if n := countCalls(fr, "Ack:"); n != 0 {
+		t.Fatalf("Ack calls = %d, want 0", n)
+	}
+	assertNoFetchTemps(t, st, "api", 1)
+}
+
+// TestCatchUpFetchAbortLeavesNothing pins that a non-404 download failure
+// aborts the fetch before the bundle and leaves no report and no temp file.
+func TestCatchUpFetchAbortLeavesNothing(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	fr := roundClosedRemote()
+	fr.roundFileFunc = func(_ context.Context, _, _ string, _ int, kind string) (io.ReadCloser, error) {
+		switch kind {
+		case "report":
+			return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
+		case "diff":
+			return nil, &client.HTTPError{Status: 500, Body: remote.ErrorBody{Code: "boom", Message: "diff read failed"}}
+		default:
+			return nil, notFound(kind)
+		}
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if err := NewDaemon(rt, time.Second).Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if _, err := os.Stat(st.ReportPath("api", 1)); err == nil {
+		t.Fatalf("a report was installed from a fetch that aborted on the diff")
+	}
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+		t.Fatalf("a report entry exists for an aborted fetch: %+v", entries)
+	}
+	if n := countCalls(fr, "Ack:"); n != 0 {
+		t.Fatalf("Ack calls = %d, want 0", n)
+	}
+	if n := countCalls(fr, "RoundBundle:"); n != 0 {
+		t.Fatalf("RoundBundle calls = %d, want 0", n)
+	}
+	assertNoFetchTemps(t, st, "api", 1)
+}
+
+// TestTickCatchUpMissingReportHalts pins the reportless close through the tick
+// path: a report 404 on a round the server did not stop halts with today's
+// message.
+func TestTickCatchUpMissingReportHalts(t *testing.T) {
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	fr := &fakeRemote{
+		getBindingResp: remote.BindingView{RoundState: remote.RoundClosed, ClosedRound: 1},
+		roundFileFunc: func(_ context.Context, _, _ string, _ int, kind string) (io.ReadCloser, error) {
+			return nil, notFound(kind)
+		},
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Fatalf("state = %s, want needs_you", got.State)
+	}
+	if !strings.Contains(got.Halt, "closed round 1 without a report file") {
+		t.Errorf("Halt = %q, want the existing reportless-close text", got.Halt)
 	}
 }

@@ -905,6 +905,10 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 
 	case remote.RoundClosed:
 		if view.ClosedRound >= b.Round {
+			if f.CatchUp != nil && f.CatchUp.Round == view.ClosedRound {
+				next, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
+				return next, true, err
+			}
 			next, err := catchUp(ctx, rt, tx, b, view)
 			return next, true, err
 		}
@@ -920,6 +924,10 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 		entries, rerr := tx.ReadLog(name)
 		if rerr == nil && view.ClosedRound >= b.Round &&
 			!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport) {
+			if f.CatchUp != nil && f.CatchUp.Round == view.ClosedRound {
+				next, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
+				return next, true, err
+			}
 			next, err := catchUp(ctx, rt, tx, b, view)
 			return next, true, err
 		}
@@ -1018,6 +1026,7 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 			synced++
 			return tx.Save(next)
 		})
+		f.release()
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
@@ -1204,218 +1213,112 @@ func RenderServers(probes []ServerProbe) string {
 	return sb.String()
 }
 
+// catchUp fetches a closed round's files and bundle and installs them under
+// tx. Callers that fetched ahead pass their fetch to applyCatchUp instead, so
+// only the inline one-off path pays the fetch here.
 func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView) (store.Binding, error) {
+	cf := fetchCatchUp(ctx, rt, b, view)
+	defer cf.release()
+	return applyCatchUp(ctx, rt, tx, b, view, cf)
+}
+
+// applyCatchUpFiles renames the fetched report, log and stream temps into
+// place and stores the diff and DB-form log under tx. A failure anywhere logs
+// as the inline write did and leaves the binding for the next tick.
+func applyCatchUpFiles(rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, cf *catchUpFetch) bool {
 	n := view.ClosedRound
-	server := b.Builder.Server
 	name := b.Name
-
-	// 1. Fetch report, diff, log and write via temp-and-rename.
-	//
-	// A stopped round may have no report file: the builder was killed before
-	// it wrote one, and catchUp writes the stopped payload instead (below).
-	// A 404 on a round that was not stopped still halts, as it always has.
-	haveReport := false
-	rcReport, err := rt.Remote.RoundFile(ctx, server, name, n, "report")
-	if err != nil {
-		var httpErr *client.HTTPError
-		if errors.As(err, &httpErr) && httpErr.Status == 404 {
-			if view.Stopped == "" {
-				return haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s closed round %d without a report file", name, server, n))
-			}
-		} else {
-			slog.Warn("fetch report failed", "server", server, "name", name, "round", n, "err", err)
-			return b, nil
-		}
-	} else {
-		defer rcReport.Close()
-		if err := writeTempAndRename(rt.Store.ReportPath(name, n), rcReport); err != nil {
-			slog.Warn("write report failed", "path", rt.Store.ReportPath(name, n), "err", err)
-			return b, nil
-		}
-		haveReport = true
-	}
-
-	diffDownloaded := false
-	rcDiff, err := rt.Remote.RoundFile(ctx, server, name, n, "diff")
-	if err != nil {
-		var httpErr *client.HTTPError
-		if errors.As(err, &httpErr) && httpErr.Status == 404 {
-			// fine (no diff)
-		} else {
-			slog.Warn("fetch diff failed", "server", server, "name", name, "round", n, "err", err)
-			return b, nil
-		}
-	} else {
-		defer rcDiff.Close()
-		body, err := io.ReadAll(io.LimitReader(rcDiff, git.DefaultMaxPatchBytes+1))
-		if err != nil {
-			slog.Warn("read diff failed", "server", server, "name", name, "round", n, "err", err)
-			return b, nil
-		}
-		if int64(len(body)) > git.DefaultMaxPatchBytes {
-			slog.Warn("remote diff over cap; not stored", "server", server, "name", name, "round", n)
-		} else {
-			if err := tx.PutRoundFile(name, n, rt.Store.DiffPath(name, n), body); err != nil {
-				slog.Warn("store diff failed", "path", rt.Store.DiffPath(name, n), "err", err)
-				return b, nil
-			}
-			diffDownloaded = true
+	if cf.ReportTemp != "" {
+		path := rt.Store.ReportPath(name, n)
+		if err := os.Rename(cf.ReportTemp, path); err != nil {
+			slog.Warn("write report failed", "path", path, "err", err)
+			return false
 		}
 	}
-
-	rcLog, err := rt.Remote.RoundFile(ctx, server, name, n, "log")
-	if err != nil {
-		var httpErr *client.HTTPError
-		if errors.As(err, &httpErr) && httpErr.Status == 404 {
-			// fine
-		} else {
-			slog.Warn("fetch log failed", "server", server, "name", name, "round", n, "err", err)
-			return b, nil
-		}
-	} else {
-		defer rcLog.Close()
-		logPath := rt.Store.BuilderLogPath(name, n)
-		if legacyLog(rt, name, n) {
-			if err := writeTempAndRename(logPath, rcLog); err != nil {
-				slog.Warn("write log failed", "path", logPath, "err", err)
-				return b, nil
-			}
-		} else {
-			body, err := io.ReadAll(io.LimitReader(rcLog, maxMirrorBytes+1))
-			if err != nil {
-				slog.Warn("write log failed", "path", logPath, "err", err)
-				return b, nil
-			}
-			if int64(len(body)) > maxMirrorBytes {
-				slog.Warn("remote log over cap; not stored", "server", server, "name", name, "round", n)
-			} else {
-				if err := tx.PutRoundFile(name, n, logPath, body); err != nil {
-					slog.Warn("write log failed", "path", logPath, "err", err)
-					return b, nil
-				}
-			}
+	if cf.Diff != nil {
+		path := rt.Store.DiffPath(name, n)
+		if err := tx.PutRoundFile(name, n, path, cf.Diff); err != nil {
+			slog.Warn("store diff failed", "path", path, "err", err)
+			return false
 		}
 	}
-
-	// The harness's own record, NNN-builder.jsonl (#240). A server that serves
-	// no stream file answers 404, which is fine, exactly like the log.
-	rcStream, err := rt.Remote.RoundFile(ctx, server, name, n, "stream")
-	if err != nil {
-		var httpErr *client.HTTPError
-		if errors.As(err, &httpErr) && httpErr.Status == 404 {
-			// fine (no stream file)
-		} else {
-			slog.Warn("fetch stream failed", "server", server, "name", name, "round", n, "err", err)
-			return b, nil
-		}
-	} else {
-		defer rcStream.Close()
-		if err := writeTempAndRename(rt.Store.BuilderStreamPath(name, n), rcStream); err != nil {
-			slog.Warn("write stream failed", "path", rt.Store.BuilderStreamPath(name, n), "err", err)
-			return b, nil
+	logPath := rt.Store.BuilderLogPath(name, n)
+	if cf.LogTemp != "" {
+		if err := os.Rename(cf.LogTemp, logPath); err != nil {
+			slog.Warn("write log failed", "path", logPath, "err", err)
+			return false
 		}
 	}
-
-	// 2. RoundBundle
-	rcBundle, err := rt.Remote.RoundBundle(ctx, server, name, n, b.Builder.LastKnown)
-	if err != nil {
-		slog.Warn("fetch round bundle failed", "server", server, "name", name, "round", n, "err", err)
-		return b, nil
-	}
-	if rcBundle != nil {
-		defer rcBundle.Close()
-		branchRef := b.Branch
-		if !strings.HasPrefix(branchRef, "refs/heads/") {
-			branchRef = "refs/heads/" + branchRef
-		}
-		// The server always cuts its own relevo/<name> branch and ships that:
-		// handleRoundBundle snapshots refs/heads/<server branch>, and a server
-		// binding's branch is relevo/<name>. A binding that adopted a branch
-		// (#263) keeps the adopted name locally, so the allow-list names the
-		// server's ref -- not b.Branch -- and the adopted branch is fast
-		// forwarded to the absorbed result below.
-		serverRef := "refs/heads/relevo/" + name
-		refs := []string{serverRef}
-		if view.DirtyCommit != "" {
-			refs = append(refs, fmt.Sprintf("refs/relevo/%s/round-%d", name, n))
-		}
-		if _, err := rt.Transport.Absorb(ctx, b.Repo, remote.ContentTypeGitBundle, rcBundle, refs); err != nil {
-			if strings.Contains(strings.ToLower(err.Error()), "checked out") {
-				if _, seen := checkedOutWarned.LoadOrStore(name, struct{}{}); !seen {
-					slog.Info("checkout another branch, then relevo wait", "binding", name, "branch", b.Branch)
-				} else {
-					slog.Debug("still checked out", "binding", name, "branch", b.Branch)
-				}
-				return b, nil
-			}
-			b.RemoteAbsorbFailures++
-			if b.RemoteAbsorbFailures >= 10 {
-				return haltBinding(ctx, rt, b, fmt.Sprintf("%s: cannot absorb round %d from %s: %s", name, n, server, err.Error()))
-			}
-			return b, nil
-		}
-		checkedOutWarned.Delete(name)
-
-		// An adopted binding's own branch is the one relevo keeps current, so
-		// bring it to the absorbed result with a compare-and-swap against the
-		// sha it had (an empty old means "create or overwrite", which is what
-		// a branch that does not exist locally yet needs). An ordinary
-		// binding has serverRef == branchRef, so this is a no-op for it.
-		if serverRef != branchRef {
-			sha, ok, err := rt.Git.RefSHA(ctx, b.Repo, serverRef)
-			if err != nil {
-				return b, fmt.Errorf("resolve server branch %s after absorb: %w", serverRef, err)
-			}
-			if !ok {
-				return b, fmt.Errorf("server branch %s missing after absorb", serverRef)
-			}
-			old, _, _ := rt.Git.RefSHA(ctx, b.Repo, branchRef)
-			if err := rt.Git.UpdateRef(ctx, b.Repo, branchRef, sha, old); err != nil {
-				// The fast-forward can collide with the same branch being
-				// checked out locally; that is the same quiet retry the
-				// absorb above gets, not an absorb failure.
-				if strings.Contains(strings.ToLower(err.Error()), "checked out") {
-					if _, seen := checkedOutWarned.LoadOrStore(name, struct{}{}); !seen {
-						slog.Info("checkout another branch, then relevo wait", "binding", name, "branch", b.Branch)
-					} else {
-						slog.Debug("still checked out", "binding", name, "branch", b.Branch)
-					}
-					return b, nil
-				}
-				b.RemoteAbsorbFailures++
-				if b.RemoteAbsorbFailures >= 10 {
-					return haltBinding(ctx, rt, b, fmt.Sprintf("%s: cannot fast-forward %s to round %d from %s: %s", name, b.Branch, n, server, err.Error()))
-				}
-				return b, nil
-			}
+	if cf.Log != nil {
+		if err := tx.PutRoundFile(name, n, logPath, cf.Log); err != nil {
+			slog.Warn("write log failed", "path", logPath, "err", err)
+			return false
 		}
 	}
+	streamPath := rt.Store.BuilderStreamPath(name, n)
+	if cf.StreamTemp != "" {
+		if err := os.Rename(cf.StreamTemp, streamPath); err != nil {
+			slog.Warn("write stream failed", "path", streamPath, "err", err)
+			return false
+		}
+	}
+	return true
+}
 
-	// 3. b.Builder.LastKnown = view.ResultCommit; b.RemoteAbsorbFailures = 0
+// applyCatchUpAbsorb records the fetch's bundle outcome in b under tx. stop
+// reports whether it already decided the binding's fate: a checked-out branch
+// and an absorb failure both wait for the next tick, and the tenth failure
+// halts. A fatal ref error is returned to the caller.
+func applyCatchUpAbsorb(ctx context.Context, rt Runtime, b store.Binding, cf *catchUpFetch) (next store.Binding, stop bool, err error) {
+	switch {
+	case cf.CheckedOut:
+		return b, true, nil
+	case cf.AbsorbErr != nil:
+		b.RemoteAbsorbFailures++
+		if b.RemoteAbsorbFailures >= 10 {
+			next, err = haltBinding(ctx, rt, b, cf.AbsorbErr.Error())
+			return next, true, err
+		}
+		return b, true, nil
+	case cf.Fatal != nil:
+		return b, true, cf.Fatal
+	}
+	return b, false, nil
+}
+
+// applyCatchUpSettle carries out the apply half's last steps: it records the
+// absorbed result, acks the round, and queues the report entry. A failed ack
+// leaves the round for the next tick exactly as before.
+func applyCatchUpSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, cf *catchUpFetch) (store.Binding, error) {
+	n := view.ClosedRound
+	server, name := b.Builder.Server, b.Name
+
 	b.Builder.LastKnown = view.ResultCommit
 	b.RemoteAbsorbFailures = 0
 
-	// 4. rt.Remote.Ack(server, name, n)
 	if _, err := rt.Remote.Ack(ctx, server, name, n); err != nil {
 		slog.Warn("ack failed", "server", server, "name", name, "round", n, "err", err)
 		return b, nil
 	}
+	return applyCatchUpReport(ctx, rt, tx, b, view, cf)
+}
 
-	// 5. queueReport. The server already recorded a diff entry at close
-	// (DiffSummary note, commits, clean/dirty); the view carried those three
-	// facts, so write the client's own diff entry from them here -- with the
-	// downloaded patch as Path -- before queueReport, which then sees the
-	// entry already exists and skips its own CaptureRoundDiff. Because
-	// queueReport only appends its "Diff:" line inside that same "no entry
-	// yet" branch, the line is added to the payload here instead, from the
-	// stored facts rather than a fresh DiffResult.
+// applyCatchUpReport queues the round's report entry: the client's own diff
+// entry from the server's facts first, then the payload, the stop entry and
+// the idle status, in the order the inline catch-up used.
+func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, cf *catchUpFetch) (store.Binding, error) {
+	n := view.ClosedRound
+	name := b.Name
+
 	entries, err := tx.ReadLog(name)
 	if err != nil {
 		return b, err
 	}
+	// The server already recorded a diff entry at close; writing the client's
+	// own from the view's facts makes queueReport skip its own capture.
 	if view.DiffNote != "" && !HasEntry(entries, n, store.DirToPlanner, store.KindDiff) {
 		diffPath := ""
-		if diffDownloaded {
+		if cf.Diff != nil {
 			diffPath = rt.Store.DiffPath(name, n)
 		}
 		diffEntry := store.LogEntry{
@@ -1427,9 +1330,40 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 		}
 		entries = append(entries, diffEntry)
 	}
-	reportPath := rt.Store.ReportPath(name, n)
-	payload := ""
-	note := ""
+
+	payload, note := catchUpPayload(b, view, cf.ReportTemp != "")
+	var u *usage.Usage = view.Usage
+	if u == nil {
+		// A pre-usage server ships no figure: record honestly that the server
+		// sent none rather than reading a record the client does not have.
+		u = remoteNoUsage(rt, b, b.RoundStartedAt, rt.Now().UTC())
+	}
+	next, err := queueReport(ctx, rt, tx, b, entries, rt.Store.ReportPath(name, n), payload, note, nil, u, view.Rusage, view.PriorTokens)
+	if err != nil {
+		return b, err
+	}
+	if view.Stopped != "" {
+		// After queueReport, so the entry is filed under the stopped round.
+		if err := tx.AppendLog(name, store.LogEntry{
+			TS: rt.Now().UTC(), Round: n, Direction: store.DirToPlanner,
+			Kind: store.KindStop, Note: "stopped/" + view.Stopped, Confirmed: true,
+		}); err != nil {
+			return next, err
+		}
+	}
+	// The caller (reconcileRemote or SyncRemote) decides whether to deliver.
+	next.Builder.RemoteStatus = "idle"
+	next.Builder.RemoteQueue = nil
+	next.Builder.RemoteLive = nil
+	return next, nil
+}
+
+// catchUpPayload builds the planner payload and note for a collected round:
+// the stopped form when the server stopped it, else the finished form naming
+// the report, both carrying the diff's summary lines.
+func catchUpPayload(b store.Binding, view remote.BindingView, haveReport bool) (payload, note string) {
+	n := view.ClosedRound
+	server, name := b.Builder.Server, b.Name
 	if view.Stopped != "" {
 		payload, note = stopPayload(view.Stopped, name, n, " on "+server, haveReport)
 	} else {
@@ -1444,34 +1378,7 @@ func catchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, vie
 	if view.DirtyCommit != "" {
 		note = joinNotes(note, fmt.Sprintf("uncommitted work at refs/relevo/%s/round-%d", name, n))
 	}
-	var u *usage.Usage = view.Usage
-	if u == nil {
-		// A pre-usage server ships no figure: record honestly that the
-		// server sent none rather than reading a record the client does
-		// not have.
-		u = remoteNoUsage(rt, b, b.RoundStartedAt, rt.Now().UTC())
-	}
-	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, u, view.Rusage, view.PriorTokens)
-	if err != nil {
-		return b, err
-	}
-	if view.Stopped != "" {
-		// After queueReport, the same order closeStopped uses, so the entry is
-		// filed under the round that was stopped (#344).
-		if err := tx.AppendLog(name, store.LogEntry{
-			TS: rt.Now().UTC(), Round: n, Direction: store.DirToPlanner,
-			Kind: store.KindStop, Note: "stopped/" + view.Stopped, Confirmed: true,
-		}); err != nil {
-			return next, err
-		}
-	}
-
-	// 6. Mark idle; the caller (reconcileRemote or SyncRemote) decides
-	// whether to deliver.
-	next.Builder.RemoteStatus = "idle"
-	next.Builder.RemoteQueue = nil
-	next.Builder.RemoteLive = nil
-	return next, nil
+	return payload, note
 }
 
 // ForwardUnavailable tells every remote binding with an open round that its
