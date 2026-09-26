@@ -209,3 +209,87 @@ expect.
 - `git diff --stat`.
 - The mutation check from step 1, and its result.
 - Whether the coverage baseline moved (it should not; do not regenerate it).
+
+---
+
+## Round 2
+
+### #586 round 2: lite-planner at max effort; effort documented for opencode
+
+Round 1 is committed on this branch (`faae6219`). This round adds one small
+change on top of it. Stop and report instead of improvising if any location
+below does not match.
+
+### 1. System Overview
+
+OpenCode already takes an effort: `opencode run -m provider/model#variant`.
+relevo passes the candidate's model verbatim in `-m` (`internal/harness/harness.go`,
+`case "opencode"` of `Launch`), and `candidate.DeriveNames` already strips
+`#<variant>` when naming a candidate. This round needs no parsing change. It:
+
+1. ships `lite-planner` at max effort: the `PlannerDefaults` entry's model
+   becomes `deepseek/deepseek-v4.1-flash#max`. Its derived name stays
+   `deepseek-v4.1-flash`;
+2. pins, in a test, that an opencode launch keeps `#max` verbatim in `-m`;
+3. documents effort for every harness in the README's candidates section.
+
+### 2. Files
+
+```
+internal/setup/setup.go            PlannerDefaults lite-planner model -> "deepseek/deepseek-v4.1-flash#max"
+internal/setup/setup_test.go       assert the lite-planner candidate's model carries "#max"
+internal/harness/harness_test.go   new TestLaunchOpencodeKeepsVariant
+README.md                          effort sentence covers claude, codex and opencode
+docs/plans/2026-09-26-planner-actors-586.md   append this round as "## Round 2"
+```
+
+### 3. Contracts
+
+- `setup.PlannerDefaults` (`internal/setup/setup.go`, the `lite-planner` row):
+  the model is `deepseek/deepseek-v4.1-flash#max`. Nothing else in `Plan` changes.
+- `TestPlanSeedsPlannerActors` (`internal/setup/setup_test.go`): it already
+  checks the actor candidate names. Add an assertion that the candidate
+  written for `lite-planner` has `Harness=="opencode"`,
+  `Provider=="openrouter"` and `Model=="deepseek/deepseek-v4.1-flash#max"`,
+  and that the `planner` one has `Model=="opus:medium"`. The derived names stay
+  `opus` and `deepseek-v4.1-flash`.
+- `TestLaunchOpencodeKeepsVariant` (`internal/harness/harness_test.go`, next to
+  `TestLaunchClaudeEffort`): `Lookup("opencode").Launch("cline-pass",
+  "cline-pass/deepseek-v4.1-flash#max", nil, builder, TierHarness)` gives a
+  `Print` whose element after `-m` is exactly
+  `cline-pass/cline-pass/deepseek-v4.1-flash#max`, and which has no `--effort`
+  and no `--variant`.
+- README:
+  - Find round 1's sentence about a claude model ending in
+    `:low|medium|high|xhigh|max` (after the codex-effort paragraph, ~line 1204).
+    Make it one short paragraph covering all three:
+    - codex: `model:<effort>`;
+    - claude: `model:<low|medium|high|xhigh|max>`, which sets `--effort`; any
+      other suffix stays part of the model id;
+    - opencode: `model#<variant>`, passed to `opencode run -m`. Variants are
+      per model, and opencode refuses an unknown one.
+  - Update the init example output line if it shows model strings. It shows
+    names only, so it probably needs no change.
+
+### 4. Working Efficiently
+
+- Read `internal/setup/setup.go`, `internal/setup/setup_test.go`,
+  `internal/harness/harness_test.go` (around `TestLaunchClaudeEffort`) and
+  `README.md` around the effort sentence in one parallel batch.
+- One edit call per file.
+- Focused: `go test ./internal/setup/ ./internal/harness/ ./cmd/relevo/ -run 'Plan|Launch|Init'`.
+- Full check once at the end: `make check`, then `gofmt -l .`.
+
+### 5. Steps
+
+1. Change the model in setup.go and extend `TestPlanSeedsPlannerActors`.
+   Verify: `go test ./internal/setup/`.
+2. Add `TestLaunchOpencodeKeepsVariant`. Verify with the focused command.
+3. Update the README paragraph.
+4. Run `make check` and `gofmt -l .`. Append this plan to
+   `docs/plans/2026-09-26-planner-actors-586.md` under `## Round 2`. Commit on
+   the branch as a new commit, not an amend, with a message referencing #586.
+
+### Report must include
+
+`git diff --stat HEAD~1`, and the `make check` result.

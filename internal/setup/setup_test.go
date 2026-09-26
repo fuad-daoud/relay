@@ -120,6 +120,30 @@ func TestPlanSeedsPlannerActors(t *testing.T) {
 	if want := []string{"builder", "planner", "lite-planner"}; !reflect.DeepEqual(files.ActorOrder, want) {
 		t.Errorf("ActorOrder = %v, want %v", files.ActorOrder, want)
 	}
+
+	var cands []candidate.Candidate
+	if err := json.Unmarshal(files.Candidates, &cands); err != nil {
+		t.Fatalf("unmarshal candidates: %v", err)
+	}
+	var plannerCand, liteCand candidate.Candidate
+	var havePlanner, haveLite bool
+	for _, c := range cands {
+		switch c.Model {
+		case "opus:medium":
+			plannerCand, havePlanner = c, true
+		case "deepseek/deepseek-v4.1-flash#max":
+			liteCand, haveLite = c, true
+		}
+	}
+	if !havePlanner || plannerCand.Model != "opus:medium" {
+		t.Errorf("candidates carry no planner model opus:medium: %s", files.Candidates)
+	}
+	if !haveLite {
+		t.Fatalf("candidates carry no lite-planner model deepseek/deepseek-v4.1-flash#max: %s", files.Candidates)
+	}
+	if liteCand.Harness != "opencode" || liteCand.Provider != "openrouter" {
+		t.Errorf("lite-planner candidate = %+v, want harness opencode and provider openrouter", liteCand)
+	}
 }
 
 func TestPlanSkipsPlannerWithoutItsHarness(t *testing.T) {

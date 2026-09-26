@@ -464,6 +464,31 @@ func TestLaunchClaudeEffort(t *testing.T) {
 	}
 }
 
+func TestLaunchOpencodeKeepsVariant(t *testing.T) {
+	builder, ok := RoleByName("builder")
+	if !ok {
+		t.Fatal("RoleByName(\"builder\") not found")
+	}
+	h, ok := Lookup("opencode")
+	if !ok {
+		t.Fatal("Lookup(\"opencode\") not found")
+	}
+
+	got, err := h.Launch("cline-pass", "cline-pass/deepseek-v4.1-flash#max", nil, builder, TierHarness)
+	if err != nil {
+		t.Fatalf("Launch error = %v", err)
+	}
+	if !containsAdjacent(got.Print, "-m", "cline-pass/cline-pass/deepseek-v4.1-flash#max") {
+		t.Errorf("Print = %v, want -m cline-pass/cline-pass/deepseek-v4.1-flash#max", got.Print)
+	}
+	if contains(got.Print, "--effort") {
+		t.Errorf("Print carries --effort: %v", got.Print)
+	}
+	if contains(got.Print, "--variant") {
+		t.Errorf("Print carries --variant: %v", got.Print)
+	}
+}
+
 func TestLaunchCodex(t *testing.T) {
 	builder, ok := RoleByName("builder")
 	if !ok {

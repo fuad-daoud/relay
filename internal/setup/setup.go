@@ -31,7 +31,7 @@ type PlannerDefault struct{ Actor, Kind, Provider, Model string }
 // PlannerDefaults are those actors in written order: planner, then lite-planner.
 var PlannerDefaults = []PlannerDefault{
 	{"planner", "claude", "anthropic", "opus:medium"},
-	{"lite-planner", "opencode", "openrouter", "deepseek/deepseek-v4.1-flash"},
+	{"lite-planner", "opencode", "openrouter", "deepseek/deepseek-v4.1-flash#max"},
 }
 
 // Files is the starter configuration Plan produced, ready to store.
