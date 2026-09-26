@@ -139,19 +139,12 @@ jobs:
         # ubuntu and macos are the supported platforms; 1.25 is the floor
         # declared in go.mod, and stable catches anything the newest toolchain
         # starts complaining about.
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
         go: ['1.25', 'stable']
         # Each leg runs 3 shards: a third of the packages and a third of
         # internal/relevo's tests, which is what fits the race run in the job's
-        # wall time. On main the two macOS legs make 6 macOS jobs, one over the
-        # free plan's cap of 5 concurrent macOS jobs, so one of them queues.
-        # Main is never cancelled, so queueing only costs time.
+        # wall time.
         shard: [0, 1, 2]
-        # PRs skip macOS on the 1.25 floor to stay under the free plan's
-        # 5-concurrent-macOS-job cap; main still runs the full matrix.
-        exclude:
-          - os: ${{ github.event_name == 'pull_request' && 'macos-latest' || 'none' }}
-            go: '1.25'
     steps:
       - uses: actions/checkout@v4
 
@@ -190,6 +183,64 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
+
+  # macOS is its own job so the coverage job, which only reads ubuntu/stable
+  # shards, never waits behind the free plan's 5-job macOS queue.
+  test-macos:
+    name: test (${{ matrix.os }}, go ${{ matrix.go }}, ${{ matrix.shard }}/3)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ${{ matrix.os }}
+    env:
+      # Go < 1.24 does not emit an LC_UUID load command on darwin unless
+      # told to, and the current macOS dyld refuses to load a binary
+      # without one -- the race-test binary of any package that imports
+      # net dies with "dyld: missing LC_UUID load command" before its
+      # tests start. -B gobuildid is the opt-in the 1.22/1.23 backports
+      # added (golang/go#68678); on 1.24+ it is already the default.
+      GOFLAGS: -ldflags=-B=gobuildid
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu and macos are the supported platforms; 1.25 is the floor
+        # declared in go.mod, and stable catches anything the newest toolchain
+        # starts complaining about.
+        os: [macos-latest]
+        go: ['1.25', 'stable']
+        # Each leg runs 3 shards: a third of the packages and a third of
+        # internal/relevo's tests, which is what fits the race run in the job's
+        # wall time. On main the two macOS legs make 6 macOS jobs, one over the
+        # free plan's cap of 5 concurrent macOS jobs, so one of them queues.
+        # Main is never cancelled, so queueing only costs time.
+        shard: [0, 1, 2]
+        # PRs skip macOS on the 1.25 floor to stay under the free plan's
+        # 5-concurrent-macOS-job cap; main still runs the full matrix.
+        exclude:
+          - go: ${{ github.event_name == 'pull_request' && '1.25' || 'none' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: test shard
+        run: sh scripts/test-shard.sh ${{ matrix.shard }} 3 .shard
+
+      # Shellcheck and the scripts' own tests stay on every os x go leg, run by
+      # shard 0, so the BSD userland on macOS keeps exercising them.
+      - name: install shellcheck
+        if: matrix.shard == 0
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew install shellcheck
+          else
+            sudo apt-get update && sudo apt-get install -y shellcheck
+          fi
+
+      - name: check scripts
+        if: matrix.shard == 0
+        run: make check-scripts
 
   # Merges the shards' coverage and runs the unchanged baseline guard on it.
   # `needs` includes test, so a red test is never reported as a coverage
