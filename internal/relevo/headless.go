@@ -741,7 +741,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// omission noted (spec §4.4).
 	reportPath := rt.Store.ReportPath(b.Name, b.Round)
 	if _, err := os.Stat(reportPath); err == nil {
-		_, m, _, err := gateOnLimit(ctx, rt, tx, b, builderTail(rt, b, limitScanLines), false)
+		_, m, _, err := gateOnLimit(ctx, rt, tx, b, currentBuilderTail(rt, b, limitScanLines), false)
 		if err != nil {
 			return b, err
 		}
@@ -780,7 +780,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			c = cand
 		}
 	}
-	denialLine, isDenial := matchDenial(builderTail(rt, b, limitScanLines), denialPatterns(c, h))
+	denialLine, isDenial := matchDenial(currentBuilderTail(rt, b, limitScanLines), denialPatterns(c, h))
 	suffix := ""
 	if isDenial {
 		suffix = "; permission-blocked: " + denialLine
@@ -920,7 +920,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return haltBinding(ctx, rt, b, escapeDiagnosis(b, codeText))
 	}
 
-	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, builderTail(rt, b, limitScanLines), false)
+	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, currentBuilderTail(rt, b, limitScanLines), false)
 	if handled {
 		return next, err
 	}

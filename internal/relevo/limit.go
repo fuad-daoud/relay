@@ -322,10 +322,11 @@ func limitPatterns(rt Runtime, token string) []*regexp.Regexp {
 }
 
 // limitText is the text a decision point scans for rate-limit patterns: the
-// tail of the round's transcript -- its log when it has one, otherwise its
-// rendered stream. A local builder is always headless since #303.
+// tail of the current builder process's output -- its log when the round has
+// one, otherwise the bytes it appended to the round's stream. A local builder
+// is always headless since #303.
 func limitText(ctx context.Context, rt Runtime, b store.Binding) string {
-	return builderTail(rt, b, limitScanLines)
+	return currentBuilderTail(rt, b, limitScanLines)
 }
 
 // gateOnLimit is the one helper every decision point calls (spec §4.4).
