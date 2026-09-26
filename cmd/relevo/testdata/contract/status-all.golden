@@ -1,0 +1,77 @@
+{
+  "bindings": [
+    {
+      "name": "webshop",
+      "cwd": "<ROOT0>/work/webshop",
+      "round": 2,
+      "state": "active",
+      "display": "ACTIVE",
+      "builder_candidate": "",
+      "planner_id": "<PLANNER>",
+      "planner_name": "architect-1",
+      "planner_kind": "",
+      "planner_route": "pull",
+      "planner_route_live": false,
+      "builder_kind": "",
+      "builder_status": "unknown",
+      "last": {
+        "ts": "<TIME>",
+        "round": 1,
+        "direction": "to_planner",
+        "kind": "report"
+      },
+      "last_seq": 1,
+      "last_payload": {
+        "ts": "<TIME>",
+        "round": 1,
+        "direction": "to_planner",
+        "kind": "report"
+      },
+      "dirty": false,
+      "pending": {
+        "round": 1,
+        "kind": "report"
+      },
+      "landed_at": "<TIME>",
+      "last_progress_at": "<TIME>",
+      "unread": true
+    },
+    {
+      "name": "hosted",
+      "cwd": "<ROOT0>/work/hosted",
+      "round": 1,
+      "state": "active",
+      "display": "ACTIVE",
+      "builder_candidate": "",
+      "planner_kind": "",
+      "planner_route": "pull",
+      "planner_route_live": false,
+      "builder_kind": "",
+      "builder_status": "unknown",
+      "last_seq": 0,
+      "server": "relevo.example.test",
+      "dirty": false,
+      "landed_at": "<TIME>",
+      "last_progress_at": "<TIME>",
+      "unread": false
+    },
+    {
+      "name": "archived",
+      "cwd": "<ROOT0>/work/archived",
+      "round": 1,
+      "state": "done",
+      "display": "DONE",
+      "builder_candidate": "",
+      "planner_kind": "",
+      "planner_route": "pull",
+      "planner_route_live": false,
+      "builder_kind": "",
+      "builder_status": "unknown",
+      "last_seq": 0,
+      "dirty": false,
+      "landed_at": "<TIME>",
+      "last_progress_at": "<TIME>",
+      "unread": false
+    }
+  ]
+}
