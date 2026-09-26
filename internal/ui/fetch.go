@@ -39,7 +39,7 @@ type tabContent struct {
 	err    error     // fetch failure, scoped to this tab alone
 	empty  string    // prose explaining expected emptiness
 	round  int       // the round the body belongs to (report, diff); 0 when not round-keyed
-	at     time.Time // when the body was read; the source line's "13:38" and "captured 1s ago"
+	at     time.Time // the event time for plan and report (zero when unknown), the read time for the others
 
 	// transcript is true when the body is a rendered round log (headless
 	// stream or pane session record, #184): colour markers, show the log
@@ -105,7 +105,6 @@ func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
 				t:     tabPlan,
 				content: tabContent{
 					loaded: true,
-					at:     time.Now(),
 					round:  round,
 					err:    unresolvedKey(key),
 				},
@@ -118,7 +117,6 @@ func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
 				t:     tabPlan,
 				content: tabContent{
 					loaded: true,
-					at:     time.Now(),
 					round:  round,
 					empty:  "no completed round yet",
 				},
@@ -133,7 +131,6 @@ func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
 					t:     tabPlan,
 					content: tabContent{
 						loaded: true,
-						at:     time.Now(),
 						round:  round,
 						empty:  fmt.Sprintf("no plan for round %d", round),
 					},
@@ -145,19 +142,33 @@ func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
 				t:     tabPlan,
 				content: tabContent{
 					loaded: true,
-					at:     time.Now(),
 					round:  round,
 					err:    err,
 				},
 			}
 		}
+
+		// The plan tab's time is when the plan was sent, from the log entry
+		// that recorded it. A log read failure or a missing entry leaves the
+		// time unknown; it never fails the tab.
+		var at time.Time
+		if entries, lerr := rt.Store.ReadLog(name); lerr == nil {
+			for i := len(entries) - 1; i >= 0; i-- {
+				e := entries[i]
+				if e.Round == round && e.Direction == store.DirToBuilder && e.Kind == store.KindPlan {
+					at = e.TS
+					break
+				}
+			}
+		}
+
 		return tabMsg{
 			name:  key,
 			round: round,
 			t:     tabPlan,
 			content: tabContent{
 				loaded: true,
-				at:     time.Now(),
+				at:     at,
 				round:  round,
 				body:   string(data),
 			},
@@ -181,7 +192,6 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 				t:     tabReport,
 				content: tabContent{
 					loaded: true,
-					at:     time.Now(),
 					err:    unresolvedKey(key),
 				},
 			}
@@ -194,7 +204,6 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 				t:     tabReport,
 				content: tabContent{
 					loaded: true,
-					at:     time.Now(),
 					err:    err,
 				},
 			}
@@ -214,7 +223,7 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 						t:     tabReport,
 						content: tabContent{
 							loaded: true,
-							at:     time.Now(),
+							at:     e.TS,
 							round:  round,
 							empty:  fmt.Sprintf("round %d report has no payload", round),
 						},
@@ -226,7 +235,7 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 					t:     tabReport,
 					content: tabContent{
 						loaded: true,
-						at:     time.Now(),
+						at:     e.TS,
 						round:  round,
 						body:   e.Payload,
 					},
@@ -241,7 +250,6 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 				t:     tabReport,
 				content: tabContent{
 					loaded: true,
-					at:     time.Now(),
 					empty:  "round 1 in flight; no report yet",
 				},
 			}
@@ -253,7 +261,6 @@ func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd
 			t:     tabReport,
 			content: tabContent{
 				loaded: true,
-				at:     time.Now(),
 				round:  round,
 				empty:  fmt.Sprintf("round %d is open; report arrives when it closes", round),
 			},
@@ -663,20 +670,19 @@ func fetchShow(ctx context.Context, rt relevo.Runtime, name string, round int, s
 	return func() tea.Msg {
 		res, err := relevo.Show(ctx, rt, relevo.ShowOptions{Name: name, Round: round, Section: section})
 		if err != nil {
-			return tabMsg{
-				name:  name,
-				round: round,
-				t:     t,
-				content: tabContent{
-					loaded: true,
-					at:     time.Now(),
-					round:  round,
-					err:    err,
-				},
+			content := tabContent{loaded: true, round: round, err: err}
+			if t != tabPlan && t != tabReport {
+				content.at = time.Now()
 			}
+			return tabMsg{name: name, round: round, t: t, content: content}
 		}
 
-		content := tabContent{loaded: true, at: time.Now(), round: round}
+		// Show carries no event time for a plan or report section, so those
+		// source lines stay timeless rather than claiming the read time.
+		content := tabContent{loaded: true, round: round}
+		if t != tabPlan && t != tabReport {
+			content.at = time.Now()
+		}
 		switch {
 		case section == relevo.ShowLog:
 			if len(res.Events) == 0 {

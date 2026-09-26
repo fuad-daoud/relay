@@ -385,3 +385,74 @@ func TestFleetCardNoEmptyPart(t *testing.T) {
 		t.Errorf("card contains empty part '·    ·':\n%s", plain)
 	}
 }
+
+func TestFleetReportedRowShowsTheRoundThatReported(t *testing.T) {
+	now := railNow
+	b := relevo.BindingStatus{
+		Name:          "b-idle",
+		Round:         3,
+		Display:       "ACTIVE",
+		BuilderStatus: "idle",
+		LastPayload: &relevo.LastEvent{
+			Round:     2,
+			Direction: store.DirToPlanner,
+			Kind:      store.KindReport,
+			TS:        now.Add(-2 * time.Minute),
+		},
+	}
+
+	if got := stripANSI(rowNow(b, now)); !strings.HasPrefix(got, "r2 · reported") {
+		t.Errorf("rowNow = %q, want it to start with %q", got, "r2 · reported")
+	}
+
+	f := fleetView{}
+	env := Env{Now: now, Width: 140, Height: 40}
+	card := stripANSI(strings.Join(f.cardLines(env, b, 140), "\n"))
+	if !strings.Contains(card, "round 2 · reported") {
+		t.Errorf("card must say %q, got:\n%s", "round 2 · reported", card)
+	}
+	if strings.Contains(card, "round 3") {
+		t.Errorf("card must not name the next round, got:\n%s", card)
+	}
+}
+
+func TestFleetWorkingRowShowsTheRoundInFlight(t *testing.T) {
+	b := relevo.BindingStatus{
+		Name:          "b-work",
+		Round:         3,
+		Display:       "ACTIVE",
+		BuilderStatus: "working",
+		LastPayload: &relevo.LastEvent{
+			Round:     3,
+			Direction: store.DirToBuilder,
+			Kind:      store.KindPlan,
+		},
+	}
+	if got := stripANSI(rowNow(b, railNow)); !strings.HasPrefix(got, "r3 · ") {
+		t.Errorf("rowNow = %q, want it to start with %q", got, "r3 · ")
+	}
+}
+
+func TestGatedLineEndsInEllipsisWhenCut(t *testing.T) {
+	env := Env{
+		Now: railNow,
+		Report: relevo.Report{Gated: []ledger.Gate{
+			{Token: "agy/antigravity-community-build/claude", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(10 * time.Minute)},
+			{Token: "codex/openrouter-free-tier/gpt-5", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(20 * time.Minute)},
+			{Token: "claude/anthropic-claude-enterprise/sonnet", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(30 * time.Minute)},
+		}},
+	}
+
+	full := stripANSI(gatedLine(env, 200))
+	if !strings.Contains(full, "anthropic-claude-enterprise") || strings.Contains(full, "…") {
+		t.Fatalf("a line that fits must be intact and unellipsised, got %q", full)
+	}
+
+	cut := gatedLine(env, 80)
+	if got := lipgloss.Width(cut); got != 80 {
+		t.Errorf("gatedLine(env, 80) is %d cells wide, want 80", got)
+	}
+	if plain := strings.TrimRight(stripANSI(cut), " "); !strings.HasSuffix(plain, "…") {
+		t.Errorf("a cut gated line must end in an ellipsis, got %q", plain)
+	}
+}

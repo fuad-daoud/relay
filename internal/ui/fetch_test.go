@@ -72,6 +72,67 @@ func TestFetchPlanLive(t *testing.T) {
 	}
 }
 
+// TestFetchPlanTimeIsWhenThePlanWasSent pins the plan tab's time to the plan
+// log entry's TS, not to the moment the tab was read.
+func TestFetchPlanTimeIsWhenThePlanWasSent(t *testing.T) {
+	st := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: st}
+	name := "webshop"
+
+	b := newTestBinding(name)
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	planPath := st.PlanPath(name, 2)
+	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, []byte("# Round 2 plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sent := time.Date(2026, 9, 8, 12, 0, 0, 0, time.Local)
+	if err := st.AppendLog(name, store.LogEntry{
+		TS: sent, Round: 2, Direction: store.DirToBuilder, Kind: store.KindPlan, Path: planPath,
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	tMsg := fetchPlan(context.Background(), plannerSource{rt}, name, 2)().(tabMsg)
+	if tMsg.content.err != nil {
+		t.Fatalf("unexpected error: %v", tMsg.content.err)
+	}
+	if !tMsg.content.at.Equal(sent) {
+		t.Errorf("content.at = %v, want the plan entry's TS %v", tMsg.content.at, sent)
+	}
+}
+
+// TestFetchReportTimeIsWhenTheReportArrived pins the report tab's time to the
+// report log entry's TS.
+func TestFetchReportTimeIsWhenTheReportArrived(t *testing.T) {
+	st := store.New(t.TempDir())
+	rt := relevo.Runtime{Store: st}
+	name := "webshop"
+
+	b := newTestBinding(name)
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	arrived := time.Date(2026, 9, 8, 12, 30, 0, 0, time.Local)
+	if err := st.AppendLog(name, store.LogEntry{
+		TS: arrived, Round: 2, Direction: store.DirToPlanner, Kind: store.KindReport, Payload: "round 2 report",
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	tMsg := fetchReport(context.Background(), plannerSource{rt}, name, 2)().(tabMsg)
+	if tMsg.content.err != nil {
+		t.Fatalf("unexpected error: %v", tMsg.content.err)
+	}
+	if !tMsg.content.at.Equal(arrived) {
+		t.Errorf("content.at = %v, want the report entry's TS %v", tMsg.content.at, arrived)
+	}
+}
+
 func TestFetchStatusReturnsExactlyOneMessage(t *testing.T) {
 	st := store.New(t.TempDir())
 	rt := relevo.Runtime{

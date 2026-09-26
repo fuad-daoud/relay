@@ -90,6 +90,18 @@ var groupMetas = map[fleetGroup]groupMeta{
 	},
 }
 
+// shownRound is the round to name on a row: a closed round's Round already
+// names the next round, so the round that reported comes from the payload,
+// the same rule as the status line.
+func shownRound(b relevo.BindingStatus) int {
+	if b.LastPayload != nil &&
+		b.LastPayload.Direction == store.DirToPlanner &&
+		(b.LastPayload.Kind == store.KindReport || b.LastPayload.Kind == store.KindQuestion) {
+		return b.LastPayload.Round
+	}
+	return b.Round
+}
+
 func rowNow(b relevo.BindingStatus, now time.Time) string {
 	g := groupOf(b)
 	if g == groupDone {
@@ -97,8 +109,8 @@ func rowNow(b relevo.BindingStatus, now time.Time) string {
 	}
 
 	rndPrefix := ""
-	if b.Round > 0 {
-		rndPrefix = fmt.Sprintf("r%d · ", b.Round)
+	if sr := shownRound(b); sr > 0 {
+		rndPrefix = fmt.Sprintf("r%d · ", sr)
 	}
 
 	switch g {

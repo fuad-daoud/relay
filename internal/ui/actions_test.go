@@ -214,7 +214,13 @@ func actionModel(t *testing.T, a Actions, rows ...relevo.BindingStatus) Model {
 // the Actions seam.
 func goldenActionModel(t *testing.T, width, height int, a Actions, rep relevo.Report) Model {
 	t.Helper()
-	st := store.New(t.TempDir())
+	return goldenActionModelWithStore(t, width, height, a, rep, store.New(t.TempDir()))
+}
+
+// goldenActionModelWithStore is goldenActionModel over st, so a fixture whose
+// plan tab reads its body and sent time from a seeded store can supply it.
+func goldenActionModelWithStore(t *testing.T, width, height int, a Actions, rep relevo.Report, st *store.Store) Model {
+	t.Helper()
 	m := newModel(context.Background(), plannerSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Actions: a, Version: "v0.13.0-28-gb66c6fc"})
 	m.now = func() time.Time { return railNow }
 	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})

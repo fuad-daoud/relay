@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // envNow is the clock a view hands the roundPane: the shell reads time once
@@ -346,8 +347,18 @@ func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		if !msg.ok {
 			return r, nil
 		}
+		// The source line shows when the report arrived, from the row's
+		// LastPayload; without a matching report payload the time is unknown.
+		at := time.Time{}
+		if b := row(env.Report, r.pane.detail.name); b != nil &&
+			b.LastPayload != nil &&
+			b.LastPayload.Direction == store.DirToPlanner &&
+			b.LastPayload.Kind == store.KindReport &&
+			b.LastPayload.Round == r.pane.detail.round {
+			at = b.LastPayload.TS
+		}
 		r.pane.detail.cache[tabReport] = tabContent{
-			loaded: true, body: msg.text, round: r.pane.detail.round, at: env.Now,
+			loaded: true, body: msg.text, round: r.pane.detail.round, at: at,
 		}
 		r.pane.detail.active = tabReport
 		r.pane.fillViewport()

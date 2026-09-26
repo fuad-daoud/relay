@@ -283,6 +283,24 @@ func TestRoundNoRawToken(t *testing.T) {
 	}
 }
 
+func TestSourceLineOmitsTimeWhenUnknown(t *testing.T) {
+	b := relevo.BindingStatus{Name: "a", Round: 3, Display: "ACTIVE"}
+	p := paneModel(t, b, tabPlan)
+	p.detail.cache[tabPlan] = tabContent{loaded: true, body: "x", round: 2}
+	if got := stripANSI(p.sourceLine()); got != "plan r2" {
+		t.Errorf("plan source = %q, want %q", got, "plan r2")
+	}
+	p.detail.active = tabReport
+	p.detail.cache[tabReport] = tabContent{loaded: true, body: "x", round: 2}
+	got := stripANSI(p.sourceLine())
+	if got != "report r2" {
+		t.Errorf("report source = %q, want %q", got, "report r2")
+	}
+	if strings.Contains(got, " · ") {
+		t.Errorf("a source line with an unknown time must have no separator, got %q", got)
+	}
+}
+
 func TestDiffStatAndColour(t *testing.T) {
 	patch := "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,2 +1,3 @@\n context\n-old\n+new\n+more\ndiff --git a/y.go b/y.go\n@@ -1 +1 @@\n-a\n+b\n"
 	files, add, del := diffStat(patch)
