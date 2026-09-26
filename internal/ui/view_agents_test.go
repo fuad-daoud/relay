@@ -361,6 +361,50 @@ func TestAgentResetOnEditNewerSaysNewerCopy(t *testing.T) {
 	}
 }
 
+// A shipped agent's four reset notes keep their exact wording, whether the file
+// is edited, stale, edit + newer, or missing (§4).
+func TestAgentViewShippedResetWordingUnchanged(t *testing.T) {
+	cases := []struct {
+		name  string
+		state harness.FileState
+		want  string
+	}{
+		{"edited", harness.FileEdited, "with the copy this relevo ships; your edit is lost"},
+		{"stale", harness.FileStale, "with the copy this relevo ships; relevo has a newer copy"},
+		{"edit + newer", harness.FileEditedNewer, "with the newer copy this relevo ships; your edit is lost"},
+		{"missing", harness.FileMissing, "the copy this relevo ships"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			files := agentFileFixtures(t)
+			for i := range files["researcher"] {
+				if files["researcher"][i].Kind == "claude" {
+					files["researcher"][i].State = tc.state
+				}
+			}
+			fa := &fakeActions{doc: candFixtureDoc(t), files: files}
+			v := agentFixtureView(t, fa, "researcher")
+			v.cur = 1 // claude
+
+			_, cmd := v.Update(key('r'), candActionEnv(fa, relevo.Report{}))
+			if cmd == nil {
+				t.Fatal("r must return a command")
+			}
+			open, ok := cmd().(openOverlayMsg)
+			if !ok {
+				t.Fatalf("r gave %T, want an overlay", cmd())
+			}
+			box, ok := open.ov.(confirmBox)
+			if !ok {
+				t.Fatalf("r opened %T, want a confirmBox", open.ov)
+			}
+			if want := pad("", 11) + tc.want; box.lines[1] != want {
+				t.Errorf("reset note = %q, want %q", box.lines[1], want)
+			}
+		})
+	}
+}
+
 // r on a file relevo has never written confirms a write, then writes exactly
 // that (kind, agent) pair (§3, round 6).
 func TestAgentResetMissingConfirmsWrite(t *testing.T) {
@@ -469,8 +513,8 @@ func TestAgentViewSourceCustomAgentResets(t *testing.T) {
 	if !box.danger || box.kind != "reset" {
 		t.Errorf("reset confirm = kind %q danger %v, want reset danger", box.kind, box.danger)
 	}
-	if got := strings.Join(box.lines, "\n"); !strings.Contains(got, "relevo renders from your config") {
-		t.Errorf("a source agent's reset note must name the config:\n%s", got)
+	if want := pad("", 11) + "with the copy relevo renders from your config; your edit is lost"; box.lines[1] != want {
+		t.Errorf("a source agent's reset note = %q, want %q", box.lines[1], want)
 	}
 
 	_, yes, closed := box.update(key('y'))
