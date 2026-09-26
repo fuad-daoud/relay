@@ -1,6 +1,6 @@
 //go:build !unix
 
-package delivery
+package relevo
 
 // defaultClaimAlive: relevo targets Linux and macOS; on other platforms no
 // claim is ever live, so the daemon always delivers to the pane.

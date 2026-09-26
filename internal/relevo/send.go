@@ -13,7 +13,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/capture"
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -746,7 +745,7 @@ func absoluteOr(path string) string {
 // origin line naming the round and builder, followed by a blank line and the
 // handoff text (#139).
 func composePrompt(b store.Binding, planPath, reportPath, donePath string) string {
-	origin := delivery.OriginLine(b.Name, b.Round, store.DirToBuilder, store.KindPlan)
+	origin := OriginLine(b.Name, b.Round, store.DirToBuilder, store.KindPlan)
 	body := fmt.Sprintf(builderPrompt, b.CWD, planPath, reportPath, donePath)
 	return origin + "\n\n" + body
 }

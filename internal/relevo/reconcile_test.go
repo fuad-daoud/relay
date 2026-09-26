@@ -10,7 +10,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/classify"
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -759,7 +758,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if report.Outcome != OutcomeDone {
 			t.Errorf("Outcome = %q, want %q", report.Outcome, OutcomeDone)
 		}
-		wantOrigin := delivery.OriginLine("webshop", 1, store.DirToPlanner, store.KindReport)
+		wantOrigin := OriginLine("webshop", 1, store.DirToPlanner, store.KindReport)
 		lines := strings.Split(report.Payload, "\n")
 		if len(lines) < 3 {
 			t.Fatalf("unexpected payload lines: %q", report.Payload)

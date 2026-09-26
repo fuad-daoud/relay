@@ -33,7 +33,7 @@ const maxLineBytes = 16 << 20
 // metaKeyPattern is what Claude Code accepts as a meta key: an identifier.
 var metaKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// Server is relevo mcp's JSON-RPC 2.0 loop over stdio; it implements delivery.Pusher via Push.
+// Server is relevo mcp's JSON-RPC 2.0 loop over stdio; it implements relevo.Pusher via Push.
 type Server struct {
 	Verbs   Verbs
 	Version string // serverInfo.version
@@ -305,7 +305,7 @@ func (s *Server) writeLine(raw []byte) {
 	}
 }
 
-// Push implements delivery.Pusher, writing one notifications/claude/channel
+// Push implements relevo.Pusher, writing one notifications/claude/channel
 // line; a meta key that is not a legal identifier is dropped and logged.
 func (s *Server) Push(ctx context.Context, content string, meta map[string]string) error {
 	clean := make(map[string]string, len(meta))

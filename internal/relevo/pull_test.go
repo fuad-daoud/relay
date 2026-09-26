@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -151,7 +150,7 @@ func TestPullPendingPrintsReportText(t *testing.T) {
 	}
 }
 
-// TestPullPendingCapsReportText: a report larger than delivery.MaxPushBytes is cut back
+// TestPullPendingCapsReportText: a report larger than MaxPushBytes is cut back
 // to the cap and names the `relevo show` command that prints the full text
 // (§4.2).
 func TestPullPendingCapsReportText(t *testing.T) {
@@ -159,8 +158,8 @@ func TestPullPendingCapsReportText(t *testing.T) {
 
 	rt := routeRuntime(t)
 	path := filepath.Join(t.TempDir(), "001-report.md")
-	// Exactly delivery.MaxPushBytes + 4096 bytes of newline-terminated lines.
-	if err := os.WriteFile(path, []byte(strings.Repeat("x\n", (delivery.MaxPushBytes+4096)/2)), 0o644); err != nil {
+	// Exactly MaxPushBytes + 4096 bytes of newline-terminated lines.
+	if err := os.WriteFile(path, []byte(strings.Repeat("x\n", (MaxPushBytes+4096)/2)), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
 	seedPendingReport(t, rt, "webshop", path, store.KindReport)
@@ -173,12 +172,12 @@ func TestPullPendingCapsReportText(t *testing.T) {
 		t.Fatal("pullPending found nothing, want the queued report")
 	}
 
-	want := fmt.Sprintf("[truncated at %d KiB -- full text: relevo show webshop --round 1 --report]", delivery.MaxPushBytes/1024)
+	want := fmt.Sprintf("[truncated at %d KiB -- full text: relevo show webshop --round 1 --report]", MaxPushBytes/1024)
 	if !strings.Contains(text, want) {
 		t.Errorf("pullPending text does not carry the truncation tail %q:\n%s", want, text)
 	}
-	if len(text) >= delivery.MaxPushBytes+len("round 1 report")+200 {
-		t.Errorf("len(text) = %d, want less than %d", len(text), delivery.MaxPushBytes+len("round 1 report")+200)
+	if len(text) >= MaxPushBytes+len("round 1 report")+200 {
+		t.Errorf("len(text) = %d, want less than %d", len(text), MaxPushBytes+len("round 1 report")+200)
 	}
 }
 

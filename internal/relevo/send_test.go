@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -386,7 +385,7 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 	b := store.Binding{Name: "webshop", CWD: "/repo/webshop", Round: 3}
 	got := composePrompt(b, "/s/003-plan.md", "/s/003-report.md", "/s/003-done")
 
-	wantOrigin := delivery.OriginLine("webshop", 3, store.DirToBuilder, store.KindPlan)
+	wantOrigin := OriginLine("webshop", 3, store.DirToBuilder, store.KindPlan)
 	firstLine := strings.SplitN(got, "\n", 2)[0]
 	if firstLine != wantOrigin {
 		t.Errorf("first line = %q, want origin line %q", firstLine, wantOrigin)
