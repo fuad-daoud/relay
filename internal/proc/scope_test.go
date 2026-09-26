@@ -225,3 +225,28 @@ func TestProbeStubs(t *testing.T) {
 		})
 	}
 }
+
+// TestFirstNonEmptyLine pins the pure trimming logic shared by the scope
+// probes: it returns the first non-empty trimmed line, which is the Result
+// value systemctl prints. This test does not run systemctl.
+func TestFirstNonEmptyLine(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain result", "oom-kill\n", "oom-kill"},
+		{"success", "success\n", "success"},
+		{"leading space", "  oom-kill  \n", "oom-kill"},
+		{"empty output", "", ""},
+		{"blank lines then result", "\n\noom-kill\n", "oom-kill"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := firstNonEmptyLine(tc.in)
+			if got != tc.want {
+				t.Errorf("firstNonEmptyLine(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
