@@ -44,9 +44,7 @@ func (r *Runner) Rusage(context.Context, relevo.ProcHandle, string) (relevo.Proc
 	return relevo.ProcRusage{}, false
 }
 
-// StartTime has no implementation here, where psInfo does not exist either.
-// The non-unix half of the tree reports ErrRunnerUnavailable for every process
-// question, and this one answers the same.
+// StartTime reports ErrRunnerUnavailable too: psInfo does not exist here.
 func StartTime(context.Context, int) (time.Time, error) {
 	return time.Time{}, relevo.ErrRunnerUnavailable
 }
