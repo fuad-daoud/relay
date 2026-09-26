@@ -20,9 +20,6 @@ var updateWire = flag.Bool("update-wire", false, "update wire golden files")
 func wireNormalize(b []byte) []byte {
 	cwdRE := regexp.MustCompile(`"cwd":\s*"[^"]*"`)
 	b = cwdRE.ReplaceAll(b, []byte(`"cwd": "/tmp/test-state/api"`))
-	// Builders cap falls back to runtime.NumCPU() without an explicit policy.
-	capRE := regexp.MustCompile(`"cap":\s*\d+`)
-	b = capRE.ReplaceAll(b, []byte(`"cap": "<CAP>"`))
 	return b
 }
 
@@ -108,6 +105,18 @@ func TestServeContractStatusJSON(t *testing.T) {
 	}
 	if aliceID == "" {
 		t.Fatalf("alice not found in clients")
+	}
+
+	// `serve status` reads the machine's policy from XDG_CONFIG_HOME; give it
+	// one whose builder cap is not the machine's NumCPU default.
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	policyDir := filepath.Join(configHome, "relevo")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatalf("mkdir policy dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "policy.json"), []byte(`{"serve":{"max_builders":7}}`), 0o644); err != nil {
+		t.Fatalf("write policy.json: %v", err)
 	}
 
 	stdout, stderr, err := captureOutput(t, func() error {
