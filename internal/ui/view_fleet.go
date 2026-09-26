@@ -140,7 +140,7 @@ func (f fleetView) withActions(a bool) fleetView {
 // newFilterInput is the fleet's one-line filter input: the same textinput the
 // command line uses, with a '/' prompt (A4).
 func newFilterInput() textinput.Model {
-	in := textinput.New()
+	in := newTextInput()
 	in.Prompt = "/"
 	return in
 }

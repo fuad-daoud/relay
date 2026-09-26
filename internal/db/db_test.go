@@ -398,6 +398,44 @@ func TestTxGivesUpOnABusyBeginAfterTheDeadline(t *testing.T) {
 	}
 }
 
+// TestOpenWithShortBusyFailsFast pins that OpenWith's BeginRetry bounds a busy
+// Tx, so a caller that must fail fast does not wait out the default window.
+func TestOpenWithShortBusyFailsFast(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d, err := OpenWith(path, Options{BusyTimeout: 20 * time.Millisecond, BeginRetry: time.Millisecond})
+	if err != nil {
+		t.Fatalf("OpenWith: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	holding := make(chan struct{})
+	release := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- d.Tx(func(tx *Tx) error {
+			close(holding)
+			<-release
+			return nil
+		})
+	}()
+	<-holding
+
+	start := time.Now()
+	err = d.Tx(func(tx *Tx) error { return nil })
+	elapsed := time.Since(start)
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("second Tx = %v, want errors.Is(..., ErrBusy)", err)
+	}
+	if elapsed >= 2*time.Second {
+		t.Errorf("second Tx took %s, want under 2s: BeginRetry must bound the wait", elapsed)
+	}
+
+	close(release)
+	if cerr := <-holderDone; cerr != nil {
+		t.Fatalf("first Tx: %v", cerr)
+	}
+}
+
 // TestBackupToCopiesEveryRowAndRefusesAnExistingPath pins the copy and the guard.
 func TestBackupToCopiesEveryRowAndRefusesAnExistingPath(t *testing.T) {
 	d := openTestDB(t)

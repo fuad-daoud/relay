@@ -232,8 +232,8 @@ func (s *Store) saveWithLog(b Binding, entries []LogEntry) error {
 			return err
 		}
 		for _, e := range entries {
-			if n >= maxLogEntries {
-				return fmt.Errorf("log exceeds %d entries", maxLogEntries)
+			if n >= s.maxLog() {
+				return fmt.Errorf("log exceeds %d entries", s.maxLog())
 			}
 			n++
 			ev, err := encodeEvent(e, n)

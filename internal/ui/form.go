@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -140,9 +141,24 @@ func (f formBox) modal(width int) (string, []string, int, bool) {
 	return f.kind, rows, want, false
 }
 
+// staticCursor is set by TestMain, because a blinking cursor's timer command
+// blocks about half a second per keystroke when a test runs the returned
+// commands synchronously.
+var staticCursor bool
+
+// newTextInput builds a text input, with the cursor's blink suppressed while
+// staticCursor is set.
+func newTextInput() textinput.Model {
+	in := textinput.New()
+	if staticCursor {
+		in.Cursor.SetMode(cursor.CursorStatic)
+	}
+	return in
+}
+
 // newFormInput builds one field input, focused only when it is the first.
 func newFormInput(focused bool) textinput.Model {
-	in := textinput.New()
+	in := newTextInput()
 	in.Prompt = ""
 	if focused {
 		in.Focus()

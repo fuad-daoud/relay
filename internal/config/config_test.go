@@ -24,6 +24,18 @@ func openStore(t *testing.T) *Store {
 	return Open(d)
 }
 
+// openStoreWith opens a store over a database whose busy waits are the given
+// options, for a test that must not wait out the defaults.
+func openStoreWith(t *testing.T, o db.Options) *Store {
+	t.Helper()
+	d, err := db.OpenWith(filepath.Join(t.TempDir(), "relevo.db"), o)
+	if err != nil {
+		t.Fatalf("db.OpenWith: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	return Open(d)
+}
+
 func writeFile(t *testing.T, path, body string, mode os.FileMode) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -273,7 +285,7 @@ func TestLoadFilesEqualsLoadAfterImport(t *testing.T) {
 func TestImportTxFailureKeepsFiles(t *testing.T) {
 	t.Parallel()
 
-	s := openStore(t)
+	s := openStoreWith(t, db.Options{BusyTimeout: 20 * time.Millisecond, BeginRetry: time.Millisecond})
 	dir := filepath.Join(t.TempDir(), "relevo")
 	writeFile(t, filepath.Join(dir, "candidates.json"),
 		`[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}]`, 0o644)

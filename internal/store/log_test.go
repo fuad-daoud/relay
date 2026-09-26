@@ -132,6 +132,7 @@ func TestSaveWithLogWritesBindingAndEntriesTogether(t *testing.T) {
 // entry passes the cap, so neither it nor the binding's new state may survive.
 func TestSaveWithLogWritesNothingWhenAnEntryFails(t *testing.T) {
 	s, name := seedBinding(t)
+	s.logCap = 5
 
 	// Seed the log with entries below the cap, written through log.jsonl so
 	// importPresent adopts them.
@@ -141,7 +142,7 @@ func TestSaveWithLogWritesNothingWhenAnEntryFails(t *testing.T) {
 		t.Fatalf("Marshal: %v", err)
 	}
 	var buf bytes.Buffer
-	for i := 0; i < maxLogEntries-1; i++ {
+	for i := 0; i < s.maxLog()-1; i++ {
 		buf.Write(raw)
 		buf.WriteByte('\n')
 	}
@@ -152,8 +153,8 @@ func TestSaveWithLogWritesNothingWhenAnEntryFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadLog (adopt the seed): %v", err)
 	}
-	if len(seeded) != maxLogEntries-1 {
-		t.Fatalf("seeded %d entries, want %d", len(seeded), maxLogEntries-1)
+	if len(seeded) != s.maxLog()-1 {
+		t.Fatalf("seeded %d entries, want %d", len(seeded), s.maxLog()-1)
 	}
 
 	b, err := s.Load(name)
@@ -182,8 +183,8 @@ func TestSaveWithLogWritesNothingWhenAnEntryFails(t *testing.T) {
 	if got.State != oldState {
 		t.Errorf("State = %q, want the old %q: the binding must not have been saved", got.State, oldState)
 	}
-	if entries, err := s.ReadLog(name); err != nil || len(entries) != maxLogEntries-1 {
-		t.Errorf("entries = %d, %v; want %d: nothing may have been appended", len(entries), err, maxLogEntries-1)
+	if entries, err := s.ReadLog(name); err != nil || len(entries) != s.maxLog()-1 {
+		t.Errorf("entries = %d, %v; want %d: nothing may have been appended", len(entries), err, s.maxLog()-1)
 	}
 }
 
