@@ -7,8 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
+	diffpatch "github.com/fuad-daoud/relevo/internal/patch"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -266,5 +269,156 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 	}
 	fmt.Print(text)
 	stampViewed()
+	return nil
+}
+
+// printDiff is diff's body (the old cmdDiff), shared by `show --diff` and
+// `show --drift` (§4.2): the output is byte-identical to the removed diff verb
+// for the same arguments, including the #143 .viewed stamp.
+// round 0 means diff's default: the newest completed round, or the open round
+// with drift.
+func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors bool) error {
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		return err
+	}
+
+	targetRound := round
+	if targetRound == 0 {
+		if drift {
+			targetRound = b.Round
+		} else {
+			targetRound = b.Round - 1
+		}
+	}
+	if targetRound < 1 {
+		return fmt.Errorf("binding %q has no completed round yet", name)
+	}
+
+	if stat {
+		entries, err := rt.Store.ReadLog(name)
+		if err != nil {
+			return err
+		}
+		targetKind := store.KindDiff
+		if drift {
+			targetKind = store.KindDrift
+		}
+		var found *store.LogEntry
+		for i := len(entries) - 1; i >= 0; i-- {
+			if entries[i].Round == targetRound && entries[i].Kind == targetKind {
+				found = &entries[i]
+				break
+			}
+		}
+		if found == nil || found.Note == "" {
+			if drift {
+				return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, name)
+			}
+			return fmt.Errorf("no diff recorded for round %d of %q", targetRound, name)
+		}
+		fmt.Println(found.Note)
+		// #143: a successful print is what "viewed" means; the stamp is
+		// best-effort and must never fail a read command.
+		_ = rt.Store.MarkViewed(name, time.Now())
+		return nil
+	}
+
+	var patch []byte
+	var ok bool
+	if drift {
+		patch, ok, err = relevo.ReadDrift(rt, name, targetRound)
+	} else {
+		patch, ok, err = relevo.ReadDiff(rt, name, targetRound)
+	}
+	if err != nil {
+		return err
+	}
+	if !ok {
+		if drift {
+			return fmt.Errorf("no drift recorded for round %d of %q (--drift)", targetRound, name)
+		}
+		return fmt.Errorf("no diff recorded for round %d of %q", targetRound, name)
+	}
+
+	if anchors {
+		patch, err = diffpatch.Annotate(patch)
+		if err != nil {
+			return err
+		}
+	}
+
+	if _, err := os.Stdout.Write(patch); err != nil {
+		return err
+	}
+	// #143: a successful print is what "viewed" means; the stamp is
+	// best-effort and must never fail a read command.
+	_ = rt.Store.MarkViewed(name, time.Now())
+	return nil
+}
+
+// printLog is the log body after flag parsing and newRuntime(): it prints
+// name's entries, applying the --round filter, JSON-encoded when asJSON is
+// set, and follows new entries until the binding is DONE or removed when
+// follow is set. markViewed guards the #143 .viewed stamp: `relevo show --log`
+// stamps and the read-only `relevo serve log` must not, because the stamp is
+// the owner's, not the admin's.
+func printLog(rt relevo.Runtime, name string, round, after int, asJSON, follow, markViewed bool) error {
+	// A binding that does not exist is named at once, the way every other
+	// command reports it; only a binding that disappears mid-follow (below)
+	// ends the loop quietly.
+	if _, err := rt.Store.Load(name); err != nil {
+		return err
+	}
+
+	// emit applies the --round filter, so the initial batch and every
+	// followed entry render identically.
+	emit := func(e store.LogEntry) {
+		if round != 0 && e.Round != round {
+			return
+		}
+		if asJSON {
+			_ = json.NewEncoder(os.Stdout).Encode(e)
+			return
+		}
+		fmt.Println(relevo.LogLine(e))
+	}
+
+	entries, err := rt.Store.ReadLogAfter(name, after)
+	if err != nil {
+		return err
+	}
+	last := after
+	for _, e := range entries {
+		emit(e)
+		last = e.Seq
+	}
+
+	if !follow {
+		// #143: a successful print is what "viewed" means; the stamp is
+		// best-effort and must never fail a read command.
+		if markViewed {
+			_ = rt.Store.MarkViewed(name, time.Now())
+		}
+		return nil
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := relevo.FollowLog(ctx, rt, name, last, time.Second, emit); err != nil {
+		if ctx.Err() != nil {
+			// Interrupted: what was already printed is the answer, and the
+			// stamp is #143's the same as any other exit.
+			if markViewed {
+				_ = rt.Store.MarkViewed(name, time.Now())
+			}
+			return nil
+		}
+		return err
+	}
+	if markViewed {
+		_ = rt.Store.MarkViewed(name, time.Now())
+	}
 	return nil
 }

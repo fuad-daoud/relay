@@ -1,0 +1,396 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/fuad-daoud/relevo/internal/doctor"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
+)
+
+// bindFlags is the union of the flags today's bind and add each accept.
+// bindRouteFor chooses which of the two bodies runs; keeping the flag set in
+// one place is what lets each old flag keep its name, default and help text
+// (§4.1).
+type bindFlags struct {
+	name      string
+	builder   string
+	planner   string
+	resume    bool
+	rebind    bool
+	timeout   time.Duration
+	tier      string
+	allowYolo bool
+	gate      string
+	noGate    bool
+	regate    *int
+	feature   string
+	role      string
+
+	// The placement flags choose add's path.
+	worktree bool
+	cwd      string
+	branch   string
+	server   string
+	base     string
+}
+
+// bindRoute names which of the three merged paths cmdBind runs.
+type bindRoute int
+
+const (
+	routeBind bindRoute = iota
+	routeAdd
+)
+
+// bindRouteFor chooses the path from the parsed flags and refuses the
+// combinations §4.1 forbids. It is a pure function, so the rules are table
+// tested without a runtime, a state directory or a harness.
+func bindRouteFor(f bindFlags) (bindRoute, error) {
+	placement := f.worktree || f.cwd != "" || f.branch != "" || f.server != "" || f.base != ""
+	switch {
+	case f.resume || f.rebind:
+		// --resume and --rebind are bind's alone.
+		if placement {
+			return routeBind, errors.New("--resume/--rebind cannot be combined with --worktree/--cwd/--branch/--server/--base")
+		}
+		return routeBind, nil
+	case placement:
+		return routeAdd, nil
+	default:
+		return routeBind, nil
+	}
+}
+
+// cmdBind binds a planner to a builder. It is the one entry point the old
+// bind and add merged into (§4.1): the flags choose which of the two
+// bodies runs, and each body stays an unexported helper so none of its logic
+// is duplicated.
+// bindFlagValues holds the pointers bind's flags parse into. bindFlagSet
+// defines them on fs; cmdBind and TestBindFlagsHaveActorNotRole read the same
+// surface, so the flag names can never drift from what a test pins (A2 round 3
+// S1).
+type bindFlagValues struct {
+	name         *string
+	builderAlias *string
+	plannerFlag  *string
+	resume       *bool
+	rebind       *bool
+	timeout      *time.Duration
+	tier         *string
+	allowYolo    *bool
+	gate         *string
+	noGate       *bool
+	regate       *int
+	feature      *string
+	actor        *string
+	worktree     *bool
+	cwd          *string
+	branch       *string
+	server       *string
+	base         *string
+}
+
+// bindFlagSet defines bind's flags on fs and returns the values they parse
+// into. It is separate from cmdBind so a test can inspect the flag surface
+// without running a bind (A2 round 3 S1).
+func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
+	v := &bindFlagValues{}
+	v.name = fs.String("name", "", "binding name (default: sanitized cwd basename)")
+	v.builderAlias = fs.String("builder", "", "candidate name or harness/provider/model token to spawn; omit to take the first ungated candidate in config policy order[builder]")
+	v.plannerFlag = fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
+	v.resume = fs.Bool("resume", false, "adopt an existing binding into this planner")
+	v.rebind = fs.Bool("rebind", false,
+		"with --resume: replace a gone builder, picking it by config policy order and the ledger (like bind with --builder omitted)")
+	v.timeout = fs.Duration("timeout", 0, "round budget before relevo flags the binding (default 24h)")
+	v.tier = fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
+	v.allowYolo = fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
+	v.gate = fs.String("gate", "", "acceptance command relevo runs on the round's completion marker (default: config policy gate.default)")
+	v.noGate = fs.Bool("no-gate", false, "opt this binding out of config policy's gate.default")
+	v.regate = fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
+	v.feature = fs.String("feature", "", "label grouping this binding with others")
+	v.actor = fs.String("actor", "", "the writer actor this binding runs (default builder)")
+	v.worktree = fs.Bool("worktree", false, "attach an additional builder to this planner, on its own worktree")
+	v.cwd = fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
+	v.branch = fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relevo/<name>")
+	v.server = fs.String("server", "", "run the builder on this configured remote server instead of a local process (relevo config server list)")
+	v.base = fs.String("base", "", "commit or ref to branch from with --server; defaults to HEAD")
+	return v
+}
+
+func cmdBind(args []string) error {
+	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
+	v := bindFlagSet(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	regateOpt, err := regateFlag(fs, v.regate)
+	if err != nil {
+		return err
+	}
+
+	f := bindFlags{
+		name: *v.name, builder: *v.builderAlias, planner: *v.plannerFlag,
+		resume: *v.resume, rebind: *v.rebind, timeout: *v.timeout, tier: *v.tier,
+		allowYolo: *v.allowYolo, gate: *v.gate, noGate: *v.noGate, regate: regateOpt,
+		feature: *v.feature, role: *v.actor, worktree: *v.worktree, cwd: *v.cwd,
+		branch: *v.branch, server: *v.server, base: *v.base,
+	}
+
+	route, rerr := bindRouteFor(f)
+	if rerr != nil {
+		// One line, exit 2, before any runtime is built (§4.1).
+		fmt.Fprintf(os.Stderr, "relevo: %v\n", rerr)
+		return fmt.Errorf("%v: %w", rerr, exitCodeErr{code: 2})
+	}
+
+	switch route {
+	case routeAdd:
+		return runAdd(f)
+	default:
+		return runBind(f)
+	}
+}
+
+// runBind is bind's own body after parsing: bind the current tree, or resume
+// or rebind an existing binding (the old cmdBind).
+func runBind(f bindFlags) error {
+	// --resume takes the name from --name, so a positional one is dropped on
+	// the floor and the binding lookup then fails on the empty name.
+	if f.resume && f.name == "" {
+		return fmt.Errorf("relevo bind --resume needs --name NAME (a positional name is ignored)")
+	}
+	if f.rebind && !f.resume {
+		return fmt.Errorf("relevo bind --rebind only applies with --resume (it replaces a gone builder on an existing binding)")
+	}
+	if f.role != "" && f.resume {
+		return fmt.Errorf("relevo bind --resume keeps the binding's actor; drop --actor")
+	}
+
+	if f.feature != "" {
+		if err := store.ValidFeature(f.feature); err != nil {
+			fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
+			return exitCodeErr{code: 2}
+		}
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve working directory: %w", err)
+	}
+
+	opts := relevo.BindOptions{
+		Name:         f.name,
+		PlannerID:    f.planner,
+		CWD:          cwd,
+		Resume:       f.resume,
+		Rebind:       f.rebind,
+		RoundTimeout: f.timeout,
+		Tier:         f.tier,
+		AllowYolo:    f.allowYolo,
+		Gate:         f.gate,
+		NoGate:       f.noGate,
+		Regate:       f.regate,
+		Feature:      f.feature,
+		Role:         f.role,
+	}
+	opts.Candidate = f.builder
+
+	adopted := f.resume
+	roleName := roleOrBuilder(f.role)
+	specRole := roleName
+	kind := ""
+	switch {
+	case f.rebind:
+		// A rebind replaces the builder of an existing binding, so the
+		// definitions come from the stored binding's actor -- --actor is
+		// refused with --resume, so roleName is "builder" here (#382 round 3).
+		// If the load fails, today's behaviour (roleName) stands.
+		if f.name != "" {
+			if existing, err := rt.Store.Load(f.name); err == nil {
+				specRole = relevo.BindingRole(existing)
+			}
+		}
+		kind = relevo.CandidateKindFor(rt, opts.Candidate, specRole)
+	case adopted:
+		if f.name != "" {
+			if existing, err := rt.Store.Load(f.name); err == nil {
+				kind = existing.Builder.Kind
+				specRole = relevo.BindingRole(existing)
+			}
+		}
+	default:
+		kind = relevo.CandidateKindFor(rt, opts.Candidate, roleName)
+	}
+
+	// Preflight is advisory only: it never blocks the bind, and any probe
+	// failure is dropped rather than printed. See bindPreflight.
+	if kind != "" {
+		env := doctor.NewEnv(rt.Store)
+		// The binding's role's definitions for this kind come from the
+		// registry, so a config roles that names a custom builder executor
+		// preflights that file (#374 §3.4). A Spec error is data: defs stays
+		// nil and the preflight falls back to the shipped builder definitions.
+		var defs []string
+		if spec, err := rt.RoleRegistry().Spec(specRole, kind); err == nil {
+			defs = spec.Definitions
+		}
+		for _, line := range bindPreflightDefs(context.Background(), env, kind, adopted, defs) {
+			fmt.Fprintln(os.Stderr, line)
+		}
+	}
+
+	b, res, err := relevo.BindResolved(context.Background(), rt, opts)
+	if err != nil {
+		return err
+	}
+	// A resume keeps the binding's stored role, so the pick note names it.
+	roleName = relevo.BindingRole(b)
+	if t := relevo.RestoreText(res); t != "" {
+		fmt.Println(t)
+	}
+	if res.WasPaused {
+		fmt.Printf("resumed %s after pause\n", b.Name)
+	}
+
+	if f.resume && (f.builder != "" || f.rebind) {
+		builderDesc := builderWhere(b.Builder)
+		if b.BuilderCandidate != "" {
+			builderDesc = fmt.Sprintf("%s (%s)", builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate))
+		}
+		fmt.Printf("rebound %s: builder %s, still on round %d\n"+
+			"hand it the round with:\n"+
+			"  relevo send --name %s --file %s\n",
+			b.Name, builderDesc, b.Round, b.Name, rt.Store.PlanPath(b.Name, b.Round))
+		noteRegateNoGate(b)
+		notePick(rt, roleName, res)
+		warnWaitingOnYou(rt, b.Name)
+		return nil
+	}
+
+	fmt.Printf("bound %s: planner %s -> builder %s (%s), round %d\n",
+		b.Name, b.Planner.PaneID, builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate), b.Round)
+	noteRegateNoGate(b)
+	if n := relevo.GatedNote(rt, b.BuilderCandidate); n != "" {
+		fmt.Fprintln(os.Stderr, n)
+	}
+	notePick(rt, roleName, res)
+	// Spawn path only: an adopted pane or resumed binding has no fresh name
+	// relevo chose, so the note would warn about a name the human did not pick
+	// here.
+	if !adopted {
+		noteConsultRolesTooLong(rt.RoleRegistry(), b.Name)
+	}
+	warnWaitingOnYou(rt, b.Name)
+	return nil
+}
+
+// runAdd is add's body after parsing (the old cmdAdd), reached through
+// `bind --worktree` or one of the placement flags (§4.1).
+func runAdd(f bindFlags) error {
+	name := f.name
+	branch := f.branch
+	cwd := f.cwd
+
+	// Before newRuntime, in this order: the flag pair, then a name that is
+	// either given or derivable from the branch.
+	if branch != "" && cwd != "" {
+		fmt.Fprintf(os.Stderr, "relevo: relevo bind --branch and --cwd are exclusive\n")
+		return fmt.Errorf("relevo bind --branch and --cwd are exclusive: %w", exitCodeErr{code: 2})
+	}
+	if name == "" {
+		if branch == "" {
+			return fmt.Errorf("relevo bind requires --name NAME")
+		}
+		derived, err := relevo.DefaultBindingName(branch)
+		if err != nil {
+			return fmt.Errorf("relevo bind --branch %s: cannot derive a binding name (%v); pass --name", branch, err)
+		}
+		name = derived
+	}
+	if f.feature != "" {
+		if err := store.ValidFeature(f.feature); err != nil {
+			fmt.Fprintf(os.Stderr, "relevo: %v\n", err)
+			return exitCodeErr{code: 2}
+		}
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+
+	repo, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve working directory: %w", err)
+	}
+
+	res, err := relevo.Add(context.Background(), rt, relevo.AddOptions{
+		Name:      name,
+		Candidate: f.builder,
+		PlannerID: f.planner,
+		Repo:      repo,
+		CWD:       cwd,
+		Branch:    branch,
+		Server:    f.server,
+		Base:      f.base,
+		Tier:      f.tier,
+		AllowYolo: f.allowYolo,
+		Gate:      f.gate,
+		NoGate:    f.noGate,
+		Regate:    f.regate,
+		Feature:   f.feature,
+		Role:      f.role,
+	})
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case res.Binding.Builder.Remote():
+		fmt.Printf("added %s: builder %s on %s\n", res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), res.Binding.Builder.Server)
+		if res.Binding.Tier != "" {
+			fmt.Printf("  tier %s (server)\n", res.Binding.Tier)
+		} else {
+			fmt.Printf("  tier server's choice (pre-tier server)\n")
+		}
+	case res.Binding.Builder.Headless():
+		fmt.Printf("added %s: builder %s (headless)\n", res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate))
+	default:
+		fmt.Printf("added %s: builder %s in %s\n",
+			res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), builderWhere(res.Binding.Builder))
+	}
+	noteRegateNoGate(res.Binding)
+	if n := relevo.GatedNote(rt, res.Binding.BuilderCandidate); n != "" {
+		fmt.Fprintln(os.Stderr, n)
+	}
+	notePick(rt, roleOrBuilder(f.role), res.Resolution)
+	switch {
+	case res.Binding.Builder.Remote() && res.Binding.ExistingBranch:
+		fmt.Printf("  branch %s (existing, tip %s) on %s\n", res.Binding.Branch, res.Base, res.Binding.Builder.Server)
+	case res.Binding.Builder.Remote():
+		fmt.Printf("  branch %s (from %s)\n", res.Binding.Branch, res.Base)
+	case res.Worktree != "" && res.Binding.ExistingBranch:
+		fmt.Printf("  worktree %s on existing branch %s (tip %s)\n", res.Worktree, res.Branch, res.Base)
+	case res.Worktree != "":
+		fmt.Printf("  worktree %s on %s (from %s)\n", res.Worktree, res.Branch, res.Base)
+	default:
+		fmt.Printf("  tree %s\n", res.Binding.CWD)
+	}
+	fmt.Printf("  relevo send --name %s --file <plan.md>\n", res.Binding.Name)
+	noteConsultRolesTooLong(rt.RoleRegistry(), res.Binding.Name)
+	warnWaitingOnYou(rt, res.Binding.Name)
+
+	return nil
+}
