@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"slices"
 	"time"
@@ -196,7 +197,10 @@ func stopPayload(how, name string, round int, where string, haveReport bool) (pa
 // entry appended after it is filed under the round that was stopped.
 func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, how string) (store.Binding, error) {
 	stoppedRound := b.Round
-	reportPath := rt.Store.ReportPath(b.Name, stoppedRound)
+	reportPath, serr := writeReaderSummary(rt, b)
+	if serr != nil {
+		slog.Warn("reader summary not written", "binding", b.Name, "round", stoppedRound, "err", serr)
+	}
 
 	entries, err := tx.ReadLog(b.Name)
 	if err != nil {

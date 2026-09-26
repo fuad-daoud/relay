@@ -162,6 +162,13 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	c := res.Candidate
 
 	tier := resolveRoleTier(opts.Tier, c, rt.RoleRegistry(), roleName)
+	if shape == store.ShapeReader {
+		var tierErr error
+		tier, tierErr = readerTier(tier, c.Harness, rt.Policy)
+		if tierErr != nil {
+			return AddResult{}, tierErr
+		}
+	}
 	if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 		return AddResult{}, err
 	}

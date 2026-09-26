@@ -27,7 +27,7 @@ func sampleSignals(ctx context.Context, rt Runtime, b store.Binding) signals {
 	var s signals
 
 	if rt.Git != nil && b.CWD != "" {
-		if fp, err := rt.Git.TreeFingerprint(ctx, b.CWD); err == nil {
+		if fp, err := rt.Git.TreeFingerprint(ctx, roundTree(rt, b)); err == nil {
 			s.tree = fp
 		}
 	}

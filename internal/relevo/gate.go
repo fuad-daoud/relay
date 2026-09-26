@@ -119,7 +119,7 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 func startGate(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, attempt int, note string) (store.Binding, *store.GateRecord, error) {
 	log := rt.Store.GateLogPath(b.Name, b.Round)
 	h, err := rt.Runner.Start(ctx, spawn.ProcSpec{
-		Dir:        b.CWD,
+		Dir:        roundTree(rt, b),
 		Argv:       []string{"sh", "-c", b.Gate + " 2>&1"},
 		LogPath:    log,
 		StreamPath: log,

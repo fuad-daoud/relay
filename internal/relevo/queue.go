@@ -34,7 +34,7 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 		}
 		b = loaded
 
-		prompt := composePrompt(b, rt.Store.PlanPath(name, b.Round), rt.Store.ReportPath(name, b.Round), rt.Store.DonePath(name, b.Round))
+		prompt := composePrompt(rt, b, rt.Store.PlanPath(name, b.Round), rt.Store.ReportPath(name, b.Round), rt.Store.DonePath(name, b.Round))
 
 		// Add the oom note because the worktree may hold partial work.
 		if b.OOMRequeue != nil {
@@ -51,11 +51,22 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 
 		var switched bool
 		var startErr error
-		if reason != "" {
-			switched = true
-			b, startErr = switchBuilder(ctx, rt, tx, b, reason, false /*closeOld*/, false /*counted*/)
-		} else {
-			b, startErr = startRound(ctx, rt, tx, b, prompt)
+		// A queued reader round runs in its scratch worktree (A5 §2): create it
+		// before the admit spawns anything, from the baseline the deferred Send
+		// captured. A failure leaves the binding NEEDS YOU below, like any
+		// other admit failure, and never falls back to b.CWD.
+		if b.Shape == store.ShapeReader {
+			if _, err := CreateScratchFrom(ctx, rt, b, b.Round, b.RoundBaselineHead, b.RoundBaselineTree); err != nil {
+				startErr = err
+			}
+		}
+		if startErr == nil {
+			if reason != "" {
+				switched = true
+				b, startErr = switchBuilder(ctx, rt, tx, b, reason, false /*closeOld*/, false /*counted*/)
+			} else {
+				b, startErr = startRound(ctx, rt, tx, b, prompt)
+			}
 		}
 
 		if startErr != nil {

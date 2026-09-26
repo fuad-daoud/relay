@@ -385,7 +385,7 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 	t.Parallel()
 
 	b := store.Binding{Name: "webshop", CWD: "/repo/webshop", Round: 3}
-	got := composePrompt(b, "/s/003-plan.md", "/s/003-report.md", "/s/003-done")
+	got := composePrompt(Runtime{}, b, "/s/003-plan.md", "/s/003-report.md", "/s/003-done")
 
 	wantOrigin := delivery.OriginLine("webshop", 3, store.DirToBuilder, store.KindPlan)
 	firstLine := strings.SplitN(got, "\n", 2)[0]
@@ -655,7 +655,7 @@ func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 	reportPath := rt.Store.ReportPath("webshop", 1)
 	donePath := rt.Store.DonePath("webshop", 1)
 	b, _ := rt.Store.Load("webshop")
-	wantPrompt := composePrompt(b, planPath, reportPath, donePath)
+	wantPrompt := composePrompt(rt, b, planPath, reportPath, donePath)
 	wantArgv := []string{
 		"agy", "-p", wantPrompt, "--model", "m", "--agent", "plan-executor",
 		"--output-format", "stream-json", "--print-timeout", "24h0m0s", "--add-dir", "/repo",

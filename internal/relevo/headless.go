@@ -200,7 +200,7 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return b, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}
-	argv, err := spawn.HeadlessLaunch(c, role, effectiveTier(b), roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
+	argv, err := spawn.HeadlessLaunch(c, role, effectiveTier(b), roundBudget(b), prompt, roundTree(rt, b), rt.Store.Dir(b.Name))
 	if err != nil {
 		return b, err
 	}
@@ -283,8 +283,21 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	if legacyLog(rt, b.Name, b.Round) {
 		logPath = rt.Store.BuilderLogPath(b.Name, b.Round)
 	}
+	// A reader round always runs in its scratch worktree (A5 R4a §2). The
+	// round's start (Send or Admit) created it from the captured baseline; a
+	// mid-round switch, a nudge or a relaunch reuses it. If a crash took it
+	// away, recreate it from the round's own baseline before launching: a
+	// missing scratch fails the round rather than running in the binding's
+	// tree, and never falls back to b.CWD.
+	if b.Shape == store.ShapeReader {
+		if _, err := os.Stat(roundTree(rt, b)); err != nil {
+			if _, err := CreateScratchFrom(ctx, rt, b, b.Round, b.RoundBaselineHead, b.RoundBaselineTree); err != nil {
+				return b, err
+			}
+		}
+	}
 	spec := spawn.ProcSpec{
-		Dir: b.CWD, Argv: argv,
+		Dir: roundTree(rt, b), Argv: argv,
 		Env:        builderEnv(b),
 		LogPath:    logPath,
 		StreamPath: rt.Store.BuilderStreamPath(b.Name, b.Round),
@@ -341,7 +354,7 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if l.PromptAt < 0 {
 		return b, fmt.Errorf("harness %q has no print form", c.Harness)
 	}
-	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), b.CWD, rt.Store.Dir(b.Name))
+	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), roundTree(rt, b), rt.Store.Dir(b.Name))
 	if err != nil {
 		return b, err
 	}
@@ -723,7 +736,10 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// Exited after writing a report but without the marker: an exited
 	// process cannot be mid-write, so the report is trusted and the
 	// omission noted (spec §4.4).
-	reportPath := rt.Store.ReportPath(b.Name, b.Round)
+	reportPath, serr := writeReaderSummary(rt, b)
+	if serr != nil {
+		slog.Warn("reader summary not written", "binding", b.Name, "round", b.Round, "err", serr)
+	}
 	if _, err := os.Stat(reportPath); err == nil {
 		_, m, _, err := gateOnLimit(ctx, rt, tx, b, currentBuilderTail(rt, b, availability.LimitScanLines), false)
 		if err != nil {
@@ -855,7 +871,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 				"lost to a daemon restart; candidate "+b.BuilderCandidate+" is no longer configured", false, false)
 		}
 
-		text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round)) +
+		text := composePrompt(rt, b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round)) +
 			"\n\n" + interruptedNote(rt.StartedAt)
 		keep := b.RoundStartedAt
 		// Read the round's session before anything clears it (#370): the
@@ -984,7 +1000,7 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// delivery (#144), exactly as the pane path orders it: the reviewer
 	// sees the gate's output, so it starts after the gate and before the
 	// planner is told.
-	if wantVerify {
+	if wantVerify && next.Shape != store.ShapeReader {
 		gateLogPath := ""
 		if rec != nil {
 			gateLogPath = rec.LogPath

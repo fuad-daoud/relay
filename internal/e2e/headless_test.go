@@ -302,7 +302,8 @@ func TestHeadlessE2E(t *testing.T) {
 func writeFakeHarness(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(fakeHarnessScript), 0o755); err != nil {
+	script := strings.ReplaceAll(fakeHarnessScript, "__READER_LINE__", fakeReaderStreamLine(t))
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake claude: %v", err)
 	}
 	return dir
@@ -349,16 +350,33 @@ fi
 worktree=$(printf '%s\n' "$prompt" | awk '/^Your working tree is: /{ sub(/^Your working tree is: /, ""); print; exit }')
 plan=$(printf '%s\n' "$prompt" | awk '/^Read: /{ sub(/^Read: /, ""); print; exit }')
 report=$(printf '%s\n' "$prompt" | awk '/^When you are done, write your report to: /{ sub(/^When you are done, write your report to: /, ""); print; exit }')
-marker=$(printf '%s\n' "$prompt" | awk '/^create this empty file: /{ sub(/^create this empty file: /, ""); print; exit }')
+artifact=$(printf '%s\n' "$prompt" | awk '/^Write every file you produce into this directory/{ sub(/^[^:]*: /, ""); print; exit }')
+marker=$(printf '%s\n' "$prompt" | awk '/create this empty file: /{ sub(/.*create this empty file: /, ""); print; exit }')
 
-if [ -z "$worktree" ] || [ -z "$plan" ] || [ -z "$report" ] || [ -z "$marker" ]; then
+if [ -z "$worktree" ] || [ -z "$plan" ] || [ -z "$marker" ]; then
 	echo "fake-claude: the prompt is missing a path" >&2
-	echo "tree=$worktree plan=$plan report=$report marker=$marker" >&2
+	echo "tree=$worktree plan=$plan report=$report artifact=$artifact marker=$marker" >&2
+	exit 2
+fi
+if [ -z "$report" ] && [ -z "$artifact" ]; then
+	echo "fake-claude: the prompt names neither a report nor an artifact directory" >&2
 	exit 2
 fi
 if [ ! -s "$plan" ]; then
 	echo "fake-claude: the staged plan $plan is missing or empty" >&2
 	exit 2
+fi
+
+# A reader round: fill the artifact directory, edit the throwaway tree, print
+# the final message the summary is taken from, then create the marker last.
+if [ -n "$artifact" ]; then
+	mkdir -p "$artifact"
+	printf '<!doctype html><title>reader</title>\n' > "$artifact/index.html"
+	printf 'body { color: #000; }\n' > "$artifact/style.css"
+	printf 'the reader edited this\n' > "$worktree/reader-edit.txt"
+	printf '%s\n' '__READER_LINE__'
+	: > "$marker"
+	exit 0
 fi
 
 {
@@ -395,8 +413,8 @@ func writeCandidatesAndPolicy(t *testing.T, configDir string) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("create config dir: %v", err)
 	}
-	candidates := `[{"harness":"claude","provider":"anthropic","model":"fake-e2e","roles":["builder"]}]`
-	pol := `{"order":{"builder":["claude/anthropic/fake-e2e"]}}`
+	candidates := `[{"harness":"claude","provider":"anthropic","model":"fake-e2e","roles":["builder","reviewer"]}]`
+	pol := `{"order":{"builder":["claude/anthropic/fake-e2e"],"reviewer":["claude/anthropic/fake-e2e"]}}`
 	for name, body := range map[string]string{"candidates.json": candidates, "policy.json": pol} {
 		if err := os.WriteFile(filepath.Join(configDir, name), []byte(body), 0o644); err != nil {
 			t.Fatalf("write %s: %v", name, err)

@@ -580,6 +580,12 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 		return store.Binding{}, Resolution{}, err
 	}
 	tier = resolveRoleTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), roleName)
+	if shape == store.ShapeReader {
+		tier, err = readerTier(tier, resCandidate.Candidate.Harness, rt.Policy)
+		if err != nil {
+			return store.Binding{}, Resolution{}, err
+		}
+	}
 	if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 		return store.Binding{}, Resolution{}, err
 	}
@@ -822,6 +828,10 @@ func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindR
 			slog.Warn("abandoned harness session not deleted", "binding", name, "kind", s.Kind, "id", s.ID, "err", err)
 		}
 	}
+
+	// A reader's throwaway worktree goes with the binding, before the record
+	// is archived or deleted: the sweep can no longer resolve it afterwards.
+	removeReaderScratch(ctx, rt, b, b.Round)
 
 	outcome := worktreeTeardown(ctx, rt, b, false)
 	res.WorktreeRemoved = outcome.Removed

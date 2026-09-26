@@ -56,6 +56,11 @@ func escapeOutcome(treeUnchanged, repoDirty, hasReport bool) EscapeOutcome {
 //     in a bare repo)
 //   - otherwise                  -> true
 func escapeApplies(b store.Binding) bool {
+	if b.Shape == store.ShapeReader {
+		// A reader never touches b.CWD: it runs in a scratch copy, so a dirty
+		// binding tree next to it says nothing about an escape.
+		return false
+	}
 	if !b.Builder.Headless() {
 		return false
 	}
