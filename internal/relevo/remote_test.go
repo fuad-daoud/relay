@@ -276,7 +276,7 @@ func (r *recordingTransport) Absorb(ctx context.Context, repo, contentType strin
 func TestProbeServersStates(t *testing.T) {
 	t.Parallel()
 
-	servers := map[string]client.ServerEntry{"zen": {URL: "https://zen:7777"}}
+	servers := map[string]remote.ServerEntry{"zen": {URL: "https://zen:7777"}}
 
 	cases := []struct {
 		name       string
@@ -348,7 +348,7 @@ func TestProbeServersStates(t *testing.T) {
 func TestProbeServersFillsTierFields(t *testing.T) {
 	t.Parallel()
 
-	servers := map[string]client.ServerEntry{
+	servers := map[string]remote.ServerEntry{
 		"zen":   {URL: "https://zen:7777"},
 		"other": {URL: "https://other:7777"},
 	}
@@ -384,7 +384,7 @@ func TestProbeServersFillsTierFields(t *testing.T) {
 func TestProbeServersPreTierLeavesTierFieldsZero(t *testing.T) {
 	t.Parallel()
 
-	servers := map[string]client.ServerEntry{"zen": {URL: "https://zen:7777"}}
+	servers := map[string]remote.ServerEntry{"zen": {URL: "https://zen:7777"}}
 	rt := Runtime{Remote: &fakeRemote{
 		whoAmIResp: remote.WhoAmI{Label: "laptop"}, // no Features: pre-tier server
 	}}

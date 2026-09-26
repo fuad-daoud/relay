@@ -10,10 +10,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/muesli/termenv"
 )
 
@@ -42,10 +42,10 @@ func candFixtureDoc(t *testing.T) relevo.ConfigDoc {
 		t.Fatalf("fixture has %d candidates, want 7", len(doc.Candidates))
 	}
 	doc.Policy = policy.Policy{MaxTier: "yolo"}
-	doc.Actors = map[string]actors.Actor{
+	doc.Actors = map[string]roles.Actor{
 		"builder": {
 			Agent: "plan-executor",
-			Candidates: []actors.Entry{
+			Candidates: []roles.Entry{
 				{Candidate: "gemini-3.8-flash-high"},
 				{Candidate: "claude-sonnet-4-6"},
 				{Candidate: "deepseek-v4.1-flash"},
@@ -57,7 +57,7 @@ func candFixtureDoc(t *testing.T) relevo.ConfigDoc {
 		},
 		"reviewer": {
 			Agent: "reviewer",
-			Candidates: []actors.Entry{
+			Candidates: []roles.Entry{
 				{Candidate: "sonnet"},
 				{Candidate: "gpt-5.6-terra"},
 			},
@@ -65,10 +65,10 @@ func candFixtureDoc(t *testing.T) relevo.ConfigDoc {
 		},
 		"researcher": {
 			Agent:      "researcher",
-			Candidates: []actors.Entry{{Candidate: "haiku"}},
+			Candidates: []roles.Entry{{Candidate: "haiku"}},
 		},
 	}
-	doc.Agents = map[string]actors.AgentEntry{}
+	doc.Agents = map[string]roles.AgentEntry{}
 	return doc
 }
 

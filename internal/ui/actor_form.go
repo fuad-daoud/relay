@@ -7,10 +7,10 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
 // actorTierNames is the tier row's chip order (§3).
@@ -29,7 +29,7 @@ func actorAgents(doc relevo.ConfigDoc, name string) []string {
 	}
 	var out []string
 	seen := make(map[string]bool)
-	for _, a := range actors.ShippedAgents() {
+	for _, a := range roles.ShippedAgents() {
 		if shape != "" && string(a.Shape) != shape {
 			continue
 		}

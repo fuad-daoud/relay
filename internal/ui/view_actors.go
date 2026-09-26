@@ -8,10 +8,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
 // actorsView is ':actors' (§4): every actor with its agent, shape, tier and
@@ -89,7 +89,7 @@ func nextPick(doc relevo.ConfigDoc, actor string, gated []ledger.Gate) string {
 
 // entryStatus is one entry's STATUS text and colour (§3): off in faint, else
 // the gate's time left in red, else ready in green.
-func entryStatus(doc relevo.ConfigDoc, e actors.Entry, gated []ledger.Gate, now time.Time) (string, lipgloss.Style) {
+func entryStatus(doc relevo.ConfigDoc, e roles.Entry, gated []ledger.Gate, now time.Time) (string, lipgloss.Style) {
 	if e.Off {
 		return "off", faintStyle
 	}
@@ -203,7 +203,7 @@ func actorTierText(tier string) string {
 
 // actorMetaText is the detail block's `<agent> · <shape> · tier <tier>` line
 // (§4).
-func actorMetaText(doc relevo.ConfigDoc, a actors.Actor) string {
+func actorMetaText(doc relevo.ConfigDoc, a roles.Actor) string {
 	return a.Agent + " · " + agentShapeOf(doc, a.Agent) + " · tier " + actorTierText(a.Tier)
 }
 

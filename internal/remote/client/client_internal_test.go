@@ -25,7 +25,7 @@ func testClient(t *testing.T, ts *httptest.Server) *Client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(Servers{"zen": ServerEntry{URL: ts.URL, Insecure: true}}, kp, time.Now)
+	return New(remote.Servers{"zen": remote.ServerEntry{URL: ts.URL, Insecure: true}}, kp, time.Now)
 }
 
 // injectSleep replaces the package's backoff sleep for one test and reports

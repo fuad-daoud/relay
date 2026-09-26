@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/config"
@@ -20,8 +19,8 @@ import (
 // stored order.
 type ConfigDoc struct {
 	Candidates []candidate.Candidate
-	Actors     map[string]actors.Actor
-	Agents     map[string]actors.AgentEntry
+	Actors     map[string]roles.Actor
+	Agents     map[string]roles.AgentEntry
 	Policy     policy.Policy
 	PolicyRaw  json.RawMessage // the stored policy body, verbatim; nil when the section is absent
 }
@@ -58,8 +57,8 @@ var ErrNoChange = errors.New("nothing changed")
 // section is empty.
 func LoadConfigDoc(s *config.Store) (ConfigDoc, error) {
 	d := ConfigDoc{
-		Actors: map[string]actors.Actor{},
-		Agents: map[string]actors.AgentEntry{},
+		Actors: map[string]roles.Actor{},
+		Agents: map[string]roles.AgentEntry{},
 	}
 
 	body, ok, err := s.Body(config.Candidates)
@@ -77,7 +76,7 @@ func LoadConfigDoc(s *config.Store) (ConfigDoc, error) {
 		return ConfigDoc{}, err
 	}
 	if ok {
-		a, _, err := actors.ParseActors(body)
+		a, _, err := roles.ParseActors(body)
 		if err != nil {
 			return ConfigDoc{}, err
 		}
@@ -89,7 +88,7 @@ func LoadConfigDoc(s *config.Store) (ConfigDoc, error) {
 		return ConfigDoc{}, err
 	}
 	if ok {
-		a, _, err := actors.ParseAgents(body)
+		a, _, err := roles.ParseAgents(body)
 		if err != nil {
 			return ConfigDoc{}, err
 		}
@@ -186,7 +185,7 @@ func EditCandidate(d ConfigDoc, name string, in CandidateInput) (ConfigEdit, err
 					continue
 				}
 				if !changed {
-					entries = append([]actors.Entry(nil), a.Candidates...)
+					entries = append([]roles.Entry(nil), a.Candidates...)
 					changed = true
 				}
 				entries[j].Candidate = newName
@@ -205,7 +204,7 @@ func EditCandidate(d ConfigDoc, name string, in CandidateInput) (ConfigEdit, err
 	}
 	sections := map[config.Section]json.RawMessage{config.Candidates: body}
 	if actsChanged {
-		actBody, err := actors.EncodeActors(acts)
+		actBody, err := roles.EncodeActors(acts)
 		if err != nil {
 			return ConfigEdit{}, err
 		}
@@ -270,7 +269,7 @@ func DeleteCandidate(d ConfigDoc, name string) (ConfigEdit, error) {
 		if len(a.Candidates) == 0 {
 			continue
 		}
-		kept := make([]actors.Entry, 0, len(a.Candidates))
+		kept := make([]roles.Entry, 0, len(a.Candidates))
 		removed := false
 		for _, e := range a.Candidates {
 			if e.Candidate == name || e.Candidate == token {
@@ -296,7 +295,7 @@ func DeleteCandidate(d ConfigDoc, name string) (ConfigEdit, error) {
 	}
 	sections := map[config.Section]json.RawMessage{config.Candidates: body}
 	if actsChanged {
-		actBody, err := actors.EncodeActors(acts)
+		actBody, err := roles.EncodeActors(acts)
 		if err != nil {
 			return ConfigEdit{}, err
 		}
@@ -325,7 +324,7 @@ func CandidateSlots(d ConfigDoc, name string) []ActorSlot {
 
 // SetActorEntries replaces actor's candidate list with entries. It covers
 // reorder, on/off, add and remove in one call.
-func SetActorEntries(d ConfigDoc, actor string, entries []actors.Entry) (ConfigEdit, error) {
+func SetActorEntries(d ConfigDoc, actor string, entries []roles.Entry) (ConfigEdit, error) {
 	a, ok := d.Actors[actor]
 	if !ok {
 		return ConfigEdit{}, &FieldError{"", "no actor named " + actor}
@@ -341,7 +340,7 @@ func SetActorEntries(d ConfigDoc, actor string, entries []actors.Entry) (ConfigE
 		seen[e.Candidate] = true
 	}
 
-	a.Candidates = append([]actors.Entry(nil), entries...)
+	a.Candidates = append([]roles.Entry(nil), entries...)
 	acts := copyActors(d.Actors)
 	acts[actor] = a
 	return actorEdit(d, acts, actor, "edit actor "+actor+" candidates")
@@ -354,7 +353,7 @@ func EditActor(d ConfigDoc, actor, agent, tier string, check bool) (ConfigEdit, 
 	if !ok {
 		return ConfigEdit{}, &FieldError{"", "no actor named " + actor}
 	}
-	if _, shipped := actors.Shipped(agent); !shipped {
+	if _, shipped := roles.Shipped(agent); !shipped {
 		if _, ok := d.Agents[agent]; !ok {
 			return ConfigEdit{}, &FieldError{"agent", "no agent named " + agent}
 		}
@@ -383,24 +382,24 @@ func EditActor(d ConfigDoc, actor, agent, tier string, check bool) (ConfigEdit, 
 
 // AddActor creates an actor with no candidates, no tier and no check.
 func AddActor(d ConfigDoc, name, agent string) (ConfigEdit, error) {
-	body, err := actors.EncodeActors(map[string]actors.Actor{name: {Agent: agent}})
+	body, err := roles.EncodeActors(map[string]roles.Actor{name: {Agent: agent}})
 	if err != nil {
 		return ConfigEdit{}, err
 	}
-	if _, _, err := actors.ParseActors(body); err != nil {
+	if _, _, err := roles.ParseActors(body); err != nil {
 		return ConfigEdit{}, &FieldError{"", err.Error()}
 	}
 	if _, taken := d.Actors[name]; taken {
 		return ConfigEdit{}, &FieldError{"", "actor " + name + " already exists"}
 	}
-	if _, shipped := actors.Shipped(agent); !shipped {
+	if _, shipped := roles.Shipped(agent); !shipped {
 		if _, ok := d.Agents[agent]; !ok {
 			return ConfigEdit{}, &FieldError{"agent", "no agent named " + agent}
 		}
 	}
 
 	acts := copyActors(d.Actors)
-	acts[name] = actors.Actor{Agent: agent}
+	acts[name] = roles.Actor{Agent: agent}
 	return actorEdit(d, acts, name, "add actor "+name)
 }
 
@@ -421,7 +420,7 @@ func DeleteActor(d ConfigDoc, name string) (ConfigEdit, error) {
 // DeleteAgent removes the custom agent named name. A shipped agent and an
 // agent any actor uses are both refused. Only the agents section changes.
 func DeleteAgent(d ConfigDoc, name string) (ConfigEdit, error) {
-	if _, shipped := actors.Shipped(name); shipped {
+	if _, shipped := roles.Shipped(name); shipped {
 		return ConfigEdit{}, &FieldError{"", name + " ships with relevo; it can't be deleted"}
 	}
 	var users []string
@@ -437,14 +436,14 @@ func DeleteAgent(d ConfigDoc, name string) (ConfigEdit, error) {
 		return ConfigEdit{}, &FieldError{"", "no agent named " + name}
 	}
 
-	agents := make(map[string]actors.AgentEntry, len(d.Agents))
+	agents := make(map[string]roles.AgentEntry, len(d.Agents))
 	for k, v := range d.Agents {
 		if k == name {
 			continue
 		}
 		agents[k] = v
 	}
-	body, err := actors.EncodeAgents(agents)
+	body, err := roles.EncodeAgents(agents)
 	if err != nil {
 		return ConfigEdit{}, err
 	}
@@ -480,8 +479,8 @@ func ReloadConfig(rt Runtime) (Runtime, error) {
 }
 
 // actorEdit builds an actors-only edit from acts and dry-runs it.
-func actorEdit(d ConfigDoc, acts map[string]actors.Actor, name, message string) (ConfigEdit, error) {
-	body, err := actors.EncodeActors(acts)
+func actorEdit(d ConfigDoc, acts map[string]roles.Actor, name, message string) (ConfigEdit, error) {
+	body, err := roles.EncodeActors(acts)
 	if err != nil {
 		return ConfigEdit{}, err
 	}
@@ -549,12 +548,12 @@ func checkProvider(harnessKind, provider string) error {
 // validates every section, converts the agents and actors to a roles file, and
 // builds the registry over the candidate set. Any error becomes a whole-form
 // FieldError.
-func dryRun(cands []candidate.Candidate, acts map[string]actors.Actor, agents map[string]actors.AgentEntry, pol policy.Policy) error {
+func dryRun(cands []candidate.Candidate, acts map[string]roles.Actor, agents map[string]roles.AgentEntry, pol policy.Policy) error {
 	if acts == nil {
-		acts = map[string]actors.Actor{}
+		acts = map[string]roles.Actor{}
 	}
 	if agents == nil {
-		agents = map[string]actors.AgentEntry{}
+		agents = map[string]roles.AgentEntry{}
 	}
 
 	candBody, err := encodeCandidates(cands)
@@ -565,7 +564,7 @@ func dryRun(cands []candidate.Candidate, acts map[string]actors.Actor, agents ma
 		return &FieldError{"", err.Error()}
 	}
 
-	actBody, err := actors.EncodeActors(acts)
+	actBody, err := roles.EncodeActors(acts)
 	if err != nil {
 		return &FieldError{"", err.Error()}
 	}
@@ -573,7 +572,7 @@ func dryRun(cands []candidate.Candidate, acts map[string]actors.Actor, agents ma
 		return &FieldError{"", err.Error()}
 	}
 
-	agentsBody, err := actors.EncodeAgents(agents)
+	agentsBody, err := roles.EncodeAgents(agents)
 	if err != nil {
 		return &FieldError{"", err.Error()}
 	}
@@ -581,7 +580,7 @@ func dryRun(cands []candidate.Candidate, acts map[string]actors.Actor, agents ma
 		return &FieldError{"", err.Error()}
 	}
 
-	rf, _, err := actors.ToRolesFile(agents, acts)
+	rf, _, err := roles.FromActors(agents, acts)
 	if err != nil {
 		return &FieldError{"", err.Error()}
 	}
@@ -640,7 +639,7 @@ func resolvesToCandidate(d ConfigDoc, ref string) bool {
 // AgentShape returns the shape word ("writer"/"reader") of the agent named
 // name: a shipped agent's shape, or a custom entry's own.
 func AgentShape(d ConfigDoc, name string) (string, error) {
-	if s, ok := actors.Shipped(name); ok {
+	if s, ok := roles.Shipped(name); ok {
 		return string(s.Shape), nil
 	}
 	e, ok := d.Agents[name]
@@ -659,8 +658,8 @@ func AgentShape(d ConfigDoc, name string) (string, error) {
 
 // copyActors returns a shallow copy of m: the map is fresh, the Actor values
 // are shared until a caller replaces one.
-func copyActors(m map[string]actors.Actor) map[string]actors.Actor {
-	out := make(map[string]actors.Actor, len(m))
+func copyActors(m map[string]roles.Actor) map[string]roles.Actor {
+	out := make(map[string]roles.Actor, len(m))
 	for k, v := range m {
 		out[k] = v
 	}
@@ -668,7 +667,7 @@ func copyActors(m map[string]actors.Actor) map[string]actors.Actor {
 }
 
 // sortedActorNames returns m's keys, sorted.
-func sortedActorNames(m map[string]actors.Actor) []string {
+func sortedActorNames(m map[string]roles.Actor) []string {
 	names := make([]string, 0, len(m))
 	for name := range m {
 		names = append(names, name)

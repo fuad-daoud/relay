@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -41,10 +40,10 @@ func configeditDoc(t *testing.T) ConfigDoc {
 		t.Fatalf("fixture has %d candidates, want 7", len(doc.Candidates))
 	}
 	doc.Policy = policy.Policy{MaxTier: "yolo"}
-	doc.Actors = map[string]actors.Actor{
+	doc.Actors = map[string]roles.Actor{
 		"builder": {
 			Agent: "plan-executor",
-			Candidates: []actors.Entry{
+			Candidates: []roles.Entry{
 				{Candidate: "gemini-3.8-flash-high"},
 				{Candidate: "claude-sonnet-4-6"},
 				{Candidate: "deepseek-v4.1-flash"},
@@ -56,7 +55,7 @@ func configeditDoc(t *testing.T) ConfigDoc {
 		},
 		"reviewer": {
 			Agent: "reviewer",
-			Candidates: []actors.Entry{
+			Candidates: []roles.Entry{
 				{Candidate: "sonnet"},
 				{Candidate: "gpt-5.6-terra"},
 			},
@@ -64,10 +63,10 @@ func configeditDoc(t *testing.T) ConfigDoc {
 		},
 		"researcher": {
 			Agent:      "researcher",
-			Candidates: []actors.Entry{{Candidate: "haiku"}},
+			Candidates: []roles.Entry{{Candidate: "haiku"}},
 		},
 	}
-	doc.Agents = map[string]actors.AgentEntry{}
+	doc.Agents = map[string]roles.AgentEntry{}
 	return doc
 }
 
@@ -95,26 +94,26 @@ func decodeCandidates(t *testing.T, e ConfigEdit) []candidate.Candidate {
 	return out
 }
 
-func decodeActors(t *testing.T, e ConfigEdit) map[string]actors.Actor {
+func decodeActors(t *testing.T, e ConfigEdit) map[string]roles.Actor {
 	t.Helper()
 	raw, ok := e.Sections[config.Actors]
 	if !ok {
 		t.Fatal("edit changes no actors section")
 	}
-	var out map[string]actors.Actor
+	var out map[string]roles.Actor
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("decode actors: %v", err)
 	}
 	return out
 }
 
-func decodeAgents(t *testing.T, e ConfigEdit) map[string]actors.AgentEntry {
+func decodeAgents(t *testing.T, e ConfigEdit) map[string]roles.AgentEntry {
 	t.Helper()
 	raw, ok := e.Sections[config.Agents]
 	if !ok {
 		t.Fatal("edit changes no agents section")
 	}
-	var out map[string]actors.AgentEntry
+	var out map[string]roles.AgentEntry
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("decode agents: %v", err)
 	}
@@ -354,12 +353,12 @@ func TestConfigEditSetActorEntries(t *testing.T) {
 	t.Parallel()
 
 	t.Run("rejects an unknown name", func(t *testing.T) {
-		_, err := SetActorEntries(configeditDoc(t), "builder", []actors.Entry{{Candidate: "nope"}})
+		_, err := SetActorEntries(configeditDoc(t), "builder", []roles.Entry{{Candidate: "nope"}})
 		wantFieldError(t, err, "", "no candidate named nope")
 	})
 
 	t.Run("rejects a duplicate", func(t *testing.T) {
-		_, err := SetActorEntries(configeditDoc(t), "builder", []actors.Entry{
+		_, err := SetActorEntries(configeditDoc(t), "builder", []roles.Entry{
 			{Candidate: "sonnet"},
 			{Candidate: "sonnet"},
 		})
@@ -367,7 +366,7 @@ func TestConfigEditSetActorEntries(t *testing.T) {
 	})
 
 	t.Run("replaces the list", func(t *testing.T) {
-		edit, err := SetActorEntries(configeditDoc(t), "builder", []actors.Entry{
+		edit, err := SetActorEntries(configeditDoc(t), "builder", []roles.Entry{
 			{Candidate: "gemini-3.8-flash-high"},
 			{Candidate: "sonnet", Off: true},
 		})
@@ -378,7 +377,7 @@ func TestConfigEditSetActorEntries(t *testing.T) {
 			t.Errorf("Message = %q", edit.Message)
 		}
 		got := decodeActors(t, edit)["builder"].Candidates
-		want := []actors.Entry{{Candidate: "gemini-3.8-flash-high"}, {Candidate: "sonnet", Off: true}}
+		want := []roles.Entry{{Candidate: "gemini-3.8-flash-high"}, {Candidate: "sonnet", Off: true}}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("entries = %+v, want %+v", got, want)
 		}
@@ -450,16 +449,16 @@ func TestConfigEditDeleteAgent(t *testing.T) {
 	wantFieldError(t, err, "", "reviewer ships with relevo; it can't be deleted")
 
 	used := configeditDoc(t)
-	used.Agents["scout"] = actors.AgentEntry{
+	used.Agents["scout"] = roles.AgentEntry{
 		Shape:  "reader",
 		Native: map[string]roles.DefRow{"opencode": {Agent: "scout"}},
 	}
-	used.Actors["tinkerer"] = actors.Actor{Agent: "scout"}
+	used.Actors["tinkerer"] = roles.Actor{Agent: "scout"}
 	_, err = DeleteAgent(used, "scout")
 	wantFieldError(t, err, "", "used by tinkerer; point it at another agent in :actors first")
 
 	unused := configeditDoc(t)
-	unused.Agents["odd"] = actors.AgentEntry{
+	unused.Agents["odd"] = roles.AgentEntry{
 		Shape:  "reader",
 		Native: map[string]roles.DefRow{"opencode": {Agent: "odd"}},
 	}

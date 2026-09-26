@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -50,7 +49,7 @@ func FormatActors(L config.Loaded, reg *roles.Registry) string {
 }
 
 // formatActor renders one actor's two lines, without the trailing newline.
-func formatActor(L config.Loaded, reg *roles.Registry, name string, a actors.Actor) string {
+func formatActor(L config.Loaded, reg *roles.Registry, name string, a roles.Actor) string {
 	shape := "reader"
 	if reg != nil {
 		if role, ok := reg.Role(name); ok && role.Shape == harness.ShapeBuilder {
@@ -59,7 +58,7 @@ func formatActor(L config.Loaded, reg *roles.Registry, name string, a actors.Act
 	}
 
 	kind := "custom"
-	if _, shipped := actors.Shipped(a.Agent); shipped {
+	if _, shipped := roles.Shipped(a.Agent); shipped {
 		kind = "shipped"
 	}
 
@@ -88,7 +87,7 @@ func actorCheckOn(check *bool) bool {
 
 // actorCandidates renders an actor's candidates: each as its candidate's short
 // name, an off entry suffixed " (off)", and "(none)" when the list is empty.
-func actorCandidates(L config.Loaded, a actors.Actor) string {
+func actorCandidates(L config.Loaded, a roles.Actor) string {
 	if len(a.Candidates) == 0 {
 		return "(none)"
 	}
@@ -109,7 +108,7 @@ func actorCandidates(L config.Loaded, a actors.Actor) string {
 // formatActorAgent renders one agents-section entry's line, without the
 // trailing newline: a source names its output label, a native says "native",
 // and both name the kinds they render.
-func formatActorAgent(name string, entry actors.AgentEntry) string {
+func formatActorAgent(name string, entry roles.AgentEntry) string {
 	if entry.Source != "" {
 		if src, err := agentsrc.Parse([]byte(entry.Source)); err == nil {
 			return fmt.Sprintf("  %s  %s  output %s  kinds %s",

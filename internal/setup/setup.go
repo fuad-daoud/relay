@@ -7,10 +7,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
 type Default struct{ Provider, Model string }
@@ -65,11 +65,11 @@ func Plan(env harness.InstallEnv) (Files, error) {
 	polJSON = append(polJSON, '\n')
 
 	names := candidate.DeriveNames(candidates)
-	entries := make([]actors.Entry, 0, len(names))
+	entries := make([]roles.Entry, 0, len(names))
 	for _, name := range names {
-		entries = append(entries, actors.Entry{Candidate: name})
+		entries = append(entries, roles.Entry{Candidate: name})
 	}
-	actorsJSON, err := actors.EncodeActors(map[string]actors.Actor{
+	actorsJSON, err := roles.EncodeActors(map[string]roles.Actor{
 		"builder": {Agent: "plan-executor", Candidates: entries, Tier: "yolo"},
 	})
 	if err != nil {

@@ -210,7 +210,7 @@ func TestAvailableRoundTrip(t *testing.T) {
 	defer ts.Close()
 
 	cl := client.New(
-		client.Servers{"zen": client.ServerEntry{URL: ts.URL, Insecure: true}},
+		remote.Servers{"zen": remote.ServerEntry{URL: ts.URL, Insecure: true}},
 		generateKey(t),
 		time.Now,
 	)
@@ -254,7 +254,7 @@ func TestStartRoundSendsTagsField(t *testing.T) {
 	defer ts.Close()
 
 	cl := client.New(
-		client.Servers{"zen": client.ServerEntry{URL: ts.URL, Insecure: true}},
+		remote.Servers{"zen": remote.ServerEntry{URL: ts.URL, Insecure: true}},
 		generateKey(t),
 		time.Now,
 	)

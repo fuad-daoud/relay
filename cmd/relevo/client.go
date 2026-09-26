@@ -53,8 +53,8 @@ func cmdClientAddServer(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	entry := client.ServerEntry{URL: rawURL, Fingerprint: *fingerprint, CA: *ca, Insecure: *insecure}
-	if err := client.ValidateEntry(entry); err != nil {
+	entry := remote.ServerEntry{URL: rawURL, Fingerprint: *fingerprint, CA: *ca, Insecure: *insecure}
+	if err := remote.ValidateEntry(entry); err != nil {
 		return err
 	}
 

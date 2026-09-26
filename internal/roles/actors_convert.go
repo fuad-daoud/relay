@@ -1,21 +1,20 @@
-package actors
+package roles
 
 import (
 	"fmt"
 
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// ToRolesFile converts the agents and actors sections into today's roles.File,
+// FromActors converts the agents and actors sections into today's File,
 // one row per actor (A2 §4.1). It is the bridge round 1 uses to keep every
-// consumer of *roles.Registry working unchanged.
+// consumer of *Registry working unchanged.
 //
-// Errors wrap roles.ErrBadRoles, so config.Load handles them exactly as it
+// Errors wrap ErrBadRoles, so config.Load handles them exactly as it
 // treats a bad roles file. The warnings name every agents entry no actor uses.
-func ToRolesFile(agents map[string]AgentEntry, actors map[string]Actor) (*roles.File, []string, error) {
-	rows := make(map[string]roles.Row, len(actors))
+func FromActors(agents map[string]AgentEntry, actors map[string]Actor) (*File, []string, error) {
+	rows := make(map[string]Row, len(actors))
 	used := make(map[string]bool, len(agents))
 
 	for _, name := range sortedKeys(actors) {
@@ -33,31 +32,31 @@ func ToRolesFile(agents map[string]AgentEntry, actors map[string]Actor) (*roles.
 			warnings = append(warnings, fmt.Sprintf("agent %s is not used by any actor", name))
 		}
 	}
-	return &roles.File{Rows: rows, Source: roles.SourceActors}, warnings, nil
+	return &File{Rows: rows, Source: SourceActors}, warnings, nil
 }
 
-// rowFor builds one actor's roles.Row.
-func rowFor(name string, actor Actor, agents map[string]AgentEntry) (roles.Row, error) {
+// rowFor builds one actor's Row.
+func rowFor(name string, actor Actor, agents map[string]AgentEntry) (Row, error) {
 	shape, defs, err := agentFor(actor.Agent, agents)
 	if err != nil {
-		return roles.Row{}, fmt.Errorf("actor %s: %v: %w", name, err, roles.ErrBadRoles)
+		return Row{}, fmt.Errorf("actor %s: %v: %w", name, err, ErrBadRoles)
 	}
 
 	// A builtin actor name keeps its builtin shape; a shape that would change
 	// what relevo's loop does with the actor is refused.
 	if builtin, ok := harness.RoleByName(name); ok {
 		if want := shapeWordFor(builtin.Shape); shape != want {
-			return roles.Row{}, fmt.Errorf("actor %s must run a %s agent: %w", name, want, roles.ErrBadRoles)
+			return Row{}, fmt.Errorf("actor %s must run a %s agent: %w", name, want, ErrBadRoles)
 		}
 	}
 
 	// check is a writer's gate; a reader has none.
 	if actor.Check != nil && *actor.Check && shape == string(agentsrc.ShapeReader) {
-		return roles.Row{}, fmt.Errorf("actor %s: check is only for a writer agent: %w", name, roles.ErrBadRoles)
+		return Row{}, fmt.Errorf("actor %s: check is only for a writer agent: %w", name, ErrBadRoles)
 	}
 
 	rowShape := shape
-	row := roles.Row{
+	row := Row{
 		Shape:       &rowShape,
 		Definitions: defs,
 	}
@@ -81,11 +80,11 @@ func rowFor(name string, actor Actor, agents map[string]AgentEntry) (roles.Row, 
 // its definition for every kind it renders. A shipped agent uses the shipped
 // table, a source agent its agentsrc shape and rendered kinds, and a native
 // agent its own map.
-func agentFor(name string, agents map[string]AgentEntry) (string, map[string]roles.DefRow, error) {
+func agentFor(name string, agents map[string]AgentEntry) (string, map[string]DefRow, error) {
 	if shipped, ok := Shipped(name); ok {
-		defs := make(map[string]roles.DefRow, len(harness.All()))
+		defs := make(map[string]DefRow, len(harness.All()))
 		for _, h := range harness.All() {
-			defs[h.Kind] = roles.DefRow{
+			defs[h.Kind] = DefRow{
 				Agent:    shipped.Name,
 				Requires: append([]string(nil), shipped.Requires...),
 			}
@@ -103,9 +102,9 @@ func agentFor(name string, agents map[string]AgentEntry) (string, map[string]rol
 		if err != nil {
 			return "", nil, fmt.Errorf("agent %q: %v", name, err)
 		}
-		defs := make(map[string]roles.DefRow)
+		defs := make(map[string]DefRow)
 		for _, kind := range agentsrc.RenderedKinds(src) {
-			defs[kind] = roles.DefRow{
+			defs[kind] = DefRow{
 				Agent:    src.Name,
 				Requires: append([]string(nil), src.Requires...),
 			}
@@ -113,9 +112,9 @@ func agentFor(name string, agents map[string]AgentEntry) (string, map[string]rol
 		return string(src.Shape), defs, nil
 	}
 
-	defs := make(map[string]roles.DefRow, len(entry.Native))
+	defs := make(map[string]DefRow, len(entry.Native))
 	for kind, d := range entry.Native {
-		defs[kind] = roles.DefRow{
+		defs[kind] = DefRow{
 			Agent:    d.Agent,
 			Requires: append([]string(nil), d.Requires...),
 		}

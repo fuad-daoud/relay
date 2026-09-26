@@ -403,7 +403,7 @@ func procStartUnix(pid int) (int64, error) {
 // nil Runtime.Remote -- but it prints once, since a configured server the
 // client cannot reach is a setup mistake worth naming immediately rather
 // than only when a remote command is next run.
-func newRemoteClient(servers client.Servers, key []byte, gitClient *git.Client) (relevo.RemoteClient, remote.TreeTransport, error) {
+func newRemoteClient(servers remote.Servers, key []byte, gitClient *git.Client) (relevo.RemoteClient, remote.TreeTransport, error) {
 	if len(servers) == 0 {
 		return nil, nil, nil
 	}

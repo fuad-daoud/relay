@@ -26,8 +26,6 @@ linters:
         text: '.*'
       - path: '^dist/'
         text: '.*'
-      - path: '^internal/actors/'
-        text: '.*'
       - path: '^internal/e2e/'
         text: '.*'
       - path: '^internal/history/'

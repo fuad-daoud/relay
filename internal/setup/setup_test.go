@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
 func TestPlanFindsBinariesInHarnessOrder(t *testing.T) {
@@ -63,9 +63,9 @@ func TestPlanFindsBinariesInHarnessOrder(t *testing.T) {
 		t.Errorf("MaxTier = %q, want yolo", pol.MaxTier)
 	}
 
-	actorSet, _, err := actors.ParseActors(files.Actors)
+	actorSet, _, err := roles.ParseActors(files.Actors)
 	if err != nil {
-		t.Fatalf("actors.ParseActors: %v", err)
+		t.Fatalf("roles.ParseActors: %v", err)
 	}
 	builder, ok := actorSet["builder"]
 	if !ok {

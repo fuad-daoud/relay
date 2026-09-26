@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
 // actorView is `actors › <name>` (§4): the actor's candidate list, reordered,
@@ -306,7 +306,7 @@ func (v actorView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		if n == 1 {
 			return v, notice(v.name + " needs at least one candidate")
 		}
-		next := make([]actors.Entry, 0, n-1)
+		next := make([]roles.Entry, 0, n-1)
 		next = append(next, entries[:v.cur]...)
 		next = append(next, entries[v.cur+1:]...)
 		v.cur = candClamp(v.cur, len(next))
@@ -321,14 +321,14 @@ func (v actorView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 
 // copyActorEntries is a fresh copy of one actor's entry list: a change builds
 // its own list, so the doc the view holds is never mutated in place.
-func copyActorEntries(entries []actors.Entry) []actors.Entry {
-	return append([]actors.Entry(nil), entries...)
+func copyActorEntries(entries []roles.Entry) []roles.Entry {
+	return append([]roles.Entry(nil), entries...)
 }
 
 // withActorEntries is doc with the actor's candidate list replaced: a copied
 // map, so the next key builds on the list this one wrote (§4).
-func withActorEntries(doc relevo.ConfigDoc, name string, entries []actors.Entry) relevo.ConfigDoc {
-	acts := make(map[string]actors.Actor, len(doc.Actors))
+func withActorEntries(doc relevo.ConfigDoc, name string, entries []roles.Entry) relevo.ConfigDoc {
+	acts := make(map[string]roles.Actor, len(doc.Actors))
 	for k, a := range doc.Actors {
 		acts[k] = a
 	}
@@ -342,7 +342,7 @@ func withActorEntries(doc relevo.ConfigDoc, name string, entries []actors.Entry)
 // change is every entry change's one path (§4): validate next with
 // SetActorEntries, update the local doc, then apply the edit. A refused edit
 // is a notice.
-func (v actorView) change(env Env, next []actors.Entry) (View, tea.Cmd) {
+func (v actorView) change(env Env, next []roles.Entry) (View, tea.Cmd) {
 	edit, err := relevo.SetActorEntries(v.doc, v.name, next)
 	if err != nil {
 		return v, notice(err.Error())
@@ -367,7 +367,7 @@ func (v actorView) pickCmd(env Env) tea.Cmd {
 		items:  items,
 		sel:    0,
 		onPick: func(name string) tea.Cmd {
-			next := append(copyActorEntries(v.doc.Actors[v.name].Candidates), actors.Entry{Candidate: name})
+			next := append(copyActorEntries(v.doc.Actors[v.name].Candidates), roles.Entry{Candidate: name})
 			_, cmd := v.change(env, next)
 			return cmd
 		},
@@ -388,7 +388,7 @@ func actorPickItems(doc relevo.ConfigDoc, name string, env Env) []listItem {
 		if inList[c.Name] {
 			continue
 		}
-		text, style := entryStatus(doc, actors.Entry{Candidate: c.Name}, env.Report.Gated, env.Now)
+		text, style := entryStatus(doc, roles.Entry{Candidate: c.Name}, env.Report.Gated, env.Now)
 		out = append(out, listItem{
 			name:        c.Name,
 			status:      text,

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -135,8 +134,8 @@ func ignoredLegacyWarnings(candBody []byte, candOK bool, polBody []byte, polOK b
 }
 
 type migration struct {
-	agents    map[string]actors.AgentEntry
-	actors    map[string]actors.Actor
+	agents    map[string]roles.AgentEntry
+	actors    map[string]roles.Actor
 	roleTiers map[string]string
 	notes     []string
 }
@@ -168,14 +167,14 @@ func buildMigration(doc Doc, set *candidate.Set) (*migration, error) {
 	}
 
 	m := &migration{
-		agents:    map[string]actors.AgentEntry{},
-		actors:    map[string]actors.Actor{},
+		agents:    map[string]roles.AgentEntry{},
+		actors:    map[string]roles.Actor{},
 		roleTiers: map[string]string{},
 	}
 	// Existing agents survive the migration; a new native agent whose name
 	// collides with one takes the <role>-agent fallback.
 	if body, ok := doc[Agents]; ok {
-		existing, _, err := actors.ParseAgents(body)
+		existing, _, err := roles.ParseAgents(body)
 		if err != nil {
 			return nil, err
 		}
@@ -231,10 +230,10 @@ func legacyRows(rf *roles.File, set *candidate.Set, pol policy.Policy) (*roles.F
 	return f, nil
 }
 
-func actorForRole(name string, role roles.Role, row roles.Row, set *candidate.Set, rf *roles.File, agentsOut map[string]actors.AgentEntry) (actors.Actor, string, []string) {
+func actorForRole(name string, role roles.Role, row roles.Row, set *candidate.Set, rf *roles.File, agentsOut map[string]roles.AgentEntry) (roles.Actor, string, []string) {
 	agentName, entry, created := agentForRole(role, agentsOut)
 	if agentName == "" {
-		return actors.Actor{}, "", []string{fmt.Sprintf("actor %s: no definitions; skipped", name)}
+		return roles.Actor{}, "", []string{fmt.Sprintf("actor %s: no definitions; skipped", name)}
 	}
 
 	var notes []string
@@ -243,7 +242,7 @@ func actorForRole(name string, role roles.Role, row roles.Row, set *candidate.Se
 		notes = append(notes, fmt.Sprintf("agent %s: from role %s's definitions", agentName, name))
 	}
 
-	a := actors.Actor{Agent: agentName}
+	a := roles.Actor{Agent: agentName}
 	seen := make(map[string]bool)
 	for _, raw := range row.Candidates {
 		display := raw
@@ -258,7 +257,7 @@ func actorForRole(name string, role roles.Role, row roles.Row, set *candidate.Se
 			continue
 		}
 		seen[display] = true
-		a.Candidates = append(a.Candidates, actors.Entry{Candidate: display, Off: containsString(row.Off, raw)})
+		a.Candidates = append(a.Candidates, roles.Entry{Candidate: display, Off: containsString(row.Off, raw)})
 	}
 	if rf != nil && row.Gate != nil {
 		a.Check = row.Gate
@@ -272,7 +271,7 @@ func migratedSections(doc Doc, set *candidate.Set, m *migration) (Doc, error) {
 		out[sec] = body
 	}
 
-	actorsJSON, err := actors.EncodeActors(m.actors)
+	actorsJSON, err := roles.EncodeActors(m.actors)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +279,7 @@ func migratedSections(doc Doc, set *candidate.Set, m *migration) (Doc, error) {
 	delete(out, Roles)
 
 	if len(m.agents) > 0 {
-		agentsJSON, err := actors.EncodeAgents(m.agents)
+		agentsJSON, err := roles.EncodeAgents(m.agents)
 		if err != nil {
 			return nil, err
 		}
@@ -306,16 +305,16 @@ func migratedSections(doc Doc, set *candidate.Set, m *migration) (Doc, error) {
 	return out, nil
 }
 
-func agentForRole(role roles.Role, agentsOut map[string]actors.AgentEntry) (string, actors.AgentEntry, bool) {
+func agentForRole(role roles.Role, agentsOut map[string]roles.AgentEntry) (string, roles.AgentEntry, bool) {
 	if shipped, ok := shippedAgentFor(role); ok {
-		return shipped, actors.AgentEntry{}, false
+		return shipped, roles.AgentEntry{}, false
 	}
 	if len(role.Definitions) == 0 {
-		return "", actors.AgentEntry{}, false
+		return "", roles.AgentEntry{}, false
 	}
 
 	name := nativeAgentName(role)
-	if _, shipped := actors.Shipped(name); shipped {
+	if _, shipped := roles.Shipped(name); shipped {
 		name = role.Name + "-agent"
 	}
 	if _, exists := agentsOut[name]; exists {
@@ -329,7 +328,7 @@ func agentForRole(role roles.Role, agentsOut map[string]actors.AgentEntry) (stri
 			Requires: append([]string(nil), d.Requires...),
 		}
 	}
-	entry := actors.AgentEntry{Shape: shapeWord(role.Shape), Native: native}
+	entry := roles.AgentEntry{Shape: shapeWord(role.Shape), Native: native}
 	return name, entry, true
 }
 

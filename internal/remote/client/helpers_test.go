@@ -231,8 +231,8 @@ func generateKey(t *testing.T) remote.Keypair {
 	return kp
 }
 
-func pinnedServers(url, fingerprint string) client.Servers {
-	return client.Servers{"zen": client.ServerEntry{URL: url, Fingerprint: fingerprint}}
+func pinnedServers(url, fingerprint string) remote.Servers {
+	return remote.Servers{"zen": remote.ServerEntry{URL: url, Fingerprint: fingerprint}}
 }
 
 func initClientRepo(t *testing.T, gitClient *git.Client) (dir, headSHA, repoID string) {
@@ -287,7 +287,7 @@ func closedPortClient(t *testing.T, kp remote.Keypair) *client.Client {
 	addr := l.Addr().String()
 	_ = l.Close()
 	return client.New(
-		client.Servers{"closed": client.ServerEntry{URL: "http://" + addr, Insecure: true}},
+		remote.Servers{"closed": remote.ServerEntry{URL: "http://" + addr, Insecure: true}},
 		kp,
 		time.Now,
 	)

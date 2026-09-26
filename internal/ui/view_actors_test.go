@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
 // actorsFixtureList loads an actorsView over fa's doc, as the ':actors'
@@ -28,13 +28,13 @@ func actorFixtureView(t *testing.T, fa *fakeActions, name string) actorView {
 }
 
 // actorEditEntries decodes one edit's actor's entry list.
-func actorEditEntries(t *testing.T, e relevo.ConfigEdit, actor string) []actors.Entry {
+func actorEditEntries(t *testing.T, e relevo.ConfigEdit, actor string) []roles.Entry {
 	t.Helper()
 	body, ok := e.Sections[config.Actors]
 	if !ok {
 		t.Fatal("the edit changes no actors section")
 	}
-	acts, _, err := actors.ParseActors(body)
+	acts, _, err := roles.ParseActors(body)
 	if err != nil {
 		t.Fatalf("ParseActors: %v", err)
 	}
@@ -42,7 +42,7 @@ func actorEditEntries(t *testing.T, e relevo.ConfigEdit, actor string) []actors.
 }
 
 // actorEntryRefs is the entry list's candidate references, in order.
-func actorEntryRefs(entries []actors.Entry) []string {
+func actorEntryRefs(entries []roles.Entry) []string {
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, e.Candidate)
@@ -71,7 +71,7 @@ func addActorText(f addActorForm, s string) addActorForm {
 // actorOrder puts builder, reviewer and researcher first, then the rest by
 // name (§3).
 func TestActorOrder(t *testing.T) {
-	got := actorOrder(map[string]actors.Actor{
+	got := actorOrder(map[string]roles.Actor{
 		"zebra": {}, "reviewer": {}, "alpha": {}, "builder": {}, "researcher": {},
 	})
 	want := "builder,reviewer,researcher,alpha,zebra"
