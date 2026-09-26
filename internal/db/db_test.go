@@ -81,7 +81,7 @@ func TestOpenCurrentSchemaWhileAnotherProcessWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open (1st): %v", err)
 	}
-	d.Close()
+	_ = d.Close()
 
 	oldTimeout := busyTimeoutMS
 	busyTimeoutMS = 200
@@ -92,14 +92,14 @@ func TestOpenCurrentSchemaWhileAnotherProcessWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sql.Open writer: %v", err)
 	}
-	t.Cleanup(func() { writer.Close() })
+	t.Cleanup(func() { _ = writer.Close() })
 
 	ctx := context.Background()
 	conn, err := writer.Conn(ctx)
 	if err != nil {
 		t.Fatalf("writer.Conn: %v", err)
 	}
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() { _ = conn.Close() })
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		t.Fatalf("BEGIN IMMEDIATE: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestOpenCurrentSchemaWhileAnotherProcessWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open (2nd) while another connection holds the write lock: %v", err)
 	}
-	defer d2.Close()
+	defer func() { _ = d2.Close() }()
 	if elapsed >= 2*time.Second {
 		t.Errorf("Open took %s, want < 2s: a current schema must not wait on the write lock", elapsed)
 	}

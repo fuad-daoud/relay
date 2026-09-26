@@ -98,8 +98,7 @@ func open(path string) (_ *DB, err error) {
 	if have > know {
 		return &DB{sqlDB: sqlDB, newer: true, have: have, know: know}, nil
 	}
-	// A current schema needs no write: taking BEGIN IMMEDIATE here made every
-	// command take the write lock before doing anything, and fail under load.
+	// A current schema needs no write: BEGIN IMMEDIATE here failed under load.
 	if have == know {
 		return &DB{sqlDB: sqlDB, have: have, know: know}, nil
 	}
