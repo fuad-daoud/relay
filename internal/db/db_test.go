@@ -282,6 +282,66 @@ func TestConcurrentOpenAppliesEachMigrationOnce(t *testing.T) {
 	}
 }
 
+// TestOpenCurrentDatabaseTakesNoWriteLock pins the reader-facing half of the
+// fix: a database already at this binary's schema is opened without running a
+// migration, so the open writes nothing and does not queue behind a writer
+// holding the lock. Mutation: make applyMigrations unconditional again and
+// this fails busy behind the holder's BEGIN IMMEDIATE.
+func TestOpenCurrentDatabaseTakesNoWriteLock(t *testing.T) {
+	oldTimeout := busyTimeoutMS
+	busyTimeoutMS = 20
+	t.Cleanup(func() { busyTimeoutMS = oldTimeout })
+
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	holder, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("sql.Open holder: %v", err)
+	}
+	defer holder.Close()
+
+	ctx := context.Background()
+	conn, err := holder.Conn(ctx)
+	if err != nil {
+		t.Fatalf("holder.Conn: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		t.Fatalf("holder BEGIN IMMEDIATE: %v", err)
+	}
+	defer conn.ExecContext(ctx, "ROLLBACK")
+
+	opened, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open while a writer holds the lock: %v", err)
+	}
+	if err := opened.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+}
+
+// TestOpenSetsJournalSizeLimit pins the WAL cap: every connection Open makes
+// carries journal_size_limit, so sqlite truncates the -wal file back to it
+// after a checkpoint instead of leaving it at a write burst's high-water size.
+func TestOpenSetsJournalSizeLimit(t *testing.T) {
+	d := openTestDB(t)
+
+	var limit int
+	if err := d.sqlDB.QueryRow(`PRAGMA journal_size_limit`).Scan(&limit); err != nil {
+		t.Fatalf("PRAGMA journal_size_limit: %v", err)
+	}
+	if limit != journalSizeLimit {
+		t.Errorf("journal_size_limit = %d, want %d", limit, journalSizeLimit)
+	}
+}
+
 // TestTxRefusesANewerSchema pins §6: a writer on a schema a newer relevo wrote
 // refuses with ErrNewerSchema instead of downgrading it.
 func TestTxRefusesANewerSchema(t *testing.T) {

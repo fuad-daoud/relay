@@ -215,11 +215,11 @@ func (s *Store) AppendLog(name string, e LogEntry) error {
 	return s.WithLock(func(tx *Tx) error { return tx.AppendLog(name, e) })
 }
 
-// ReadLog returns every entry in order, acquiring the state lock for the
-// operation.
+// ReadLog returns every entry in order, taking the state lock only when a
+// legacy file needs importing.
 func (s *Store) ReadLog(name string) ([]LogEntry, error) {
 	var entries []LogEntry
-	err := s.WithLock(func(tx *Tx) error {
+	err := s.read(name, func(tx *Tx) error {
 		var err error
 		entries, err = tx.ReadLog(name)
 		return err
@@ -227,11 +227,12 @@ func (s *Store) ReadLog(name string) ([]LogEntry, error) {
 	return entries, err
 }
 
-// ReadLogAfter returns the entries whose Seq is greater than after, acquiring
-// the state lock for the operation. It returns nil, nil when none match.
+// ReadLogAfter returns the entries whose Seq is greater than after, taking the
+// state lock only when a legacy file needs importing. It returns nil, nil when
+// none match.
 func (s *Store) ReadLogAfter(name string, after int) ([]LogEntry, error) {
 	var entries []LogEntry
-	err := s.WithLock(func(tx *Tx) error {
+	err := s.read(name, func(tx *Tx) error {
 		var err error
 		entries, err = tx.ReadLogAfter(name, after)
 		return err
@@ -249,13 +250,14 @@ type PendingEntry struct {
 }
 
 // PendingForPlanner returns the oldest undelivered payload bound for the
-// planner, acquiring the state lock for the operation. It drops the entry's
-// index: a caller that only reads cannot confirm, and a caller that intends to
-// confirm must hold the lock across both calls and so must go through Tx.
+// planner, taking the state lock only when a legacy file needs importing. It
+// drops the entry's index: a caller that only reads cannot confirm, and a
+// caller that intends to confirm must hold the lock across both calls and so
+// must go through Tx.
 func (s *Store) PendingForPlanner(name string) (LogEntry, bool, error) {
 	var e LogEntry
 	var found bool
-	err := s.WithLock(func(tx *Tx) error {
+	err := s.read(name, func(tx *Tx) error {
 		var err error
 		e, _, found, err = tx.PendingForPlanner(name)
 		return err

@@ -269,6 +269,52 @@ func warnNewerFormatOnce(name string, err error) {
 	slog.Warn("leaving a binding written by a newer relevo alone", "binding", name, "err", err)
 }
 
+// legacyPresent reports whether any of binding name's files that importPresent
+// adopts -- bind.json, log.jsonl or the .viewed sidecar -- exists. A read path
+// uses it to decide whether it must take the lock: a legacy file means an
+// import, and an import writes. A stat error other than not-exist is returned
+// rather than treated as absent, so a failing root never skips an import.
+func (s *Store) legacyPresent(name string) (bool, error) {
+	for _, path := range []string{s.bindingPath(name), s.logPath(name), s.ViewedPath(name)} {
+		if _, err := os.Stat(path); err == nil {
+			return true, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("stat %q: %w", path, err)
+		}
+	}
+	return false, nil
+}
+
+// anyLegacyPresent reports whether any binding directory under the root holds
+// a legacy file importAll would adopt, so a whole-root read knows whether it
+// must take the lock. A missing root has nothing to import. It checks all
+// three files rather than only bind.json, which makes it a superset of what
+// importAll acts on: that can only make a read take the lock more often, never
+// skip an import.
+func (s *Store) anyLegacyPresent() (bool, error) {
+	entries, err := os.ReadDir(s.root)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read state root: %w", err)
+	}
+
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		present, err := s.legacyPresent(e.Name())
+		if err != nil {
+			return false, err
+		}
+		if present {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // splitLogLines returns a log.jsonl's non-empty lines, in order, so an
 // imported entry's entry_json can keep the line's exact bytes. decodeLog has
 // already validated the stream and assigned Seq positions by the time this

@@ -331,10 +331,11 @@ func (s *Store) Save(b Binding) error {
 	return s.WithLock(func(tx *Tx) error { return tx.Save(b) })
 }
 
-// Load reads one binding, acquiring the state lock for the operation.
+// Load reads one binding. It takes the state lock only when a legacy file
+// needs importing, so a read does not wait on a binding's reconcile.
 func (s *Store) Load(name string) (Binding, error) {
 	var b Binding
-	err := s.WithLock(func(tx *Tx) error {
+	err := s.read(name, func(tx *Tx) error {
 		var err error
 		b, err = tx.Load(name)
 		return err
@@ -342,10 +343,11 @@ func (s *Store) Load(name string) (Binding, error) {
 	return b, err
 }
 
-// List reads every binding, acquiring the state lock for the operation.
+// List reads every binding, taking the state lock only when a legacy file
+// needs importing.
 func (s *Store) List() ([]Binding, error) {
 	var bindings []Binding
-	err := s.WithLock(func(tx *Tx) error {
+	err := s.readAll(func(tx *Tx) error {
 		var err error
 		bindings, err = tx.List()
 		return err
@@ -385,7 +387,7 @@ func (s *Store) Delete(name string) error {
 func (s *Store) FindByCWD(cwd string) (Binding, bool, error) {
 	var found bool
 	var b Binding
-	err := s.WithLock(func(tx *Tx) error {
+	err := s.readAll(func(tx *Tx) error {
 		bindings, err := tx.List()
 		if err != nil {
 			return err
@@ -883,6 +885,29 @@ func (t *Tx) remove(name string) error {
 		return fmt.Errorf("delete binding %q: %w", name, err)
 	}
 	return nil
+}
+
+// read runs fn on a Tx, under the state lock only when binding name has a
+// legacy file to import: the database already gives a reader a consistent
+// snapshot, so the flock matters only for a load-modify-save sequence and for
+// the import load/list run first. A legacyPresent error also takes the lock,
+// where the import reports the same error rather than silently skipping it.
+func (s *Store) read(name string, fn func(tx *Tx) error) error {
+	present, err := s.legacyPresent(name)
+	if err != nil || present {
+		return s.WithLock(fn)
+	}
+	return fn(&Tx{s: s})
+}
+
+// readAll is read's whole-root twin, for List and FindByCWD: it takes the lock
+// only when some binding directory holds a legacy file importAll would adopt.
+func (s *Store) readAll(fn func(tx *Tx) error) error {
+	present, err := s.anyLegacyPresent()
+	if err != nil || present {
+		return s.WithLock(fn)
+	}
+	return fn(&Tx{s: s})
 }
 
 // WithLock runs fn while holding an exclusive advisory lock on the state root,
