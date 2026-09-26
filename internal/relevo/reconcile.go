@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -492,7 +493,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		Gate:         gate,
 	}
 	entry.BuilderSession = builderSessionOf(b)
-	if err := Queue(ctx, rt, tx, b.Name, entry); err != nil {
+	if err := delivery.Queue(ctx, deliveryDeps(rt), tx, b.Name, entry); err != nil {
 		return b, err
 	}
 
@@ -568,7 +569,7 @@ func deliverAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 		// queued; the owner reads them over the wire (remote-builders spec §6.2).
 		return b, nil
 	}
-	next, got, err := DeliverPending(ctx, rt, tx, b)
+	next, got, err := delivery.DeliverPending(ctx, deliveryDeps(rt), tx, b)
 	if err != nil {
 		return b, err
 	}

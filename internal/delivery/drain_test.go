@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"context"
@@ -67,20 +67,20 @@ func queueDrainEntry(t *testing.T, s *store.Store, name string, round int, kind 
 func TestDrainRequiresPlanner(t *testing.T) {
 	t.Parallel()
 
-	rt := Runtime{Store: store.New(t.TempDir())}
+	rt := Deps{Store: store.New(t.TempDir())}
 	if _, err := Drain(context.Background(), rt, &DrainState{}, &fakePusher{}); err == nil {
 		t.Fatal("Drain with an empty Planner must error")
 	}
 }
 
-// TestDrainFiltersByPlannerID is the plan's required case for §3.3: Drain
+// TestDrainFiltersByPlannerID is the required case: Drain
 // pushes only the bindings whose PlannerID is the one it drains. The two
 // bindings here share a pane, so only the planner id can tell them apart.
 func TestDrainFiltersByPlannerID(t *testing.T) {
 	t.Parallel()
 
 	s := store.New(t.TempDir())
-	rt := Runtime{Store: s}
+	rt := Deps{Store: s}
 	mine := saveDrainBinding(t, s, "mine", "w2:p3", store.StateActive)
 	other := store.Binding{
 		Name:      "other",
@@ -118,7 +118,7 @@ func TestDrainPushesThenConfirms(t *testing.T) {
 	t.Parallel()
 
 	s := store.New(t.TempDir())
-	rt := Runtime{Store: s}
+	rt := Deps{Store: s}
 	pane := "w2:p3"
 	saveDrainBinding(t, s, "judge", pane, store.StateActive)
 	queueDrainEntry(t, s, "judge", 3, store.KindReport, "/x/003-report.md", "the report body")
@@ -152,13 +152,13 @@ func TestDrainPushesThenConfirms(t *testing.T) {
 }
 
 // TestDrainPushesExpandedReportText proves Drain pushes the report's text,
-// not just the pointer payload (#297): a report entry naming a readable
+// not just the pointer payload: a report entry naming a readable
 // path is expanded through PushText before it reaches the Pusher.
 func TestDrainPushesExpandedReportText(t *testing.T) {
 	t.Parallel()
 
 	s := store.New(t.TempDir())
-	rt := Runtime{Store: s}
+	rt := Deps{Store: s}
 	pane := "w2:p3"
 	saveDrainBinding(t, s, "judge", pane, store.StateActive)
 
@@ -189,7 +189,7 @@ func TestDrainOmitsShowMetaWhenEntryHasNone(t *testing.T) {
 	t.Parallel()
 
 	s := store.New(t.TempDir())
-	rt := Runtime{Store: s}
+	rt := Deps{Store: s}
 	pane := "w2:p3"
 	saveDrainBinding(t, s, "judge", pane, store.StateActive)
 	queueDrainEntry(t, s, "judge", 1, store.KindAnswer, "", "an answer, no file")
@@ -208,7 +208,7 @@ func TestDrainPushFailureLeavesPendingThenRetries(t *testing.T) {
 	t.Parallel()
 
 	s := store.New(t.TempDir())
-	rt := Runtime{Store: s}
+	rt := Deps{Store: s}
 	pane := "w2:p3"
 	saveDrainBinding(t, s, "judge", pane, store.StateActive)
 	queueDrainEntry(t, s, "judge", 1, store.KindReport, "", "payload one")
@@ -243,7 +243,7 @@ func TestDrainSkipsOtherPlannersAndOwnedBindings(t *testing.T) {
 	t.Parallel()
 
 	s := store.New(t.TempDir())
-	rt := Runtime{Store: s}
+	rt := Deps{Store: s}
 	pane := "w2:p3"
 	saveDrainBinding(t, s, "mine", pane, store.StateActive)
 
@@ -285,14 +285,14 @@ func TestDrainSkipsOtherPlannersAndOwnedBindings(t *testing.T) {
 	}
 }
 
-// TestDrainStateEdges walks the transitions spec §3.6 calls out: a
+// TestDrainStateEdges walks the state transitions: a
 // transition into needs_you/broken/orphaned pushes once, staying in one
 // pushes nothing more, and leaving one pushes nothing.
 func TestDrainStateEdges(t *testing.T) {
 	t.Parallel()
 
 	s := store.New(t.TempDir())
-	rt := Runtime{Store: s}
+	rt := Deps{Store: s}
 	pane := "w2:p3"
 
 	b := saveDrainBinding(t, s, "judge", pane, store.StateActive)
@@ -364,7 +364,7 @@ func TestDrainDropsGoneBindingsFromMemory(t *testing.T) {
 	t.Parallel()
 
 	s := store.New(t.TempDir())
-	rt := Runtime{Store: s}
+	rt := Deps{Store: s}
 	pane := "w2:p3"
 	saveDrainBinding(t, s, "judge", pane, store.StateNeedsYou)
 

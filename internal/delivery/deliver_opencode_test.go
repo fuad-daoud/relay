@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"bytes"
@@ -140,7 +140,7 @@ func TestOpencodeDeliverHappyPath(t *testing.T) {
 }
 
 // TestOpencodeDeliverSilentTwoHundred is the test the design exists for
-// (§3.4): a 2xx from the wrong server process must never be treated as
+// a 2xx from the wrong server process must never be treated as
 // delivery. The fake Exec always answers 0, so the origin is never seen.
 func TestOpencodeDeliverSilentTwoHundred(t *testing.T) {
 	t.Parallel()
@@ -438,94 +438,111 @@ func TestOpencodeDeliverPasswordNeverLeaks(t *testing.T) {
 	}
 }
 
-func TestOpencodeDeliverStateFilesPreference(t *testing.T) {
-	t.Parallel()
+// opencodeStateFiles is the state-file fixture the preference test chooses
+// between, with the two request counters its fake services record.
+type opencodeStateFiles struct {
+	stateWithURL       string
+	configPasswordOnly string
+	configWithURL      string
+	missing            string
+	dbPath             string
+	stateRequests      int
+	configRequests     int
+}
 
-	var stateRequests, configRequests int
+// newOpencodeStateFiles starts two fake opencode services and writes the
+// service files a deliverer can be pointed at.
+func newOpencodeStateFiles(t *testing.T) *opencodeStateFiles {
+	t.Helper()
+	f := &opencodeStateFiles{}
 	stateSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		stateRequests++
+		f.stateRequests++
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer stateSrv.Close()
-
+	t.Cleanup(stateSrv.Close)
 	configSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		configRequests++
+		f.configRequests++
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer configSrv.Close()
+	t.Cleanup(configSrv.Close)
 
 	dir := t.TempDir()
-	stateWithURL := writeOpencodeServiceFile(t, dir, stateSrv.URL, "pw", 1)
+	f.stateWithURL = writeOpencodeServiceFile(t, dir, stateSrv.URL, "pw", 1)
 	pwDir := filepath.Join(dir, "pw-only")
 	if err := os.MkdirAll(pwDir, 0o755); err != nil {
 		t.Fatalf("mkdir pw-only: %v", err)
 	}
-	configPasswordOnly := writeOpencodeServiceFile(t, pwDir, "", "pw", 1)
+	f.configPasswordOnly = writeOpencodeServiceFile(t, pwDir, "", "pw", 1)
 	configDir := filepath.Join(dir, "config")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("mkdir config: %v", err)
 	}
-	configWithURL := writeOpencodeServiceFile(t, configDir, configSrv.URL, "pw", 1)
-	missing := filepath.Join(dir, "nonexistent.json")
+	f.configWithURL = writeOpencodeServiceFile(t, configDir, configSrv.URL, "pw", 1)
+	f.missing = filepath.Join(dir, "nonexistent.json")
+	f.dbPath = filepath.Join(dir, "opencode.db")
+	return f
+}
+
+// opencodeDeliverOnce runs one Deliver of the fixed payload through d and
+// returns its outcome and reason.
+func opencodeDeliverOnce(t *testing.T, d *OpencodeDeliverer) (Outcome, string) {
+	t.Helper()
+	out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	return out, reason
+}
+
+func TestOpencodeDeliverStateFilesPreference(t *testing.T) {
+	t.Parallel()
+
+	f := newOpencodeStateFiles(t)
 
 	t.Run("stateWithURL and configPasswordOnly uses state url", func(t *testing.T) {
-		stateRequests, configRequests = 0, 0
-		exec := &fakeSqliteExec{seenFrom: 2}
+		f.stateRequests, f.configRequests = 0, 0
 		d := &OpencodeDeliverer{
-			StateFiles: []string{stateWithURL, configPasswordOnly},
-			DBPath:     filepath.Join(dir, "opencode.db"),
-			Exec:       exec,
+			StateFiles: []string{f.stateWithURL, f.configPasswordOnly},
+			DBPath:     f.dbPath,
+			Exec:       &fakeSqliteExec{seenFrom: 2},
 			Alive:      aliveAlways,
 		}
-		out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
-		if err != nil {
-			t.Fatalf("Deliver: %v", err)
-		}
+		out, reason := opencodeDeliverOnce(t, d)
 		if out != OutcomeDelivered {
 			t.Fatalf("out = %v, reason = %q, want OutcomeDelivered", out, reason)
 		}
-		if stateRequests != 1 || configRequests != 0 {
-			t.Errorf("stateRequests = %d, configRequests = %d; want stateRequests = 1, configRequests = 0", stateRequests, configRequests)
+		if f.stateRequests != 1 || f.configRequests != 0 {
+			t.Errorf("stateRequests = %d, configRequests = %d; want 1 and 0", f.stateRequests, f.configRequests)
 		}
 	})
 
 	t.Run("missing and configWithURL uses config url", func(t *testing.T) {
-		stateRequests, configRequests = 0, 0
-		exec := &fakeSqliteExec{seenFrom: 2}
+		f.stateRequests, f.configRequests = 0, 0
 		d := &OpencodeDeliverer{
-			StateFiles: []string{missing, configWithURL},
-			DBPath:     filepath.Join(dir, "opencode.db"),
-			Exec:       exec,
+			StateFiles: []string{f.missing, f.configWithURL},
+			DBPath:     f.dbPath,
+			Exec:       &fakeSqliteExec{seenFrom: 2},
 			Alive:      aliveAlways,
 		}
-		out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
-		if err != nil {
-			t.Fatalf("Deliver: %v", err)
-		}
+		out, reason := opencodeDeliverOnce(t, d)
 		if out != OutcomeDelivered {
 			t.Fatalf("out = %v, reason = %q, want OutcomeDelivered", out, reason)
 		}
-		if stateRequests != 0 || configRequests != 1 {
-			t.Errorf("stateRequests = %d, configRequests = %d; want stateRequests = 0, configRequests = 1", stateRequests, configRequests)
+		if f.stateRequests != 0 || f.configRequests != 1 {
+			t.Errorf("stateRequests = %d, configRequests = %d; want 0 and 1", f.stateRequests, f.configRequests)
 		}
 	})
 
 	t.Run("passwordOnly behaves as unusable file", func(t *testing.T) {
 		d := &OpencodeDeliverer{
-			StateFiles: []string{configPasswordOnly},
-			DBPath:     filepath.Join(dir, "opencode.db"),
+			StateFiles: []string{f.configPasswordOnly},
+			DBPath:     f.dbPath,
 			Exec:       &fakeSqliteExec{},
 			Alive:      aliveAlways,
 		}
-		out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), "relevo: round 1\n\nbody", "/x/r.md", time.Time{})
-		if err != nil {
-			t.Fatalf("Deliver: %v", err)
-		}
-		if out != OutcomeUnavailable {
-			t.Fatalf("out = %v, want OutcomeUnavailable", out)
-		}
-		if reason != "opencode service not running" {
-			t.Errorf("reason = %q, want %q", reason, "opencode service not running")
+		out, reason := opencodeDeliverOnce(t, d)
+		if out != OutcomeUnavailable || reason != "opencode service not running" {
+			t.Fatalf("out = %v, reason = %q; want OutcomeUnavailable and service-not-running", out, reason)
 		}
 	})
 }
@@ -537,7 +554,7 @@ func basicAuth(user, pass string) string {
 }
 
 // TestOpencodeConfirmSeen covers the two shapes a delivered turn can take
-// (#393): OpenCode 2.0.14's session_message row, and the pre-2.0 part/message
+// OpenCode 2.0.14's session_message row, and the pre-2.0 part/message
 // pair. Only a user turn counts, and either table alone confirms.
 func TestOpencodeConfirmSeen(t *testing.T) {
 	t.Parallel()
@@ -609,6 +626,25 @@ func TestOpencodeConfirmSeen(t *testing.T) {
 	}
 }
 
+// opencodeDeliverWant runs one Deliver and asserts its outcome and reason.
+func opencodeDeliverWant(t *testing.T, d *OpencodeDeliverer, payload, ref string, queuedAt time.Time, want Outcome, wantReason string) {
+	t.Helper()
+	out, reason, err := d.Deliver(context.Background(), opencodePlanner("ses_abc123"), payload, ref, queuedAt)
+	if err != nil {
+		t.Fatalf("Deliver(%s): %v", ref, err)
+	}
+	if out != want || reason != wantReason {
+		t.Fatalf("Deliver(%s) = (%v, %q), want (%v, %q)", ref, out, reason, want, wantReason)
+	}
+}
+
+// opencodePosts reports the POST count under mu.
+func opencodePosts(mu *sync.Mutex, posts *int) int {
+	mu.Lock()
+	defer mu.Unlock()
+	return *posts
+}
+
 func TestOpencodeDeliverPostsOnce(t *testing.T) {
 	t.Parallel()
 
@@ -624,7 +660,6 @@ func TestOpencodeDeliverPostsOnce(t *testing.T) {
 
 	dir := t.TempDir()
 	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
-
 	db := sqliteFixture(t,
 		"create table message (id text, data text)",
 		"create table part (id text, message_id text, session_id text, data text)",
@@ -641,66 +676,35 @@ func TestOpencodeDeliverPostsOnce(t *testing.T) {
 		Alive:      aliveAlways,
 		Now:        func() time.Time { return curTime },
 	}
-
 	payload1 := "relevo: round 1 · to planner · payload 1\n\nbody 1"
-	plannerEp := opencodePlanner("ses_abc123")
 
-	// Call Deliver for the same payload 5 times (advancing injected clock by 2s each, below FallbackAfter)
+	// The same payload five times POSTs once: the recorded post is the
+	// answer while the session has not taken the turn.
 	for i := 1; i <= 5; i++ {
-		out, reason, err := d.Deliver(context.Background(), plannerEp, payload1, "/x/001-report.md", startTime)
-		if err != nil {
-			t.Fatalf("call %d Deliver: %v", i, err)
-		}
-		if out != OutcomeUnavailable {
-			t.Fatalf("call %d out = %v, want OutcomeUnavailable", i, out)
-		}
-		if reason != "posted but not seen in the session" {
-			t.Fatalf("call %d reason = %q, want \"posted but not seen in the session\"", i, reason)
-		}
-		mu.Lock()
-		gotPosts := posts
-		mu.Unlock()
-		if gotPosts != 1 {
-			t.Fatalf("after call %d, got %d POSTs, want 1", i, gotPosts)
+		opencodeDeliverWant(t, d, payload1, "/x/001-report.md", startTime, OutcomeUnavailable, "posted but not seen in the session")
+		if got := opencodePosts(&mu, &posts); got != 1 {
+			t.Fatalf("after call %d, got %d POSTs, want 1", i, got)
 		}
 		curTime = curTime.Add(2 * time.Second)
 	}
 
-	// Then make the row appear in session_inbox -> the next call reports delivered with no POST.
+	// Once the row appears in session_inbox, the next call reports delivered
+	// with no new POST.
 	out, err := exec.Command("sqlite3", db,
 		"insert into session_inbox values ('inbox1', 'ses_abc123', 'message', '"+payload1+"', 'queue', 0, 100)").CombinedOutput()
 	if err != nil {
 		t.Fatalf("insert session_inbox: %v: %s", err, out)
 	}
-
-	out6, reason6, err := d.Deliver(context.Background(), plannerEp, payload1, "/x/001-report.md", startTime)
-	if err != nil {
-		t.Fatalf("call 6 Deliver: %v", err)
-	}
-	if out6 != OutcomeDelivered {
-		t.Fatalf("call 6 out = %v, reason = %q, want OutcomeDelivered", out6, reason6)
-	}
-	mu.Lock()
-	gotPosts := posts
-	mu.Unlock()
-	if gotPosts != 1 {
-		t.Fatalf("after call 6, got %d POSTs, want 1", gotPosts)
+	opencodeDeliverWant(t, d, payload1, "/x/001-report.md", startTime, OutcomeDelivered, "already present")
+	if got := opencodePosts(&mu, &posts); got != 1 {
+		t.Fatalf("after the delivered call, got %d POSTs, want 1", got)
 	}
 
-	// A second payload (different origin) still POSTs once on its own.
-	payload2 := "relevo: round 1 · to planner · payload 2\n\nbody 2"
+	// A second payload, with its own origin, POSTs once on its own.
 	curTime = curTime.Add(2 * time.Second)
-	out7, reason7, err := d.Deliver(context.Background(), plannerEp, payload2, "/x/002-report.md", startTime)
-	if err != nil {
-		t.Fatalf("payload2 Deliver: %v", err)
-	}
-	if out7 != OutcomeUnavailable {
-		t.Fatalf("payload2 out = %v, reason = %q, want OutcomeUnavailable", out7, reason7)
-	}
-	mu.Lock()
-	gotPosts = posts
-	mu.Unlock()
-	if gotPosts != 2 {
-		t.Fatalf("after payload 2, got %d POSTs, want 2", gotPosts)
+	payload2 := "relevo: round 1 · to planner · payload 2\n\nbody 2"
+	opencodeDeliverWant(t, d, payload2, "/x/002-report.md", startTime, OutcomeUnavailable, "posted but not seen in the session")
+	if got := opencodePosts(&mu, &posts); got != 2 {
+		t.Fatalf("after payload 2, got %d POSTs, want 2", got)
 	}
 }
