@@ -130,7 +130,7 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 		entries = append(entries, diffEntry)
 	}
 
-	payload, note := catchUpPayload(b, view, cf.ReportTemp != "")
+	payload, note := catchUpPayload(b, view, cf.ReportTemp != "", closeClause(rt, b, view.ClosedRound))
 	var u *usage.Usage = view.Usage
 	if u == nil {
 		// A pre-usage server ships no figure: record honestly that the server
@@ -159,14 +159,16 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 
 // catchUpPayload builds the planner payload and note for a collected round:
 // the stopped form when the server stopped it, else the finished form naming
-// the report, both carrying the diff's summary lines.
-func catchUpPayload(b store.Binding, view remote.BindingView, haveReport bool) (payload, note string) {
+// the artifact, both carrying the diff's summary lines. clause is the artifact
+// clause closeClause resolved for the binding; the caller resolves it, so this
+// stays pure.
+func catchUpPayload(b store.Binding, view remote.BindingView, haveReport bool, clause string) (payload, note string) {
 	n := view.ClosedRound
 	server, name := b.Builder.Server, b.Name
 	if view.Stopped != "" {
-		payload, note = stopPayload(view.Stopped, name, n, " on "+server, haveReport)
+		payload, note = stopPayload(view.Stopped, name, n, " on "+server, haveReport, clause)
 	} else {
-		payload = fmt.Sprintf("The runner finished round %d on %s. Report: %s", n, server, showCommand(name, n, "report"))
+		payload = fmt.Sprintf("The runner finished round %d on %s. %s", n, server, clause)
 	}
 	if line := capture.DiffLineFromNote(view.DiffNote, view.DiffCommits, view.DiffTree, b.Branch); line != "" {
 		payload = payload + "\n" + line
