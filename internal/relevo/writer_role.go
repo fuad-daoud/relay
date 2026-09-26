@@ -68,12 +68,12 @@ func CheckWriterRole(rt Runtime, role string) error {
 	return checkWriterRole(rt.RoleRegistry(), role)
 }
 
-// roleGates reports whether a binding of role takes policy.json's gate.default
-// when neither --gate nor --no-gate is given: the role's Gate, or true when the
-// registry does not know the role (the caller has already refused that).
-func roleGates(reg *roles.Registry, role string) bool {
+// roleChecks reports whether a binding of role takes policy.json's gate.default
+// when neither --gate nor --no-gate is given: the role's Check, or true when
+// the registry does not know the role (the caller has already refused that).
+func roleChecks(reg *roles.Registry, role string) bool {
 	if r, ok := reg.Role(role); ok {
-		return r.Gate
+		return r.Check
 	}
 	return true
 }
@@ -84,7 +84,7 @@ func roleGates(reg *roles.Registry, role string) bool {
 func bindingSpec(rt Runtime, b store.Binding, kind string) (harness.RoleSpec, error) {
 	role := bindingRole(b)
 	if _, ok := rt.RoleRegistry().Role(role); !ok {
-		return harness.RoleSpec{}, fmt.Errorf("binding %s runs actor %q, which config roles no longer defines: %w", b.Name, role, ErrUnknownRole)
+		return harness.RoleSpec{}, fmt.Errorf("binding %s runs actor %q, which config actors no longer defines: %w", b.Name, role, ErrUnknownRole)
 	}
 	return rt.RoleRegistry().Spec(role, kind)
 }

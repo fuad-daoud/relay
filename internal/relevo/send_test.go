@@ -945,7 +945,7 @@ func TestVerifyPolicyDefault(t *testing.T) {
 }
 
 // switchSetup binds webshop on agy/test/m with a fake runner -- the setup
-// TestSendHeadlessTierYoloOverrideAndRoundClose uses -- for the --builder
+// TestSendHeadlessTierYoloOverrideAndRoundClose uses -- for the --candidate
 // tests. Every local builder is headless, so the runner drives the round.
 func switchSetup(t *testing.T) (Runtime, *fakeRunner) {
 	t.Helper()
@@ -964,7 +964,7 @@ func switchSetup(t *testing.T) (Runtime, *fakeRunner) {
 	return rt, fr
 }
 
-// TestSendBuilderMovesTheCandidateAndPersists pins §5.2 (a): --builder starts
+// TestSendBuilderMovesTheCandidateAndPersists pins §5.2 (a): --candidate starts
 // the round on the named candidate, files its pick entry before the plan
 // entry, and the change persists into the next plain send.
 //
@@ -1036,7 +1036,7 @@ func TestSendBuilderMovesTheCandidateAndPersists(t *testing.T) {
 	}
 }
 
-// TestSendRecordsPickAndPlanInOrderInOneWrite pins #471: a --builder send
+// TestSendRecordsPickAndPlanInOrderInOneWrite pins #471: a --candidate send
 // writes the pick entry and the plan entry in one write, so they land with
 // consecutive seqs in that order, and the binding carries the spawned pid.
 func TestSendRecordsPickAndPlanInOrderInOneWrite(t *testing.T) {

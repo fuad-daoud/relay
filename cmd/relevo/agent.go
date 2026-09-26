@@ -18,20 +18,40 @@ func agentInstallEnv() (harness.InstallEnv, error) {
 	return relevo.AgentInstallEnv()
 }
 
-// cmdAgentInstall installs embedded agent role definitions, the body
+// agentFlagValues holds the pointers `relevo config agents`' flags parse into.
+// agentFlagSet defines them on fs; cmdAgentInstall and TestRemovedFlagsAreUnknown
+// read the same surface (A4-1a).
+type agentFlagValues struct {
+	kind   *string
+	agent  *string
+	force  *bool
+	dryRun *bool
+}
+
+// agentFlagSet defines `relevo config agents`' flags on fs and returns the
+// values they parse into, so a test can inspect the flag surface without
+// installing anything.
+func agentFlagSet(fs *flag.FlagSet) *agentFlagValues {
+	v := &agentFlagValues{}
+	v.kind = fs.String("kind", "", "harness kind")
+	v.agent = fs.String("agent", "", "agent name")
+	v.force = fs.Bool("force", false, "force overwrite")
+	v.dryRun = fs.Bool("dry-run", false, "dry run")
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "usage: relevo config agents [--kind <agy|claude|opencode>] [--agent <name>] [--force] [--dry-run]")
+		fmt.Fprintln(fs.Output(), "Installs relevo's shipped agents and the custom agents in your config.")
+		fmt.Fprintln(fs.Output(), "For opencode it also installs the relevo OpenCode plugin (~/.config/opencode/plugins/relevo).")
+	}
+	return v
+}
+
+// cmdAgentInstall installs embedded agent definitions, the body
 // `relevo config agents` had (now `relevo config agents`).
 func cmdAgentInstall(args []string) error {
 	fs := flag.NewFlagSet("relevo config agents", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	kind := fs.String("kind", "", "harness kind")
-	role := fs.String("role", "", "role name")
-	force := fs.Bool("force", false, "force overwrite")
-	dryRun := fs.Bool("dry-run", false, "dry run")
-	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: relevo config agents [--kind <agy|claude|opencode>] [--role <name>] [--force] [--dry-run]")
-		fmt.Fprintln(fs.Output(), "Installs relevo's shipped agents and the custom agents in your config.")
-		fmt.Fprintln(fs.Output(), "For opencode it also installs the relevo OpenCode plugin (~/.config/opencode/plugins/relevo).")
-	}
+	v := agentFlagSet(fs)
+	kind, agent, force, dryRun := v.kind, v.agent, v.force, v.dryRun
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, errHelpShown) {
 			return err
@@ -41,7 +61,7 @@ func cmdAgentInstall(args []string) error {
 
 	opts := harness.InstallOptions{
 		Kind:   *kind,
-		Role:   *role,
+		Role:   *agent,
 		Force:  *force,
 		DryRun: *dryRun,
 		// The OpenCode plugin is opt-in: this verb is the one place that
@@ -59,12 +79,12 @@ func cmdAgentInstall(args []string) error {
 	// warning on stderr and nothing more.
 	cfg, cfgErr := relevo.MachineConfig()
 	sourceRole := false
-	if cfgErr == nil && *role != "" {
+	if cfgErr == nil && *agent != "" {
 		loaded, lerr := cfg.Load()
 		if lerr != nil {
 			cfgErr = lerr
 		} else {
-			sourceRole = relevo.IsSourceAgent(loaded.Agents, *role)
+			sourceRole = relevo.IsSourceAgent(loaded.Agents, *agent)
 		}
 	}
 	if cfgErr != nil {
@@ -87,9 +107,9 @@ func cmdAgentInstall(args []string) error {
 			return exitCodeErr{code: 2}
 		}
 		results = append(results, shipped...)
-		if cfgErr == nil && *role == "" {
-			// A --role names exactly the one agent to install, so the custom
-			// walk runs only with no role: it then installs every custom
+		if cfgErr == nil && *agent == "" {
+			// An --agent names exactly the one agent to install, so the custom
+			// walk runs only with no agent: it then installs every custom
 			// agent the kind and force flags select.
 			customOpts := opts
 			customOpts.Role = ""

@@ -27,7 +27,7 @@ func TestRenderStatusShowsDetailLine(t *testing.T) {
 	}
 	// It must sit between the builder line and pending, where a human about to
 	// rebind is already looking.
-	builderAt := strings.Index(out, "  builder ")
+	builderAt := strings.Index(out, "  runner ")
 	detailAt := strings.Index(out, "  detail ")
 	pendingAt := strings.Index(out, "  pending ")
 	if builderAt >= detailAt || detailAt >= pendingAt {

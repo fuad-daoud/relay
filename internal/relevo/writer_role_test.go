@@ -204,7 +204,7 @@ func TestGateFollowsRole(t *testing.T) {
 
 	noGateWriter := roles.Row{
 		Shape:       ptr("writer"),
-		Gate:        ptr(false),
+		Check:       ptr(false),
 		Candidates:  []string{testClaudeRef},
 		Definitions: map[string]roles.DefRow{"claude": {Agent: "my-ui"}},
 	}
@@ -327,7 +327,7 @@ func TestVanishedRoleFailsRoundStart(t *testing.T) {
 	if !errors.Is(err, ErrUnknownRole) {
 		t.Errorf("err = %v, want ErrUnknownRole", err)
 	}
-	if !strings.Contains(err.Error(), "which config roles no longer defines") {
+	if !strings.Contains(err.Error(), "which config actors no longer defines") {
 		t.Errorf("err = %q, want it to name the vanished role", err.Error())
 	}
 	if len(fr.specs) != 0 {
@@ -363,7 +363,7 @@ func TestAddCustomRoleOnServerRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("Add(--server with a custom role) = nil, want the upgrade-it error")
 	}
-	want := `server s does not run custom roles (role "ui-builder"); upgrade it`
+	want := `server s does not run custom actors (actor "ui-builder"); upgrade it`
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("err = %q, want %q", err.Error(), want)
 	}
@@ -417,12 +417,12 @@ func TestStatusShowsRole(t *testing.T) {
 	}
 
 	uiOnly := view.RenderStatus(view.Report{Bindings: []view.BindingStatus{rows["ui-status"]}})
-	if !strings.Contains(uiOnly, "role ui-builder") {
-		t.Errorf("ui builder line = %q, want `role ui-builder`", uiOnly)
+	if !strings.Contains(uiOnly, "actor ui-builder") {
+		t.Errorf("ui builder line = %q, want `actor ui-builder`", uiOnly)
 	}
 	plainOnly := view.RenderStatus(view.Report{Bindings: []view.BindingStatus{rows["plain-status"]}})
-	if strings.Contains(plainOnly, "role ui-builder") {
-		t.Errorf("builder builder line = %q, want no role suffix", plainOnly)
+	if strings.Contains(plainOnly, "actor ui-builder") {
+		t.Errorf("builder builder line = %q, want no actor suffix", plainOnly)
 	}
 
 	plainJSON, err := json.Marshal(rows["plain-status"])

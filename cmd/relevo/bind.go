@@ -20,7 +20,7 @@ import (
 // (§4.1).
 type bindFlags struct {
 	name      string
-	builder   string
+	candidate string
 	planner   string
 	resume    bool
 	rebind    bool
@@ -77,24 +77,24 @@ func bindRouteFor(f bindFlags) (bindRoute, error) {
 // surface, so the flag names can never drift from what a test pins (A2 round 3
 // S1).
 type bindFlagValues struct {
-	name         *string
-	builderAlias *string
-	plannerFlag  *string
-	resume       *bool
-	rebind       *bool
-	timeout      *time.Duration
-	tier         *string
-	allowYolo    *bool
-	gate         *string
-	noGate       *bool
-	regate       *int
-	feature      *string
-	actor        *string
-	worktree     *bool
-	cwd          *string
-	branch       *string
-	server       *string
-	base         *string
+	name        *string
+	candidate   *string
+	plannerFlag *string
+	resume      *bool
+	rebind      *bool
+	timeout     *time.Duration
+	tier        *string
+	allowYolo   *bool
+	gate        *string
+	noGate      *bool
+	regate      *int
+	feature     *string
+	actor       *string
+	worktree    *bool
+	cwd         *string
+	branch      *string
+	server      *string
+	base        *string
 }
 
 // bindFlagSet defines bind's flags on fs and returns the values they parse
@@ -103,20 +103,20 @@ type bindFlagValues struct {
 func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
 	v := &bindFlagValues{}
 	v.name = fs.String("name", "", "binding name (default: sanitized cwd basename)")
-	v.builderAlias = fs.String("builder", "", "candidate name or harness/provider/model token to spawn; omit to take the first ungated candidate in config policy order[builder]")
+	v.candidate = fs.String("candidate", "", "candidate name or harness/provider/model token to run; omit to take the actor's first ungated candidate")
 	v.plannerFlag = fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
 	v.resume = fs.Bool("resume", false, "adopt an existing binding into this planner")
 	v.rebind = fs.Bool("rebind", false,
-		"with --resume: replace a gone builder, picking it by config policy order and the ledger (like bind with --builder omitted)")
+		"with --resume: replace a gone runner, picking it by config policy order and the ledger (like bind with --candidate omitted)")
 	v.timeout = fs.Duration("timeout", 0, "round budget before relevo flags the binding (default 24h)")
-	v.tier = fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then policy tier.<role>, then harness)")
+	v.tier = fs.String("tier", "", "permission tier: harness|read|edit|yolo (default: candidate tier, then the actor's tier, then harness)")
 	v.allowYolo = fs.Bool("allow-yolo", false, "permit --tier yolo above policy max_tier for this command")
 	v.gate = fs.String("gate", "", "acceptance command relevo runs on the round's completion marker (default: config policy gate.default)")
 	v.noGate = fs.Bool("no-gate", false, "opt this binding out of config policy's gate.default")
 	v.regate = fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
 	v.feature = fs.String("feature", "", "label grouping this binding with others")
 	v.actor = fs.String("actor", "", "the writer actor this binding runs (default builder)")
-	v.worktree = fs.Bool("worktree", false, "attach an additional builder to this planner, on its own worktree")
+	v.worktree = fs.Bool("worktree", false, "attach an additional runner to this planner, on its own worktree")
 	v.cwd = fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
 	v.branch = fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relevo/<name>")
 	v.server = fs.String("server", "", "run the builder on this configured remote server instead of a local process (relevo config server list)")
@@ -137,7 +137,7 @@ func cmdBind(args []string) error {
 	}
 
 	f := bindFlags{
-		name: *v.name, builder: *v.builderAlias, planner: *v.plannerFlag,
+		name: *v.name, candidate: *v.candidate, planner: *v.plannerFlag,
 		resume: *v.resume, rebind: *v.rebind, timeout: *v.timeout, tier: *v.tier,
 		allowYolo: *v.allowYolo, gate: *v.gate, noGate: *v.noGate, regate: regateOpt,
 		feature: *v.feature, role: *v.actor, worktree: *v.worktree, cwd: *v.cwd,
@@ -206,7 +206,7 @@ func runBind(f bindFlags) error {
 		Feature:      f.feature,
 		Role:         f.role,
 	}
-	opts.Candidate = f.builder
+	opts.Candidate = f.candidate
 
 	adopted := f.resume
 	roleName := roleOrBuilder(f.role)
@@ -265,7 +265,7 @@ func runBind(f bindFlags) error {
 		fmt.Printf("resumed %s after pause\n", b.Name)
 	}
 
-	if f.resume && (f.builder != "" || f.rebind) {
+	if f.resume && (f.candidate != "" || f.rebind) {
 		builderDesc := builderWhere(b.Builder)
 		if b.BuilderCandidate != "" {
 			builderDesc = fmt.Sprintf("%s (%s)", builderWhere(b.Builder), rt.Candidates.NameOf(b.BuilderCandidate))
@@ -339,7 +339,7 @@ func runAdd(f bindFlags) error {
 
 	res, err := relevo.Add(context.Background(), rt, relevo.AddOptions{
 		Name:      name,
-		Candidate: f.builder,
+		Candidate: f.candidate,
 		PlannerID: f.planner,
 		Repo:      repo,
 		CWD:       cwd,

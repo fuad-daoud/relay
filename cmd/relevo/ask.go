@@ -28,11 +28,11 @@ type askFlagValues struct {
 func askFlagSet(fs *flag.FlagSet) *askFlagValues {
 	v := &askFlagValues{}
 	v.actor = fs.String("actor", "", "the reader actor to consult: reviewer, researcher, or a reader actor in config actors")
-	v.cand = fs.String("candidate", "", "candidate name or harness/provider/model token; omit to take the first ungated in config policy order[<role>]")
+	v.cand = fs.String("candidate", "", "candidate name or harness/provider/model token; omit to take the first ungated in config policy order[<actor>]")
 	v.file = fs.String("file", "", "file containing the question")
 	v.question = fs.String("question", "", "the question itself; exactly one of --file and -q")
 	fs.StringVar(v.question, "q", "", "the question itself (shorthand for --question)")
-	v.round = fs.Int("round", 0, "ask the builder that built this closed round: resumes its session, headless and read-only")
+	v.round = fs.Int("round", 0, "ask the runner that ran this closed round: resumes its session, headless and read-only")
 	v.nameFlag = fs.String("name", "", "binding name")
 	v.plannerFlag = fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
 	return v

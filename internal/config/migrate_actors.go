@@ -259,8 +259,8 @@ func actorForRole(name string, role roles.Role, row roles.Row, set *candidate.Se
 		seen[display] = true
 		a.Candidates = append(a.Candidates, roles.Entry{Candidate: display, Off: containsString(row.Off, raw)})
 	}
-	if rf != nil && row.Gate != nil {
-		a.Check = row.Gate
+	if rf != nil && row.Check != nil {
+		a.Check = row.Check
 	}
 	return a, agentName, notes
 }

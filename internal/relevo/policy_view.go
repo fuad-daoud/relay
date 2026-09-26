@@ -79,7 +79,7 @@ func PolicyWarnings(set *candidate.Set, pol policy.Policy) []PolicyWarning {
 				Role:  role,
 				Index: -1,
 				Token: tok,
-				Text:  fmt.Sprintf("%s: %s serves the role but is not in order.%s", role, c.Name, role),
+				Text:  fmt.Sprintf("%s: %s serves the actor but is not in order.%s", role, c.Name, role),
 			})
 		}
 	}
@@ -276,7 +276,7 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []availability.Ga
 			header:  header,
 			serving: serving,
 			sole:    len(serving) == 1,
-			noRows:  "  no candidate serves this role",
+			noRows:  "  no candidate serves this actor",
 		}
 		if len(serving) > 0 {
 			if ordered {
