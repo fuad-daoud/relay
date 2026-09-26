@@ -7,7 +7,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// unusedCols is the unused-provider table's cell widths at width (§4):
+// unusedCols is the unused-provider table's cell widths at width:
 // PROVIDER keeps the CANDIDATE column's width, STATUS is fixed at 9 so it
 // lines up with the candidates' STATUS, and SET BY is 33 unless that would
 // leave REASON under 16 cells, in which case SET BY leaves.
@@ -39,7 +39,7 @@ func unusedHeaderLine(nameW, reasonW, setByW, cw int) string {
 	return candLine(cells, false, cw)
 }
 
-// unusedDataLine is one unused provider's table row (§4). The name is bold on
+// unusedDataLine is one unused provider's table row. The name is bold on
 // the cursor row, the reason is the gate note's readable lead, SET BY names
 // the recorder, and STATUS is the time left in red.
 func unusedDataLine(g relevo.ProviderGate, sel bool, nameW, reasonW, setByW, cw int, now time.Time) string {
@@ -75,7 +75,7 @@ func asGate(g relevo.ProviderGate) ledger.Gate {
 	}
 }
 
-// unusedDetailLines is the unused row's detail block (§4): whose gate it is,
+// unusedDetailLines is the unused row's detail block: whose gate it is,
 // the gate itself, and how to clear it.
 func unusedDetailLines(g relevo.ProviderGate, now time.Time, width int) []string {
 	p := g.Provider
