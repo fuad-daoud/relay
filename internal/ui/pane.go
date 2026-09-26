@@ -10,14 +10,6 @@ import (
 // is roundPane.paneHead.
 var sep = faintStyle.Render(" · ")
 
-// builderStatusStyle: blocked is the one status a human must notice.
-func builderStatusStyle(status string) lipgloss.Style {
-	if status == "blocked" {
-		return stateNeedsYouStyle
-	}
-	return fgStyle
-}
-
 // spread puts right at the right edge of a width-wide line, after left,
 // dropping the gap when they would overlap (left wins; the caller decides
 // what is important enough for the right).

@@ -109,6 +109,7 @@ jobs:
       - name: make check
         env:
           RELEVO_REQUIRE_LINT: ${{ matrix.os == 'ubuntu-latest' && matrix.go == 'stable' && '1' || '' }}
+          RELEVO_REQUIRE_COVERAGE: ${{ matrix.os == 'ubuntu-latest' && matrix.go == 'stable' && '1' || '' }}
         run: make check
 
   portability:

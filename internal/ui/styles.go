@@ -74,9 +74,3 @@ func stateStyle(display string) lipgloss.Style {
 	}
 	return normalStyle
 }
-
-// pillStyle is the pane title's state badge: black on the state colour.
-func pillStyle(display string) lipgloss.Style {
-	fg := stateStyle(display).GetForeground()
-	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(fg).Padding(0, 1)
-}

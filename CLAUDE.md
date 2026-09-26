@@ -73,6 +73,14 @@ without the logic is not pinning anything.
   `scripts/check-comments.sh` / `scripts/check-filesize.sh`. Packages and files
   not yet cleaned are listed as exclusions; a round that finishes a package
   removes its entries, and a new exclusion is never added to get a round green.
+- `make check` also fails when a package's statement coverage drops more than
+  one point below `testdata/coverage-baseline.txt`; a round that moves code
+  between packages regenerates the baseline with
+  `sh scripts/check-coverage.sh --write` and says so in its report, and no
+  round lowers a baseline to get green. The baseline is tied to the Go minor
+  version and platform recorded in its header, is enforced on CI's
+  ubuntu-latest/go-stable leg, and is skipped elsewhere; a Go upgrade on that
+  leg means regenerating it.
 
 ## Merging and CI
 

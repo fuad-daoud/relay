@@ -33,7 +33,8 @@ check:
 	$(MAKE) lint
 	sh scripts/check-comments.sh
 	sh scripts/check-filesize.sh
-	go test -race -count=1 ./...
+	@go test -race -count=1 -cover ./... > .coverage.txt 2>&1; st=$$?; cat .coverage.txt; exit $$st
+	sh scripts/check-coverage.sh
 	@cp go.mod go.mod.check && cp go.sum go.sum.check && \
 	if ! go mod tidy || ! cmp -s go.mod go.mod.check || ! cmp -s go.sum go.sum.check; then \
 		mv go.mod.check go.mod && mv go.sum.check go.sum; \

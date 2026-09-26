@@ -264,11 +264,6 @@ func (v statsView) Context(env Env) (string, string) {
 	return v.statsTabsRow(), right
 }
 
-// statsFact is one context-row pair: its number in text bold, its label muted.
-func statsFact(number, label string) string {
-	return textStyle.Bold(true).Render(number) + " " + mutedStyle.Render(label)
-}
-
 func (v statsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case statsMsg:
@@ -1558,27 +1553,6 @@ func statsStackedTable(cells []string, width int) []string {
 	out := make([]string, 0, len(cells))
 	for _, c := range cells {
 		out = append(out, fit("   "+fit(c, width-6), width))
-	}
-	return out
-}
-
-// joinColumns lays two panels side by side line by line, padding the shorter
-// side to its width.
-func joinColumns(left []string, right []string, leftW, rightW int) []string {
-	n := len(left)
-	if len(right) > n {
-		n = len(right)
-	}
-	out := make([]string, 0, n)
-	for i := 0; i < n; i++ {
-		l, r := "", ""
-		if i < len(left) {
-			l = left[i]
-		}
-		if i < len(right) {
-			r = right[i]
-		}
-		out = append(out, fit(l, leftW)+fit(r, rightW))
 	}
 	return out
 }

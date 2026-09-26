@@ -41,10 +41,6 @@ func fixedKeypair() Keypair {
 	return Keypair{Private: priv, Public: pub}
 }
 
-func normalize(b []byte) []byte {
-	return b
-}
-
 func assertGolden(t *testing.T, name string, got []byte) {
 	t.Helper()
 	filename := name
