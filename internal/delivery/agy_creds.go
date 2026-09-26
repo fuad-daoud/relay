@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"encoding/json"
@@ -17,7 +17,7 @@ import (
 // The agy variables relevo reads. agy rotates ANTIGRAVITY_LS_ADDRESS and
 // ANTIGRAVITY_CSRF_TOKEN on every launch, keeps neither in its own process
 // environment nor on disk, and injects both only into the commands it runs
-// (#349) -- so a relevo command running inside agy is the one moment they can be
+// -- so a relevo command running inside agy is the one moment they can be
 // captured.
 const (
 	agyConversationEnv = "ANTIGRAVITY_CONVERSATION_ID"
@@ -27,8 +27,7 @@ const (
 )
 
 // agySecretPrefix is the secret-table name prefix one conversation's
-// credentials live under: a conversation 0f0e… is the secret `agy/0f0e…`
-// (P3b round 2 §1).
+// credentials live under: a conversation 0f0e… is the secret `agy/0f0e…`.
 const agySecretPrefix = "agy/"
 
 // agyCredsPruneAfter is how long an unused conversation's credentials are kept
@@ -121,8 +120,7 @@ func agyEnvValid(env func(string) string) bool {
 
 // AgyEnvPresent is agyEnvValid, exported: main.go checks it before opening the
 // machine database, so a command that runs outside agy opens no database at
-// all -- which is what keeps captureAgyEnv free on every verb (P3b round 2
-// §4.3).
+// all -- which is what keeps captureAgyEnv free on every verb.
 func AgyEnvPresent(env func(string) string) bool { return agyEnvValid(env) }
 
 // CaptureAgyCreds persists the calling agy session's agentapi credentials as
@@ -173,9 +171,8 @@ func CaptureAgyCreds(env func(string) string, secrets SecretStore, now time.Time
 
 // ImportAgyCreds adopts the pre-database credential files, if any: a present
 // <dir>/<conversation>.json is put to the secret agy/<conversation> and only
-// then removed, and <dir> is removed when it is left empty (P3b round 2 §4.3).
-// The order is round 1's KVImportFile rule: put, then remove, never the
-// reverse, so a crash between them leaves the file and the next run imports it
+// then removed, and <dir> is removed when it is left empty.
+// The order is put, then remove, never the reverse, so a crash between them leaves the file and the next run imports it
 // again. The row wins over a file that is still there, and a malformed file
 // fails loudly and stays where it is. It is a no-op with a nil store or dir.
 func ImportAgyCreds(secrets SecretStore, dir string) error {

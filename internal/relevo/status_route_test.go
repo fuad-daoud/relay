@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/delivery"
 )
 
 // routeDoc is the part of the status JSON the plan's §4 requires: the two new
@@ -40,7 +42,7 @@ func TestStatusJSONHasRouteFields(t *testing.T) {
 	}
 
 	// A live channel claim turns the same row into the channel route.
-	rt.Channels = fakeClaimStore{"pl_aaaaaaaabbbb": &Claim{Planner: "pl_aaaaaaaabbbb", PID: 1}}
+	rt.Channels = fakeClaimStore{"pl_aaaaaaaabbbb": &delivery.Claim{Planner: "pl_aaaaaaaabbbb", PID: 1}}
 	doc = statusDoc(t, rt)
 	if doc.Bindings[0].PlannerRoute != "channel" {
 		t.Errorf("planner_route = %q, want channel with a live claim", doc.Bindings[0].PlannerRoute)

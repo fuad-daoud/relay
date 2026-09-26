@@ -1,6 +1,6 @@
 //go:build unix
 
-package relevo
+package delivery
 
 import (
 	"errors"

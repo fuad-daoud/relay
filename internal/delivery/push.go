@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"fmt"
@@ -14,11 +14,10 @@ import (
 const MaxPushBytes = 64 << 10
 
 // showCommand renders the planner-facing command that prints one round's
-// artifact (P4a round 2 §4.2). name is the binding, round the round the
-// artifact belongs to, and section show's own flag that reads it. It replaces
-// the state-dir path the payloads and hints used to name: a closed round's
-// files may be sealed into the database (P3c), so the command is the durable
-// way to name them.
+// artifact. name is the binding, round the round the artifact belongs to, and
+// section show's own flag that reads it. A closed round's files may be sealed
+// into the database, so the command is the durable way to name them rather
+// than a state-dir path.
 func showCommand(name string, round int, section string) string {
 	return fmt.Sprintf("relevo show %s --round %d --%s", name, round, section)
 }
@@ -31,7 +30,7 @@ func FindingsCommand(name string, round int, id string) string {
 
 // findingsIDOf recovers the consult id from a findings path's basename
 // (NNN-<id>-findings.md) -- the one identifier a findings entry carries, since
-// LogEntry.Path stays the artifact's identifier (§3). It returns "" when the
+// LogEntry.Path stays the artifact's identifier. It returns "" when the
 // basename is not a findings name.
 func findingsIDOf(path string) string {
 	base := filepath.Base(path)
@@ -47,9 +46,9 @@ func findingsIDOf(path string) string {
 	return base[i+1:]
 }
 
-// logRef renders the `relevo show` command that prints e's full artifact, or
+// LogRef renders the `relevo show` command that prints e's full artifact, or
 // "" when e's kind names none (an edge's prompt file has no show section).
-func logRef(name string, e store.LogEntry) string {
+func LogRef(name string, e store.LogEntry) string {
 	switch e.Kind {
 	case store.KindReport:
 		return showCommand(name, e.Round, "report")
@@ -70,7 +69,7 @@ func logRef(name string, e store.LogEntry) string {
 // Payload + blank line + the file's contents for the kinds whose Path
 // names a text artifact the planner would otherwise have to open. name is
 // the binding the entry belongs to, threaded so a truncated text can name
-// the `relevo show` command that prints the whole thing (§4.2).
+// the `relevo show` command that prints the whole thing.
 //
 // ok reports whether an expansion happened. A read error is not a
 // delivery failure: PushText returns e.Payload and false, because an
@@ -88,7 +87,7 @@ func PushText(e store.LogEntry, name string, read func(string) ([]byte, error)) 
 		return e.Payload, false
 	}
 
-	ref := logRef(name, e)
+	ref := LogRef(name, e)
 	if ref == "" {
 		// A kind with no show section (an edge's prompt file): fall back to
 		// the path rather than printing an empty reference.
@@ -113,7 +112,7 @@ func expandablePushKind(k store.Kind) bool {
 // truncatePushText keeps at most MaxPushBytes of text, cut back to the last
 // newline within that budget (or at the budget itself when there is none),
 // and appends a final line naming ref -- the `relevo show` command that
-// prints the full text (§4.2) -- when it truncated.
+// prints the full text -- when it truncated.
 func truncatePushText(text, ref string) string {
 	if len(text) <= MaxPushBytes {
 		return text

@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"sync"
@@ -7,7 +7,7 @@ import (
 
 const giveUpRelogAfter = time.Hour
 
-// giveUpLog rate-limits the give-up log line (#459) to once per key,
+// giveUpLog rate-limits the give-up log line to once per key,
 // with at most one hourly re-log while a payload stays pending.
 type giveUpLog struct {
 	mu   sync.Mutex

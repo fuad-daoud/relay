@@ -47,8 +47,8 @@ fi
 LC_ALL=C sort -u "$work/out" > "$work/all.txt"
 
 test_lines=$(grep -c '^test .*/internal/relevo ' "$work/all.txt" || :)
-if [ "$test_lines" -le 1000 ]; then
-	echo "FAIL: TOTAL=1 lists $test_lines internal/relevo tests, want more than 1000"
+if [ "$test_lines" -le 100 ]; then
+	echo "FAIL: TOTAL=1 lists $test_lines internal/relevo tests, want more than 100"
 	fail=1
 fi
 
