@@ -10,10 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -107,6 +109,49 @@ func TestServedBuilderTier(t *testing.T) {
 	rt = Runtime{Candidates: nil, Policy: policy.Policy{Tier: map[string]string{"builder": "yolo"}}, Now: func() time.Time { return baseTime }}
 	if got := ServedBuilderTier(rt); got != harness.TierHarness {
 		t.Fatalf("refused chain: got %v, want harness", got)
+	}
+}
+
+// TestServedBuilderTierFollowsTheRoleRegistry pins that the builder tier a
+// served round resolves comes from the runtime's roles registry, not from
+// whichever candidate the legacy fallback happens to rank first.
+func TestServedBuilderTierFollowsTheRoleRegistry(t *testing.T) {
+	t.Parallel()
+	set := candidateSet(t, servedNoTierCandidateJSON)
+
+	actorsSection := map[string]actors.Actor{
+		"builder": {
+			Agent:      "plan-executor",
+			Candidates: []actors.Entry{{Candidate: "claude/test/m"}},
+			Tier:       "yolo",
+		},
+	}
+	rf, _, err := actors.ToRolesFile(nil, actorsSection)
+	if err != nil {
+		t.Fatalf("actors.ToRolesFile: %v", err)
+	}
+	reg, err := roles.Build(rf, set, policy.Policy{MaxTier: "yolo"})
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+
+	rt := Runtime{
+		Candidates: set,
+		Policy:     policy.Policy{MaxTier: "yolo"},
+		Registry:   reg,
+		Gates:      testGateKV(t),
+		Now:        func() time.Time { return baseTime },
+	}
+	if got := ServedBuilderTier(rt); got != harness.TierYolo {
+		t.Fatalf("registry builder tier: got %v, want yolo", got)
+	}
+
+	// The same runtime without the registry falls back to the legacy
+	// derivation, which carries no role tier: assert only that it is not
+	// yolo, since which tier it names is not what this test pins.
+	rt.Registry = nil
+	if got := ServedBuilderTier(rt); got == harness.TierYolo {
+		t.Fatalf("nil registry: got %v, want anything but yolo", got)
 	}
 }
 

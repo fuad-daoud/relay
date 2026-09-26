@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
@@ -231,13 +232,39 @@ func TestServeTierRuntimeHasClock(t *testing.T) {
 		t.Fatalf("policy.Load: %v", err)
 	}
 
-	rt := serveTierRuntime(candidates, pol, root, nil)
+	rt := serveTierRuntime(candidates, pol, nil, root, nil)
 	if rt.Now == nil {
 		t.Fatal("serveTierRuntime returned a Runtime without a clock")
 	}
 	tier := relevo.ServedBuilderTier(rt) // this is the line that panicked in production
 	if tier == "" {
 		t.Fatal("expected a tier")
+	}
+}
+
+// TestServeTierRuntimeCarriesTheRegistry pins that the runtime cmdServeRun
+// logs the builder tier from carries the same registry the served rounds
+// resolve through, so the log cannot name a tier the rounds do not run at.
+func TestServeTierRuntimeCarriesTheRegistry(t *testing.T) {
+	root := t.TempDir()
+	candidatesJSON := `[{"harness":"claude","provider":"t","model":"m","roles":["builder"]}]`
+	candidatesPath := filepath.Join(root, "candidates.json")
+	if err := os.WriteFile(candidatesPath, []byte(candidatesJSON), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	set, err := candidate.Load(candidatesPath)
+	if err != nil {
+		t.Fatalf("candidate.Load: %v", err)
+	}
+	pol := policy.Policy{MaxTier: "yolo"}
+	reg, err := roles.Build(nil, set, pol)
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+
+	rt := serveTierRuntime(set, pol, reg, root, nil)
+	if rt.Registry != reg {
+		t.Fatal("serveTierRuntime dropped the registry: the startup log would resolve the tier without it")
 	}
 }
 

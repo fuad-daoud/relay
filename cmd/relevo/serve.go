@@ -24,6 +24,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -217,9 +218,11 @@ func cmdServe(args []string) error {
 
 // serveTierRuntime is the Runtime cmdServeRun uses only to log the builder
 // tier at startup: candidates, policy, the server's gates and a clock.
-// Gates is the `serve.`-prefixed view of the machine database (P5 §4.3), so a
-// tier check that reads the gate record sees the server-wide one.
-func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, root string, d *db.DB) relevo.Runtime {
+// reg is passed so the logged tier is the tier served rounds get: they resolve
+// through the same registry. Gates is the `serve.`-prefixed view of the
+// machine database, so a tier check that reads the gate record sees the
+// server-wide one.
+func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, reg *roles.Registry, root string, d *db.DB) relevo.Runtime {
 	var gates db.KV
 	if d != nil {
 		gates = db.PrefixKV{KV: d, Prefix: "serve."}
@@ -227,6 +230,7 @@ func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, root string,
 	return relevo.Runtime{
 		Candidates: candidates,
 		Policy:     pol,
+		Registry:   reg,
 		Gates:      gates,
 		GatesDir:   root,
 		Now:        time.Now,
@@ -418,7 +422,7 @@ func cmdServeRun(args []string) error {
 
 	candidates, pol, reg := L.Candidates, L.Policy, L.Registry
 
-	builderTierRT := serveTierRuntime(candidates, pol, root, d)
+	builderTierRT := serveTierRuntime(candidates, pol, reg, root, d)
 	if builderTier := relevo.ServedBuilderTier(builderTierRT); builderTier == harness.TierHarness {
 		slog.Warn(relevo.ServerTierWarning(relevo.ServerProbe{TierAware: true, BuilderTier: string(builderTier)}))
 	} else {
