@@ -862,3 +862,189 @@ func TestShowTranscriptRendersTheStreamWithoutALog(t *testing.T) {
 		}
 	})
 }
+
+// TestFindingsRound pins the pure resolver behind `show --findings`: a
+// requested round within upper is taken as is, one above upper is refused with
+// the plan-round count, and no --round scans newest-first for the round that
+// holds the consult's findings, ErrNoFindings when none does.
+func TestFindingsRound(t *testing.T) {
+	t.Parallel()
+
+	existsErr := errors.New("exists failed")
+	holds := func(rounds ...int) func(int) (bool, error) {
+		return func(round int) (bool, error) {
+			for _, r := range rounds {
+				if r == round {
+					return true, nil
+				}
+			}
+			return false, nil
+		}
+	}
+
+	cases := []struct {
+		name      string
+		requested int
+		upper     int
+		exists    func(int) (bool, error)
+		want      int
+		wantErr   string
+		wantNone  bool
+	}{
+		{name: "requested round within upper", requested: 1, upper: 1, exists: holds(), want: 1},
+		{name: "requested round above upper", requested: 2, upper: 1, exists: holds(), wantErr: "round 2: binding has 1 rounds"},
+		{name: "newest held round wins", requested: 0, upper: 2, exists: holds(1), want: 1},
+		{name: "newest of two held rounds wins", requested: 0, upper: 2, exists: holds(1, 2), want: 2},
+		{name: "no round holds the findings", requested: 0, upper: 2, exists: holds(), wantNone: true},
+		{name: "exists error propagates", requested: 0, upper: 2, exists: func(int) (bool, error) { return false, existsErr }, wantErr: "exists failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			round, err := findingsRound(tc.requested, tc.upper, tc.exists)
+			if tc.wantNone {
+				if !errors.Is(err, ErrNoFindings) {
+					t.Fatalf("findingsRound(%d, %d) err = %v, want ErrNoFindings", tc.requested, tc.upper, err)
+				}
+				return
+			}
+			if tc.wantErr != "" {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("findingsRound(%d, %d) err = %v, want %q", tc.requested, tc.upper, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("findingsRound(%d, %d): %v", tc.requested, tc.upper, err)
+			}
+			if round != tc.want {
+				t.Errorf("findingsRound(%d, %d) = %d, want %d", tc.requested, tc.upper, round, tc.want)
+			}
+		})
+	}
+}
+
+// TestShowLiveFindingsOnBindingWithNoRounds pins #593 on the live path: a
+// consult is recorded on the binding's current round, which has no plan entry
+// yet, so `show --findings <id>` must read it with and without --round.
+func TestShowLiveFindingsOnBindingWithNoRounds(t *testing.T) {
+	t.Parallel()
+
+	s := store.New(t.TempDir())
+	b := store.Binding{
+		Name:  "consultonly",
+		CWD:   "/work/consultonly",
+		Round: 1,
+		State: store.StateActive,
+	}
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	const id = "abc"
+	const want = "# Plan\n\nWrite the plan as findings.\n"
+	if err := os.WriteFile(s.FindingsPath("consultonly", 1, id), []byte(want), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	rt := Runtime{Store: s}
+	for _, round := range []int{1, 0} {
+		res, err := Show(context.Background(), rt, ShowOptions{
+			Name: "consultonly", Round: round, Section: ShowFindings, FindingsID: id,
+		})
+		if err != nil {
+			t.Fatalf("Show(round %d): %v", round, err)
+		}
+		if res.Missing {
+			t.Errorf("Show(round %d): Missing = true, want the findings text", round)
+		}
+		if res.Text != want {
+			t.Errorf("Show(round %d): Text = %q, want %q", round, res.Text, want)
+		}
+		if res.Round != 1 {
+			t.Errorf("Show(round %d): Round = %d, want 1", round, res.Round)
+		}
+		if res.Rounds != 0 {
+			t.Errorf("Show(round %d): Rounds = %d, want the plan-round count 0", round, res.Rounds)
+		}
+	}
+}
+
+// TestShowLiveFindingsUnknownConsult: no round holds the consult's findings,
+// so `show --findings` with no --round reports ErrNoFindings rather than
+// scanning into a bound error.
+func TestShowLiveFindingsUnknownConsult(t *testing.T) {
+	t.Parallel()
+
+	s := store.New(t.TempDir())
+	b := store.Binding{
+		Name:  "consultonly",
+		CWD:   "/work/consultonly",
+		Round: 1,
+		State: store.StateActive,
+	}
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := os.WriteFile(s.FindingsPath("consultonly", 1, "abc"), []byte("# Plan\n"), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+
+	rt := Runtime{Store: s}
+	_, err := Show(context.Background(), rt, ShowOptions{
+		Name: "consultonly", Round: 0, Section: ShowFindings, FindingsID: "zzz",
+	})
+	if !errors.Is(err, ErrNoFindings) {
+		t.Fatalf("err = %v, want ErrNoFindings", err)
+	}
+	if !strings.Contains(err.Error(), "zzz") || !strings.Contains(err.Error(), "consultonly") {
+		t.Errorf("err = %v, want it to name consult zzz on consultonly", err)
+	}
+}
+
+// TestShowArchivedFindingsOnBindingWithNoRounds is the archived analogue of
+// TestShowLiveFindingsOnBindingWithNoRounds: an archived record whose round 1
+// has no plan entry still answers a findings read, sealed or scanned.
+func TestShowArchivedFindingsOnBindingWithNoRounds(t *testing.T) {
+	t.Parallel()
+
+	s := store.New(t.TempDir())
+	b := store.Binding{
+		Name:  "archivedconsult",
+		CWD:   "/work/archivedconsult",
+		Round: 1,
+		State: store.StateActive,
+	}
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	const id = "abc"
+	const want = "# Plan\n\nArchived consult findings.\n"
+	if err := os.WriteFile(s.FindingsPath("archivedconsult", 1, id), []byte(want), 0o644); err != nil {
+		t.Fatalf("write findings: %v", err)
+	}
+	if _, err := s.Archive("archivedconsult"); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	rt := Runtime{Store: s}
+	for _, round := range []int{1, 0} {
+		res, err := Show(context.Background(), rt, ShowOptions{
+			Name: "archivedconsult", Round: round, Section: ShowFindings, FindingsID: id,
+		})
+		if err != nil {
+			t.Fatalf("Show(round %d): %v", round, err)
+		}
+		if !res.Archived {
+			t.Errorf("Show(round %d): Archived = false, want true", round)
+		}
+		if res.Missing {
+			t.Errorf("Show(round %d): Missing = true, want the findings text", round)
+		}
+		if res.Text != want {
+			t.Errorf("Show(round %d): Text = %q, want %q", round, res.Text, want)
+		}
+		if res.Round != 1 {
+			t.Errorf("Show(round %d): Round = %d, want 1", round, res.Round)
+		}
+	}
+}

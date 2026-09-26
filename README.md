@@ -1817,6 +1817,23 @@ agent: `researcher` is dispatched by a builder's own plan-executor and returns
 findings in-band to it, while a reviewer runs as its own relevo consult and
 hands back a file path.
 
+### Planner actors
+
+A planner actor can write a plan as a consult, so a human reviews it before
+the builder starts:
+
+```
+relevo ask --name b --actor lite-planner -q "plan: <task>"   # or --file q.md
+relevo show b --findings <id> > plan.md                      # review / edit
+relevo send --name b --file plan.md
+```
+
+The plan is the consult's findings. `relevo show` prints the header to stderr
+and the section's text to stdout, so the redirect gives a clean plan file to
+review and edit. Reviewing is a human (or planner-session) step: relevo sends
+nothing automatically, and `relevo send` is what hands the reviewed file to
+the builder.
+
 ### Round usage
 
 At every round close relevo records what the round consumed on the
