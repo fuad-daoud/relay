@@ -398,27 +398,6 @@ func assertIngestMirrorEmpty(t *testing.T, path string) {
 	}
 }
 
-// waitForState busy-polls the store (itself lock-synchronised) until name
-// reaches want or the deadline passes.
-func waitForState(t *testing.T, rt Runtime, name string, want store.State) store.Binding {
-	t.Helper()
-	deadline := time.After(2 * time.Second)
-	for {
-		b, err := rt.Store.Load(name)
-		if err != nil {
-			t.Fatalf("Load %s: %v", name, err)
-		}
-		if b.State == want {
-			return b
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("%s never reached state %s, last seen %s", name, want, b.State)
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-}
-
 // fakeFetcher counts calls so a test can prove the tick asked the endpoint --
 // or, on a fresh cache, never asked at all.
 type fakeFetcher struct {

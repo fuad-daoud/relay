@@ -698,18 +698,6 @@ func retryConfirmLines(b relevo.BindingStatus, candidate string) []string {
 // that means a round is open.
 func roundOpen(b relevo.BindingStatus) bool { return b.Display == "ACTIVE" }
 
-// excludeCandidate drops current from names, so a retry prompt never offers
-// the candidate the binding already runs (§4.5).
-func excludeCandidate(names []string, current string) []string {
-	out := make([]string, 0, len(names))
-	for _, n := range names {
-		if n != "" && n != current {
-			out = append(out, n)
-		}
-	}
-	return out
-}
-
 // shellCmd is the o key: a shell in the binding's tree, with the terminal
 // released and restored. A failure to start one is a notice (§4.3, §6).
 func shellCmd(env Env, key string) tea.Cmd {

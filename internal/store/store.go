@@ -943,30 +943,3 @@ func acquireFlock(f *os.File, limit time.Duration) error {
 		time.Sleep(lockRetryDelay)
 	}
 }
-
-// writeFileAtomic writes via a temp file in the same directory then renames, so
-// a crash mid-write can never leave a truncated binding on disk.
-func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temp file in %s: %w", dir, err)
-	}
-	defer os.Remove(tmp.Name())
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp file: %w", err)
-	}
-	if err := os.Chmod(tmp.Name(), mode); err != nil {
-		return fmt.Errorf("chmod temp file: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("rename into place: %w", err)
-	}
-
-	return nil
-}

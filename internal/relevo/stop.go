@@ -35,15 +35,6 @@ type StopResult struct {
 	Grace  time.Duration // always zero since #303; the pane wrap-up is gone
 }
 
-// stopGrace is the grace a binding was stopped with, or the default when it
-// records none. Kept for bindings written before #303.
-func stopGrace(b store.Binding) time.Duration {
-	if b.StopGraceMS <= 0 {
-		return DefaultStopGrace
-	}
-	return time.Duration(b.StopGraceMS) * time.Millisecond
-}
-
 // stopAction is what a binding's stop bookkeeping implies should happen next.
 type stopAction int
 

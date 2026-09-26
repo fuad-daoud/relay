@@ -138,8 +138,6 @@ type kvOps struct {
 	kv  db.KVTx
 }
 
-func (o kvOps) get(id string) (Record, error) { return o.reg.getFrom(o.kv, id) }
-
 func (o kvOps) byName(name string) (Record, error) { return o.reg.byNameFrom(o.kv, name) }
 
 func (o kvOps) byHost(pid int, startedAt int64) (Record, error) {

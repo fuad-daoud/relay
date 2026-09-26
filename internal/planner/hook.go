@@ -200,7 +200,6 @@ func Init(reg Registry, in InitInput) (Record, InitResult, error) {
 // regOps is the transaction-free surface initLocked drives. kvOps implements
 // it over one KVTx; regAdapter adapts any other Registry, one call per step.
 type regOps interface {
-	get(id string) (Record, error)
 	byName(name string) (Record, error)
 	byHost(pid int, startedAt int64) (Record, error)
 	bySession(kind, sessionID string) (Record, error)
@@ -214,7 +213,6 @@ type regOps interface {
 // regAdapter runs Init against an arbitrary Registry, one locked call per step.
 type regAdapter struct{ Registry }
 
-func (a regAdapter) get(id string) (Record, error)          { return a.Get(id) }
 func (a regAdapter) byName(name string) (Record, error)     { return a.ByName(name) }
 func (a regAdapter) bySession(k, s string) (Record, error)  { return a.BySession(k, s) }
 func (a regAdapter) create(r Record) (Record, error)        { return a.Create(r) }
