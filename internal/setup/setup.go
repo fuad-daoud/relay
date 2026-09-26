@@ -23,15 +23,27 @@ var Defaults = map[string]Default{
 	"codex":    {"openai", "gpt-5.6-terra:high"},
 }
 
+// PlannerDefault is a reader actor config init seeds beside the builder: the
+// actor name, the harness kind whose binary must be on PATH, and its one
+// candidate's provider and model.
+type PlannerDefault struct{ Actor, Kind, Provider, Model string }
+
+// PlannerDefaults are those actors in written order: planner, then lite-planner.
+var PlannerDefaults = []PlannerDefault{
+	{"planner", "claude", "anthropic", "opus:medium"},
+	{"lite-planner", "opencode", "openrouter", "deepseek/deepseek-v4.1-flash"},
+}
+
 // Files is the starter configuration Plan produced, ready to store.
 type Files struct {
 	Kinds      []string // harness kinds found on PATH, in harness.All() order
 	Candidates []byte   // JSON, indented two spaces, trailing newline
 	Policy     []byte   // JSON, indented two spaces, trailing newline
-	Actors     []byte   // JSON, the builder actor over the plan's candidate names
+	Actors     []byte   // JSON, the builder actor plus the planner actors whose harness is on PATH
+	ActorOrder []string // the actor names written: builder, then PlannerDefaults order (only those written)
 }
 
-// Plan builds starter candidates, a policy and a builder actor for every harness binary on PATH, erroring when none is found.
+// Plan builds starter candidates, a policy and starter actors for every harness binary on PATH, erroring when none is found.
 func Plan(env harness.InstallEnv) (Files, error) {
 	var kinds []string
 	var candidates []candidate.Candidate
@@ -50,6 +62,26 @@ func Plan(env harness.InstallEnv) (Files, error) {
 	if len(kinds) == 0 {
 		return Files{}, errors.New("no harness binaries on PATH (agy, claude, codex, opencode); install one first")
 	}
+	builderCount := len(candidates)
+
+	order := []string{"builder"}
+	var planners []PlannerDefault
+	for _, p := range PlannerDefaults {
+		h, ok := harness.Lookup(p.Kind)
+		if !ok {
+			continue
+		}
+		if _, err := env.LookPath(h.Binary); err != nil {
+			continue
+		}
+		planners = append(planners, p)
+		order = append(order, p.Actor)
+		candidates = append(candidates, candidate.Candidate{
+			Harness:  p.Kind,
+			Provider: p.Provider,
+			Model:    p.Model,
+		})
+	}
 
 	candJSON, err := json.MarshalIndent(candidates, "", "  ")
 	if err != nil {
@@ -65,16 +97,31 @@ func Plan(env harness.InstallEnv) (Files, error) {
 	polJSON = append(polJSON, '\n')
 
 	names := candidate.DeriveNames(candidates)
-	entries := make([]roles.Entry, 0, len(names))
-	for _, name := range names {
-		entries = append(entries, roles.Entry{Candidate: name})
-	}
-	actorsJSON, err := roles.EncodeActors(map[string]roles.Actor{
-		"builder": {Agent: "plan-executor", Candidates: entries, Tier: "yolo"},
-	})
+	actorsJSON, err := roles.EncodeActors(starterActors(names[:builderCount], planners, names[builderCount:]))
 	if err != nil {
 		return Files{}, fmt.Errorf("marshal actors: %w", err)
 	}
 
-	return Files{Kinds: kinds, Candidates: candJSON, Policy: polJSON, Actors: actorsJSON}, nil
+	return Files{Kinds: kinds, Candidates: candJSON, Policy: polJSON, Actors: actorsJSON, ActorOrder: order}, nil
+}
+
+// starterActors assembles the builder actor and one reader actor per written
+// planner, each with the candidate names DeriveNames produced.
+func starterActors(builderNames []string, planners []PlannerDefault, plannerNames []string) map[string]roles.Actor {
+	actors := map[string]roles.Actor{
+		"builder": {Agent: "plan-executor", Tier: "yolo", Candidates: candidateEntries(builderNames)},
+	}
+	for i, p := range planners {
+		actors[p.Actor] = roles.Actor{Agent: "architect", Candidates: candidateEntries(plannerNames[i : i+1])}
+	}
+	return actors
+}
+
+// candidateEntries wraps names as an actor's candidates, each on.
+func candidateEntries(names []string) []roles.Entry {
+	entries := make([]roles.Entry, 0, len(names))
+	for _, name := range names {
+		entries = append(entries, roles.Entry{Candidate: name})
+	}
+	return entries
 }

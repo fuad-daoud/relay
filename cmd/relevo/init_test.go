@@ -61,8 +61,8 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 	}
 
 	L := storedConfig(t)
-	if L.Candidates.Len() != 2 {
-		t.Errorf("stored candidates = %v, want claude and opencode", L.Candidates.Refs())
+	if L.Candidates.Len() != 4 {
+		t.Errorf("stored candidates = %v, want the two builder and two planner candidates", L.Candidates.Refs())
 	}
 	// R5: the candidates carry no roles/tier, the policy only max_tier, and a
 	// builder actor over the candidates' names is what says who serves what.
@@ -122,15 +122,19 @@ func TestInitReportsActors(t *testing.T) {
 	}
 
 	L := storedConfig(t)
-	builder, ok := L.Actors["builder"]
-	if !ok {
-		t.Fatalf("stored actors = %v, want a builder", L.Actors)
+	var parts []string
+	for _, name := range []string{"builder", "planner", "lite-planner"} {
+		a, ok := L.Actors[name]
+		if !ok {
+			t.Fatalf("stored actors = %v, want a %s", L.Actors, name)
+		}
+		names := make([]string, 0, len(a.Candidates))
+		for _, e := range a.Candidates {
+			names = append(names, e.Candidate)
+		}
+		parts = append(parts, name+": "+strings.Join(names, ", "))
 	}
-	names := make([]string, 0, len(builder.Candidates))
-	for _, e := range builder.Candidates {
-		names = append(names, e.Candidate)
-	}
-	want := "wrote actors (builder: " + strings.Join(names, ", ") + ")"
+	want := "wrote actors (" + strings.Join(parts, "; ") + ")"
 	out := string(stdout) + string(stderr)
 	if !strings.Contains(out, want) {
 		t.Errorf("output does not contain %q:\n%s", want, out)

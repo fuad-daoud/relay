@@ -39,8 +39,8 @@ func TestPlanFindsBinariesInHarnessOrder(t *testing.T) {
 	if err := json.Unmarshal(files.Candidates, &cands); err != nil {
 		t.Fatalf("unmarshal candidates: %v", err)
 	}
-	if len(cands) != 2 {
-		t.Fatalf("candidates = %d, want 2", len(cands))
+	if len(cands) != 4 {
+		t.Fatalf("candidates = %d, want 4", len(cands))
 	}
 	for _, c := range cands {
 		if c.Roles != nil || c.Tier != "" {
@@ -78,8 +78,84 @@ func TestPlanFindsBinariesInHarnessOrder(t *testing.T) {
 	for _, e := range builder.Candidates {
 		names = append(names, e.Candidate)
 	}
-	if want := candidate.DeriveNames(cands); !reflect.DeepEqual(names, want) {
-		t.Errorf("builder candidates = %v, want the plan's names %v", names, want)
+	if want := candidate.DeriveNames(cands)[:2]; !reflect.DeepEqual(names, want) {
+		t.Errorf("builder candidates = %v, want the first two of the plan's names %v", names, want)
+	}
+}
+
+func TestPlanSeedsPlannerActors(t *testing.T) {
+	files, err := Plan(pathEnv{onPath: map[string]bool{"claude": true, "opencode": true}})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	actorSet, _, err := roles.ParseActors(files.Actors)
+	if err != nil {
+		t.Fatalf("roles.ParseActors: %v", err)
+	}
+	for _, tt := range []struct {
+		actor string
+		want  []string
+	}{
+		{"planner", []string{"opus"}},
+		{"lite-planner", []string{"deepseek-v4.1-flash"}},
+	} {
+		a, ok := actorSet[tt.actor]
+		if !ok {
+			t.Fatalf("actors = %v, want a %s", actorSet, tt.actor)
+		}
+		if a.Agent != "architect" {
+			t.Errorf("%s agent = %q, want architect", tt.actor, a.Agent)
+		}
+		var got []string
+		for _, e := range a.Candidates {
+			got = append(got, e.Candidate)
+		}
+		if !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%s candidates = %v, want %v", tt.actor, got, tt.want)
+		}
+		if a.Tier != "" {
+			t.Errorf("%s tier = %q, want none", tt.actor, a.Tier)
+		}
+	}
+	if want := []string{"builder", "planner", "lite-planner"}; !reflect.DeepEqual(files.ActorOrder, want) {
+		t.Errorf("ActorOrder = %v, want %v", files.ActorOrder, want)
+	}
+}
+
+func TestPlanSkipsPlannerWithoutItsHarness(t *testing.T) {
+	files, err := Plan(pathEnv{onPath: map[string]bool{"opencode": true}})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	actorSet, _, err := roles.ParseActors(files.Actors)
+	if err != nil {
+		t.Fatalf("roles.ParseActors: %v", err)
+	}
+	if _, ok := actorSet["planner"]; ok {
+		t.Errorf("actors = %v, want no planner without claude on PATH", actorSet)
+	}
+	if _, ok := actorSet["lite-planner"]; !ok {
+		t.Errorf("actors = %v, want a lite-planner with opencode on PATH", actorSet)
+	}
+	if strings.Contains(string(files.Candidates), "opus:medium") {
+		t.Errorf("candidates carry opus:medium without claude on PATH:\n%s", files.Candidates)
+	}
+	if want := []string{"builder", "lite-planner"}; !reflect.DeepEqual(files.ActorOrder, want) {
+		t.Errorf("ActorOrder = %v, want %v", files.ActorOrder, want)
+	}
+
+	files, err = Plan(pathEnv{onPath: map[string]bool{"codex": true}})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	actorSet, _, err = roles.ParseActors(files.Actors)
+	if err != nil {
+		t.Fatalf("roles.ParseActors: %v", err)
+	}
+	for _, name := range []string{"planner", "lite-planner"} {
+		if _, ok := actorSet[name]; ok {
+			t.Errorf("actors = %v, want no %s with only codex on PATH", actorSet, name)
+		}
 	}
 }
 

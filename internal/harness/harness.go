@@ -268,8 +268,12 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 
 	switch h.Kind {
 	case "claude":
-		print = []string{"-p", PromptPlaceholder, "--model", model, "--agent", role.Definition,
-			"--output-format", "stream-json", "--verbose"}
+		id, effort := claudeEffort(model)
+		print = []string{"-p", PromptPlaceholder, "--model", id}
+		if effort != "" {
+			print = append(print, "--effort", effort)
+		}
+		print = append(print, "--agent", role.Definition, "--output-format", "stream-json", "--verbose")
 		promptAt = 1
 	case "opencode":
 		// Without --standalone, `run` is a client of the user's single
@@ -366,6 +370,21 @@ func SplitEffort(model string) (id, effort string, err error) {
 		return "", "", ErrBadModel
 	}
 	return id, effort, nil
+}
+
+// claudeEfforts is the vocabulary `claude --effort` accepts.
+var claudeEfforts = map[string]bool{"low": true, "medium": true, "high": true, "xhigh": true, "max": true}
+
+// claudeEffort splits a claude candidate model "<id>[:<effort>]" on its last
+// ':': when the suffix is in claudeEfforts and the id is non-empty it returns
+// (id, effort), and otherwise (model, ""). It never errors, because an unknown
+// suffix is part of the model id — a Bedrock model id contains ':'.
+func claudeEffort(model string) (id, effort string) {
+	i := strings.LastIndex(model, ":")
+	if i <= 0 || !claudeEfforts[model[i+1:]] {
+		return model, ""
+	}
+	return model[:i], model[i+1:]
 }
 
 // Lookup returns the entry for a kind; ok is false for a kind relevo was not
