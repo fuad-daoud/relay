@@ -53,12 +53,12 @@ func agentFilesCmd(env Env, name string) tea.Cmd {
 	}
 }
 
-// rows is the table (§4): the loaded file states for a shipped agent; for a
-// custom one, one row per kind its native entry or its source names, at the
-// kind's convention path. A custom agent whose entry cannot be read has no
-// rows.
+// rows is the table: the loaded file states for a shipped agent and for a
+// custom agent relevo renders from a source; for a custom native agent, one
+// row per kind its native entry names, at the kind's convention path. A custom
+// agent whose entry cannot be read has no rows.
 func (v agentView) rows() []agentFileRow {
-	if v.row.source == "shipped" {
+	if v.row.source == "shipped" || relevo.IsSourceAgent(v.doc.Agents, v.name) {
 		out := make([]agentFileRow, 0, len(v.files))
 		for _, f := range v.files {
 			out = append(out, agentFileRow{kind: f.Kind, path: f.Path, model: f.Model, state: f.State})
@@ -181,15 +181,15 @@ func (v agentView) Crumbs() []string { return []string{v.name} }
 // Capturing is always false: the view owns no text input of its own (§4).
 func (v agentView) Capturing() bool { return false }
 
-// Keys are the detail view's keys (§4). A custom agent's view has no `r`: a
-// reset would have nothing relevo ships to write. `esc back` is left to the
-// shell's own tail.
+// Keys are the detail view's keys. A native custom agent's view has no `r`:
+// relevo writes no file for it, so a reset has nothing to restore. `esc back`
+// is left to the shell's own tail.
 func (v agentView) Keys() []KeyHelp {
 	keys := []KeyHelp{
 		{"↑↓", "move"},
 		{"e", "edit in $EDITOR"},
 	}
-	if v.row.source == "shipped" {
+	if v.row.source == "shipped" || relevo.IsSourceAgent(v.doc.Agents, v.name) {
 		keys = append(keys, KeyHelp{"r", "reset"})
 	}
 	return keys
@@ -288,7 +288,7 @@ func (v agentView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		}
 		return v, v.editCmd(env, rows[v.cur])
 	case "r":
-		if n == 0 || v.row.source != "shipped" {
+		if n == 0 || (v.row.source != "shipped" && !relevo.IsSourceAgent(v.doc.Agents, v.name)) {
 			return v, nil
 		}
 		return v, v.resetCmd(env, rows[v.cur])
@@ -315,26 +315,37 @@ func (v agentView) editCmd(env Env, f agentFileRow) tea.Cmd {
 	})
 }
 
-// resetCmd is the r key (§4): a file the user edited, one relevo has a newer
-// copy of, or one relevo has never written can be reset; anything else is a
-// notice. A reset is a danger confirm, because the edit it discards cannot come
-// back. A missing file is a write rather than a reset: nothing is lost, the
-// confirm's title, label and note say so (§3, round 6).
+// copyPhrase names the copy a reset writes: the one relevo ships for a shipped
+// agent, or the one relevo renders from the user's config for a custom source
+// agent.
+func copyPhrase(custom bool) string {
+	if custom {
+		return "relevo renders from your config"
+	}
+	return "the copy this relevo ships"
+}
+
+// resetCmd is the r key: a file the user edited, one relevo has a newer copy
+// of, or one relevo has never written can be reset; anything else is a notice.
+// A reset is a danger confirm, because the edit it discards cannot come back. A
+// missing file is a write rather than a reset: nothing is lost, the confirm's
+// title, label and note say so.
 func (v agentView) resetCmd(env Env, f agentFileRow) tea.Cmd {
 	if f.state != harness.FileEdited && f.state != harness.FileStale && f.state != harness.FileMissing {
 		return notice(f.kind + "'s " + v.name + " is up to date")
 	}
 	kind, name := f.kind, v.name
+	phrase := copyPhrase(relevo.IsSourceAgent(v.doc.Agents, v.name))
 	title := "Reset " + kind + "'s " + accentStyle.Bold(true).Render(name) + "?"
 	label := "overwrites"
-	note := "with the copy this relevo ships; your edit is lost"
+	note := "with " + phrase + "; your edit is lost"
 	switch f.state {
 	case harness.FileStale:
-		note = "with the copy this relevo ships; relevo has a newer copy"
+		note = "with " + phrase + "; relevo has a newer copy"
 	case harness.FileMissing:
 		title = "Write " + kind + "'s " + accentStyle.Bold(true).Render(name) + "?"
 		label = "writes"
-		note = "the copy this relevo ships"
+		note = phrase
 	}
 	return openOverlay(confirmBox{
 		kind:   "reset",

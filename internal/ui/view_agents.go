@@ -113,6 +113,9 @@ func agentRows(doc relevo.ConfigDoc, files map[string][]harness.AgentFile) []age
 			r.shape, r.source, r.files = string(s.Shape), "shipped", files[name]
 		} else {
 			r.shape, r.source = agentShapeOf(doc, name), "custom"
+			if relevo.IsSourceAgent(doc.Agents, name) {
+				r.files = files[name]
+			}
 		}
 		out = append(out, r)
 	}
@@ -224,9 +227,9 @@ func agentHeaderLine(nameW int, cols []candCol, cw int) string {
 	return candLine(cells, false, cw)
 }
 
-// agentStateCell is one agent's cell on kind (§4): ok green when the file is
-// up to date, stale or edited amber, `·` faint when it is missing and on every
-// kind of a custom agent, which has no files relevo manages.
+// agentStateCell is one agent's cell on kind: ok green when the file is up to
+// date, stale or edited amber, and `·` faint when there is no file state for
+// the agent on that kind, as for a custom agent relevo does not write.
 func agentStateCell(r agentRow, kind string) (string, lipgloss.Style) {
 	for _, f := range r.files {
 		if f.Kind != kind {
@@ -368,18 +371,16 @@ func agentFileLine(kind, path, state, model string) string {
 	return line
 }
 
-// agentDetailLines is the cursor row's detail block (§4): the name and its
-// triple, then one line per kind with the definition file's `~` path, its
-// state and its model pin. A custom native agent lists the native file
-// instead; a custom source agent says relevo cannot install it.
+// agentDetailLines is the cursor row's detail block: the name and its triple,
+// then one line per kind with the definition file's `~` path, its state and its
+// model pin. A shipped agent and a custom source agent both list the files
+// relevo manages; a custom native agent lists the file at the kind's convention
+// path instead, which relevo never writes.
 func agentDetailLines(doc relevo.ConfigDoc, r agentRow, width int) []string {
 	meta := r.source + " · " + r.shape + " · " + agentUsedText(r)
 	first := "   " + faintStyle.Bold(true).Render(r.name) + "   " + mutedStyle.Render(meta)
 	out := []string{fit(first, width)}
-	if r.source == "custom" {
-		if doc.Agents[r.name].Native == nil {
-			return append(out, fit("   "+mutedStyle.Render("relevo does not install custom agents yet"), width))
-		}
+	if r.source == "custom" && !relevo.IsSourceAgent(doc.Agents, r.name) {
 		for _, f := range customAgentRows(doc, r.name) {
 			out = append(out, fit(agentFileLine(f.kind, tildePath(f.path), "", ""), width))
 		}

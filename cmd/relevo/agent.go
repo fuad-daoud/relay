@@ -87,10 +87,10 @@ func cmdAgentInstall(args []string) error {
 			return exitCodeErr{code: 2}
 		}
 		results = append(results, shipped...)
-		if cfgErr == nil {
-			// The shipped branch already took any shipped --role, so the
-			// custom walk leaves Role empty and installs every custom agent
-			// the kind and force flags select.
+		if cfgErr == nil && *role == "" {
+			// A --role names exactly the one agent to install, so the custom
+			// walk runs only with no role: it then installs every custom
+			// agent the kind and force flags select.
 			customOpts := opts
 			customOpts.Role = ""
 			custom, cerr := relevo.InstallCustomAgents(cfg, env, customOpts)

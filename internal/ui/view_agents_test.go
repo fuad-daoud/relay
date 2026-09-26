@@ -2,6 +2,8 @@ package ui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -52,6 +54,55 @@ func agentDocCustom(t *testing.T, name, shape string, native map[string]roles.De
 	doc := candFixtureDoc(t)
 	doc.Agents[name] = roles.AgentEntry{Shape: shape, Native: native}
 	return doc
+}
+
+// securityReviewerSource is a valid reader source with no kind list, so it
+// renders to every kind relevo knows.
+const securityReviewerSource = "---\n" +
+	"name: security-reviewer\n" +
+	"description: Reviews a change for security problems.\n" +
+	"shape: reader\n" +
+	"output: review\n" +
+	"requires: []\n" +
+	"kinds: []\n" +
+	"---\n\n" +
+	"Review the change for security problems.\n"
+
+// agentDocSource is the fixture doc with security-reviewer added as a source
+// agent, so the source-custom cases have one relevo renders files for.
+func agentDocSource(t *testing.T) relevo.ConfigDoc {
+	t.Helper()
+	doc := candFixtureDoc(t)
+	doc.Agents["security-reviewer"] = roles.AgentEntry{Shape: "reader", Source: securityReviewerSource}
+	return doc
+}
+
+// sourceAgentFiles is security-reviewer's rendered files, in harness.All()
+// order, at each kind's convention path under the fixture's home and in state.
+func sourceAgentFiles(t *testing.T, state harness.FileState) []harness.AgentFile {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("home: %v", err)
+	}
+	var files []harness.AgentFile
+	for _, h := range harness.All() {
+		rel, ok := harness.DefinitionPath(h.Kind, "security-reviewer")
+		if !ok {
+			t.Fatalf("%s has no security-reviewer definition path", h.Kind)
+		}
+		files = append(files, harness.AgentFile{Kind: h.Kind, Path: filepath.Join(home, rel), State: state})
+	}
+	return files
+}
+
+// sourceAgentFixture is the agents goldens' Actions: the installed shipped
+// agents plus security-reviewer, whose rendered files are all up to date.
+func sourceAgentFixture(t *testing.T) *fakeActions {
+	t.Helper()
+	fa := &fakeActions{doc: agentDocSource(t), files: agentFileFixtures(t)}
+	fa.files["security-reviewer"] = sourceAgentFiles(t, harness.FileUpToDate)
+	return fa
 }
 
 // usedBy for researcher is builder (plan-executor requires it) and researcher
@@ -330,8 +381,8 @@ func TestAgentResetMissingConfirmsWrite(t *testing.T) {
 	}
 }
 
-// A custom agent's view has no r, and its rows come from the native entry
-// (§4).
+// A native custom agent's view has no r, and its rows come from the native
+// entry: relevo writes no file for it, so there is nothing to reset.
 func TestAgentViewCustomHasNoReset(t *testing.T) {
 	fa := &fakeActions{doc: agentDocCustom(t, "scout", "reader", map[string]roles.DefRow{"opencode": {Agent: "my-scout"}})}
 	v := agentFixtureView(t, fa, "scout")
@@ -347,6 +398,88 @@ func TestAgentViewCustomHasNoReset(t *testing.T) {
 	}
 	if rel, ok := harness.DefinitionPath("opencode", "my-scout"); !ok || !strings.HasSuffix(rows[0].path, rel) {
 		t.Errorf("custom row path = %q, want it to end in %q", rows[0].path, rel)
+	}
+}
+
+// A source custom agent's view offers r, and r on an edited file confirms a
+// reset that names the copy relevo renders from the user's config. Confirming
+// resets exactly that (kind, agent) pair.
+func TestAgentViewSourceCustomAgentResets(t *testing.T) {
+	fa := sourceAgentFixture(t)
+	for i := range fa.files["security-reviewer"] {
+		if fa.files["security-reviewer"][i].Kind == "claude" {
+			fa.files["security-reviewer"][i].State = harness.FileEdited
+		}
+	}
+	v := agentFixtureView(t, fa, "security-reviewer")
+	v.cur = 1 // claude
+
+	hasReset := false
+	for _, kh := range v.Keys() {
+		if kh.Key == "r" {
+			hasReset = true
+		}
+	}
+	if !hasReset {
+		t.Error("a source custom agent's view must offer r")
+	}
+
+	_, cmd := v.Update(key('r'), candActionEnv(fa, relevo.Report{}))
+	if cmd == nil {
+		t.Fatal("r must return a command")
+	}
+	open, ok := cmd().(openOverlayMsg)
+	if !ok {
+		t.Fatalf("r gave %T, want an overlay", cmd())
+	}
+	box, ok := open.ov.(confirmBox)
+	if !ok {
+		t.Fatalf("r opened %T, want a confirmBox", open.ov)
+	}
+	if !box.danger || box.kind != "reset" {
+		t.Errorf("reset confirm = kind %q danger %v, want reset danger", box.kind, box.danger)
+	}
+	if got := strings.Join(box.lines, "\n"); !strings.Contains(got, "relevo renders from your config") {
+		t.Errorf("a source agent's reset note must name the config:\n%s", got)
+	}
+
+	_, yes, closed := box.update(key('y'))
+	if !closed {
+		t.Fatal("y must close the confirm")
+	}
+	runCmd(t, yes)
+
+	if len(fa.resets) != 1 || fa.resets[0] != [2]string{"claude", "security-reviewer"} {
+		t.Fatalf("resets = %v, want one [claude security-reviewer]", fa.resets)
+	}
+}
+
+// The detail block of a source custom agent lists one line per rendered file
+// with its state, and says nothing about relevo not installing custom agents.
+func TestAgentsDetailListsASourceCustomAgentsFiles(t *testing.T) {
+	fa := sourceAgentFixture(t)
+	v := agentsFixtureList(t, fa)
+	rows := v.rows()
+	r := rows[agentRowIndex(t, rows, "security-reviewer")]
+	if len(r.files) != len(harness.All()) {
+		t.Fatalf("security-reviewer files = %d, want one per kind", len(r.files))
+	}
+
+	lines := agentDetailLines(fa.doc, r, 132)
+	got := strings.Join(lines, "\n")
+	if strings.Contains(got, "does not install") {
+		t.Errorf("a source agent must not say relevo cannot install it:\n%s", got)
+	}
+	if len(lines) != 1+len(r.files) {
+		t.Errorf("detail has %d lines, want one per file plus the header", len(lines))
+	}
+	for _, f := range r.files {
+		if !strings.Contains(got, tildePath(f.Path)) {
+			t.Errorf("the detail must list %s's file %s:\n%s", f.Kind, tildePath(f.Path), got)
+		}
+		if !strings.Contains(stripANSI(got), string(f.State)) {
+			t.Errorf("the detail must show %s's state %q:\n%s", f.Kind, f.State, got)
+		}
 	}
 }
 
