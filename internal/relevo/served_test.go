@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -119,16 +118,16 @@ func TestServedBuilderTierFollowsTheRoleRegistry(t *testing.T) {
 	t.Parallel()
 	set := candidateSet(t, servedNoTierCandidateJSON)
 
-	actorsSection := map[string]actors.Actor{
+	actorsSection := map[string]roles.Actor{
 		"builder": {
 			Agent:      "plan-executor",
-			Candidates: []actors.Entry{{Candidate: "claude/test/m"}},
+			Candidates: []roles.Entry{{Candidate: "claude/test/m"}},
 			Tier:       "yolo",
 		},
 	}
-	rf, _, err := actors.ToRolesFile(nil, actorsSection)
+	rf, _, err := roles.FromActors(nil, actorsSection)
 	if err != nil {
-		t.Fatalf("actors.ToRolesFile: %v", err)
+		t.Fatalf("roles.FromActors: %v", err)
 	}
 	reg, err := roles.Build(rf, set, policy.Policy{MaxTier: "yolo"})
 	if err != nil {

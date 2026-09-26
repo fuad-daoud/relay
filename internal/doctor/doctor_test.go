@@ -1092,7 +1092,7 @@ func TestCustomRoleRow(t *testing.T) {
 		if !strings.Contains(c.Detail, "(custom)") {
 			t.Errorf("detail = %q, want it marked custom", c.Detail)
 		}
-		wantFix := "install your agent definition at ~/.claude/agents/my-executor.md; relevo never installs a custom definition"
+		wantFix := "run relevo config agents --kind claude, or install your agent definition at ~/.claude/agents/my-executor.md"
 		if c.Fix != wantFix {
 			t.Errorf("fix = %q, want %q", c.Fix, wantFix)
 		}

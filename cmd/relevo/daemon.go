@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/legacy"
@@ -238,7 +239,7 @@ func cmdDaemon(args []string) error {
 	// Role definitions are refreshed once per image start, after the lock and
 	// daemon.json (#371 §4.10): an upgrade leaves the files relevo wrote for
 	// each harness on disk, and one nobody edited is stale. Never fatal.
-	refreshRoles()
+	refreshRoles(rt.Config)
 
 	loaded, err := rt.Config.Load()
 	if err != nil {
@@ -331,7 +332,8 @@ func cmdDaemon(args []string) error {
 	return err
 }
 
-// refreshRoles lands relevo's shipped role definitions once per image start
+// refreshRoles lands relevo's shipped role definitions and the custom agents
+// the config renders, once per image start
 // (#371 §4.10). The kinds are the ones `relevo config agents` picks by default
 // -- harness.Install's own "every harness whose binary is on PATH" selection --
 // and the env is the same one that verb uses, so both read and write the one
@@ -340,7 +342,7 @@ func cmdDaemon(args []string) error {
 // It is never fatal: a definition that could not be written is one warning, a
 // manifest relevo cannot read or save is one warning, and the daemon's own work
 // does not depend on either.
-func refreshRoles() {
+func refreshRoles(cfg *config.Store) {
 	env, err := agentInstallEnv()
 	if err != nil {
 		slog.Warn("role definitions not refreshed", "err", err)
@@ -351,6 +353,12 @@ func refreshRoles() {
 	if err != nil {
 		slog.Warn("role definitions not refreshed", "err", err)
 	}
+
+	custom, cerr := relevo.InstallCustomAgents(cfg, env, harness.InstallOptions{})
+	if cerr != nil {
+		slog.Warn("role definitions not refreshed", "err", cerr)
+	}
+	results = append(results, custom...)
 
 	for _, r := range results {
 		switch r.Outcome {
