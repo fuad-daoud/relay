@@ -2,19 +2,13 @@ package transcript
 
 import "bytes"
 
-// relevo's supervisor appends two bookkeeping lines to a builder's stream
-// once the builder exits: the exit trailer, "relevo-exit:<code>", and the
-// rusage trailer, "relevo-rusage:<...>". A stream written before the rename
-// carries the pre-rename spellings instead (legacy.ExitTrailer /
-// legacy.RusageTrailer, #292 §1). Neither is the builder's words, so Render
-// drops them rather than passing them through as text. They are not removed
-// from the stream file itself, which is the record proc.ExitCode and
-// proc.Rusage read.
-//
-// The two current prefixes are proc.ExitTrailer and proc.RusageTrailer.
-// This package cannot name those constants: internal/proc imports
-// internal/relevo, which imports this package, so the import would be a
-// cycle. The strings are spelled out here instead and must stay equal.
+// relevo's supervisor appends two bookkeeping lines to a builder's stream once
+// the builder exits: "relevo-exit:<code>" and "relevo-rusage:<...>"; a stream
+// written before the rename carries the pre-rename spellings. Neither is the
+// builder's words, so Render drops them. The prefixes are spelled out here
+// because internal/proc importing this package would cycle; the strings must
+// stay equal to proc's constants (the stream file itself keeps the lines, and
+// proc.ExitCode and proc.Rusage read them there).
 const (
 	relevoExitTrailer   = "relevo-exit:"
 	relevoRusageTrailer = "relevo-rusage:"
@@ -22,9 +16,6 @@ const (
 	legacyRusageTrailer = "relay-rusage:" // name-guard: legacy
 )
 
-// trailerPrefixes is every prefix a supervisor trailer line begins with,
-// after its whitespace is trimmed: the current relevo forms and the
-// pre-rename ones.
 var trailerPrefixes = [...]string{
 	relevoExitTrailer,
 	relevoRusageTrailer,
@@ -32,8 +23,6 @@ var trailerPrefixes = [...]string{
 	legacyRusageTrailer,
 }
 
-// isTrailerLine reports whether a line, its whitespace already trimmed, is
-// one of relevo's supervisor trailers rather than the builder's own output.
 func isTrailerLine(trimmed []byte) bool {
 	for _, p := range trailerPrefixes {
 		if bytes.HasPrefix(trimmed, []byte(p)) {

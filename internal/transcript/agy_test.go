@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// TestAgyErrorResults renders the 7 real agy ERROR results (§7.2 N1): the
-// limit text agy carries in result.error reaches the log as an "error: " line
-// after the status and before the response, so a scan of the rendered stream
-// finds it. Before this, renderAgy printed only "result: ERROR" and dropped
-// the text.
 func TestAgyErrorResults(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("testdata", "agy-errors", "results.jsonl"))
 	if err != nil {
@@ -48,8 +43,6 @@ func TestAgyErrorResults(t *testing.T) {
 		}
 	}
 
-	// A result with no error renders exactly as before: the status line, then
-	// the response.
 	noError := `{"event":"result","result":{"status":"ERROR","response":"could not continue","denied_actions":[]}}`
 	want := []string{"result: ERROR", "could not continue"}
 	if got := Render("agy", []byte(noError)); !reflect.DeepEqual(got, want) {

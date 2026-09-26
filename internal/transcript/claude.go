@@ -1,8 +1,7 @@
 package transcript
 
-// renderClaude is the table for `claude -p --output-format stream-json
-// --verbose` (spec §4.1). One assistant event carries one message whose
-// content blocks render in order; tool results arrive as user events.
+// renderClaude is the table for claude -p --output-format stream-json --verbose:
+// an assistant message's blocks render in order; tool results are user events.
 func renderClaude(obj map[string]any) []string {
 	switch str(obj["type"]) {
 	case "assistant":
@@ -53,7 +52,6 @@ func renderClaude(obj map[string]any) []string {
 	return []string{unknown(obj)}
 }
 
-// contentBlocks is message.content as a list of objects; nil when absent.
 func contentBlocks(obj map[string]any) []map[string]any {
 	var out []map[string]any
 	for _, b := range asList(asMap(obj["message"])["content"]) {
@@ -64,8 +62,6 @@ func contentBlocks(obj map[string]any) []map[string]any {
 	return out
 }
 
-// resultText is a tool_result's content: a string as is, or the first text
-// block of a list, or "".
 func resultText(v any) string {
 	if s, ok := v.(string); ok {
 		return s
