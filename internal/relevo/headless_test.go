@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -317,7 +318,7 @@ func TestStartRoundWithoutARunnerIsErrRunnerUnavailable(t *testing.T) {
 
 	rt, b := seedHeadless(t, newFakeRunner())
 	rt.Runner = nil
-	if _, err := startRound(context.Background(), rt, nil, b, "p"); !errors.Is(err, ErrRunnerUnavailable) {
+	if _, err := startRound(context.Background(), rt, nil, b, "p"); !errors.Is(err, spawn.ErrRunnerUnavailable) {
 		t.Errorf("err = %v, want ErrRunnerUnavailable", err)
 	}
 }
@@ -330,7 +331,7 @@ func TestStartRoundSetsScope(t *testing.T) {
 
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
-	rt.Scope = &ScopeSpec{Slice: "relevo.slice", CPUWeight: 150, CPUQuota: "150%", MemoryMax: "2G", TasksMax: 64}
+	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 150, CPUQuota: "150%", MemoryMax: "2G", TasksMax: 64}
 
 	if _, err := startRound(context.Background(), rt, nil, b, "the prompt"); err != nil {
 		t.Fatalf("startRound: %v", err)
@@ -406,7 +407,7 @@ func TestScopeUnitNameFor(t *testing.T) {
 func TestScopeFor(t *testing.T) {
 	t.Parallel()
 
-	base := ScopeSpec{Slice: "relevo.slice", CPUWeight: 150, MemoryMax: "2G", CPUQuota: "150%", TasksMax: 64}
+	base := spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 150, MemoryMax: "2G", CPUQuota: "150%", TasksMax: 64}
 
 	t.Run("nil template gives nil", func(t *testing.T) {
 		if got := scopeFor(Runtime{}, scopeGate, "relevo-gate-local-webshop-1", ""); got != nil {
@@ -514,7 +515,7 @@ func TestSendHeadlessWithoutRunnerStagesNothing(t *testing.T) {
 	}
 
 	_, err = Send(context.Background(), rt, "webshop", writePlan(t, "# x"), SendOptions{})
-	if !errors.Is(err, ErrRunnerUnavailable) {
+	if !errors.Is(err, spawn.ErrRunnerUnavailable) {
 		t.Fatalf("Send err = %v, want ErrRunnerUnavailable", err)
 	}
 

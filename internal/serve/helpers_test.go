@@ -25,6 +25,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -110,12 +111,12 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
-// scriptRunner is a fake relevo.Runner tracking liveness per pid, so two
+// scriptRunner is a fake spawn.Runner tracking liveness per pid, so two
 // bindings' processes are tellable apart: setAlive flips every pid, finish one.
 type scriptRunner struct {
 	mu           sync.Mutex
-	specs        []relevo.ProcSpec
-	aliveHandles []relevo.ProcHandle
+	specs        []spawn.ProcSpec
+	aliveHandles []spawn.ProcHandle
 	alive        map[int]bool
 	nextPID      int
 	// startErr, when set, is returned by Start instead of starting anything.
@@ -126,11 +127,11 @@ func newScriptRunner() *scriptRunner {
 	return &scriptRunner{alive: map[int]bool{}, nextPID: 4242}
 }
 
-func (r *scriptRunner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHandle, error) {
+func (r *scriptRunner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHandle, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.startErr != nil {
-		return relevo.ProcHandle{}, r.startErr
+		return spawn.ProcHandle{}, r.startErr
 	}
 	pid := r.nextPID
 	r.nextPID++
@@ -139,17 +140,17 @@ func (r *scriptRunner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.
 	if spec.LogPath != "" {
 		_ = os.WriteFile(spec.LogPath, []byte("builder started\n"), 0o644)
 	}
-	return relevo.ProcHandle{PID: pid, StartedAt: time.Now()}, nil
+	return spawn.ProcHandle{PID: pid, StartedAt: time.Now()}, nil
 }
 
-func (r *scriptRunner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) {
+func (r *scriptRunner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.aliveHandles = append(r.aliveHandles, h)
 	return r.alive[h.PID], nil
 }
 
-func (r *scriptRunner) ExitCode(ctx context.Context, h relevo.ProcHandle, logPath string) (code int, ok bool) {
+func (r *scriptRunner) ExitCode(ctx context.Context, h spawn.ProcHandle, logPath string) (code int, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	alive, tracked := r.alive[h.PID]
@@ -162,15 +163,15 @@ func (r *scriptRunner) ExitCode(ctx context.Context, h relevo.ProcHandle, logPat
 	return 0, !alive
 }
 
-func (r *scriptRunner) Kill(ctx context.Context, h relevo.ProcHandle) error {
+func (r *scriptRunner) Kill(ctx context.Context, h spawn.ProcHandle) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.alive[h.PID] = false
 	return nil
 }
 
-func (r *scriptRunner) Rusage(ctx context.Context, h relevo.ProcHandle, streamPath string) (relevo.ProcRusage, bool) {
-	return relevo.ProcRusage{}, false
+func (r *scriptRunner) Rusage(ctx context.Context, h spawn.ProcHandle, streamPath string) (spawn.ProcRusage, bool) {
+	return spawn.ProcRusage{}, false
 }
 
 // setAlive flips every pid this runner has started to a.
@@ -523,10 +524,10 @@ func snapshotRef(t *testing.T, env *testEnv, dir, ref string) []byte {
 }
 
 // startedSpecs copies the runner's specs under its mutex.
-func startedSpecs(env *testEnv) []relevo.ProcSpec {
+func startedSpecs(env *testEnv) []spawn.ProcSpec {
 	env.runner.mu.Lock()
 	defer env.runner.mu.Unlock()
-	return append([]relevo.ProcSpec(nil), env.runner.specs...)
+	return append([]spawn.ProcSpec(nil), env.runner.specs...)
 }
 
 // closeRound writes round 1's report and completion marker for name, and marks

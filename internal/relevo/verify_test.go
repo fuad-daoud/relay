@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -144,7 +145,7 @@ func TestVerifyConsultScope(t *testing.T) {
 	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
 	rt.Policy.Order = map[string][]string{"reviewer": {testClaudeRef}}
 	rt.NewID = func() string { return verifyConsultID }
-	rt.Scope = &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%", AllowedCPUs: "0-3"}
+	rt.Scope = &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%", AllowedCPUs: "0-3"}
 
 	b.RoundVerify = true
 	if err := rt.Store.Save(b); err != nil {

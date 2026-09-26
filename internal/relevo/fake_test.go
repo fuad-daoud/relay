@@ -2,10 +2,12 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
@@ -620,9 +622,9 @@ func withClock(rt Runtime, c *fakeClock) Runtime {
 // unscripted pid is alive until killed), and reports the exit code a test
 // set with exit(). Nothing here runs a process.
 type fakeRunner struct {
-	specs   []ProcSpec
-	handles []ProcHandle
-	kills   []ProcHandle
+	specs   []spawn.ProcSpec
+	handles []spawn.ProcHandle
+	kills   []spawn.ProcHandle
 
 	startErr error
 	aliveErr error
@@ -643,7 +645,7 @@ type fakeRunner struct {
 	exits     map[int]int
 	nextPID   int
 	exitPaths []string
-	rusages   map[int]ProcRusage
+	rusages   map[int]spawn.ProcRusage
 
 	// scopeActive is the answer ScopeActive gives per unit base name; a
 	// missing key is false. scopeQueries records every unit asked for, in
@@ -665,22 +667,22 @@ func (f *fakeRunner) script(pid int, answers ...bool) {
 func (f *fakeRunner) exit(pid, code int) { f.exits[pid] = code }
 
 // setRusage sets what Rusage reports for pid; an unset pid reports ok=false.
-func (f *fakeRunner) setRusage(pid int, r ProcRusage) {
+func (f *fakeRunner) setRusage(pid int, r spawn.ProcRusage) {
 	if f.rusages == nil {
-		f.rusages = map[int]ProcRusage{}
+		f.rusages = map[int]spawn.ProcRusage{}
 	}
 	f.rusages[pid] = r
 }
 
-func (f *fakeRunner) Start(_ context.Context, spec ProcSpec) (ProcHandle, error) {
+func (f *fakeRunner) Start(_ context.Context, spec spawn.ProcSpec) (spawn.ProcHandle, error) {
 	if f.onStart != nil {
 		f.onStart()
 	}
 	if f.startErr != nil {
-		return ProcHandle{}, f.startErr
+		return spawn.ProcHandle{}, f.startErr
 	}
 	f.nextPID++
-	h := ProcHandle{PID: f.nextPID, StartedAt: time.Unix(1_700_000_000+int64(f.nextPID), 0)}
+	h := spawn.ProcHandle{PID: f.nextPID, StartedAt: time.Unix(1_700_000_000+int64(f.nextPID), 0)}
 	f.specs = append(f.specs, spec)
 	f.handles = append(f.handles, h)
 	if _, scripted := f.alive[h.PID]; !scripted {
@@ -689,7 +691,7 @@ func (f *fakeRunner) Start(_ context.Context, spec ProcSpec) (ProcHandle, error)
 	return h, nil
 }
 
-func (f *fakeRunner) Alive(_ context.Context, h ProcHandle) (bool, error) {
+func (f *fakeRunner) Alive(_ context.Context, h spawn.ProcHandle) (bool, error) {
 	if f.onAlive != nil {
 		f.onAlive()
 	}
@@ -706,13 +708,13 @@ func (f *fakeRunner) Alive(_ context.Context, h ProcHandle) (bool, error) {
 	return seq[0], nil
 }
 
-func (f *fakeRunner) ExitCode(_ context.Context, h ProcHandle, path string) (int, bool) {
+func (f *fakeRunner) ExitCode(_ context.Context, h spawn.ProcHandle, path string) (int, bool) {
 	f.exitPaths = append(f.exitPaths, path)
 	code, ok := f.exits[h.PID]
 	return code, ok
 }
 
-func (f *fakeRunner) Kill(_ context.Context, h ProcHandle) error {
+func (f *fakeRunner) Kill(_ context.Context, h spawn.ProcHandle) error {
 	if f.killErr != nil {
 		return f.killErr
 	}
@@ -721,7 +723,7 @@ func (f *fakeRunner) Kill(_ context.Context, h ProcHandle) error {
 	return nil
 }
 
-func (f *fakeRunner) Rusage(_ context.Context, h ProcHandle, _ string) (ProcRusage, bool) {
+func (f *fakeRunner) Rusage(_ context.Context, h spawn.ProcHandle, _ string) (spawn.ProcRusage, bool) {
 	r, ok := f.rusages[h.PID]
 	return r, ok
 }
@@ -758,4 +760,69 @@ func (f *fakeUsage) Read(ctx context.Context, src usage.Source) ([]usage.Sample,
 func (f *fakeUsage) Peek(ctx context.Context, src usage.Source) ([]usage.Sample, string) {
 	f.peeks = append(f.peeks, src)
 	return f.peekSamples, f.peekNote
+}
+
+func TestFakeRunnerScriptsAliveAndRecordsKills(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeRunner()
+	var _ spawn.Runner = f
+
+	h, err := f.Start(context.Background(), spawn.ProcSpec{Dir: "/tree", Argv: []string{"agy", "-p", "x"}, LogPath: "/state/x/001-builder.log"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if len(f.specs) != 1 || f.specs[0].Dir != "/tree" || f.specs[0].LogPath != "/state/x/001-builder.log" {
+		t.Fatalf("specs = %+v", f.specs)
+	}
+	if h.PID == 0 || h.StartedAt.IsZero() {
+		t.Fatalf("handle = %+v; want a pid and a time", h)
+	}
+	// Unscripted: alive forever.
+	for i := 0; i < 3; i++ {
+		if alive, _ := f.Alive(context.Background(), h); !alive {
+			t.Fatalf("unscripted Alive #%d = false", i)
+		}
+	}
+	// Scripted: true, true, then false forever.
+	f.script(h.PID, true, true, false)
+	want := []bool{true, true, false, false}
+	for i, w := range want {
+		if alive, _ := f.Alive(context.Background(), h); alive != w {
+			t.Errorf("scripted Alive #%d = %v, want %v", i, alive, w)
+		}
+	}
+	// ExitCode is absent until set.
+	if _, ok := f.ExitCode(context.Background(), h, ""); ok {
+		t.Error("ExitCode before exit() must be ok=false")
+	}
+	f.exit(h.PID, 3)
+	if code, ok := f.ExitCode(context.Background(), h, ""); !ok || code != 3 {
+		t.Errorf("ExitCode = %d, %v; want 3, true", code, ok)
+	}
+
+	// A second Start gets a distinct pid; Kill records it and makes it dead.
+	h2, _ := f.Start(context.Background(), spawn.ProcSpec{Dir: "/tree", Argv: []string{"agy"}, LogPath: "/state/x/002-builder.log"})
+	if h2.PID == h.PID {
+		t.Fatal("two Starts returned the same pid")
+	}
+	if err := f.Kill(context.Background(), h2); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if len(f.kills) != 1 || f.kills[0] != h2 {
+		t.Errorf("kills = %+v, want [h2]", f.kills)
+	}
+	if alive, _ := f.Alive(context.Background(), h2); alive {
+		t.Error("a killed handle must read as not alive")
+	}
+
+	// Errors pass through.
+	f.startErr = errors.New("no binary")
+	if _, err := f.Start(context.Background(), spawn.ProcSpec{Argv: []string{"x"}}); err == nil {
+		t.Error("startErr not returned")
+	}
+	f.aliveErr = errors.New("ps refused")
+	if _, err := f.Alive(context.Background(), h); err == nil {
+		t.Error("aliveErr not returned")
+	}
 }

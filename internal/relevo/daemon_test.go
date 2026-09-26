@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/release"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -600,7 +601,7 @@ type panickingRunner struct {
 	panicPID int
 }
 
-func (p *panickingRunner) Alive(ctx context.Context, h ProcHandle) (bool, error) {
+func (p *panickingRunner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, error) {
 	if h.PID == p.panicPID {
 		panic("alive exploded")
 	}

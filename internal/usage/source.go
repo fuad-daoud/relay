@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/legacy"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 type Mode string
@@ -68,16 +69,9 @@ func (r reader) Peek(ctx context.Context, src Source) ([]Sample, string) {
 	return nil, "no reader for mode " + string(src.Mode)
 }
 
-// exitTrailer is proc.ExitTrailer, copied not imported so this package stays free
-// of relevo's process model.
-const exitTrailer = "relevo-exit:"
-
 // legacyExitTrailer is legacy.ExitTrailer: the same line a stream written before
 // the rename ends in, taken from legacy so the old name lives in one place.
 const legacyExitTrailer = legacy.ExitTrailer
-
-// ExitTrailerForTest exposes exitTrailer so internal/relevo can pin it.
-func ExitTrailerForTest() string { return exitTrailer }
 
 // LegacyExitTrailerForTest exposes legacyExitTrailer so internal/proc can pin it.
 func LegacyExitTrailerForTest() string { return legacyExitTrailer }
@@ -109,7 +103,7 @@ func streamClosed(path string) bool {
 	}
 	lines := strings.Split(strings.TrimRight(string(buf), "\n"), "\n")
 	last := lines[len(lines)-1]
-	return strings.HasPrefix(last, exitTrailer) || strings.HasPrefix(last, legacyExitTrailer)
+	return strings.HasPrefix(last, spawn.ExitTrailer) || strings.HasPrefix(last, legacyExitTrailer)
 }
 
 // waitClosed blocks until the stream is closed or ctx is done.

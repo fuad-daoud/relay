@@ -20,8 +20,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/legacy"
-	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 func TestStartCapturesBothStreamsAndTheExitTrailer(t *testing.T) {
@@ -36,7 +35,7 @@ func TestStartCapturesBothStreamsAndTheExitTrailer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read stream: %v", err)
 	}
-	if got, want := string(data), "out\n\n"+ExitTrailer+"3\n"; got != want {
+	if got, want := string(data), "out\n\n"+spawn.ExitTrailer+"3\n"; got != want {
 		t.Errorf("stream = %q, want stdout, a blank line, then the trailer %q", got, want)
 	}
 	data, err = os.ReadFile(log)
@@ -63,7 +62,7 @@ func TestTrailerIsOnItsOwnLineAfterAPartialWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), "no newline\n"+ExitTrailer+"0\n"; got != want {
+	if got, want := string(data), "no newline\n"+spawn.ExitTrailer+"0\n"; got != want {
 		t.Errorf("stream = %q, want %q", got, want)
 	}
 	if code, ok := r.ExitCode(context.Background(), h, stream); !ok || code != 0 {
@@ -76,7 +75,7 @@ func TestStartRunsInDirWithExtraEnv(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "001-builder.log")
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relevo.ProcSpec{
+	h, err := r.Start(context.Background(), spawn.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", "pwd; echo $RELEVO_T3"}, Env: []string{"RELEVO_T3=yes"}, LogPath: log, StreamPath: stream,
 	})
 	if err != nil {
@@ -97,7 +96,7 @@ func TestStartRunsInDirWithExtraEnv(t *testing.T) {
 	if lines[1] != "yes" {
 		t.Errorf("env line = %q, want yes", lines[1])
 	}
-	if lines[3] != ExitTrailer+"0" {
+	if lines[3] != spawn.ExitTrailer+"0" {
 		t.Errorf("trailer = %q", lines[3])
 	}
 }
@@ -114,7 +113,7 @@ func TestStartedProcessInheritsRaisedOOMScore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read stream: %v", err)
 	}
-	if got, want := string(data), "500\n\n"+ExitTrailer+"0\n"; got != want {
+	if got, want := string(data), "500\n\n"+spawn.ExitTrailer+"0\n"; got != want {
 		t.Errorf("stream = %q, want %q (builder must see oom_score_adj 500)", got, want)
 	}
 }
@@ -180,7 +179,7 @@ func TestKilledSupervisorNeverWritesTheTrailer(t *testing.T) {
 func TestAliveIsFalseForAReusedPid(t *testing.T) {
 	r := New()
 	// Our own pid certainly exists; a start time that is not ours must not match.
-	h := relevo.ProcHandle{PID: os.Getpid(), StartedAt: time.Unix(1_000_000, 0)}
+	h := spawn.ProcHandle{PID: os.Getpid(), StartedAt: time.Unix(1_000_000, 0)}
 	alive, err := r.Alive(context.Background(), h)
 	if err != nil || alive {
 		t.Errorf("Alive(reused pid) = %v, %v; want false, nil", alive, err)
@@ -197,7 +196,7 @@ func TestAliveIsFalseNotAnErrorForAMissingPid(t *testing.T) {
 	if err != nil || alive {
 		t.Errorf("Alive(exited) = %v, %v; want false, nil", alive, err)
 	}
-	alive, err = r.Alive(context.Background(), relevo.ProcHandle{})
+	alive, err = r.Alive(context.Background(), spawn.ProcHandle{})
 	if err != nil || alive {
 		t.Errorf("Alive(zero handle) = %v, %v; want false, nil", alive, err)
 	}
@@ -217,20 +216,20 @@ func TestStartRefusesAMissingBinaryBeforeTouchingTheLog(t *testing.T) {
 			t.Error("a refused Start must not create the stream")
 		}
 	}
-	_, err := r.Start(context.Background(), relevo.ProcSpec{Dir: dir, Argv: []string{"relevo-no-such-binary-t3"}, LogPath: log, StreamPath: stream})
+	_, err := r.Start(context.Background(), spawn.ProcSpec{Dir: dir, Argv: []string{"relevo-no-such-binary-t3"}, LogPath: log, StreamPath: stream})
 	if err == nil {
 		t.Fatal("Start with a missing binary must fail")
 	}
 	assertNeither()
-	if _, err := r.Start(context.Background(), relevo.ProcSpec{Dir: dir, LogPath: log, StreamPath: stream}); err == nil {
+	if _, err := r.Start(context.Background(), spawn.ProcSpec{Dir: dir, LogPath: log, StreamPath: stream}); err == nil {
 		t.Error("Start with empty Argv must fail")
 	}
 	assertNeither()
-	if _, err := r.Start(context.Background(), relevo.ProcSpec{Dir: filepath.Join(dir, "missing"), Argv: []string{"sh", "-c", "true"}, LogPath: log, StreamPath: stream}); err == nil {
+	if _, err := r.Start(context.Background(), spawn.ProcSpec{Dir: filepath.Join(dir, "missing"), Argv: []string{"sh", "-c", "true"}, LogPath: log, StreamPath: stream}); err == nil {
 		t.Error("Start with a missing Dir must fail")
 	}
 	assertNeither()
-	if _, err := r.Start(context.Background(), relevo.ProcSpec{Dir: dir, Argv: []string{"sh", "-c", "true"}, LogPath: log}); err == nil {
+	if _, err := r.Start(context.Background(), spawn.ProcSpec{Dir: dir, Argv: []string{"sh", "-c", "true"}, LogPath: log}); err == nil {
 		t.Error("Start with empty StreamPath must fail")
 	}
 	assertNeither()
@@ -241,7 +240,7 @@ func TestStartFailsWhenTheStreamCannotBeOpened(t *testing.T) {
 	r := New()
 	dir := t.TempDir()
 	log := filepath.Join(dir, "001-builder.log")
-	_, err := r.Start(context.Background(), relevo.ProcSpec{
+	_, err := r.Start(context.Background(), spawn.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", "true"},
 		LogPath: log, StreamPath: filepath.Join(dir, "missing", "001-builder.jsonl"),
 	})
@@ -261,7 +260,7 @@ func TestStartRefusesADirThatIsNotADirectory(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := r.Start(context.Background(), relevo.ProcSpec{
+	_, err := r.Start(context.Background(), spawn.ProcSpec{
 		Dir: file, Argv: []string{"sh", "-c", "true"},
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
 	})
@@ -279,11 +278,11 @@ func TestExitCodeReadsOnlyATrailingTrailer(t *testing.T) {
 		code int
 		ok   bool
 	}{
-		"trailer":                   {"noise\n" + ExitTrailer + "7\n", 7, true},
-		"trailer no newline":        {ExitTrailer + "0", 0, true},
+		"trailer":                   {"noise\n" + spawn.ExitTrailer + "7\n", 7, true},
+		"trailer no newline":        {spawn.ExitTrailer + "0", 0, true},
 		"no trailer":                {"hello\nworld\n", 0, false},
-		"trailer not last":          {ExitTrailer + "1\nmore output\n", 0, false},
-		"garbage code":              {ExitTrailer + "x\n", 0, false},
+		"trailer not last":          {spawn.ExitTrailer + "1\nmore output\n", 0, false},
+		"garbage code":              {spawn.ExitTrailer + "x\n", 0, false},
 		"empty":                     {"", 0, false},
 		"legacy trailer":            {"noise\n" + legacy.ExitTrailer + "3\n", 3, true},
 		"legacy trailer no newline": {legacy.ExitTrailer + "0", 0, true},
@@ -296,27 +295,14 @@ func TestExitCodeReadsOnlyATrailingTrailer(t *testing.T) {
 			if err := os.WriteFile(p, []byte(c.body), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			code, ok := r.ExitCode(context.Background(), relevo.ProcHandle{}, p)
+			code, ok := r.ExitCode(context.Background(), spawn.ProcHandle{}, p)
 			if code != c.code || ok != c.ok {
 				t.Errorf("ExitCode = %d, %v; want %d, %v", code, ok, c.code, c.ok)
 			}
 		})
 	}
-	if _, ok := r.ExitCode(context.Background(), relevo.ProcHandle{}, filepath.Join(dir, "absent.log")); ok {
+	if _, ok := r.ExitCode(context.Background(), spawn.ProcHandle{}, filepath.Join(dir, "absent.log")); ok {
 		t.Error("ExitCode on a missing file must be ok=false")
-	}
-}
-
-// The usage reader carries its own copy of the prefix so internal/usage stays
-// free of the process model; proc imports relevo, so they are pinned equal here.
-func TestExitTrailerMatchesUsage(t *testing.T) {
-	if usage.ExitTrailerForTest() != ExitTrailer {
-		t.Fatalf("usage.exitTrailer %q != proc.ExitTrailer %q: the reader would wait out its deadline on every headless round",
-			usage.ExitTrailerForTest(), ExitTrailer)
-	}
-	if usage.LegacyExitTrailerForTest() != legacy.ExitTrailer {
-		t.Fatalf("usage.legacyExitTrailer %q != legacy.ExitTrailer %q: a pre-rename stream would still read as open",
-			usage.LegacyExitTrailerForTest(), legacy.ExitTrailer)
 	}
 }
 
@@ -329,18 +315,11 @@ func TestSupervisorEmitsRusageOnlyInScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read stream: %v", err)
 	}
-	if strings.Contains(string(data), RusageTrailer) {
+	if strings.Contains(string(data), spawn.RusageTrailerPrefix) {
 		t.Errorf("stream = %q; a plain spawn outside a relevo-round-*.scope must print no rusage line", data)
 	}
 	if code, ok := r.ExitCode(context.Background(), h, stream); !ok || code != 0 {
 		t.Errorf("ExitCode = %d, %v; want 0, true", code, ok)
-	}
-}
-
-// relevo cannot import internal/proc, so it keeps its own rusage prefix.
-func TestRusageTrailerPrefixMatchesProc(t *testing.T) {
-	if relevo.RusageTrailerPrefix != RusageTrailer {
-		t.Errorf("relevo.RusageTrailerPrefix = %q, want proc.RusageTrailer %q", relevo.RusageTrailerPrefix, RusageTrailer)
 	}
 }
 
@@ -373,18 +352,18 @@ func TestSupervisorEmitsRusageWhenUnitMatches(t *testing.T) {
 		t.Fatalf("run supervisorScript: %v", err)
 	}
 	stream := string(out)
-	if !strings.Contains(stream, "\n"+RusageTrailer+"cpu_usec=") {
-		t.Errorf("stream = %q; want a %scpu_usec= line", stream, RusageTrailer)
+	if !strings.Contains(stream, "\n"+spawn.RusageTrailerPrefix+"cpu_usec=") {
+		t.Errorf("stream = %q; want a %scpu_usec= line", stream, spawn.RusageTrailerPrefix)
 	}
-	if !strings.HasSuffix(stream, ExitTrailer+"0\n") {
-		t.Errorf("stream = %q; want it to end with %s0", stream, ExitTrailer)
+	if !strings.HasSuffix(stream, spawn.ExitTrailer+"0\n") {
+		t.Errorf("stream = %q; want it to end with %s0", stream, spawn.ExitTrailer)
 	}
 }
 
 func TestStartWrapsArgvWithScope(t *testing.T) {
-	spec := relevo.ProcSpec{
+	spec := spawn.ProcSpec{
 		Argv:  []string{"echo", "hi"},
-		Scope: &relevo.ScopeSpec{Unit: "relevo-round-abc12345-foo-3", Slice: "relevo.slice", CPUWeight: 100},
+		Scope: &spawn.ScopeSpec{Unit: "relevo-round-abc12345-foo-3", Slice: "relevo.slice", CPUWeight: 100},
 	}
 	got := buildArgv(spec, "/usr/bin/echo")
 	inner := []string{"/bin/sh", "-c", supervisorScript, "relevo-supervisor", ScopeUnitFileName(spec.Scope.Unit), "/usr/bin/echo", "hi"}
@@ -397,9 +376,9 @@ func TestStartWrapsArgvWithScope(t *testing.T) {
 // The supervisor's first argument names the scope unit it must be running in.
 func TestBuildArgvPassesTheWantedUnit(t *testing.T) {
 	t.Run("scoped", func(t *testing.T) {
-		spec := relevo.ProcSpec{
+		spec := spawn.ProcSpec{
 			Argv:  []string{"echo", "hi"},
-			Scope: &relevo.ScopeSpec{Unit: "relevo-round-abc-x-1", CPUWeight: 100},
+			Scope: &spawn.ScopeSpec{Unit: "relevo-round-abc-x-1", CPUWeight: 100},
 		}
 		got := buildArgv(spec, "/usr/bin/echo")
 		idx := indexOf(got, "relevo-supervisor")
@@ -414,7 +393,7 @@ func TestBuildArgvPassesTheWantedUnit(t *testing.T) {
 		}
 	})
 	t.Run("unscoped", func(t *testing.T) {
-		spec := relevo.ProcSpec{Argv: []string{"echo", "hi"}}
+		spec := spawn.ProcSpec{Argv: []string{"echo", "hi"}}
 		got := buildArgv(spec, "/usr/bin/echo")
 		idx := indexOf(got, "relevo-supervisor")
 		if idx < 0 || idx+1 >= len(got) {
@@ -447,7 +426,7 @@ func TestStartStripsDeniedEnv(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "001-builder.log")
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relevo.ProcSpec{
+	h, err := r.Start(context.Background(), spawn.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", `echo "k=${TYPESAFE_API_KEY-unset}"; echo "r=$RELEVO_T4"`}, LogPath: log, StreamPath: stream,
 	})
 	if err != nil {
@@ -473,19 +452,19 @@ func TestStartFallsBackWhenProbeRefused(t *testing.T) {
 	cases := []struct {
 		name       string
 		stub       string
-		scope      *relevo.ScopeSpec
+		scope      *spawn.ScopeSpec
 		wantOutput string
 	}{
 		{
 			name:       "failed scope probe runs the builder unscoped",
 			stub:       refusingScopeStub,
-			scope:      &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100},
+			scope:      &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100},
 			wantOutput: "ran-unscoped",
 		},
 		{
 			name:       "refused pin keeps the scope but drops AllowedCPUs",
 			stub:       refusingPinStub,
-			scope:      &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "2"},
+			scope:      &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "2"},
 			wantOutput: "ran-unpinned-fallback",
 		},
 	}
@@ -498,7 +477,7 @@ func TestStartFallsBackWhenProbeRefused(t *testing.T) {
 			r := New()
 			dir := t.TempDir()
 			stream := filepath.Join(dir, "001-builder.jsonl")
-			h, err := r.Start(context.Background(), relevo.ProcSpec{
+			h, err := r.Start(context.Background(), spawn.ProcSpec{
 				Dir: dir, Argv: []string{"sh", "-c", "echo " + tc.wantOutput},
 				LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
 				Scope: tc.scope,
@@ -516,8 +495,8 @@ func TestStartFallsBackWhenProbeRefused(t *testing.T) {
 			if !strings.Contains(got, tc.wantOutput) {
 				t.Errorf("stream = %q; want the builder's own output, so the fallback really ran it", got)
 			}
-			if !strings.Contains(got, "\n"+ExitTrailer+"0\n") {
-				t.Errorf("stream = %q; want the normal %s0 trailer", got, ExitTrailer)
+			if !strings.Contains(got, "\n"+spawn.ExitTrailer+"0\n") {
+				t.Errorf("stream = %q; want the normal %s0 trailer", got, spawn.ExitTrailer)
 			}
 			if code, ok := r.ExitCode(context.Background(), h, stream); !ok || code != 0 {
 				t.Errorf("ExitCode = %d, %v; want 0, true", code, ok)
@@ -529,12 +508,12 @@ func TestStartFallsBackWhenProbeRefused(t *testing.T) {
 // TestStartProbesOnlyWhenAsked counts the stub's invocations: each probe runs
 // once per Runner, and a Runner never asked for one never probes.
 func TestStartProbesOnlyWhenAsked(t *testing.T) {
-	scope := &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100}
-	pinned := &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "2"}
+	scope := &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100}
+	pinned := &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "2"}
 	cases := []struct {
 		name     string
 		stub     func(string) string
-		scope    *relevo.ScopeSpec
+		scope    *spawn.ScopeSpec
 		wantCall int
 	}{
 		{"scoped Start probes once", countingScopeStub, scope, 1},
@@ -552,7 +531,7 @@ func TestStartProbesOnlyWhenAsked(t *testing.T) {
 			r := New()
 			for i := 0; i < 2; i++ {
 				dir := t.TempDir()
-				h, err := r.Start(context.Background(), relevo.ProcSpec{
+				h, err := r.Start(context.Background(), spawn.ProcSpec{
 					Dir: dir, Argv: []string{"sh", "-c", "true"},
 					LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
 					Scope: tc.scope,
@@ -586,11 +565,11 @@ func TestStartDoesNotMutateCallerScope(t *testing.T) {
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	r := New()
-	scope := &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "2"}
+	scope := &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "2"}
 	before := *scope
 
 	dir := t.TempDir()
-	h, err := r.Start(context.Background(), relevo.ProcSpec{
+	h, err := r.Start(context.Background(), spawn.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", "true"},
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
 		Scope: scope,
@@ -615,32 +594,32 @@ func TestStartSetsGoMaxProcs(t *testing.T) {
 		name     string
 		parent   string
 		stub     string
-		scope    *relevo.ScopeSpec
+		scope    *spawn.ScopeSpec
 		wantVals []string
 	}{
 		{
 			name: "pinned scope", stub: acceptingStub,
-			scope:    &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "1"},
+			scope:    &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "1"},
 			wantVals: []string{"1"},
 		},
 		{
 			name: "refused pin falls back to the quota", stub: refusingPinStub,
-			scope:    &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "1", CPUQuota: "200%"},
+			scope:    &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "1", CPUQuota: "200%"},
 			wantVals: []string{"2"},
 		},
 		{
 			name: "dropped scope sets none", stub: refusingScopeStub,
-			scope:    &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, CPUQuota: "200%"},
+			scope:    &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, CPUQuota: "200%"},
 			wantVals: nil,
 		},
 		{
 			name: "scope overrides an inherited GOMAXPROCS", parent: "7", stub: acceptingStub,
-			scope:    &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "1"},
+			scope:    &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "1"},
 			wantVals: []string{"1"},
 		},
 		{
 			name: "scope limiting nothing passes the parent through", parent: "7", stub: acceptingStub,
-			scope:    &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100},
+			scope:    &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100},
 			wantVals: []string{"7"},
 		},
 	}
@@ -659,7 +638,7 @@ func TestStartSetsGoMaxProcs(t *testing.T) {
 			r := New()
 			dir := t.TempDir()
 			stream := filepath.Join(dir, "001-builder.jsonl")
-			h, err := r.Start(context.Background(), relevo.ProcSpec{
+			h, err := r.Start(context.Background(), spawn.ProcSpec{
 				Dir: dir, Argv: []string{"sh", "-c", "env"},
 				LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
 				Scope: tc.scope,
@@ -692,11 +671,11 @@ func TestStartDoesNotMutateCallerEnv(t *testing.T) {
 
 	r := New()
 	dir := t.TempDir()
-	h, err := r.Start(context.Background(), relevo.ProcSpec{
+	h, err := r.Start(context.Background(), spawn.ProcSpec{
 		Dir: dir, Argv: []string{"true"},
 		Env:     caller,
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: filepath.Join(dir, "001-builder.jsonl"),
-		Scope: &relevo.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "1"},
+		Scope: &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "1"},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -925,7 +904,7 @@ func TestSupervisorScriptReapsInsideTheWantBranch(t *testing.T) {
 	if !strings.HasPrefix(supervisorScript, ReapFragment) {
 		t.Error("supervisorScript does not start with ReapFragment: the fragment must be defined before the script calls it")
 	}
-	const trailer = `printf '\nrelevo-exit:%s\n' "$rc"`
+	const trailer = `printf '\n` + spawn.ExitTrailer + `%s\n' "$rc"`
 	if !strings.HasSuffix(supervisorScript, trailer) {
 		t.Errorf("supervisorScript does not end with %q: the trailer must stay the stream's last line", trailer)
 	}
@@ -934,7 +913,7 @@ func TestSupervisorScriptReapsInsideTheWantBranch(t *testing.T) {
 	}
 
 	caseAt := strings.Index(supervisorScript, `case "$cg" in */"$want")`)
-	rusageAt := strings.Index(supervisorScript, `printf '\nrelevo-rusage:`)
+	rusageAt := strings.Index(supervisorScript, `printf '\n`+spawn.RusageTrailerPrefix)
 	readAt := strings.Index(supervisorScript, "read -r self _ </proc/self/stat")
 	reapAt := strings.Index(supervisorScript, reapCall)
 	esacAt := strings.Index(supervisorScript, "esac")
@@ -953,7 +932,7 @@ func TestStartDisablesFsmonitor(t *testing.T) {
 	r := New()
 	dir := t.TempDir()
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relevo.ProcSpec{
+	h, err := r.Start(context.Background(), spawn.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", "env"},
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
 	})
@@ -986,7 +965,7 @@ func TestStartDisablesFsmonitorForGit(t *testing.T) {
 	r := New()
 	dir := t.TempDir()
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relevo.ProcSpec{
+	h, err := r.Start(context.Background(), spawn.ProcSpec{
 		Dir: dir, Argv: []string{"git", "-C", repo, "config", "--get", "core.fsmonitor"},
 		LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
 	})
@@ -1001,7 +980,7 @@ func TestStartDisablesFsmonitorForGit(t *testing.T) {
 	}
 	var printed []string
 	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-		if line != "" && !strings.HasPrefix(line, ExitTrailer) {
+		if line != "" && !strings.HasPrefix(line, spawn.ExitTrailer) {
 			printed = append(printed, line)
 		}
 	}

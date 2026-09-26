@@ -1,24 +1,23 @@
 package transcript
 
-import "bytes"
+import (
+	"bytes"
+
+	"github.com/fuad-daoud/relevo/internal/spawn"
+)
 
 // relevo's supervisor appends two bookkeeping lines to a builder's stream once
-// the builder exits: "relevo-exit:<code>" and "relevo-rusage:<...>"; a stream
+// the builder exits: a relevo-exit: code and a relevo-rusage: payload; a stream
 // written before the rename carries the pre-rename spellings. Neither is the
-// builder's words, so Render drops them. The prefixes are spelled out here
-// because internal/proc importing this package would cycle; the strings must
-// stay equal to proc's constants (the stream file itself keeps the lines, and
-// proc.ExitCode and proc.Rusage read them there).
+// builder's words, so Render drops them.
 const (
-	relevoExitTrailer   = "relevo-exit:"
-	relevoRusageTrailer = "relevo-rusage:"
 	legacyExitTrailer   = "relay-exit:"   // name-guard: legacy
 	legacyRusageTrailer = "relay-rusage:" // name-guard: legacy
 )
 
 var trailerPrefixes = [...]string{
-	relevoExitTrailer,
-	relevoRusageTrailer,
+	spawn.ExitTrailer,
+	spawn.RusageTrailerPrefix,
 	legacyExitTrailer,
 	legacyRusageTrailer,
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 func TestServeUsageOnNoArgs(t *testing.T) {
@@ -137,11 +138,11 @@ func TestScopeFromPolicy(t *testing.T) {
 	enabledFalse := false
 	cases := map[string]struct {
 		sc   *policy.ScopePolicy
-		want *relevo.ScopeSpec
+		want *spawn.ScopeSpec
 	}{
 		"nil block defaults on": {
 			sc:   nil,
-			want: &relevo.ScopeSpec{CPUWeight: 100},
+			want: &spawn.ScopeSpec{CPUWeight: 100},
 		},
 		"enabled false is nil": {
 			sc:   &policy.ScopePolicy{Enabled: &enabledFalse},
@@ -149,25 +150,25 @@ func TestScopeFromPolicy(t *testing.T) {
 		},
 		"zero weight defaults to 100": {
 			sc:   &policy.ScopePolicy{},
-			want: &relevo.ScopeSpec{CPUWeight: 100},
+			want: &spawn.ScopeSpec{CPUWeight: 100},
 		},
 		"quota passes through": {
 			sc:   &policy.ScopePolicy{CPUQuota: "200%"},
-			want: &relevo.ScopeSpec{CPUWeight: 100, CPUQuota: "200%"},
+			want: &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "200%"},
 		},
 		"gate quota passes through": {
 			sc:   &policy.ScopePolicy{CPUQuota: "200%", GateCPUQuota: "300%"},
-			want: &relevo.ScopeSpec{CPUWeight: 100, CPUQuota: "200%", GateCPUQuota: "300%"},
+			want: &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "200%", GateCPUQuota: "300%"},
 		},
 		"slice and limits pass through": {
 			sc: &policy.ScopePolicy{
 				Slice: "relevo.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 64,
 			},
-			want: &relevo.ScopeSpec{Slice: "relevo.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 64},
+			want: &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 64},
 		},
 		"allowed cpus passes through": {
 			sc:   &policy.ScopePolicy{CPUQuota: "200%", AllowedCPUs: "0-2"},
-			want: &relevo.ScopeSpec{CPUWeight: 100, CPUQuota: "200%", AllowedCPUs: "0-2"},
+			want: &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "200%", AllowedCPUs: "0-2"},
 		},
 	}
 	for name, c := range cases {
@@ -184,19 +185,19 @@ func TestScopeFromPolicy(t *testing.T) {
 // scope (#285, #295) and the gate quota suffix (#313).
 func TestScopeStatusText(t *testing.T) {
 	cases := map[string]struct {
-		sc   *relevo.ScopeSpec
+		sc   *spawn.ScopeSpec
 		want string
 	}{
 		"nil is off":            {sc: nil, want: "off"},
-		"bare is on":            {sc: &relevo.ScopeSpec{}, want: "on"},
-		"quota":                 {sc: &relevo.ScopeSpec{CPUQuota: "200%"}, want: "on (200%)"},
-		"slice":                 {sc: &relevo.ScopeSpec{Slice: "relevo.slice"}, want: "on (slice relevo.slice)"},
-		"slice and quota":       {sc: &relevo.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%"}, want: "on (slice relevo.slice, 200%)"},
-		"gate only":             {sc: &relevo.ScopeSpec{GateCPUQuota: "300%"}, want: "on (gate 300%)"},
-		"quota and gate":        {sc: &relevo.ScopeSpec{CPUQuota: "200%", GateCPUQuota: "300%"}, want: "on (200%, gate 300%)"},
-		"slice and gate":        {sc: &relevo.ScopeSpec{Slice: "relevo.slice", GateCPUQuota: "300%"}, want: "on (slice relevo.slice, gate 300%)"},
-		"slice, quota and gate": {sc: &relevo.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%", GateCPUQuota: "300%"}, want: "on (slice relevo.slice, 200%, gate 300%)"},
-		"cpus":                  {sc: &relevo.ScopeSpec{AllowedCPUs: "0-2"}, want: "on (cpus 0-2, one per round)"},
+		"bare is on":            {sc: &spawn.ScopeSpec{}, want: "on"},
+		"quota":                 {sc: &spawn.ScopeSpec{CPUQuota: "200%"}, want: "on (200%)"},
+		"slice":                 {sc: &spawn.ScopeSpec{Slice: "relevo.slice"}, want: "on (slice relevo.slice)"},
+		"slice and quota":       {sc: &spawn.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%"}, want: "on (slice relevo.slice, 200%)"},
+		"gate only":             {sc: &spawn.ScopeSpec{GateCPUQuota: "300%"}, want: "on (gate 300%)"},
+		"quota and gate":        {sc: &spawn.ScopeSpec{CPUQuota: "200%", GateCPUQuota: "300%"}, want: "on (200%, gate 300%)"},
+		"slice and gate":        {sc: &spawn.ScopeSpec{Slice: "relevo.slice", GateCPUQuota: "300%"}, want: "on (slice relevo.slice, gate 300%)"},
+		"slice, quota and gate": {sc: &spawn.ScopeSpec{Slice: "relevo.slice", CPUQuota: "200%", GateCPUQuota: "300%"}, want: "on (slice relevo.slice, 200%, gate 300%)"},
+		"cpus":                  {sc: &spawn.ScopeSpec{AllowedCPUs: "0-2"}, want: "on (cpus 0-2, one per round)"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

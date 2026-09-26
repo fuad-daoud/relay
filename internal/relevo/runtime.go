@@ -23,6 +23,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -118,7 +119,7 @@ type Runtime struct {
 	// Runner starts and stops headless builder processes (#99). cmd/relevo
 	// wires proc.New(); tests wire fakeRunner. Nil means no headless path
 	// can run, and reports ErrRunnerUnavailable.
-	Runner     Runner
+	Runner     spawn.Runner
 	Store      *store.Store
 	Candidates *candidate.Set
 
@@ -235,7 +236,7 @@ type Runtime struct {
 	// filled from (#244, #216); its Unit is always empty here, since
 	// startRound fills in the per-round unit name. Nil means no scopes
 	// (the local daemon, CI, or a server whose scope probe failed).
-	Scope *ScopeSpec
+	Scope *spawn.ScopeSpec
 
 	// HeldCPUs returns the cores held by live rounds other than the binding
 	// named self, in every store that shares this host's pool (#314). Nil

@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 // waitGone polls Alive until it is false or the deadline passes.
-func waitGone(t *testing.T, r *Runner, h relevo.ProcHandle, within time.Duration) {
+func waitGone(t *testing.T, r *Runner, h spawn.ProcHandle, within time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(within)
 	for time.Now().Before(deadline) {
@@ -29,12 +29,12 @@ func waitGone(t *testing.T, r *Runner, h relevo.ProcHandle, within time.Duration
 }
 
 // start runs argv in a fresh temp dir and returns the handle, log and stream.
-func start(t *testing.T, r *Runner, argv ...string) (relevo.ProcHandle, string, string) {
+func start(t *testing.T, r *Runner, argv ...string) (spawn.ProcHandle, string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	log := filepath.Join(dir, "001-builder.log")
 	stream := filepath.Join(dir, "001-builder.jsonl")
-	h, err := r.Start(context.Background(), relevo.ProcSpec{Dir: dir, Argv: argv, LogPath: log, StreamPath: stream})
+	h, err := r.Start(context.Background(), spawn.ProcSpec{Dir: dir, Argv: argv, LogPath: log, StreamPath: stream})
 	if err != nil {
 		t.Fatalf("Start(%v): %v", argv, err)
 	}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/legacy"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 // roundBaseRe matches the basename of a round file: the NNN- prefix every file
@@ -221,16 +222,6 @@ func Sealable(b Binding, round int, streamDrained bool) bool {
 	return true
 }
 
-// ExitTrailer prefixes the line the supervisor appends to a round's builder
-// stream when the process exits: "relevo-exit:<code>". This package cannot
-// import internal/proc to share the literal -- proc imports internal/relevo,
-// which imports this package -- so it is repeated here and an external test
-// asserts the two are equal.
-const ExitTrailer = "relevo-exit:"
-
-// rusageTrailer is repeated for the same import-cycle reason as ExitTrailer.
-const rusageTrailer = "relevo-rusage:"
-
 // StreamDrained reports whether round's builder stream is fully consumed by
 // the drain, so nothing more will be rendered into that round's builder log.
 // Only the round the endpoint is currently draining can be undrained; every
@@ -258,7 +249,7 @@ func (s *Store) StreamDrained(b Binding, round int) bool {
 		return false
 	}
 	text := string(body)
-	if !strings.Contains(text, "\n"+ExitTrailer) && !strings.Contains(text, "\n"+legacy.ExitTrailer) {
+	if !strings.Contains(text, "\n"+spawn.ExitTrailer) && !strings.Contains(text, "\n"+legacy.ExitTrailer) {
 		return false
 	}
 	off := b.Builder.StreamOffset
@@ -286,9 +277,9 @@ func trailerLinesOnly(s string) bool {
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, ExitTrailer) ||
+		if strings.HasPrefix(line, spawn.ExitTrailer) ||
 			strings.HasPrefix(line, legacy.ExitTrailer) ||
-			strings.HasPrefix(line, rusageTrailer) ||
+			strings.HasPrefix(line, spawn.RusageTrailerPrefix) ||
 			strings.HasPrefix(line, legacy.RusageTrailer) {
 			continue
 		}

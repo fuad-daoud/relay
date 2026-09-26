@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/legacy"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -48,7 +49,7 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 		return b, false, nil, err
 	}
 
-	h := ProcHandle{PID: b.GateRun.PID, StartedAt: time.Unix(b.GateRun.StartedAt, 0)}
+	h := spawn.ProcHandle{PID: b.GateRun.PID, StartedAt: time.Unix(b.GateRun.StartedAt, 0)}
 	alive, err := rt.Runner.Alive(ctx, h)
 	if err != nil {
 		// An OS hiccup is not evidence the gate stopped: treat it as alive
@@ -117,7 +118,7 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 // exactly as the inlined branch did.
 func startGate(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, attempt int, note string) (store.Binding, *store.GateRecord, error) {
 	log := rt.Store.GateLogPath(b.Name, b.Round)
-	h, err := rt.Runner.Start(ctx, ProcSpec{
+	h, err := rt.Runner.Start(ctx, spawn.ProcSpec{
 		Dir:        b.CWD,
 		Argv:       []string{"sh", "-c", b.Gate + " 2>&1"},
 		LogPath:    log,
@@ -200,7 +201,7 @@ func tailLines(read func(string) ([]byte, error), path string, n int) []string {
 	}
 	var nonEmpty []string
 	for _, l := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, RusageTrailerPrefix) || strings.HasPrefix(l, legacy.RusageTrailer) {
+		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, spawn.RusageTrailerPrefix) || strings.HasPrefix(l, legacy.RusageTrailer) {
 			continue
 		}
 		nonEmpty = append(nonEmpty, l)

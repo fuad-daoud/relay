@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/legacy"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 // scopeWant prepends systemd-run's fixed scope flags to tail, so each row's
@@ -21,38 +21,38 @@ func scopeWant(tail ...string) []string {
 func TestScopeArgv(t *testing.T) {
 	inner := []string{"/bin/sh", "-c", "script", "relevo-supervisor", "bin"}
 	cases := map[string]struct {
-		spec relevo.ScopeSpec
+		spec spawn.ScopeSpec
 		want []string
 	}{
 		"full spec": {
-			spec: relevo.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", Slice: "relevo.slice", CPUWeight: 200, MemoryMax: "2G", TasksMax: 50},
+			spec: spawn.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", Slice: "relevo.slice", CPUWeight: 200, MemoryMax: "2G", TasksMax: 50},
 			want: scopeWant("--slice=relevo.slice", "-p", "CPUWeight=200", "-p", "MemoryMax=2G", "-p", "TasksMax=50",
 				"--", "/bin/sh", "-c", "script", "relevo-supervisor", "bin"),
 		},
 		"no slice": {
-			spec: relevo.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", CPUWeight: 200, MemoryMax: "2G", TasksMax: 50},
+			spec: spawn.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", CPUWeight: 200, MemoryMax: "2G", TasksMax: 50},
 			want: scopeWant("-p", "CPUWeight=200", "-p", "MemoryMax=2G", "-p", "TasksMax=50",
 				"--", "/bin/sh", "-c", "script", "relevo-supervisor", "bin"),
 		},
 		"no memory": {
-			spec: relevo.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", Slice: "relevo.slice", CPUWeight: 200, TasksMax: 50},
+			spec: spawn.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", Slice: "relevo.slice", CPUWeight: 200, TasksMax: 50},
 			want: scopeWant("--slice=relevo.slice", "-p", "CPUWeight=200", "-p", "TasksMax=50",
 				"--", "/bin/sh", "-c", "script", "relevo-supervisor", "bin"),
 		},
 		"no tasks": {
-			spec: relevo.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", Slice: "relevo.slice", CPUWeight: 200, MemoryMax: "2G"},
+			spec: spawn.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", Slice: "relevo.slice", CPUWeight: 200, MemoryMax: "2G"},
 			want: scopeWant("--slice=relevo.slice", "-p", "CPUWeight=200", "-p", "MemoryMax=2G",
 				"--", "/bin/sh", "-c", "script", "relevo-supervisor", "bin"),
 		},
 		// The quota sits between the weight and the memory pairs.
 		"with quota": {
-			spec: relevo.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", Slice: "relevo.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 50},
+			spec: spawn.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", Slice: "relevo.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 50},
 			want: scopeWant("--slice=relevo.slice", "-p", "CPUWeight=200", "-p", "CPUQuota=200%", "-p", "MemoryMax=2G", "-p", "TasksMax=50",
 				"--", "/bin/sh", "-c", "script", "relevo-supervisor", "bin"),
 		},
 		// The pin sits between the quota and the memory pairs.
 		"with allowed cpus": {
-			spec: relevo.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", Slice: "relevo.slice", CPUWeight: 200, CPUQuota: "200%", AllowedCPUs: "2", MemoryMax: "2G", TasksMax: 50},
+			spec: spawn.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", Slice: "relevo.slice", CPUWeight: 200, CPUQuota: "200%", AllowedCPUs: "2", MemoryMax: "2G", TasksMax: 50},
 			want: scopeWant("--slice=relevo.slice", "-p", "CPUWeight=200", "-p", "CPUQuota=200%", "-p", "AllowedCPUs=2", "-p", "MemoryMax=2G", "-p", "TasksMax=50",
 				"--", "/bin/sh", "-c", "script", "relevo-supervisor", "bin"),
 		},
@@ -70,17 +70,17 @@ func TestScopeArgv(t *testing.T) {
 func TestParseRusageTrailer(t *testing.T) {
 	cases := map[string]struct {
 		line string
-		want relevo.ProcRusage
+		want spawn.ProcRusage
 		ok   bool
 	}{
-		"both fields":      {"relevo-rusage:cpu_usec=123456 mem_peak=891289600", relevo.ProcRusage{CPUMS: 123, PeakMemBytes: 891289600}, true},
-		"cpu only":         {"relevo-rusage:cpu_usec=5000", relevo.ProcRusage{CPUMS: 5}, true},
-		"mem only":         {"relevo-rusage:mem_peak=1024", relevo.ProcRusage{PeakMemBytes: 1024}, true},
-		"unknown key":      {"relevo-rusage:cpu_usec=1000 foo=bar", relevo.ProcRusage{CPUMS: 1}, true},
-		"malformed number": {"relevo-rusage:cpu_usec=notanumber", relevo.ProcRusage{}, true},
-		"legacy prefix":    {legacy.RusageTrailer + "cpu_usec=12345 mem_peak=1048576", relevo.ProcRusage{CPUMS: 12, PeakMemBytes: 1048576}, true},
-		"legacy cpu only":  {legacy.RusageTrailer + "cpu_usec=5000", relevo.ProcRusage{CPUMS: 5}, true},
-		"wrong prefix":     {"something-else:cpu_usec=1000", relevo.ProcRusage{}, false},
+		"both fields":      {"relevo-rusage:cpu_usec=123456 mem_peak=891289600", spawn.ProcRusage{CPUMS: 123, PeakMemBytes: 891289600}, true},
+		"cpu only":         {"relevo-rusage:cpu_usec=5000", spawn.ProcRusage{CPUMS: 5}, true},
+		"mem only":         {"relevo-rusage:mem_peak=1024", spawn.ProcRusage{PeakMemBytes: 1024}, true},
+		"unknown key":      {"relevo-rusage:cpu_usec=1000 foo=bar", spawn.ProcRusage{CPUMS: 1}, true},
+		"malformed number": {"relevo-rusage:cpu_usec=notanumber", spawn.ProcRusage{}, true},
+		"legacy prefix":    {legacy.RusageTrailer + "cpu_usec=12345 mem_peak=1048576", spawn.ProcRusage{CPUMS: 12, PeakMemBytes: 1048576}, true},
+		"legacy cpu only":  {legacy.RusageTrailer + "cpu_usec=5000", spawn.ProcRusage{CPUMS: 5}, true},
+		"wrong prefix":     {"something-else:cpu_usec=1000", spawn.ProcRusage{}, false},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -98,37 +98,37 @@ func TestParseRusageTrailer(t *testing.T) {
 func TestRusageFindsTheTrailerLine(t *testing.T) {
 	cases := map[string]struct {
 		body string
-		want relevo.ProcRusage
+		want spawn.ProcRusage
 		ok   bool
 	}{
 		"real supervisor layout": {
 			body: "builder said hi\n" +
-				"\n" + RusageTrailer + "cpu_usec=19071588 mem_peak=403206144\n" +
-				"\n" + ExitTrailer + "0\n",
-			want: relevo.ProcRusage{CPUMS: 19071, PeakMemBytes: 403206144},
+				"\n" + spawn.RusageTrailerPrefix + "cpu_usec=19071588 mem_peak=403206144\n" +
+				"\n" + spawn.ExitTrailer + "0\n",
+			want: spawn.ProcRusage{CPUMS: 19071, PeakMemBytes: 403206144},
 			ok:   true,
 		},
 		"trailer before the exit trailer": {
-			body: "builder output\n\n" + RusageTrailer + "cpu_usec=12345 mem_peak=1048576\n" + ExitTrailer + "0\n",
-			want: relevo.ProcRusage{CPUMS: 12, PeakMemBytes: 1048576},
+			body: "builder output\n\n" + spawn.RusageTrailerPrefix + "cpu_usec=12345 mem_peak=1048576\n" + spawn.ExitTrailer + "0\n",
+			want: spawn.ProcRusage{CPUMS: 12, PeakMemBytes: 1048576},
 			ok:   true,
 		},
 		"legacy stream": {
 			body: "builder output\n\n" + legacy.RusageTrailer + "cpu_usec=12345 mem_peak=1048576\n\n" + legacy.ExitTrailer + "3\n",
-			want: relevo.ProcRusage{CPUMS: 12, PeakMemBytes: 1048576},
+			want: spawn.ProcRusage{CPUMS: 12, PeakMemBytes: 1048576},
 			ok:   true,
 		},
 		"output after the exit trailer": {
 			body: "builder said hi\n" +
-				"\n" + RusageTrailer + "cpu_usec=19071588 mem_peak=403206144\n" +
-				"\n" + ExitTrailer + "0\n" +
+				"\n" + spawn.RusageTrailerPrefix + "cpu_usec=19071588 mem_peak=403206144\n" +
+				"\n" + spawn.ExitTrailer + "0\n" +
 				"stray output after exit\n",
-			want: relevo.ProcRusage{CPUMS: 19071, PeakMemBytes: 403206144},
+			want: spawn.ProcRusage{CPUMS: 19071, PeakMemBytes: 403206144},
 			ok:   true,
 		},
 		"no trailer": {
-			body: "builder output\n\n" + ExitTrailer + "0\n",
-			want: relevo.ProcRusage{},
+			body: "builder output\n\n" + spawn.ExitTrailer + "0\n",
+			want: spawn.ProcRusage{},
 			ok:   false,
 		},
 	}
@@ -139,7 +139,7 @@ func TestRusageFindsTheTrailerLine(t *testing.T) {
 			if err := os.WriteFile(path, []byte(c.body), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			got, ok := r.Rusage(context.Background(), relevo.ProcHandle{}, path)
+			got, ok := r.Rusage(context.Background(), spawn.ProcHandle{}, path)
 			if ok != c.ok || got != c.want {
 				t.Errorf("Rusage = %+v, %v; want %+v, %v", got, ok, c.want, c.ok)
 			}

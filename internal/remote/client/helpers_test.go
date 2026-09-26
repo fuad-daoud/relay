@@ -16,10 +16,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/serve"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -49,11 +49,11 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// scriptRunner is a fake relevo.Runner whose process stays alive until killed.
+// scriptRunner is a fake spawn.Runner whose process stays alive until killed.
 type scriptRunner struct {
 	mu           sync.Mutex
-	specs        []relevo.ProcSpec
-	aliveHandles []relevo.ProcHandle
+	specs        []spawn.ProcSpec
+	aliveHandles []spawn.ProcHandle
 	pidSeq       int
 	alive        bool
 }
@@ -62,7 +62,7 @@ func newScriptRunner() *scriptRunner {
 	return &scriptRunner{alive: true}
 }
 
-func (r *scriptRunner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHandle, error) {
+func (r *scriptRunner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHandle, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.specs = append(r.specs, spec)
@@ -71,17 +71,17 @@ func (r *scriptRunner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.
 	if spec.LogPath != "" {
 		_ = os.WriteFile(spec.LogPath, []byte("builder started\n"), 0o644)
 	}
-	return relevo.ProcHandle{PID: 1000 + r.pidSeq, StartedAt: time.Now()}, nil
+	return spawn.ProcHandle{PID: 1000 + r.pidSeq, StartedAt: time.Now()}, nil
 }
 
-func (r *scriptRunner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) {
+func (r *scriptRunner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.aliveHandles = append(r.aliveHandles, h)
 	return r.alive, nil
 }
 
-func (r *scriptRunner) ExitCode(ctx context.Context, h relevo.ProcHandle, logPath string) (code int, ok bool) {
+func (r *scriptRunner) ExitCode(ctx context.Context, h spawn.ProcHandle, logPath string) (code int, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.alive {
@@ -90,15 +90,15 @@ func (r *scriptRunner) ExitCode(ctx context.Context, h relevo.ProcHandle, logPat
 	return 0, true
 }
 
-func (r *scriptRunner) Kill(ctx context.Context, h relevo.ProcHandle) error {
+func (r *scriptRunner) Kill(ctx context.Context, h spawn.ProcHandle) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.alive = false
 	return nil
 }
 
-func (r *scriptRunner) Rusage(ctx context.Context, h relevo.ProcHandle, streamPath string) (relevo.ProcRusage, bool) {
-	return relevo.ProcRusage{}, false
+func (r *scriptRunner) Rusage(ctx context.Context, h spawn.ProcHandle, streamPath string) (spawn.ProcRusage, bool) {
+	return spawn.ProcRusage{}, false
 }
 
 func (r *scriptRunner) setAlive(a bool) {
@@ -197,7 +197,7 @@ func enrollTestClient(t *testing.T, machineDB *db.DB, serverRoot string, kp remo
 	}
 }
 
-func newTestServer(t *testing.T, root string, machineDB *db.DB, cSet *candidate.Set, runner relevo.Runner, gitClient *git.Client) *serve.Server {
+func newTestServer(t *testing.T, root string, machineDB *db.DB, cSet *candidate.Set, runner spawn.Runner, gitClient *git.Client) *serve.Server {
 	t.Helper()
 	srv, err := serve.New(serve.Config{
 		Root:       root,

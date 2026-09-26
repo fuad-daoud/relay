@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 // TestScopeAcceptReapsItsScope leaves a detached process in a scope of its own
@@ -50,10 +50,10 @@ func TestScopeAcceptReapsItsScope(t *testing.T) {
 
 	started := time.Now()
 	r := New()
-	h, err := r.Start(context.Background(), relevo.ProcSpec{
+	h, err := r.Start(context.Background(), spawn.ProcSpec{
 		Dir: dir, Argv: []string{"sh", "-c", script},
 		LogPath: filepath.Join(dir, "harness.log"), StreamPath: stream,
-		Scope: &relevo.ScopeSpec{Unit: unit, CPUWeight: 100},
+		Scope: &spawn.ScopeSpec{Unit: unit, CPUWeight: 100},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -77,9 +77,9 @@ func TestScopeAcceptReapsItsScope(t *testing.T) {
 	}
 	if !ok || code != 0 {
 		data, _ := os.ReadFile(stream)
-		t.Fatalf("stream after 5s = %q (code %d, ok %v); want it to end with %s0", data, code, ok, ExitTrailer)
+		t.Fatalf("stream after 5s = %q (code %d, ok %v); want it to end with %s0", data, code, ok, spawn.ExitTrailer)
 	}
-	t.Logf("stream ended with %s%d %s after the harness exit", ExitTrailer, code, time.Since(started).Round(time.Millisecond))
+	t.Logf("stream ended with %s%d %s after the harness exit", spawn.ExitTrailer, code, time.Since(started).Round(time.Millisecond))
 
 	// 2. The scope is no longer active within 5 s: it emptied, so --collect
 	// removed it.

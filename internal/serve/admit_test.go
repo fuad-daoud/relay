@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -609,7 +610,7 @@ func TestGetBindingQueuePosition(t *testing.T) {
 // store, and owner B's round -- started through HeldCPUs -- takes core 1.
 func TestHeldCPUsCrossOwnerCensus(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) {
-		cfg.Scope = &relevo.ScopeSpec{CPUWeight: 100, AllowedCPUs: "0-1"}
+		cfg.Scope = &spawn.ScopeSpec{CPUWeight: 100, AllowedCPUs: "0-1"}
 	})
 	ownerB := addOwner(t, env, "bob")
 
@@ -648,7 +649,7 @@ func TestHeldCPUsCrossOwnerCensus(t *testing.T) {
 // list are still returned.
 func TestHeldCPUsSkipsAFailingOwner(t *testing.T) {
 	env := setupTestEnv(t, func(cfg *Config) {
-		cfg.Scope = &relevo.ScopeSpec{CPUWeight: 100, AllowedCPUs: "0-1"}
+		cfg.Scope = &spawn.ScopeSpec{CPUWeight: 100, AllowedCPUs: "0-1"}
 	})
 	ownerB := addOwner(t, env, "bob")
 	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")

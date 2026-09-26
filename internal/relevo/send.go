@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -281,7 +282,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	// runner must exist and no previous process may still be alive -- and both
 	// are checked here, before Send stages anything.
 	if rt.Runner == nil {
-		return preflight{}, fmt.Errorf("binding %q: %w", name, ErrRunnerUnavailable)
+		return preflight{}, fmt.Errorf("binding %q: %w", name, spawn.ErrRunnerUnavailable)
 	}
 	if b.Builder.PID != 0 {
 		alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
@@ -361,7 +362,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	// spawned is the process startRound launched, if any: the deferred
 	// failure path after the lock stops a builder this send started but
 	// could not finish recording (#436).
-	var spawned *ProcHandle
+	var spawned *spawn.ProcHandle
 
 	var round int
 	var driftLineOut string
@@ -394,7 +395,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// should start a second builder in the same tree.
 		if b.Builder.PID != 0 {
 			if rt.Runner == nil {
-				return fmt.Errorf("binding %q: %w", name, ErrRunnerUnavailable)
+				return fmt.Errorf("binding %q: %w", name, spawn.ErrRunnerUnavailable)
 			}
 			alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
 			if err != nil {
@@ -460,7 +461,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			// saved and the staged plan is removed, like the tier-unsupported
 			// branch below.
 			if rt.Scope != nil {
-				if p, ok := rt.Runner.(ScopeProber); ok {
+				if p, ok := rt.Runner.(spawn.ScopeProber); ok {
 					unit := scopeUnitName(b)
 					active, perr := p.ScopeActive(ctx, unit)
 					if perr != nil {

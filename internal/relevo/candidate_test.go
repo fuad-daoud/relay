@@ -64,8 +64,8 @@ func orderOf(role string, toks ...string) policy.Policy {
 	return policy.Policy{Order: map[string][]string{role: toks}}
 }
 
-// spawn is a SpawnFailed gate on token, for tests.
-func spawn(token string) ledger.Gate {
+// spawnGate is a SpawnFailed gate on token, for tests.
+func spawnGate(token string) ledger.Gate {
 	return ledger.Gate{Token: token, Kind: ledger.SpawnFailed, Until: baseTime.Add(10 * time.Minute)}
 }
 
@@ -177,7 +177,7 @@ func TestResolveCandidate(t *testing.T) {
 			name:         "order, first gated",
 			setBody:      testCandidatesJSON,
 			pol:          orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef),
-			gates:        []ledger.Gate{spawn(testAgyRef)},
+			gates:        []ledger.Gate{spawnGate(testAgyRef)},
 			token:        "",
 			role:         "builder",
 			wantRef:      testClaudeRef,
@@ -189,7 +189,7 @@ func TestResolveCandidate(t *testing.T) {
 			name:        "order, two gated, unlisted wins",
 			setBody:     testCandidatesJSON,
 			pol:         orderOf("builder", testAgyRef, testClaudeRef),
-			gates:       []ledger.Gate{spawn(testAgyRef), spawn(testClaudeRef)},
+			gates:       []ledger.Gate{spawnGate(testAgyRef), spawnGate(testClaudeRef)},
 			token:       "",
 			role:        "builder",
 			wantRef:     testOpencodeRef,
@@ -244,7 +244,7 @@ func TestResolveCandidate(t *testing.T) {
 			name:         "order, two gates on one token",
 			setBody:      testCandidatesJSON,
 			pol:          orderOf("builder", testAgyRef, testClaudeRef),
-			gates:        []ledger.Gate{spawn(testAgyRef), limit(testAgyRef)},
+			gates:        []ledger.Gate{spawnGate(testAgyRef), limit(testAgyRef)},
 			token:        "",
 			role:         "builder",
 			wantRef:      testClaudeRef,

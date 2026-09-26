@@ -47,6 +47,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -872,7 +873,7 @@ func stopRecordedBuilders(t *testing.T, rt relevo.Runtime, names ...string) {
 		if err != nil || b.Builder.PID == 0 {
 			continue
 		}
-		h := relevo.ProcHandle{PID: b.Builder.PID, StartedAt: time.Unix(b.Builder.StartedAt, 0)}
+		h := spawn.ProcHandle{PID: b.Builder.PID, StartedAt: time.Unix(b.Builder.StartedAt, 0)}
 		if err := rt.Runner.Kill(context.Background(), h); err != nil {
 			t.Logf("cleanup: killing %s's builder pid %d: %v", name, b.Builder.PID, err)
 		}

@@ -20,11 +20,8 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/legacy"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
-
-// ExitTrailer prefixes the supervisor's "relevo-exit:<code>" line.
-const ExitTrailer = "relevo-exit:"
 
 // DefaultKillGrace is how long Kill waits after SIGTERM before SIGKILL.
 const DefaultKillGrace = 5 * time.Second
@@ -98,7 +95,7 @@ const (
 // Start retries it, so one transient failure costs at most this long.
 const ScopeReprobeAfter = 5 * time.Minute
 
-// Runner is the local relevo.Runner.
+// Runner is the local spawn.Runner.
 type Runner struct {
 	// KillGrace is the SIGTERM-to-SIGKILL grace; zero means DefaultKillGrace.
 	KillGrace time.Duration
@@ -121,9 +118,9 @@ type Runner struct {
 	pinOK bool
 }
 
-var _ relevo.Runner = (*Runner)(nil)
+var _ spawn.Runner = (*Runner)(nil)
 
-var _ relevo.ScopeProber = (*Runner)(nil)
+var _ spawn.ScopeProber = (*Runner)(nil)
 
 func New() *Runner { return &Runner{} }
 
@@ -174,7 +171,7 @@ func (r *Runner) nowTime() time.Time {
 // buildArgv builds the argv Start execs: bin under supervisorScript, wrapped in
 // a systemd scope when spec.Scope is set. The supervisor's first argument is the
 // scope unit Start expects to be running in, or "" for a plain spawn.
-func buildArgv(spec relevo.ProcSpec, bin string) []string {
+func buildArgv(spec spawn.ProcSpec, bin string) []string {
 	var want string
 	if spec.Scope != nil {
 		want = ScopeUnitFileName(spec.Scope.Unit)
@@ -190,14 +187,14 @@ func buildArgv(spec relevo.ProcSpec, bin string) []string {
 // without waiting. exec.Command, not CommandContext: the caller's context
 // ending must not kill a builder relevo meant to leave running. Setsid keeps the
 // supervisor out of relevo's session and out of any group Kill could hit.
-func (r *Runner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHandle, error) {
+func (r *Runner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHandle, error) {
 	bin, err := checkSpawnSpec(spec)
 	if err != nil {
-		return relevo.ProcHandle{}, err
+		return spawn.ProcHandle{}, err
 	}
 	logf, streamf, err := openSpawnFiles(spec)
 	if err != nil {
-		return relevo.ProcHandle{}, err
+		return spawn.ProcHandle{}, err
 	}
 	defer func() { _ = logf.Close() }()
 	defer func() { _ = streamf.Close() }()
@@ -212,7 +209,7 @@ func (r *Runner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHa
 	cmd.Stderr = logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
-		return relevo.ProcHandle{}, fmt.Errorf("proc: start: %w", err)
+		return spawn.ProcHandle{}, fmt.Errorf("proc: start: %w", err)
 	}
 	pid := cmd.Process.Pid
 	// Reap the supervisor here, if this process outlives it (the daemon does);
@@ -224,7 +221,7 @@ func (r *Runner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHa
 
 // checkSpawnSpec validates spec and resolves the binary Start will exec; every
 // check runs before either file is created, so a refused Start leaves nothing.
-func checkSpawnSpec(spec relevo.ProcSpec) (string, error) {
+func checkSpawnSpec(spec spawn.ProcSpec) (string, error) {
 	if len(spec.Argv) == 0 {
 		return "", errors.New("proc: empty argv")
 	}
@@ -246,7 +243,7 @@ func checkSpawnSpec(spec relevo.ProcSpec) (string, error) {
 }
 
 // openSpawnFiles opens the builder's log and stream for append.
-func openSpawnFiles(spec relevo.ProcSpec) (logf, streamf *os.File, err error) {
+func openSpawnFiles(spec spawn.ProcSpec) (logf, streamf *os.File, err error) {
 	logf, err = os.OpenFile(spec.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, nil, fmt.Errorf("proc: log: %w", err)
@@ -263,7 +260,7 @@ func openSpawnFiles(spec relevo.ProcSpec) (logf, streamf *os.File, err error) {
 // fails is dropped, so the builder runs unscoped, and a refused AllowedCPUs is
 // cleared while the scope and its quota stay. The pin fallback re-points a
 // copied ScopeSpec, since Start took spec by value but Scope is a pointer.
-func (r *Runner) resolveScope(ctx context.Context, spec relevo.ProcSpec) relevo.ProcSpec {
+func (r *Runner) resolveScope(ctx context.Context, spec spawn.ProcSpec) spawn.ProcSpec {
 	if spec.Scope == nil {
 		return spec
 	}
@@ -293,7 +290,7 @@ func (r *Runner) resolveScope(ctx context.Context, spec relevo.ProcSpec) relevo.
 // spawnEnv adds the GOMAXPROCS and fsmonitor entries and filters the parent so
 // the child sees exactly one of each; the full-slice expressions copy, so the
 // caller's Env array and the DeniedEnv var are never written in place.
-func spawnEnv(parent, extra []string, scope *relevo.ScopeSpec) []string {
+func spawnEnv(parent, extra []string, scope *spawn.ScopeSpec) []string {
 	add := goMaxProcsEnv(parent, extra, scope)
 	env := append(extra[:len(extra):len(extra)], add...)
 	env = append(env[:len(env):len(env)], gitNoFsmonitorEnv(parent, env)...)
@@ -307,18 +304,18 @@ func spawnEnv(parent, extra []string, scope *relevo.ScopeSpec) []string {
 
 // handleFor returns the handle for a just-started pid; when ps cannot report a
 // start time, time.Now is within the tolerance Alive allows.
-func handleFor(ctx context.Context, pid int) relevo.ProcHandle {
+func handleFor(ctx context.Context, pid int) spawn.ProcHandle {
 	started, _, err := psInfo(ctx, pid)
 	if err != nil {
 		started = time.Now()
 	}
-	return relevo.ProcHandle{PID: pid, StartedAt: started.Truncate(time.Second)}
+	return spawn.ProcHandle{PID: pid, StartedAt: started.Truncate(time.Second)}
 }
 
 // Alive reports whether the handle's process exists, is not a zombie, and
 // started within a second of when the handle says. A missing pid is (false,
 // nil); only ps itself failing to run is an error.
-func (r *Runner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) {
+func (r *Runner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, error) {
 	if h.PID <= 0 {
 		return false, nil
 	}
@@ -342,12 +339,12 @@ func (r *Runner) Alive(ctx context.Context, h relevo.ProcHandle) (bool, error) {
 // ExitCode reads the trailer the supervisor appended, if it is the stream's last
 // line; a stream written before the rename ends in legacy.ExitTrailer instead
 // and reads the same way. The handle is unused: the stream is the record.
-func (r *Runner) ExitCode(_ context.Context, _ relevo.ProcHandle, logPath string) (int, bool) {
+func (r *Runner) ExitCode(_ context.Context, _ spawn.ProcHandle, logPath string) (int, bool) {
 	line, ok := lastLine(logPath)
 	if !ok {
 		return 0, false
 	}
-	prefix := ExitTrailer
+	prefix := spawn.ExitTrailer
 	if !strings.HasPrefix(line, prefix) {
 		prefix = legacy.ExitTrailer
 		if !strings.HasPrefix(line, prefix) {
@@ -365,7 +362,7 @@ func (r *Runner) ExitCode(_ context.Context, _ relevo.ProcHandle, logPath string
 // builder under it -- waits up to the grace for Alive to turn false, then
 // SIGKILLs the group. Alive's start-time check runs first, so a reused pid is
 // never signalled.
-func (r *Runner) Kill(ctx context.Context, h relevo.ProcHandle) error {
+func (r *Runner) Kill(ctx context.Context, h spawn.ProcHandle) error {
 	alive, err := r.Alive(ctx, h)
 	if err != nil {
 		return err
@@ -397,17 +394,17 @@ func (r *Runner) Kill(ctx context.Context, h relevo.ProcHandle) error {
 // rusage trailer or the legacy one a pre-rename stream carries; ok is false when
 // none match. The scan is needed because the supervisor's printf leaves a blank
 // line between the rusage and exit trailers.
-func (r *Runner) Rusage(_ context.Context, _ relevo.ProcHandle, streamPath string) (relevo.ProcRusage, bool) {
+func (r *Runner) Rusage(_ context.Context, _ spawn.ProcHandle, streamPath string) (spawn.ProcRusage, bool) {
 	lines, ok := lastLines(streamPath, 6)
 	if !ok {
-		return relevo.ProcRusage{}, false
+		return spawn.ProcRusage{}, false
 	}
 	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.HasPrefix(lines[i], RusageTrailer) || strings.HasPrefix(lines[i], legacy.RusageTrailer) {
+		if strings.HasPrefix(lines[i], spawn.RusageTrailerPrefix) || strings.HasPrefix(lines[i], legacy.RusageTrailer) {
 			return ParseRusageTrailer(lines[i])
 		}
 	}
-	return relevo.ProcRusage{}, false
+	return spawn.ProcRusage{}, false
 }
 
 var errNoProcess = errors.New("proc: no such process")

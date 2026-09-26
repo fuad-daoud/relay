@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -288,7 +289,7 @@ func writePlanTemp(root, planText string) (string, error) {
 // round_halted, anything unrecognised a 500.
 func writeSendError(w http.ResponseWriter, rt relevo.Runtime, name string, b store.Binding, sendErr error) {
 	switch {
-	case errors.Is(sendErr, relevo.ErrRunnerUnavailable):
+	case errors.Is(sendErr, spawn.ErrRunnerUnavailable):
 		writeErr(w, http.StatusServiceUnavailable, remote.CodeNoRunner, sendErr.Error())
 	case errors.Is(sendErr, relevo.ErrBuilderBusy), errors.Is(sendErr, relevo.ErrReportPending):
 		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, sendErr.Error())
