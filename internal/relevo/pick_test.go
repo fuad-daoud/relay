@@ -3,8 +3,6 @@ package relevo
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -180,7 +178,7 @@ func TestResumeRebindLogsPickAtCurrentRound(t *testing.T) {
 
 func TestAddLogsPick(t *testing.T) {
 	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
+	rt := newTestRuntime(t, fg)
 	rt.Policy = orderOf("builder", testAgyRef)
 
 	res, err := Add(context.Background(), rt, AddOptions{
@@ -199,51 +197,6 @@ func TestAddLogsPick(t *testing.T) {
 	}
 	if got[0].Round != 1 {
 		t.Errorf("pick round = %d, want 1", got[0].Round)
-	}
-}
-
-func TestForkInheritedLogsSource(t *testing.T) {
-	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
-	srcCWD := filepath.Join(t.TempDir(), "repo")
-	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	seedFourRoundBinding(t, rt, "source", srcCWD)
-
-	res, err := Fork(context.Background(), rt, ForkOptions{
-		Source: "source", Round: 2, NewName: "alt", Candidate: "", PlannerID: testPlannerName,
-	})
-	if err != nil {
-		t.Fatalf("Fork: %v", err)
-	}
-	if res.Resolution.InheritedFrom != "source" {
-		t.Errorf("InheritedFrom = %q, want source", res.Resolution.InheritedFrom)
-	}
-
-	ks := kinds(t, rt, "alt")
-	forkIdx := -1
-	for i, k := range ks {
-		if k == store.KindFork {
-			forkIdx = i
-			break
-		}
-	}
-	if forkIdx == -1 || forkIdx+1 >= len(ks) || ks[forkIdx+1] != store.KindPick {
-		t.Fatalf("kinds = %v, want KindFork immediately followed by KindPick", ks)
-	}
-
-	entries, err := rt.Store.ReadLog("alt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	pick := entries[forkIdx+1]
-	wantNote := "picked opencode/test/m for builder: explicit, inherited from source, policy bypassed"
-	if pick.Note != wantNote {
-		t.Errorf("pick note = %q, want %q", pick.Note, wantNote)
-	}
-	if pick.Round != 3 {
-		t.Errorf("pick round = %d, want 3", pick.Round)
 	}
 }
 

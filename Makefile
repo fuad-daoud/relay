@@ -10,12 +10,31 @@ UNAME_S := $(shell uname -s)
 BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo devel)
 LDFLAGS := -X main.version=$(if $(VERSION),$(VERSION),$(BUILD_VERSION))
 
-.PHONY: check build install service uninstall release jev
+.PHONY: check lint build install service uninstall release jev
+
+# lint runs golangci-lint with .golangci.yml. The binary is not vendored and
+# CI installs it in a setup step, so a machine without it still gets the rest
+# of check -- the same pattern the shellcheck step below uses. A leg that must
+# run the linter (CI's ubuntu-latest/stable) sets RELEVO_REQUIRE_LINT=1, which
+# turns the missing binary into a failure instead of a skip.
+lint:
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	elif [ "$${RELEVO_REQUIRE_LINT:-}" = "1" ]; then \
+		echo "golangci-lint is required (RELEVO_REQUIRE_LINT=1) but not installed"; \
+		exit 1; \
+	else \
+		echo "golangci-lint not installed; skipping lint"; \
+	fi
 
 check:
 	@test -z "$$(gofmt -l $$(git ls-files '*.go'))" || { gofmt -l $$(git ls-files '*.go'); exit 1; }
 	go vet ./...
-	go test -race -count=1 ./...
+	$(MAKE) lint
+	sh scripts/check-comments.sh
+	sh scripts/check-filesize.sh
+	@go test -race -count=1 -cover ./... > .coverage.txt 2>&1; st=$$?; cat .coverage.txt; exit $$st
+	sh scripts/check-coverage.sh
 	@cp go.mod go.mod.check && cp go.sum go.sum.check && \
 	if ! go mod tidy || ! cmp -s go.mod go.mod.check || ! cmp -s go.sum go.sum.check; then \
 		mv go.mod.check go.mod && mv go.sum.check go.sum; \

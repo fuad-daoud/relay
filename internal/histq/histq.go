@@ -142,9 +142,6 @@ var (
 	modeValues   = []string{"pane", "headless", "remote"}
 )
 
-// Parse parses s against the wall clock. ParseAt is the deterministic form.
-func Parse(s string) (Query, error) { return ParseAt(s, time.Now()) }
-
 // ParseAt parses s with now as the clock since/until are resolved against.
 // Filter.Newest is always true: a query reads newest first.
 func ParseAt(s string, now time.Time) (Query, error) {

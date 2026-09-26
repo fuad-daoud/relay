@@ -41,7 +41,7 @@ func claimRow(t *testing.T, d *db.DB, plannerID string) (Claim, bool) {
 }
 
 // seedClaim writes one claim row the way an older relevo would have, so a test
-// can pin what Live, Remove and the sweep do with it.
+// can pin what Live and Remove do with it.
 func seedClaim(t *testing.T, d *db.DB, plannerID string, c Claim) {
 	t.Helper()
 	raw, err := json.Marshal(c)
@@ -106,8 +106,8 @@ func TestClaimKeyedByPlannerID(t *testing.T) {
 
 // TestClaimLiveIgnoresPaneKeyedRow: a pre-#303 pane-keyed claim is not a claim
 // this version wrote. Live must ignore it (it would otherwise have to answer a
-// question about a pane it no longer has) and leave the row for the sweep,
-// which is the only thing allowed to remove it.
+// question about a pane it no longer has) and leave the row where it is:
+// nothing in this version rewrites or removes a pane-keyed row.
 func TestClaimLiveIgnoresPaneKeyedRow(t *testing.T) {
 	f, d, _ := testClaims(t)
 	now := time.Now()
@@ -127,39 +127,6 @@ func TestClaimLiveIgnoresPaneKeyedRow(t *testing.T) {
 	}
 	if _, ok := claimRow(t, d, paneClaimID); !ok {
 		t.Fatal("Live must leave a pane-keyed claim alone")
-	}
-}
-
-// TestMCPStartRemovesOnlyDeadPaneKeyedClaims is the plan's required case for
-// the sweep rule: a pane-keyed claim whose pid is dead goes, a live one stays,
-// a planner-keyed claim is never swept, and a row with no pid is left alone.
-func TestMCPStartRemovesOnlyDeadPaneKeyedClaims(t *testing.T) {
-	f, d, _ := testClaims(t)
-	f.Alive = func(pid int) bool { return pid == 4242 }
-
-	now := time.Now()
-	seedClaim(t, d, "wG_pQ", Claim{PID: 111, StartedAt: now, SeenAt: now})  // dead
-	seedClaim(t, d, "w9_p1", Claim{PID: 4242, StartedAt: now, SeenAt: now}) // live
-	seedClaim(t, d, testClaimPlanner, Claim{Planner: testClaimPlanner, PID: 111, StartedAt: now, SeenAt: now})
-	if err := d.KVPut(claimKey("junk"), []byte(`{"pane":"wG:pQ"}`)); err != nil {
-		t.Fatalf("seed junk row: %v", err)
-	}
-
-	if removed := f.SweepPaneKeyed(); removed != 1 {
-		t.Fatalf("SweepPaneKeyed removed %d claims, want 1", removed)
-	}
-
-	if _, ok := claimRow(t, d, "wG_pQ"); ok {
-		t.Error("a dead pane-keyed claim must be removed")
-	}
-	if _, ok := claimRow(t, d, "w9_p1"); !ok {
-		t.Error("a live pane-keyed claim must survive the sweep")
-	}
-	if _, ok := claimRow(t, d, testClaimPlanner); !ok {
-		t.Error("a planner-keyed claim must survive the sweep")
-	}
-	if _, ok := claimRow(t, d, "junk"); !ok {
-		t.Error("a pane-keyed claim with no pid has no dead writer to prove, so it stays")
 	}
 }
 
@@ -284,7 +251,7 @@ func TestClaimWriteRefusesSecondLiveWriter(t *testing.T) {
 
 // TestClaimWriteRefusesANonPlannerID: the old pane-keyed shape must never be
 // written again, so a claim whose key is not a planner id is refused rather
-// than silently creating a row the sweep would later reap.
+// than silently creating a pane-keyed row.
 func TestClaimWriteRefusesANonPlannerID(t *testing.T) {
 	f, d, _ := testClaims(t)
 	now := time.Now()

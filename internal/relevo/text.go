@@ -40,24 +40,6 @@ func RestoreText(res Resolution) string {
 	return strings.Join(lines, "\n")
 }
 
-// LandText is what `relevo land` says on success: what was landed and how far
-// it got, then the PR (or the exact command that would open one).
-func LandText(res LandResult) string {
-	how := "merged"
-	if res.Rebased {
-		how = "rebased"
-	}
-	line := fmt.Sprintf("landed %s -> %s (%s; gate %s; pushed)",
-		res.Branch, res.Base, how, res.GateResult)
-	switch {
-	case res.PRURL != "":
-		line += "\n  pr: " + res.PRURL
-	case res.PRCommand != "":
-		line += "\n  open the PR: " + res.PRCommand
-	}
-	return line
-}
-
 // StopText is what `relevo stop` says on success: what happened to the round.
 func StopText(name string, res StopResult) string {
 	switch res.Action {

@@ -2295,7 +2295,7 @@ func TestForwardAvailablePostsToEveryServerOnce(t *testing.T) {
 	local := remoteBinding("")
 	local.Name = "local"
 	local.CWD = "/fake/local"
-	local.Builder = store.Endpoint{PaneID: "w2:p4", Mode: store.ModePane}
+	local.Builder = store.Endpoint{PaneID: "w2:p4", Mode: store.Mode("pane")}
 	if err := st.Save(local); err != nil {
 		t.Fatal(err)
 	}
@@ -2335,7 +2335,7 @@ func TestServerInUse(t *testing.T) {
 	bindings := []store.Binding{
 		remoteBinding("zen"),
 		func() store.Binding { b := remoteBinding("mars"); b.Name = "other"; return b }(),
-		{Name: "local", Builder: store.Endpoint{Mode: store.ModePane}},
+		{Name: "local", Builder: store.Endpoint{Mode: store.Mode("pane")}},
 	}
 
 	if got := ServerInUse(bindings, "zen"); len(got) != 1 || got[0] != "api" {
@@ -4921,7 +4921,7 @@ func TestResumeRemoteRefusesRebind(t *testing.T) {
 	}
 }
 
-func TestAskForkRefuseRemote(t *testing.T) {
+func TestAskRefusesRemote(t *testing.T) {
 	t.Run("Ask", func(t *testing.T) {
 		rt, _ := seedForAsk(t)
 		b := remoteBinding("zen")
@@ -4937,22 +4937,6 @@ func TestAskForkRefuseRemote(t *testing.T) {
 		})
 		if err == nil || !strings.Contains(err.Error(), "consults are local-only") {
 			t.Fatalf("Ask err = %v, want the consults-are-local-only refusal", err)
-		}
-	})
-
-	t.Run("Fork", func(t *testing.T) {
-		rt := newForkRuntime(t, nil, nil)
-		b := remoteBinding("zen")
-		b.CWD = "/fake/fork-src"
-		if err := rt.Store.Save(b); err != nil {
-			t.Fatal(err)
-		}
-
-		_, err := Fork(context.Background(), rt, ForkOptions{
-			Source: "api", NewName: "api2", Round: 1, PlannerID: testPlannerName, CWD: "/fake/fork-dst",
-		})
-		if err == nil || !strings.Contains(err.Error(), "fork across servers is not supported") {
-			t.Fatalf("Fork err = %v, want the cross-server refusal", err)
 		}
 	})
 }

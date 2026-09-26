@@ -229,55 +229,6 @@ func TestGateFollowsRole(t *testing.T) {
 	}
 }
 
-// TestForkInheritsRole pins #382 §2: a fork inherits the source binding's
-// role, and its first round runs that role's definition.
-func TestForkInheritsRole(t *testing.T) {
-	rt := newRuntime(t)
-	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
-		"builder":    {Candidates: []string{testClaudeRef}},
-		"ui-builder": uiBuilderRow(testClaudeRef),
-	})
-
-	srcCWD := t.TempDir()
-	src := store.Binding{
-		Name: "source", CWD: srcCWD, PlannerID: testPlannerID,
-		BuilderCandidate: testClaudeRef, Role: "ui-builder",
-		Round: 1, State: store.StateActive,
-	}
-	if err := rt.Store.Save(src); err != nil {
-		t.Fatalf("Save(source): %v", err)
-	}
-	if err := rt.Store.AppendLog("source", store.LogEntry{
-		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan,
-		Path: rt.Store.PlanPath("source", 1), Confirmed: true,
-	}); err != nil {
-		t.Fatalf("AppendLog: %v", err)
-	}
-
-	res, err := Fork(context.Background(), rt, ForkOptions{
-		Source: "source", Round: 1, NewName: "alt",
-		PlannerID: testPlannerName, CWD: t.TempDir(), Headless: true,
-	})
-	if err != nil {
-		t.Fatalf("Fork: %v", err)
-	}
-	if res.Binding.Role != "ui-builder" {
-		t.Errorf("fork Role = %q, want ui-builder", res.Binding.Role)
-	}
-
-	fr := newFakeRunner()
-	rt.Runner = fr
-	if _, err := startRound(context.Background(), rt, nil, res.Binding, "the prompt"); err != nil {
-		t.Fatalf("startRound: %v", err)
-	}
-	if len(fr.specs) != 1 {
-		t.Fatalf("specs = %+v, want one Start", fr.specs)
-	}
-	if !containsAdjacentPair(fr.specs[0].Argv, "--agent", "my-ui") {
-		t.Errorf("argv = %v, want --agent my-ui", fr.specs[0].Argv)
-	}
-}
-
 // TestSwitchPicksFromRoleList pins #382 §5.1: a mid-round switch takes the
 // next candidate from the binding's own role's list, never a builder-only one.
 //

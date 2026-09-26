@@ -911,13 +911,6 @@ func stripBy(text string) string {
 	return strings.Join(out, " ")
 }
 
-func deref(s *string) string {
-	if s == nil {
-		return "-"
-	}
-	return *s
-}
-
 func pad(s string, width int) string {
 	if w := lipgloss.Width(s); w < width {
 		return s + strings.Repeat(" ", width-w)

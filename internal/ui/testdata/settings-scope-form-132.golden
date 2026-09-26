@@ -1,0 +1,34 @@
+  ◆ relevo    settings                                                                                         v0.13.0-28    14:02  
+                                                                                                                                    
+   17 settings   3 set                                                                                                              
+                                                                                                                                    
+   SETTING                                                                         VALUE                   DEFAULT                  
+   rounds ┈┈┈┈┈┈┈┈┈╭─ serve.scope ──────────────────────────────────────────────────────────────────────────────╮settings · 2 set   
+   max_switches    │                                                                                            │                   
+   max_tier        │ enabled           on    off                                                                │                   
+   verify.default  │                                                                                            │                   
+   check ┈┈┈┈┈┈┈┈┈┈│ slice            relevo.slice               default: systemd's                             │┈┈┈┈┈ 3 settings   
+   gate.default    │                                                                                            │                   
+   gate.timeout    │ cpu_weight                                  default 100                                    │                   
+   gate.regate     │                                                                                            │                   
+   timing ┈┈┈┈┈┈┈┈┈│ memory_max                                  default none · e.g. 8G                         │┈┈┈┈┈ 5 settings   
+   limit_gate_defau│                                                                                            │                   
+   stall_after     │ cpu_quota                                   default none · e.g. 200%                       │                   
+   progress_interva│                                                                                            │                   
+   explore_after   │ gate_cpu_quota                              default: cpu_quota                             │                   
+   stale_after     │                                                                                            │                   
+   processes ┈┈┈┈┈┈│ allowed_cpus                                default: no pinning · e.g. 0-3                 │settings · 1 set   
+   scope           │                                                                                            │o limits           
+   serve.max_builde│ tasks_max                                   default none                                   │                   
+   serve.scope     │                                                                                            │pe                 
+   scan ┈┈┈┈┈┈┈┈┈┈┈│ rounds relevo serve runs use this in place of scope                                        │┈┈┈┈┈ 2 settings   
+   scan_patterns   │                                                                                            │                   
+   classify        │  enter  save       tab  next field       esc  cancel       ←→  choose                      │                   
+   notify ┈┈┈┈┈┈┈┈┈╰────────────────────────────────────────────────────────────────────────────────────────────╯┈┈┈┈┈┈ 1 setting   
+   notify.webhooks                                                                 none                    none                     
+                                                                                                                                    
+   serve.scope   slice relevo.slice                                                                                                 
+   The scope for rounds relevo serve runs; when set it replaces scope for them.                                                     
+                                                                                                                                    
+
+ enter  save      tab  next field      esc  cancel      ←→  choose                                                                  

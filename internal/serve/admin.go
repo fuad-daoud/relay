@@ -138,40 +138,6 @@ func FlatStatus(ctx context.Context, s *Server) (relevo.Report, error) {
 	return out, nil
 }
 
-// RenderAdminStatus formats the admin status for all owners. The first line
-// is the server's builder census (#285): "builders <running>/<cap>, queued
-// <n>". Then, for each owner: a header line "<label>  (<id>)" then
-// relevo.RenderStatus(report) indented two spaces; owners with no bindings
-// print "<label>  no bindings". "no owners\n" follows the census line when
-// there are none.
-func RenderAdminStatus(owners []OwnerStatus, builders remote.BuildersView) string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "builders %d/%d, queued %d\n", builders.Running, builders.Cap, builders.Queued)
-
-	if len(owners) == 0 {
-		sb.WriteString("no owners\n")
-		return sb.String()
-	}
-
-	for _, o := range owners {
-		if len(o.Report.Bindings) == 0 {
-			fmt.Fprintf(&sb, "%s  no bindings\n", o.Label)
-			continue
-		}
-		fmt.Fprintf(&sb, "%s  (%s)\n", o.Label, string(o.Owner))
-		rendered := relevo.RenderStatus(o.Report)
-		trimmed := strings.TrimRight(rendered, "\n")
-		for _, line := range strings.Split(trimmed, "\n") {
-			if line == "" {
-				sb.WriteString("\n")
-			} else {
-				sb.WriteString("  " + line + "\n")
-			}
-		}
-	}
-	return sb.String()
-}
-
 // StatusJSON is the document `relevo serve status --json` prints: the
 // machine-readable server census (servers#13). The field names are a
 // contract. Owners is never null; LastContact is null until some owner
@@ -411,63 +377,8 @@ func AdminOwnerRuntime(s *Server, owner string) (relevo.Runtime, string, error) 
 	return s.runtimeAt(root), s.clients.LabelOf(id), nil
 }
 
-// AdminTabEntries gathers every TabEntry `relevo serve tab` sums. With an
-// owner it is that owner's entries, Owner set to the label and Binding left
-// as the bare name; without one it walks every owner directory the way
-// AdminStatus does, grouping them as "label/name" under Owner = label so two
-// owners' same-named bindings stay apart. Read-only: each owner directory
-// already exists (that is how it is found), so WithLock's MkdirAll is a
-// no-op and no store is created.
-func AdminTabEntries(s *Server, owner string, cut time.Time, warn func(string)) ([]relevo.TabEntry, error) {
-	if owner != "" {
-		rt, label, err := AdminOwnerRuntime(s, owner)
-		if err != nil {
-			return nil, err
-		}
-		entries, err := relevo.TabEntries(rt, cut, warn)
-		if err != nil {
-			return nil, err
-		}
-		for i := range entries {
-			entries[i].Owner = label
-		}
-		return entries, nil
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
-	dirs, err := os.ReadDir(bindingsDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	var out []relevo.TabEntry
-	for _, entry := range dirs {
-		id, ok := remote.IDFromDir(entry.Name())
-		if !entry.IsDir() || !ok {
-			continue
-		}
-		ownerPath := filepath.Join(bindingsDir, entry.Name())
-		entries, err := relevo.TabEntries(s.runtimeAt(ownerPath), cut, warn)
-		if err != nil {
-			return nil, err
-		}
-		label := s.clients.LabelOf(id)
-		for i := range entries {
-			entries[i].Owner = label
-			entries[i].Binding = label + "/" + entries[i].Binding
-		}
-		out = append(out, entries...)
-	}
-	return out, nil
-}
-
 // resolveOwner finds the one client owner names, by exact label or exact
+
 // client id. Two clients sharing a label is an error naming both ids rather
 // than a silent pick between them.
 func (s *Server) resolveOwner(owner string) (remote.ClientID, error) {

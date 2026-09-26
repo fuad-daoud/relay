@@ -366,8 +366,8 @@ func consultActive(c Consult) bool {
 // A read or write error leaves every file in place and is returned: the next
 // pass retries, and RoundFilePut is an upsert, so a removal that failed after
 // the commit re-puts the same bytes and removes them again. A removal error
-// is logged, never returned: the seal itself succeeded. Non-NNN files (today
-// land-gate.log) are never sealed. The state lock is already held by the
+// is logged, never returned: the seal itself succeeded. Non-NNN files are
+// never sealed. The state lock is already held by the
 // caller (P3c §4.2).
 func (t *Tx) SealRound(name string, round int) (int, error) {
 	files, err := roundFilesOfDir(t.s.Dir(name), round)

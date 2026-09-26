@@ -51,15 +51,6 @@ func reportReady(b relevo.BindingStatus) bool {
 	return b.PlannerName == "you" && b.Pending != nil
 }
 
-// nowStyle colours the NOW cell: a pending report is what needs the human, so
-// it wears the same amber as a NEEDS YOU state (§4.5).
-func nowStyle(b relevo.BindingStatus) lipgloss.Style {
-	if reportReady(b) {
-		return stateNeedsYouStyle
-	}
-	return dimStyle
-}
-
 // whatAge is a row's NOW cell: what the binding is on, and for how long,
 // from the fields Status has today.
 func whatAge(b relevo.BindingStatus, now time.Time) (what, age string) {
@@ -118,22 +109,6 @@ func clipName(name string, width int) string {
 		return name
 	}
 	return lipgloss.NewStyle().MaxWidth(width-1).Render(name) + "…"
-}
-
-// clipLeft truncates s to width cells from the left, a leading ellipsis
-// marking what was cut: a repo path matters most at its tail.
-func clipLeft(s string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	if lipgloss.Width(s) <= width {
-		return s
-	}
-	runes := []rune(s)
-	if len(runes) <= width {
-		return s
-	}
-	return "…" + string(runes[len(runes)-(width-1):])
 }
 
 // fleetView is ':fleet': grouped sections, fold, card and gated line (§2.3, §4).

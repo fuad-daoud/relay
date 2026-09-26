@@ -1,0 +1,34 @@
+  ◆ relevo    settings                                                                                         v0.13.0-28    14:02  
+                                                                                                                                    
+   17 settings   3 set                                                                                                              
+                                                                                                                                    
+   SETTING                                                                         VALUE                   DEFAULT                  
+   rounds ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings · 2 set   
+   max_switches                                                                    2                       2                        
+   max_tier                                                                        yolo                    edit                     
+   verify.default  ╭─ classify ─────────────────────────────────────────────────────────────────────────────────╮                   
+   check ┈┈┈┈┈┈┈┈┈┈│                                                                                            │┈┈┈┈┈ 3 settings   
+   gate.default    │ provider          off    jev                                                               │                   
+   gate.timeout    │                                                                                            │                   
+   gate.regate     │ model                                       default jev-latest                             │                   
+   timing ┈┈┈┈┈┈┈┈┈│                                                                                            │┈┈┈┈┈ 5 settings   
+   limit_gate_defau│ threshold                                   default 0.7                                    │                   
+   stall_after     │                                                                                            │                   
+   progress_interva│ timeout                                     default 4s                                     │                   
+   explore_after   │                                                                                            │                   
+   stale_after     │ scores each builder line for prompt injection, beside the pattern scan                     │                   
+   processes ┈┈┈┈┈┈│                                                                                            │settings · 1 set   
+   scope           │  enter  save       tab  next field       esc  cancel       ←→  choose                      │o limits           
+   serve.max_builde╰────────────────────────────────────────────────────────────────────────────────────────────╯                   
+   serve.scope                                                                     slice relevo.slice      as scope                 
+   scan ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 2 settings   
+   scan_patterns                                                                   none                    none                     
+   classify                                                                        off                     off                      
+   notify ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 setting   
+   notify.webhooks                                                                 none                    none                     
+                                                                                                                                    
+   classify   off                                                                                                                   
+   An optional classifier that scores a builder's lines for prompt injection, beside the pattern scan.                              
+                                                                                                                                    
+
+ enter  save      tab  next field      esc  cancel      ←→  choose                                                                  

@@ -67,18 +67,6 @@ func reconcileConsults(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			continue
 		}
 
-		// A consult endpoint with Mode "" predates #303. Pane consults were
-		// removed, so relevo can no longer drive it: close it silent with the
-		// reason instead of reconciling a pane.
-		if !b.Consults[i].Endpoint.Headless() {
-			var err error
-			if b, err = finishConsult(ctx, rt, tx, b, i, store.ConsultSilent,
-				"pane consults were removed (#303)"); err != nil {
-				return b, err
-			}
-			continue
-		}
-
 		// A headless consult is a process, not a pane: it is observed through
 		// the Runner and its completion is the stream's final message
 		// (#147, #144).

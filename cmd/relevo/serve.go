@@ -721,7 +721,7 @@ func cmdServeStatus(args []string) error {
 	fs := flag.NewFlagSet("relevo serve status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	_ = fs.String("state", "", "state directory")
-	asJSON := fs.Bool("json", false, "print the census as JSON")
+	_ = fs.Bool("json", false, "print the census as JSON")
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, errHelpShown) {
 			return err
@@ -745,14 +745,9 @@ func cmdServeStatus(args []string) error {
 		return err
 	}
 
-	if *asJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(serve.StatusDocument(owners, builders))
-	}
-
-	fmt.Print(serve.RenderAdminStatus(owners, builders))
-	return nil
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(serve.StatusDocument(owners, builders))
 }
 
 // serveShowUsage is the removed `relevo serve show` usage line, updated to
@@ -845,47 +840,6 @@ func serveShow(owner, state, name string, round int, section relevo.ShowSection,
 		return exitCodeErr{code: 1}
 	}
 	return nil
-}
-
-// serveTab is cmdServeTab's body, moved so `relevo history --tab --owner
-// <label|all>` calls it (§4.2). It takes the parsed values: owner "" means
-// every owner (the caller maps `--owner all` to ""), state is the resolved
-// --state. It sums recorded usage across owners from the server (#216). With
-// an owner it sums that owner's bindings; without it sums every owner, and
-// the binding group is "<label>/<name>" while --by owner groups by label. It
-// is the spec's "`relevo tab --by owner` on the server", scoped to this verb.
-func serveTab(owner, state, since, by string, asJSON bool) error {
-	cut, err := relevo.ParseSince(since, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-
-	root, d, err := adminRootFor(state)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-
-	srv, err := serve.New(serveAdminConfig(root, d))
-	if err != nil {
-		return err
-	}
-
-	entries, err := serve.AdminTabEntries(srv, owner, cut, func(msg string) {
-		fmt.Fprintf(os.Stderr, "relevo serve tab: skip %s\n", msg)
-	})
-	if err != nil {
-		if errors.Is(err, serve.ErrNoSuchClient) {
-			fmt.Fprintf(os.Stderr, "relevo serve tab: no such client: %s\n", owner)
-		} else if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "relevo serve tab: %s: binding not found\n", owner)
-		} else {
-			fmt.Fprintf(os.Stderr, "relevo serve tab: %v\n", err)
-		}
-		return exitCodeErr{code: 1}
-	}
-
-	return renderTabReport(entries, by, cut, asJSON)
 }
 
 // serveGateList lists the gates on the server-wide ledger: `relevo serve

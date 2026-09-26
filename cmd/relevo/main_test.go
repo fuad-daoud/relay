@@ -266,24 +266,6 @@ func TestStopRefusesToGuessTheBinding(t *testing.T) {
 	}
 }
 
-// TestLandRefusesToGuessTheBinding pins #136: land pushes, so a bare `relevo
-// land` must refuse rather than act on whichever binding owns the cwd. The
-// check runs before any runtime is built, so this test touches neither the
-// state directory nor a harness, and a CI runner with no harness still fails on the
-// missing name, not on the environment.
-func TestLandRefusesToGuessTheBinding(t *testing.T) {
-	err := run([]string{"land"})
-	if err == nil {
-		t.Fatal("a bare relevo land must be refused")
-	}
-	if !strings.Contains(err.Error(), "--name") {
-		t.Fatalf("error must point at --name, got %q", err)
-	}
-	if !strings.Contains(err.Error(), "usage: relevo land") {
-		t.Fatalf("expected the usage line, got %v", err)
-	}
-}
-
 // TestStopGraceMustBePositive pins #138's flag validation: --grace <= 0 is a
 // bad value, not an omission, so it exits 2. The check runs before any runtime
 // is built, so this touches neither the state directory nor a harness.
@@ -490,19 +472,6 @@ func TestDiffAnchorsCommand(t *testing.T) {
 	}
 }
 
-// TestReviewRequiresFile pins that `relevo review` without --file is refused
-// before a runtime is built, so a CI runner with no harness still fails on the
-// missing flag rather than on the environment.
-func TestReviewRequiresFile(t *testing.T) {
-	err := run([]string{"review", "--name", "webshop"})
-	if err == nil {
-		t.Fatal("relevo review without --file must be rejected")
-	}
-	if !strings.Contains(err.Error(), "--file") {
-		t.Errorf("error must point at --file, got %q", err)
-	}
-}
-
 func TestDiffDriftCommand(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
@@ -615,31 +584,6 @@ func TestDiffDriftCommand(t *testing.T) {
 	}
 	if !strings.Contains(errNoDriftStat.Error(), "--drift") || !strings.Contains(errNoDriftStat.Error(), "99") || !strings.Contains(errNoDriftStat.Error(), "webshop") {
 		t.Fatalf("error %q must name --drift, round 99, and webshop", errNoDriftStat.Error())
-	}
-}
-
-func TestForkHelp(t *testing.T) {
-	err := run([]string{"bind", "--from", "src", "-h"})
-	if !errors.Is(err, errHelpShown) {
-		t.Fatalf("got %v, want errHelpShown", err)
-	}
-}
-
-func TestForkValidation(t *testing.T) {
-	// Each assertion names the specific validation being exercised: the
-	// new binding's name is --name, and the round comes from --from's @ROUND
-	// or from --round.
-
-	// Missing --round: no @ROUND in --from and --round left at 0.
-	err := run([]string{"bind", "--from", "src", "--name", "fork-1"})
-	if err == nil || !strings.Contains(err.Error(), "relevo bind --from requires --round N") {
-		t.Fatalf("expected the --round validation, got %v", err)
-	}
-
-	// Missing --name, the new binding's name.
-	err = run([]string{"bind", "--from", "src", "--round", "1"})
-	if err == nil || !strings.Contains(err.Error(), "relevo bind --from requires --name NAME") {
-		t.Fatalf("expected the --name validation, got %v", err)
 	}
 }
 
@@ -1073,7 +1017,7 @@ func TestBindRejectsTabFlag(t *testing.T) {
 	for _, args := range [][]string{
 		{"bind", "--tab"},
 		{"bind", "--worktree", "--name", "x", "--tab"},
-		{"bind", "--from", "x", "--round", "1", "--name", "y", "--tab"},
+		{"bind", "--branch", "b", "--name", "y", "--tab"},
 		{"ask", "--actor", "reviewer", "--file", "q.md", "--new-tab"},
 	} {
 		err := run(args)
@@ -1385,8 +1329,6 @@ func TestBindRoutesAndRefusals(t *testing.T) {
 		{"branch is add", bindFlags{branch: "b"}, routeAdd},
 		{"server is add", bindFlags{server: "s"}, routeAdd},
 		{"base is add", bindFlags{base: "main"}, routeAdd},
-		{"from is fork", bindFlags{from: "src@2", name: "new"}, routeFork},
-		{"from with cwd is fork", bindFlags{from: "src@2", name: "new", cwd: "/tmp"}, routeFork},
 	}
 	for _, c := range valid {
 		got, err := bindRouteFor(c.f)
@@ -1404,12 +1346,6 @@ func TestBindRoutesAndRefusals(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"from+resume", []string{"bind", "--from", "src@1", "--name", "x", "--resume"}, "--from cannot be combined with --resume/--rebind"},
-		{"from+rebind", []string{"bind", "--from", "src@1", "--name", "x", "--rebind"}, "--from cannot be combined with --resume/--rebind"},
-		{"from+worktree", []string{"bind", "--from", "src@1", "--name", "x", "--worktree"}, "--from cannot be combined with --worktree"},
-		{"from+branch", []string{"bind", "--from", "src@1", "--name", "x", "--branch", "b"}, "--from cannot be combined with --worktree"},
-		{"from+server", []string{"bind", "--from", "src@1", "--name", "x", "--server", "s"}, "--from cannot be combined with --worktree"},
-		{"from+base", []string{"bind", "--from", "src@1", "--name", "x", "--base", "main"}, "--from cannot be combined with --worktree"},
 		{"resume+worktree", []string{"bind", "--resume", "--name", "x", "--worktree"}, "--resume/--rebind cannot be combined with"},
 		{"resume+cwd", []string{"bind", "--resume", "--name", "x", "--cwd", "/tmp"}, "--resume/--rebind cannot be combined with"},
 		{"rebind+server", []string{"bind", "--resume", "--rebind", "--name", "x", "--server", "s"}, "--resume/--rebind cannot be combined with"},
@@ -1567,7 +1503,6 @@ func TestUnbindSweepTakesNoBinding(t *testing.T) {
 func TestRemovedVerbsNameTheirReplacement(t *testing.T) {
 	cases := []struct{ verb, replacement string }{
 		{"add", "relevo bind --worktree"},
-		{"fork", "relevo bind --from <source>@<round>"},
 		{"diff", "relevo show --diff"},
 		{"log", "relevo show --log"},
 		{"gc", "relevo unbind --done"},

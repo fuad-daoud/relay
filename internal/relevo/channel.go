@@ -49,7 +49,7 @@ type ClaimStore interface {
 	// now - SeenAt <= ClaimTTL. A row that exists but is not live is
 	// removed and (nil, nil) returned. Missing row -> (nil, nil). A name
 	// that is not a planner id is not a claim this version made: it is
-	// ignored (nil, nil) and left for SweepPaneKeyed.
+	// ignored (nil, nil) and never rewritten.
 	Live(planner string, now time.Time) (*Claim, error)
 	// Write persists c. Returns ErrClaimHeld when a different live claim
 	// (other PID) exists for c.Planner.
@@ -57,11 +57,6 @@ type ClaimStore interface {
 	// Remove deletes the claim for planner if its PID equals pid. No error
 	// when absent.
 	Remove(planner string, pid int) error
-	// SweepPaneKeyed removes the pre-#303 pane-keyed claims whose writer is
-	// dead, and returns how many it removed. A live pane-keyed claim --
-	// another planner session still running an older relevo mcp -- is left
-	// alone.
-	SweepPaneKeyed() int
 }
 
 // KVClaims is the ClaimStore over the store root database's kv rows: one
@@ -114,9 +109,9 @@ func (c *KVClaims) importFiles() error {
 
 	for _, e := range entries {
 		name := e.Name()
-		// The sweep's own filter: only a *.json file was ever a claim. The
-		// base name is the key's tail, pane-keyed names included -- the
-		// sweep is what eventually reaps those.
+		// Only a *.json file was ever a claim. The base name is the key's
+		// tail, pane-keyed names included -- those old rows are ignored and
+		// never rewritten.
 		if e.IsDir() || filepath.Ext(name) != ".json" {
 			continue
 		}
@@ -137,8 +132,8 @@ func (c *KVClaims) Live(plannerID string, now time.Time) (*Claim, error) {
 	}
 	if planner.ValidID(plannerID) != nil {
 		// Not a planner id: a pre-#303 pane-keyed claim. This version did
-		// not write it and must not rewrite it; only SweepPaneKeyed may
-		// remove it, and only once its writer is dead.
+		// not write it and must not rewrite it; the old row is ignored and
+		// left alone.
 		return nil, nil
 	}
 	if err := c.ensureImported(); err != nil {
@@ -246,45 +241,10 @@ func (c *KVClaims) Remove(plannerID string, pid int) error {
 	return c.KV.KVDelete(claimKey(plannerID))
 }
 
-// SweepPaneKeyed implements ClaimStore: it removes every claim/<name> row
-// whose name is not a valid planner id -- a claim written by a pre-#303 relevo
-// mcp, keyed by pane -- but only once that claim's pid is provably dead. Other
-// planner sessions may still be running an older relevo mcp during the
-// upgrade, and deleting a live claim would make them rewrite it every poll.
-// A row with no parseable pid has no dead writer to prove, so it is left.
-// It returns how many rows it removed.
-func (c *KVClaims) SweepPaneKeyed() int {
-	if err := c.ensureImported(); err != nil {
-		return 0
-	}
-	keys, err := c.KV.KVKeys(claimKeyPrefix)
-	if err != nil {
-		return 0
-	}
-
-	removed := 0
-	for _, key := range keys {
-		id := strings.TrimPrefix(key, claimKeyPrefix)
-		if planner.ValidID(id) == nil {
-			continue // a planner-keyed claim: Live's business, not this sweep's
-		}
-		raw, ok, err := c.KV.KVGet(key)
-		if err != nil || !ok {
-			continue
-		}
-		if !paneKeyedClaimDead(raw, c.alive) {
-			continue
-		}
-		if err := c.KV.KVDelete(key); err == nil {
-			removed++
-		}
-	}
-	return removed
-}
-
-// paneKeyedClaimDead is the sweep's rule, pure so it is tested directly: a
-// claim document is removed only when it parses and carries a pid that is not
-// alive. Anything else -- unparseable bytes, no pid, a live pid -- is left.
+// paneKeyedClaimDead is the pre-#303 pane-keyed claim rule, pure so it is
+// tested directly: a claim document is removed only when it parses and carries
+// a pid that is not alive. Anything else -- unparseable bytes, no pid, a live
+// pid -- is left.
 func paneKeyedClaimDead(raw []byte, alive func(pid int) bool) bool {
 	var c struct {
 		PID int `json:"pid"`

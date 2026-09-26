@@ -65,6 +65,19 @@ func newRuntime(t *testing.T) Runtime {
 	}
 }
 
+// newTestRuntime is newRuntime with a test's Git: a local builder is headless
+// (#303), so there is no pane dependency left to thread through, and fg may be
+// nil for the tests that prove --cwd needs no git.
+func newTestRuntime(t *testing.T, fg *fakeGit) Runtime {
+	t.Helper()
+	rt := newRuntime(t)
+	if fg != nil {
+		rt.Git = fg
+	}
+	rt.Hooks = nil
+	return rt
+}
+
 // runtimeWithPlanner is newRuntime with its one registry record replaced, for
 // the tests that need a planner whose session id, kind or transcript locator
 // a case names. An empty locator leaves Planner.TranscriptLocator for
@@ -877,14 +890,11 @@ func TestResumeRestoreHeadlessHasNoOrphan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, res, err := BindResolved(context.Background(), rt, BindOptions{
+	_, _, err := BindResolved(context.Background(), rt, BindOptions{
 		Name: "webshop", Resume: true, PlannerID: testPlannerName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("BindResolved: %v", err)
-	}
-	if res.OrphanedPane != "" {
-		t.Errorf("OrphanedPane = %q, want empty", res.OrphanedPane)
 	}
 	if len(fg.checkoutWorktreeCalls) != 1 {
 		t.Errorf("checkoutWorktreeCalls = %d, want 1", len(fg.checkoutWorktreeCalls))
@@ -1879,49 +1889,6 @@ func TestBindNoGateOverridesPolicyDefault(t *testing.T) {
 	}
 }
 
-// TestForkInheritsSourceGate pins #132: a fork with no --gate/--no-gate
-// inherits the source binding's Gate.
-func TestForkInheritsSourceGate(t *testing.T) {
-	ctx := context.Background()
-	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
-
-	srcCWD := filepath.Join(t.TempDir(), "repo")
-	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	seedFourRoundBinding(t, rt, "source", srcCWD)
-	src, err := rt.Store.Load("source")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src.Gate = "make check"
-	if err := rt.Store.Save(src); err != nil {
-		t.Fatal(err)
-	}
-
-	res, err := Fork(ctx, rt, ForkOptions{
-		Source:    "source",
-		Round:     2,
-		NewName:   "alt",
-		PlannerID: testPlannerName,
-	})
-	if err != nil {
-		t.Fatalf("Fork failed: %v", err)
-	}
-	if res.Binding.Gate != "make check" {
-		t.Errorf("Binding.Gate = %q, want inherited from source", res.Binding.Gate)
-	}
-
-	stored, err := rt.Store.Load("alt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stored.Gate != "make check" {
-		t.Errorf("stored Gate = %q, want inherited from source", stored.Gate)
-	}
-}
-
 // TestBindRegateFlagStored pins #132 part 2: an explicit --regate is stored on
 // the binding as given.
 func TestBindRegateFlagStored(t *testing.T) {
@@ -1978,85 +1945,6 @@ func TestBindRegateFlagOverridesPolicy(t *testing.T) {
 	}
 	if b.Regate != 0 {
 		t.Errorf("b.Regate = %d, want 0 despite the policy default", b.Regate)
-	}
-}
-
-// TestForkInheritsSourceRegate pins #132 part 2: a fork with no --regate
-// inherits the source binding's budget.
-func TestForkInheritsSourceRegate(t *testing.T) {
-	ctx := context.Background()
-	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
-
-	srcCWD := filepath.Join(t.TempDir(), "repo")
-	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	seedFourRoundBinding(t, rt, "source", srcCWD)
-	src, err := rt.Store.Load("source")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src.Regate = 2
-	if err := rt.Store.Save(src); err != nil {
-		t.Fatal(err)
-	}
-
-	res, err := Fork(ctx, rt, ForkOptions{
-		Source:    "source",
-		Round:     2,
-		NewName:   "alt",
-		PlannerID: testPlannerName,
-	})
-	if err != nil {
-		t.Fatalf("Fork failed: %v", err)
-	}
-	if res.Binding.Regate != 2 {
-		t.Errorf("Binding.Regate = %d, want inherited from source", res.Binding.Regate)
-	}
-
-	stored, err := rt.Store.Load("alt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stored.Regate != 2 {
-		t.Errorf("stored Regate = %d, want inherited from source", stored.Regate)
-	}
-}
-
-// TestForkRegateFlagOverridesSource pins #132 part 2: an explicit --regate on
-// a fork wins over the source's budget.
-func TestForkRegateFlagOverridesSource(t *testing.T) {
-	ctx := context.Background()
-	fg := &fakeGit{headCommitID: "commit-head-123"}
-	rt := newForkRuntime(t, fg, nil)
-
-	srcCWD := filepath.Join(t.TempDir(), "repo")
-	if err := os.MkdirAll(srcCWD, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	seedFourRoundBinding(t, rt, "source", srcCWD)
-	src, err := rt.Store.Load("source")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src.Regate = 2
-	if err := rt.Store.Save(src); err != nil {
-		t.Fatal(err)
-	}
-
-	res, err := Fork(ctx, rt, ForkOptions{
-		Source:    "source",
-		Round:     2,
-		NewName:   "alt",
-		PlannerID: testPlannerName,
-		Regate:    ptr(0),
-	})
-	if err != nil {
-		t.Fatalf("Fork failed: %v", err)
-	}
-	if res.Binding.Regate != 0 {
-		t.Errorf("Binding.Regate = %d, want the explicit 0", res.Binding.Regate)
 	}
 }
 

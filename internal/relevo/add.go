@@ -85,12 +85,6 @@ type AddResult struct {
 
 // Add attaches an additional builder to the calling planner, on its own tree.
 //
-// It is deliberately not `fork`. A fork continues a timeline: it copies round
-// history through some round, starts at the round after it, and records where
-// it came from. A peer was never a continuation of anything -- it starts at
-// round 1 with an empty log and no provenance -- so writing ForkedFrom on it
-// would record a relationship that does not exist.
-//
 // Preconditions:  a relevo planner resolves for the caller (--planner,
 //
 //	$RELEVO_PLANNER, the host process, or the session); opts.Name is valid

@@ -27,10 +27,6 @@ func (f fakeClaimStore) Remove(planner string, pid int) error {
 	return nil
 }
 
-// SweepPaneKeyed is a no-op here: the sweep's own rule has its own test in
-// channel_test.go, and this fake is only ever read through Live.
-func (f fakeClaimStore) SweepPaneKeyed() int { return 0 }
-
 // routeRuntime is a minimal Runtime for the delivery-route tests: a temp
 // store, a fixed clock and nothing else wired.
 func routeRuntime(t *testing.T) Runtime {

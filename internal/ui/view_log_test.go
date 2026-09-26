@@ -17,8 +17,6 @@ import (
 )
 
 func strPtr(s string) *string { return &s }
-func intPtr(n int) *int       { return &n }
-func int64Ptr(n int64) *int64 { return &n }
 
 func TestLogFoldsSend(t *testing.T) {
 	now := time.Date(2026, 9, 25, 18, 33, 0, 0, time.UTC)
