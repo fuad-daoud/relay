@@ -13,25 +13,61 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestIngestStoreSourceFillsTheMirror is P3a §8 step 4's test: a binding held
-// in the store's database ingests into the mirror exactly as the same fixture
-// did through DirSource -- a binding row and its event rows -- even though
+// TestIngestStoreSourceFillsTheMirror pins that a binding held in the store's
+// database ingests exactly as the same fixture did through DirSource, though
 // bind.json and log.jsonl no longer exist as files.
 func TestIngestStoreSourceFillsTheMirror(t *testing.T) {
 	ctx := context.Background()
 	deps := Deps{Now: func() time.Time { return time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC) }}
 
-	// DirSource over a fresh copy of the fixture, for the baseline mirror.
 	dir := copyFixture(t)
 	dirDB := openTestDB(t)
 	if _, err := Ingest(ctx, DirSource(dir), dirDB, deps); err != nil {
 		t.Fatalf("Ingest(DirSource): %v", err)
 	}
 
-	// The same fixture adopted into a store root, so the store's database is
-	// the binding's home and bind.json/log.jsonl are gone.
-	root := t.TempDir()
-	st := store.New(root)
+	st := adoptIntoStore(t, dir)
+
+	storeDB := openTestDB(t)
+	if _, err := Ingest(ctx, StoreSource(st, "fixture"), storeDB, deps); err != nil {
+		t.Fatalf("Ingest(StoreSource): %v", err)
+	}
+
+	dirBinding := mustBinding(t, dirDB, "fixture")
+	storeBinding := mustBinding(t, storeDB, "fixture")
+	if storeBinding.CWD != dirBinding.CWD || !strEq(storeBinding.FinalState, "needs_you") {
+		t.Errorf("StoreSource binding = %+v, want DirSource's %+v", storeBinding, dirBinding)
+	}
+
+	dirEvents, err := dirDB.Events(dirBinding.ID, 0)
+	if err != nil {
+		t.Fatalf("Events(dir): %v", err)
+	}
+	storeEvents, err := storeDB.Events(storeBinding.ID, 0)
+	if err != nil {
+		t.Fatalf("Events(store): %v", err)
+	}
+	if len(storeEvents) == 0 || len(storeEvents) != len(dirEvents) {
+		t.Fatalf("StoreSource ingested %d events, DirSource %d", len(storeEvents), len(dirEvents))
+	}
+	for i := range storeEvents {
+		if got, want := entryOf(t, storeEvents[i].EntryJSON), entryOf(t, dirEvents[i].EntryJSON); got != want {
+			t.Errorf("event %d = %s, want %s\nstore: %s\n  dir: %s",
+				i, got, want, storeEvents[i].EntryJSON, dirEvents[i].EntryJSON)
+		}
+	}
+
+	// Round files still come from the binding directory, not from Load.
+	if rounds := mustRounds(t, storeDB, storeBinding.ID); len(rounds) != 3 {
+		t.Errorf("StoreSource ingested %d rounds, want 3 (the round files)", len(rounds))
+	}
+}
+
+// adoptIntoStore imports dir's files into a store root, so the store's database
+// becomes the binding's home and bind.json/log.jsonl are gone.
+func adoptIntoStore(t *testing.T, dir string) *store.Store {
+	t.Helper()
+	st := store.New(t.TempDir())
 	if err := os.MkdirAll(st.Dir("fixture"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -56,49 +92,11 @@ func TestIngestStoreSourceFillsTheMirror(t *testing.T) {
 			t.Fatalf("%s is still a file after the import: %v", base, err)
 		}
 	}
-
-	storeDB := openTestDB(t)
-	if _, err := Ingest(ctx, StoreSource(st, "fixture"), storeDB, deps); err != nil {
-		t.Fatalf("Ingest(StoreSource): %v", err)
-	}
-
-	dirBinding := mustBinding(t, dirDB, "fixture")
-	storeBinding := mustBinding(t, storeDB, "fixture")
-	if storeBinding.CWD != dirBinding.CWD || !strEq(storeBinding.FinalState, "needs_you") {
-		t.Errorf("StoreSource binding = %+v, want DirSource's %+v", storeBinding, dirBinding)
-	}
-
-	dirEvents, err := dirDB.Events(dirBinding.ID, 0)
-	if err != nil {
-		t.Fatalf("Events(dir): %v", err)
-	}
-	storeEvents, err := storeDB.Events(storeBinding.ID, 0)
-	if err != nil {
-		t.Fatalf("Events(store): %v", err)
-	}
-	if len(storeEvents) == 0 {
-		t.Fatal("StoreSource ingested no event rows")
-	}
-	if len(storeEvents) != len(dirEvents) {
-		t.Fatalf("StoreSource ingested %d events, DirSource %d", len(storeEvents), len(dirEvents))
-	}
-	for i := range storeEvents {
-		if got, want := entryOf(t, storeEvents[i].EntryJSON), entryOf(t, dirEvents[i].EntryJSON); got != want {
-			t.Errorf("event %d = %s, want %s\nstore: %s\n  dir: %s",
-				i, got, want, storeEvents[i].EntryJSON, dirEvents[i].EntryJSON)
-		}
-	}
-
-	// Round files still come from the binding directory, not from Load.
-	if rounds := mustRounds(t, storeDB, storeBinding.ID); len(rounds) != 3 {
-		t.Errorf("StoreSource ingested %d rounds, want 3 (the round files)", len(rounds))
-	}
+	return st
 }
 
-// entryOf decodes an event's entry_json to the fields both sources must agree
-// on. The bytes differ by construction -- DirSource passes the file's line
-// through and StoreSource re-marshals a decoded LogEntry -- so the test
-// compares meaning, not bytes.
+// entryOf decodes an event's entry_json to the fields both sources must agree on;
+// their bytes differ by construction, so the test compares meaning, not bytes.
 func entryOf(t *testing.T, entryJSON string) string {
 	t.Helper()
 	var e store.LogEntry

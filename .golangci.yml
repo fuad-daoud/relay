@@ -38,8 +38,6 @@ linters:
         text: '.*'
       - path: '^internal/history/'
         text: '.*'
-      - path: '^internal/ingest/'
-        text: '.*'
       - path: '^internal/jsonshape/'
         text: '.*'
       - path: '^internal/latency/'
@@ -67,8 +65,6 @@ linters:
       - path: '^internal/ui/[^/]+\.go$'
         text: '.*'
       - path: '^internal/ui/dash/'
-        text: '.*'
-      - path: '^internal/usage/'
         text: '.*'
 
 issues:
