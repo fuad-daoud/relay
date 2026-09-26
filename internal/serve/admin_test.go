@@ -701,3 +701,82 @@ func TestAdminStatusLastSeen(t *testing.T) {
 		t.Errorf("LastContact = %v, want %v", doc.LastContact, seen)
 	}
 }
+
+// TestServeStatusJSONKeysBurstReads pins the literal JSON keys in the
+// `relevo serve status --json` document that an external program parses: the
+// burst provider in fuad-daoud/servers reads them over ssh to confirm a node
+// is idle before tearing it down. The keys are named literally here rather
+// than left to the golden file, because `-update` regenerates that golden
+// silently, so a rename would pass CI unnoticed.
+func TestServeStatusJSONKeysBurstReads(t *testing.T) {
+	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	s := newAdminServer(t, now)
+	id := enrol(t, s, "alice")
+	saveOwnerBinding(t, s, id, "app-a", func(b *store.Binding) {
+		b.Round = 2
+		b.BuilderCandidate = "claude/test/m"
+		b.Serve = &store.ServeFacts{LastSeen: now}
+	})
+
+	owners, _, err := AdminStatus(context.Background(), s)
+	if err != nil {
+		t.Fatalf("AdminStatus: %v", err)
+	}
+	doc := StatusDocument(owners, remote.BuildersView{Running: 1, Cap: 2})
+
+	blob, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(blob, &m); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	requireKeys(t, m, "runners", "last_contact")
+	requireKeys(t, m["runners"], "running", "queued", "cap")
+
+	ownersArr, ok := m["owners"].([]any)
+	if !ok || len(ownersArr) == 0 {
+		t.Fatalf("owners is not a non-empty JSON array: %T %v", m["owners"], m["owners"])
+	}
+	owner0, ok := ownersArr[0].(map[string]any)
+	if !ok {
+		t.Fatalf("owners[0] is not a JSON object: %T", ownersArr[0])
+	}
+	report, ok := owner0["report"].(map[string]any)
+	if !ok {
+		t.Fatalf("owners[0].report is not a JSON object: %T", owner0["report"])
+	}
+	bindings, ok := report["bindings"].([]any)
+	if !ok || len(bindings) == 0 {
+		t.Fatalf("owners[0].report.bindings is not a non-empty JSON array: %T %v", report["bindings"], report["bindings"])
+	}
+	b0, ok := bindings[0].(map[string]any)
+	if !ok {
+		t.Fatalf("bindings[0] is not a JSON object: %T", bindings[0])
+	}
+	requireKeys(t, b0, "name", "round", "state", "candidate", "runner_status")
+
+	if b0["name"] != "app-a" {
+		t.Errorf("bindings[0] name = %v, want app-a: the walk must read the seeded binding, not a zero object", b0["name"])
+	}
+	if b0["round"] != float64(2) {
+		t.Errorf("bindings[0] round = %v, want 2 (float64 after Unmarshal)", b0["round"])
+	}
+}
+
+// requireKeys fails unless obj is a JSON object holding every key. Each
+// missing key names the external reader that depends on it.
+func requireKeys(t *testing.T, obj any, keys ...string) {
+	t.Helper()
+	m, ok := obj.(map[string]any)
+	if !ok {
+		t.Fatalf("value is not a JSON object, so its keys %v cannot be read: %T", keys, obj)
+	}
+	for _, k := range keys {
+		if _, ok := m[k]; !ok {
+			t.Errorf("missing JSON key %q: the burst provider in fuad-daoud/servers reads %q; renaming it needs a burst release that accepts the new name first", k, k)
+		}
+	}
+}
