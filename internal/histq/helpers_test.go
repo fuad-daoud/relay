@@ -8,13 +8,9 @@ import (
 )
 
 // The shared fixture: ten literal rows across three bindings, two repos, two
-// features and three builders, with outcomes reported×6 halted×2 exited×1
-// open×1 over two days. Costs and token counts are round numbers so every sum
-// below is checkable by hand; rows 3 and 8 carry an "unknown" cost basis and
-// row 5 has no cost, no commits and no duration at all. The rows are listed in
-// the order the tests index them by, so the builders below concatenate to it
-// exactly.
-
+// features and three builders, in the order the tests index them by, so the
+// builders below concatenate to it exactly. Rows 3 and 8 carry an "unknown"
+// cost basis; row 5 has no cost, no commits and no duration.
 const (
 	fxRepoAPI         = "https://github.com/o/api"
 	fxRepoWeb         = "https://github.com/o/web"
@@ -26,10 +22,8 @@ const (
 // fxLoc renders day keys in UTC, so the fixture's dates are the test's.
 var fxLoc = time.UTC
 
-// parseNow is the clock the parse tests resolve since/until against.
 var parseNow = time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 
-// fxDay is a 2026-09-<day> timestamp at hour:00 UTC.
 func fxDay(day, hour int) time.Time {
 	return time.Date(2026, 9, day, hour, 0, 0, 0, time.UTC)
 }
@@ -48,7 +42,6 @@ func fixtureRows() []db.RoundRow {
 	return append(rows, fixtureAPIRound4()...)
 }
 
-// fixtureAPIRows is fixture rows 1-3: the three b1/api rounds.
 func fixtureAPIRows() []db.RoundRow {
 	return []db.RoundRow{
 		{
@@ -96,7 +89,6 @@ func fixtureAPIRows() []db.RoundRow {
 	}
 }
 
-// fixtureWebRows is fixture rows 4-6: the three b2/web rounds.
 func fixtureWebRows() []db.RoundRow {
 	return []db.RoundRow{
 		{
@@ -140,7 +132,6 @@ func fixtureWebRows() []db.RoundRow {
 	}
 }
 
-// fixtureInfraRows is fixture rows 7-9: the three b3/infra rounds.
 func fixtureInfraRows() []db.RoundRow {
 	return []db.RoundRow{
 		{
@@ -185,7 +176,6 @@ func fixtureInfraRows() []db.RoundRow {
 	}
 }
 
-// fixtureAPIRound4 is fixture row 10, the last b1/api round.
 func fixtureAPIRound4() []db.RoundRow {
 	return []db.RoundRow{
 		{
@@ -204,13 +194,11 @@ func fixtureAPIRound4() []db.RoundRow {
 	}
 }
 
-// fxClosed is StartedAt + d, for the fixture rows that have one.
 func fxClosed(day, hour int, d time.Duration) *time.Time {
 	t := fxDay(day, hour).Add(d)
 	return &t
 }
 
-// eqStr fails on a string mismatch, with the name of the field it checked.
 func eqStr(t *testing.T, name, got, want string) {
 	t.Helper()
 	if got != want {

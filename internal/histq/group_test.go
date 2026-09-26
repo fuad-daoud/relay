@@ -9,12 +9,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// TestGroupByBuilderSums asserts every counter and sum of the builder axis
-// against the hand-checkable fixture: A = rows 1, 2, 7, 10; B = rows 3, 4, 9;
-// C = rows 5, 6, 8.
-//
-// The cost and unknown columns also pin the basis rule: CostUSD sums only the
-// rows whose basis is not "unknown" (B skips row 3's 3.00, C skips row 8's
+// A = rows 1, 2, 7, 10; B = rows 3, 4, 9; C = rows 5, 6, 8. CostUSD sums only
+// the rows whose basis is not "unknown" (B skips row 3's 3.00, C skips row 8's
 // 1.50) and Unknown counts every such row.
 func TestGroupByBuilderSums(t *testing.T) {
 	groups := Group(fixtureRows(), AxisBuilder, fxLoc)
@@ -81,8 +77,6 @@ func TestGroupByBuilderSums(t *testing.T) {
 	}
 }
 
-// TestGroupByDayNewestFirst pins the day axis: keys are the local date, and
-// they come out newest first regardless of the cost order.
 func TestGroupByDayNewestFirst(t *testing.T) {
 	groups := Group(fixtureRows(), AxisDay, fxLoc)
 	if len(groups) != 2 {
@@ -99,8 +93,7 @@ func TestGroupByDayNewestFirst(t *testing.T) {
 	}
 }
 
-// TestGroupOrderCostThenRoundsThenKey pins the ordering rule on a small
-// fixture built for it: cost desc, then rounds desc, then key asc.
+// Cost desc, then rounds desc, then key asc.
 func TestGroupOrderCostThenRoundsThenKey(t *testing.T) {
 	rows := []db.RoundRow{
 		{BindingName: "X", CostUSD: fxFloat(1.00), CostBasis: fxStr("measured")},
@@ -119,7 +112,6 @@ func TestGroupOrderCostThenRoundsThenKey(t *testing.T) {
 	}
 }
 
-// TestGroupNoneIsNil pins that no axis means no grouping at all.
 func TestGroupNoneIsNil(t *testing.T) {
 	if got := Group(fixtureRows(), AxisNone, fxLoc); got != nil {
 		t.Errorf("Group(AxisNone) = %v, want nil", got)
@@ -129,8 +121,7 @@ func TestGroupNoneIsNil(t *testing.T) {
 	}
 }
 
-// TestGroupAxisKeys pins the key set of every axis that groups by a column,
-// order-insensitively: the ordering rules have their own tests.
+// Keys are compared order-insensitively; the ordering rules have their own tests.
 func TestGroupAxisKeys(t *testing.T) {
 	tests := []struct {
 		by   Axis
@@ -162,10 +153,6 @@ func TestGroupAxisKeys(t *testing.T) {
 	}
 }
 
-// TestTotalsCounts pins every Tiles field against the fixture: 10 rounds,
-// $12.00 of known cost, three unknown rows (3, 5 and 8), 16250 tokens, two
-// halted and one exited, three bindings and three builders, and the median
-// duration over the nine rows that have one.
 func TestTotalsCounts(t *testing.T) {
 	got := Totals(fixtureRows())
 	want := Tiles{
@@ -190,9 +177,6 @@ func TestTotalsCounts(t *testing.T) {
 	}
 }
 
-// TestTotalsMedianOddEven pins the median rule over Totals: 0 when no row
-// has a duration, the middle value for an odd count, the mean of the two
-// middles for an even one.
 func TestTotalsMedianOddEven(t *testing.T) {
 	rows := func(ms ...int64) []db.RoundRow {
 		out := make([]db.RoundRow, len(ms))

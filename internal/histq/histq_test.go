@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-// TestParseEveryKey pins every scalar key:value key. The by axis, whose value
-// is not stored on db.Filter, has its own test.
 func TestParseEveryKey(t *testing.T) {
 	cases := []struct {
 		token string
@@ -92,7 +90,6 @@ func TestParseNumericOps(t *testing.T) {
 	}
 }
 
-// TestParseBy pins the by axis values, including none.
 func TestParseBy(t *testing.T) {
 	tests := []struct {
 		input string
@@ -209,9 +206,9 @@ func TestStringRoundTrip(t *testing.T) {
 		})
 	}
 
-	// One exact string pins the canonical key order: the filter keys sort
-	// into a fixed order regardless of how they were typed, the numeric
-	// conditions keep their input order, then the words, then by.
+	// One exact string pins the canonical key order independent of input order:
+	// filter keys sort into their fixed order, numeric conditions keep input
+	// order, then the words, then by.
 	q, err := ParseAt("mode:remote outcome:halted harness:agy auth cost>1 by:builder since:30d", parseNow)
 	if err != nil {
 		t.Fatalf("ParseAt: %v", err)

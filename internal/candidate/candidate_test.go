@@ -46,8 +46,6 @@ func TestRefRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSetQueries pins the set-level reads: Len, the Refs order, and ForRole
-// over a matching and a non-matching role.
 func TestSetQueries(t *testing.T) {
 	set := writeCandidates(t, threeSetBody)
 
@@ -88,7 +86,6 @@ func TestSetQueries(t *testing.T) {
 	}
 }
 
-// TestLookup pins a hit by triple and a miss that lists the configured refs.
 func TestLookup(t *testing.T) {
 	set := writeCandidates(t, threeSetBody)
 
@@ -123,8 +120,7 @@ func TestLoadMissingFileIsEmpty(t *testing.T) {
 	}
 }
 
-// Note: Rule 6 (CanServe false) is unreachable with the shipped table --
-// every kind serves every role -- so it is not included in the validation table.
+// CanServe false is unreachable with the shipped harness table, so it is not pinned here.
 func TestLoadValidation(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -191,9 +187,6 @@ func TestLoadValidation(t *testing.T) {
 	}
 }
 
-// TestLoadAcceptsEmptyRoles pins that a candidate with an empty roles array,
-// or none at all, is valid: it serves nothing in legacy mode, and in
-// roles.json mode its roles are ignored anyway.
 func TestLoadAcceptsEmptyRoles(t *testing.T) {
 	tests := []struct {
 		name string
@@ -224,9 +217,6 @@ func TestLoadAcceptsEmptyRoles(t *testing.T) {
 	}
 }
 
-// TestLoadSkipsUnknownHarnessAndRole pins that a candidate whose harness or
-// one of whose roles is unknown is skipped with a warning, and the others
-// still load. A duplicate still fails.
 func TestLoadSkipsUnknownHarnessAndRole(t *testing.T) {
 	t.Run("unknown harness", func(t *testing.T) {
 		set, warnings := loadWarnings(t, `[
@@ -262,8 +252,6 @@ func TestLoadSkipsUnknownHarnessAndRole(t *testing.T) {
 	})
 }
 
-// TestLoadFields loads each optional field from JSON and reads it back, so a
-// field the struct declares but Load drops is caught.
 func TestLoadFields(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -330,8 +318,6 @@ func TestLoadFields(t *testing.T) {
 	}
 }
 
-// TestLoadPlanFlag pins the subscription-lane flag: it loads when true and
-// defaults to false.
 func TestLoadPlanFlag(t *testing.T) {
 	tests := []struct {
 		name string
@@ -366,9 +352,6 @@ func TestLoadPlanFlag(t *testing.T) {
 	}
 }
 
-// TestSetProviders: two candidates on one provider name it once, the result
-// is sorted whatever order the file listed them in, and a nil set -- a server
-// with no candidates.json -- answers nil instead of panicking.
 func TestSetProviders(t *testing.T) {
 	body := `[
 	  {"harness":"opencode","provider":"test","model":"m","roles":["builder"]},
@@ -390,8 +373,6 @@ func TestSetProviders(t *testing.T) {
 	}
 }
 
-// TestParseFillsNames pins that every entry gets a name: the deterministic one
-// DeriveNames computes, or an explicit one kept verbatim.
 func TestParseFillsNames(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -433,7 +414,6 @@ func TestParseFillsNames(t *testing.T) {
 	}
 }
 
-// TestParseNameErrors pins the three name-registration errors.
 func TestParseNameErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -476,8 +456,6 @@ func TestParseNameErrors(t *testing.T) {
 	}
 }
 
-// TestParseSkippedEntryKeepsDerivedNames pins that a skipped entry still takes
-// part in DeriveNames, so a later name does not shift when it is fixed.
 func TestParseSkippedEntryKeepsDerivedNames(t *testing.T) {
 	body := `[
 		{"harness":"nope","provider":"p","model":"m"},
@@ -487,15 +465,13 @@ func TestParseSkippedEntryKeepsDerivedNames(t *testing.T) {
 	if len(warnings) != 1 {
 		t.Fatalf("warnings = %v, want one for the unknown harness", warnings)
 	}
-	// The skipped entry still reserved "m", so the surviving candidate
-	// keeps the name DeriveNames gave it in the full list.
+	// The skipped entry still reserved "m", so the surviving candidate keeps
+	// the name DeriveNames gave it in the full list.
 	if got, want := set.Names(), []string{"claude-m"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Names() = %v, want %v", got, want)
 	}
 }
 
-// TestResolve pins Resolve: a name, a token, a bad token, an unknown string
-// that lists the known names, and a nil set.
 func TestResolve(t *testing.T) {
 	set := parseSet(t, twoSetBody)
 
@@ -548,8 +524,6 @@ func TestResolve(t *testing.T) {
 	})
 }
 
-// TestNameOf pins NameOf: a known token resolves, an unknown one is returned
-// unchanged, and a nil set returns its argument.
 func TestNameOf(t *testing.T) {
 	set := parseSet(t, oneSetBody)
 
@@ -566,9 +540,6 @@ func TestNameOf(t *testing.T) {
 	}
 }
 
-// TestNameFor pins NameFor: ok is true only when the set holds the token. A
-// known token gives its name; an unknown one and a nil set give "", false, so
-// a caller can leave a name field empty.
 func TestNameFor(t *testing.T) {
 	set := parseSet(t, oneSetBody)
 

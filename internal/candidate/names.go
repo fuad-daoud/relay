@@ -7,26 +7,19 @@ import (
 )
 
 // namePattern is the shape of a candidate name: lowercase, at most 24
-// characters, and never containing "/", so a name can never be mistaken for a
-// harness/provider/model token.
+// characters, and never containing "/", so a name can never be a token.
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,23}$`)
 
-// maxNameLen is the longest name namePattern admits.
 const maxNameLen = 24
 
-// IsName reports whether s is shaped like a candidate name (never contains "/").
 func IsName(s string) bool {
 	return namePattern.MatchString(s)
 }
 
-// DeriveNames returns one name per entry, in entry order. An entry with a
-// non-empty Name keeps it verbatim; Parse validates it, not here.
-//
-// Every explicit name and every provider name is reserved first. An entry
-// without a name takes the first free candidate from this order: the model's
-// last "/"-segment slugged and stripped of its "#..."/":..." effort suffix,
-// then that base with the effort appended, then the harness prefixed on either
-// form, then the base with a numeric suffix.
+// DeriveNames returns one name per entry, in entry order, keeping an explicit
+// Name verbatim. Every explicit and provider name is reserved first; an unnamed
+// entry then takes the first free candidate: base, base-effort, harness-base,
+// harness-base-effort, then base-2, base-3, ...
 func DeriveNames(entries []Candidate) []string {
 	reserved := make(map[string]bool, len(entries)*2)
 	for _, e := range entries {
@@ -54,9 +47,7 @@ func DeriveNames(entries []Candidate) []string {
 	return names
 }
 
-// pickName returns the first name candidate that is neither reserved nor
-// rejected by namePattern, falling back to numbered suffixes on base. It does
-// not reserve its result: DeriveNames reserves it.
+// pickName does not reserve its result: DeriveNames reserves it.
 func pickName(harnessName, base, effort string, reserved map[string]bool) string {
 	tries := []string{base}
 	if effort != "" {
@@ -67,7 +58,7 @@ func pickName(harnessName, base, effort string, reserved map[string]bool) string
 		tries = append(tries, harnessName+"-"+base+"-"+effort)
 	}
 	for _, t := range tries {
-		if n := truncateName(t); !reserved[n] && IsName(n) {
+		if n := truncate(t, maxNameLen); !reserved[n] && IsName(n) {
 			return n
 		}
 	}
@@ -81,9 +72,6 @@ func pickName(harnessName, base, effort string, reserved map[string]bool) string
 	}
 }
 
-// deriveBase returns a model's name base and the effort suffix it carried. The
-// base is the model's last "/"-segment with an effort suffix ("#..." or ":...")
-// removed, slugged into name characters.
 func deriveBase(model string) (base, effort string) {
 	seg := model
 	if i := strings.LastIndex(seg, "/"); i >= 0 {
@@ -96,9 +84,6 @@ func deriveBase(model string) (base, effort string) {
 	return slug(seg), effort
 }
 
-// slug reduces s to name characters: lowercase [a-z0-9.-], every other run of
-// characters replaced by one "-", leading "-" and "." dropped, truncated to
-// maxNameLen. An empty result becomes "c", the shortest valid name.
 func slug(s string) string {
 	s = strings.ToLower(s)
 
@@ -124,12 +109,7 @@ func slug(s string) string {
 	return out
 }
 
-// truncateName cuts s to at most maxNameLen characters, on a rune boundary.
-func truncateName(s string) string {
-	return truncate(s, maxNameLen)
-}
-
-// truncate cuts s to at most n characters, on a rune boundary.
+// truncate cuts s to at most n bytes, on a rune boundary.
 func truncate(s string, n int) string {
 	if n <= 0 {
 		return ""
@@ -137,13 +117,8 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	for n > 0 && !isRuneStart(s[n]) {
+	for n > 0 && s[n]&0xC0 == 0x80 {
 		n--
 	}
 	return s[:n]
-}
-
-// isRuneStart reports whether b starts a UTF-8 rune.
-func isRuneStart(b byte) bool {
-	return b&0xC0 != 0x80
 }
