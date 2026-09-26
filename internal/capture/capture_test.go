@@ -1,4 +1,4 @@
-package relevo
+package capture
 
 import (
 	"context"
@@ -12,17 +12,17 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-func TestCaptureRoundDiff_NilGit(t *testing.T) {
+func TestRoundDiff_NilGit(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	s := store.New(t.TempDir())
-	rt := Runtime{Store: s, Gates: testGateKV(t)}
+	d := Deps{Store: s}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "abc"}
 
 	var res DiffResult
 	if err := s.WithLock(func(tx *store.Tx) error {
-		res = CaptureRoundDiff(ctx, rt, tx, b)
+		res = RoundDiff(ctx, d, tx, b)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -35,18 +35,18 @@ func TestCaptureRoundDiff_NilGit(t *testing.T) {
 	}
 }
 
-func TestCaptureRoundDiff_ErrNotRepo(t *testing.T) {
+func TestRoundDiff_ErrNotRepo(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	fg := &fakeGit{snapshotTreeErr: git.ErrNotRepo}
-	rt := Runtime{Store: s, Git: fg, Gates: testGateKV(t)}
+	d := Deps{Store: s, Git: fg}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "abc"}
 
 	var res DiffResult
 	if err := s.WithLock(func(tx *store.Tx) error {
-		res = CaptureRoundDiff(ctx, rt, tx, b)
+		res = RoundDiff(ctx, d, tx, b)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -59,18 +59,18 @@ func TestCaptureRoundDiff_ErrNotRepo(t *testing.T) {
 	}
 }
 
-func TestCaptureRoundDiff_GitFailure(t *testing.T) {
+func TestRoundDiff_GitFailure(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	fg := &fakeGit{snapshotTreeErr: errors.New("boom: git broken")}
-	rt := Runtime{Store: s, Git: fg, Gates: testGateKV(t)}
+	d := Deps{Store: s, Git: fg}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "abc"}
 
 	var res DiffResult
 	if err := s.WithLock(func(tx *store.Tx) error {
-		res = CaptureRoundDiff(ctx, rt, tx, b)
+		res = RoundDiff(ctx, d, tx, b)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestCaptureRoundDiff_GitFailure(t *testing.T) {
 	}
 }
 
-func TestCaptureRoundDiff_EmptyDiff(t *testing.T) {
+func TestRoundDiff_EmptyDiff(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -96,12 +96,12 @@ func TestCaptureRoundDiff_EmptyDiff(t *testing.T) {
 		snapshotTreeID: "tree-end",
 		diffResult:     git.Diff{Stat: git.Stat{FilesChanged: 0}},
 	}
-	rt := Runtime{Store: s, Git: fg, Gates: testGateKV(t)}
+	d := Deps{Store: s, Git: fg}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "tree-start"}
 
 	var res DiffResult
 	if err := s.WithLock(func(tx *store.Tx) error {
-		res = CaptureRoundDiff(ctx, rt, tx, b)
+		res = RoundDiff(ctx, d, tx, b)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestCaptureRoundDiff_EmptyDiff(t *testing.T) {
 	}
 }
 
-func TestCaptureRoundDiff_TruncatedDiff(t *testing.T) {
+func TestRoundDiff_TruncatedDiff(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -136,12 +136,12 @@ func TestCaptureRoundDiff_TruncatedDiff(t *testing.T) {
 			Truncated: true,
 		},
 	}
-	rt := Runtime{Store: s, Git: fg, Gates: testGateKV(t)}
+	d := Deps{Store: s, Git: fg}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: "tree-start"}
 
 	var res DiffResult
 	if err := s.WithLock(func(tx *store.Tx) error {
-		res = CaptureRoundDiff(ctx, rt, tx, b)
+		res = RoundDiff(ctx, d, tx, b)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func TestCaptureRoundDiff_TruncatedDiff(t *testing.T) {
 	}
 }
 
-func TestCaptureRoundDiff_NormalDiff(t *testing.T) {
+func TestRoundDiff_NormalDiff(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -179,7 +179,7 @@ func TestCaptureRoundDiff_NormalDiff(t *testing.T) {
 			Patch: []byte("--- a/file\n+++ b/file\n@@ ...\n"),
 		},
 	}
-	rt := Runtime{Store: s, Git: fg, Gates: testGateKV(t)}
+	d := Deps{Store: s, Git: fg}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 2, RoundBaselineTree: "tree-start"}
 
 	// Must save binding so s.Dir("webshop") exists for writing the patch
@@ -189,7 +189,7 @@ func TestCaptureRoundDiff_NormalDiff(t *testing.T) {
 
 	var res DiffResult
 	if err := s.WithLock(func(tx *store.Tx) error {
-		res = CaptureRoundDiff(ctx, rt, tx, b)
+		res = RoundDiff(ctx, d, tx, b)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -220,7 +220,7 @@ func TestCaptureRoundDiff_NormalDiff(t *testing.T) {
 	}
 
 	// ReadDiff
-	patch, ok, err := ReadDiff(rt, "webshop", 2)
+	patch, ok, err := ReadDiff(s, "webshop", 2)
 	if err != nil || !ok {
 		t.Fatalf("ReadDiff failed: ok=%v, err=%v", ok, err)
 	}
@@ -229,62 +229,62 @@ func TestCaptureRoundDiff_NormalDiff(t *testing.T) {
 	}
 
 	// ReadDiff for round without patch
-	patch, ok, err = ReadDiff(rt, "webshop", 1)
+	patch, ok, err = ReadDiff(s, "webshop", 1)
 	if err != nil || ok || patch != nil {
 		t.Fatalf("expected nil, false, nil for round 1, got %v, %v, %v", patch, ok, err)
 	}
 
 	// ReadDiff for missing binding
-	_, _, err = ReadDiff(rt, "nonexistent", 1)
+	_, _, err = ReadDiff(s, "nonexistent", 1)
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for missing binding, got %v", err)
 	}
 }
 
-func TestCaptureBaseline(t *testing.T) {
+func TestBaseline(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	b := store.Binding{Name: "webshop", CWD: "/repo"}
-	newRT := func(g Git) Runtime {
-		return Runtime{Store: s, Git: g, Gates: testGateKV(t)}
+	newDeps := func(g Git) Deps {
+		return Deps{Store: s, Git: g}
 	}
 
-	tree, head := CaptureBaseline(ctx, newRT(&fakeGit{snapshotTreeID: "tree-base", headCommitID: "head-base"}), b)
+	tree, head := Baseline(ctx, newDeps(&fakeGit{snapshotTreeID: "tree-base", headCommitID: "head-base"}), b)
 	if tree != "tree-base" || head != "head-base" {
 		t.Fatalf("got (%q, %q), want (tree-base, head-base)", tree, head)
 	}
 
-	if tree, head := CaptureBaseline(ctx, newRT(nil), b); tree != "" || head != "" {
+	if tree, head := Baseline(ctx, newDeps(nil), b); tree != "" || head != "" {
 		t.Fatalf("nil git: got (%q, %q), want both empty", tree, head)
 	}
 
 	fgSnap := &fakeGit{snapshotTreeErr: errors.New("fail"), headCommitID: "head-base"}
-	if tree, head := CaptureBaseline(ctx, newRT(fgSnap), b); tree != "" || head != "" {
+	if tree, head := Baseline(ctx, newDeps(fgSnap), b); tree != "" || head != "" {
 		t.Fatalf("snapshot failure: got (%q, %q), want both empty", tree, head)
 	}
 	if fgSnap.headCalls != 0 {
 		t.Fatalf("HeadCommit called %d times after a failed snapshot, want 0", fgSnap.headCalls)
 	}
 
-	if tree, head := CaptureBaseline(ctx, newRT(&fakeGit{snapshotTreeID: "tree-base", headCommitErr: errors.New("unborn")}), b); tree != "tree-base" || head != "" {
+	if tree, head := Baseline(ctx, newDeps(&fakeGit{snapshotTreeID: "tree-base", headCommitErr: errors.New("unborn")}), b); tree != "tree-base" || head != "" {
 		t.Fatalf("head failure: got (%q, %q), want (tree-base, \"\")", tree, head)
 	}
 }
 
-func TestCaptureRoundDiff_EmptyBaselineSkipsSnapshot(t *testing.T) {
+func TestRoundDiff_EmptyBaselineSkipsSnapshot(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	fg := &fakeGit{snapshotTreeID: "tree-end"}
-	rt := Runtime{Store: s, Git: fg, Gates: testGateKV(t)}
+	d := Deps{Store: s, Git: fg}
 	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: ""}
 
 	var res DiffResult
 	if err := s.WithLock(func(tx *store.Tx) error {
-		res = CaptureRoundDiff(ctx, rt, tx, b)
+		res = RoundDiff(ctx, d, tx, b)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -300,231 +300,266 @@ func TestCaptureRoundDiff_EmptyBaselineSkipsSnapshot(t *testing.T) {
 	}
 }
 
-func TestCaptureRoundDiff_EndTree(t *testing.T) {
+// roundDiffEndTreeCase is one scripted RoundDiff outcome for the EndTree
+// contract. The table lives at package level so its closures do not count
+// against the test function's length.
+type roundDiffEndTreeCase struct {
+	name               string
+	git                func() *fakeGit
+	nilGit             bool
+	baseline           string
+	wantEndTree        string
+	wantAvailable      bool
+	wantReasonNonEmpty bool
+	assertCalls        func(t *testing.T, fg *fakeGit)
+}
+
+var roundDiffEndTreeCases = []roundDiffEndTreeCase{
+	{
+		name: "successful snapshot, successful diff -> EndTree set, Available true",
+		git: func() *fakeGit {
+			return &fakeGit{
+				snapshotTreeID: "tree-end",
+				diffResult: git.Diff{
+					Stat: git.Stat{FilesChanged: 1, Insertions: 2, Deletions: 1},
+				},
+			}
+		},
+		baseline:           "tree-start",
+		wantEndTree:        "tree-end",
+		wantAvailable:      true,
+		wantReasonNonEmpty: false,
+		assertCalls: func(t *testing.T, fg *fakeGit) {
+			if fg.snapshotCalls != 1 {
+				t.Fatalf("expected 1 SnapshotTree call, got %d", fg.snapshotCalls)
+			}
+			if fg.diffCalls != 1 {
+				t.Fatalf("expected 1 DiffTrees call, got %d", fg.diffCalls)
+			}
+		},
+	},
+	{
+		name: "successful snapshot, DiffTrees fails -> EndTree still set, Available false with a Reason",
+		git: func() *fakeGit {
+			return &fakeGit{
+				snapshotTreeID: "tree-end",
+				diffErr:        errors.New("boom: diff failed"),
+			}
+		},
+		baseline:           "tree-start",
+		wantEndTree:        "tree-end",
+		wantAvailable:      false,
+		wantReasonNonEmpty: true,
+		assertCalls: func(t *testing.T, fg *fakeGit) {
+			if fg.snapshotCalls != 1 {
+				t.Fatalf("expected 1 SnapshotTree call, got %d", fg.snapshotCalls)
+			}
+			if fg.diffCalls != 1 {
+				t.Fatalf("expected 1 DiffTrees call, got %d", fg.diffCalls)
+			}
+		},
+	},
+	{
+		name:               "d.Git == nil -> EndTree empty",
+		nilGit:             true,
+		baseline:           "tree-start",
+		wantEndTree:        "",
+		wantAvailable:      false,
+		wantReasonNonEmpty: false,
+	},
+	{
+		name: "b.RoundBaselineTree == \"\" -> EndTree empty, and no snapshot was attempted",
+		git: func() *fakeGit {
+			return &fakeGit{snapshotTreeID: "tree-end"}
+		},
+		baseline:           "",
+		wantEndTree:        "",
+		wantAvailable:      false,
+		wantReasonNonEmpty: true,
+		assertCalls: func(t *testing.T, fg *fakeGit) {
+			if fg.snapshotCalls != 0 {
+				t.Fatalf("expected 0 SnapshotTree calls, got %d", fg.snapshotCalls)
+			}
+		},
+	},
+	{
+		name: "SnapshotTree returns git.ErrNotRepo -> EndTree empty",
+		git: func() *fakeGit {
+			return &fakeGit{snapshotTreeErr: git.ErrNotRepo}
+		},
+		baseline:           "tree-start",
+		wantEndTree:        "",
+		wantAvailable:      false,
+		wantReasonNonEmpty: false,
+		assertCalls: func(t *testing.T, fg *fakeGit) {
+			if fg.snapshotCalls != 1 {
+				t.Fatalf("expected 1 SnapshotTree call, got %d", fg.snapshotCalls)
+			}
+		},
+	},
+}
+
+func TestRoundDiff_EndTree(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
-
-	cases := []struct {
-		name               string
-		git                func() *fakeGit
-		nilGit             bool
-		baseline           string
-		wantEndTree        string
-		wantAvailable      bool
-		wantReasonNonEmpty bool
-		assertCalls        func(t *testing.T, fg *fakeGit)
-	}{
-		{
-			name: "successful snapshot, successful diff -> EndTree set, Available true",
-			git: func() *fakeGit {
-				return &fakeGit{
-					snapshotTreeID: "tree-end",
-					diffResult: git.Diff{
-						Stat: git.Stat{FilesChanged: 1, Insertions: 2, Deletions: 1},
-					},
-				}
-			},
-			baseline:           "tree-start",
-			wantEndTree:        "tree-end",
-			wantAvailable:      true,
-			wantReasonNonEmpty: false,
-			assertCalls: func(t *testing.T, fg *fakeGit) {
-				if fg.snapshotCalls != 1 {
-					t.Fatalf("expected 1 SnapshotTree call, got %d", fg.snapshotCalls)
-				}
-				if fg.diffCalls != 1 {
-					t.Fatalf("expected 1 DiffTrees call, got %d", fg.diffCalls)
-				}
-			},
-		},
-		{
-			name: "successful snapshot, DiffTrees fails -> EndTree still set, Available false with a Reason",
-			git: func() *fakeGit {
-				return &fakeGit{
-					snapshotTreeID: "tree-end",
-					diffErr:        errors.New("boom: diff failed"),
-				}
-			},
-			baseline:           "tree-start",
-			wantEndTree:        "tree-end",
-			wantAvailable:      false,
-			wantReasonNonEmpty: true,
-			assertCalls: func(t *testing.T, fg *fakeGit) {
-				if fg.snapshotCalls != 1 {
-					t.Fatalf("expected 1 SnapshotTree call, got %d", fg.snapshotCalls)
-				}
-				if fg.diffCalls != 1 {
-					t.Fatalf("expected 1 DiffTrees call, got %d", fg.diffCalls)
-				}
-			},
-		},
-		{
-			name:               "rt.Git == nil -> EndTree empty",
-			nilGit:             true,
-			baseline:           "tree-start",
-			wantEndTree:        "",
-			wantAvailable:      false,
-			wantReasonNonEmpty: false,
-		},
-		{
-			name: "b.RoundBaselineTree == \"\" -> EndTree empty, and no snapshot was attempted",
-			git: func() *fakeGit {
-				return &fakeGit{snapshotTreeID: "tree-end"}
-			},
-			baseline:           "",
-			wantEndTree:        "",
-			wantAvailable:      false,
-			wantReasonNonEmpty: true,
-			assertCalls: func(t *testing.T, fg *fakeGit) {
-				if fg.snapshotCalls != 0 {
-					t.Fatalf("expected 0 SnapshotTree calls, got %d", fg.snapshotCalls)
-				}
-			},
-		},
-		{
-			name: "SnapshotTree returns git.ErrNotRepo -> EndTree empty",
-			git: func() *fakeGit {
-				return &fakeGit{snapshotTreeErr: git.ErrNotRepo}
-			},
-			baseline:           "tree-start",
-			wantEndTree:        "",
-			wantAvailable:      false,
-			wantReasonNonEmpty: false,
-			assertCalls: func(t *testing.T, fg *fakeGit) {
-				if fg.snapshotCalls != 1 {
-					t.Fatalf("expected 1 SnapshotTree call, got %d", fg.snapshotCalls)
-				}
-			},
-		},
-	}
-
-	for _, tc := range cases {
+	for _, tc := range roundDiffEndTreeCases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := store.New(t.TempDir())
-			var fg *fakeGit
-			var g Git
-			if !tc.nilGit {
-				if tc.git != nil {
-					fg = tc.git()
-				} else {
-					fg = &fakeGit{}
-				}
-				g = fg
-			}
-			rt := Runtime{Store: s, Git: g, Gates: testGateKV(t)}
-			b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: tc.baseline}
-			if err := s.Save(b); err != nil {
-				t.Fatal(err)
-			}
-
-			var res DiffResult
-			if err := s.WithLock(func(tx *store.Tx) error {
-				res = CaptureRoundDiff(ctx, rt, tx, b)
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-
-			if res.EndTree != tc.wantEndTree {
-				t.Fatalf("EndTree = %q, want %q", res.EndTree, tc.wantEndTree)
-			}
-			if res.Available != tc.wantAvailable {
-				t.Fatalf("Available = %v, want %v", res.Available, tc.wantAvailable)
-			}
-			if tc.wantReasonNonEmpty && res.Reason == "" {
-				t.Fatal("expected non-empty Reason")
-			}
-			if !tc.wantReasonNonEmpty && res.Reason != "" {
-				t.Fatalf("expected empty Reason, got %q", res.Reason)
-			}
-			if tc.assertCalls != nil && fg != nil {
-				tc.assertCalls(t, fg)
-			}
+			runRoundDiffEndTree(t, tc)
 		})
 	}
+}
+
+// runRoundDiffEndTree builds one roundDiffEndTreeCases row's world, calls
+// RoundDiff under the store lock, and checks every field the row pins.
+func runRoundDiffEndTree(t *testing.T, tc roundDiffEndTreeCase) {
+	t.Helper()
+	ctx := context.Background()
+	s := store.New(t.TempDir())
+	var fg *fakeGit
+	var g Git
+	if !tc.nilGit {
+		if tc.git != nil {
+			fg = tc.git()
+		} else {
+			fg = &fakeGit{}
+		}
+		g = fg
+	}
+	d := Deps{Store: s, Git: g}
+	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineTree: tc.baseline}
+	if err := s.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	var res DiffResult
+	if err := s.WithLock(func(tx *store.Tx) error {
+		res = RoundDiff(ctx, d, tx, b)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if res.EndTree != tc.wantEndTree {
+		t.Fatalf("EndTree = %q, want %q", res.EndTree, tc.wantEndTree)
+	}
+	if res.Available != tc.wantAvailable {
+		t.Fatalf("Available = %v, want %v", res.Available, tc.wantAvailable)
+	}
+	if tc.wantReasonNonEmpty && res.Reason == "" {
+		t.Fatal("expected non-empty Reason")
+	}
+	if !tc.wantReasonNonEmpty && res.Reason != "" {
+		t.Fatalf("expected empty Reason, got %q", res.Reason)
+	}
+	if tc.assertCalls != nil && fg != nil {
+		tc.assertCalls(t, fg)
+	}
+}
+
+// commitFactsCase is one scripted CommitFacts outcome. The table lives at
+// package level so its expectations and closures do not count against the test
+// function's length.
+type commitFactsCase struct {
+	name    string
+	git     func() *fakeGit
+	binding store.Binding
+	want    CommitResult
+	check   func(t *testing.T, fg *fakeGit)
+}
+
+var commitFactsCases = []commitFactsCase{
+	{
+		name:    "nil git",
+		git:     func() *fakeGit { return nil },
+		binding: store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineHead: "head-start"},
+		want:    CommitResult{},
+	},
+	{
+		name:    "no baseline head",
+		git:     func() *fakeGit { return &fakeGit{headCommitID: "h"} },
+		binding: store.Binding{Name: "webshop", CWD: "/repo", Round: 1},
+		want:    CommitResult{Reason: "no baseline"},
+		check: func(t *testing.T, fg *fakeGit) {
+			if fg.headCalls != 0 || fg.revListCalls != 0 || fg.dirtyCalls != 0 {
+				t.Fatalf("git was called without a baseline: %+v", fg)
+			}
+		},
+	},
+	{
+		name:    "head fails",
+		git:     func() *fakeGit { return &fakeGit{headCommitErr: errors.New("boom: head")} },
+		binding: store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineHead: "head-start"},
+		want:    CommitResult{Reason: "head: boom: head"},
+		check: func(t *testing.T, fg *fakeGit) {
+			if fg.revListCalls != 0 || fg.dirtyCalls != 0 {
+				t.Fatalf("sequence did not stop at the first failure: %+v", fg)
+			}
+		},
+	},
+	{
+		name:    "rev-list fails",
+		git:     func() *fakeGit { return &fakeGit{headCommitID: "head-end", revListErr: errors.New("boom: rev-list")} },
+		binding: store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineHead: "head-start"},
+		want:    CommitResult{Reason: "rev-list: boom: rev-list"},
+		check: func(t *testing.T, fg *fakeGit) {
+			if fg.dirtyCalls != 0 {
+				t.Fatalf("Dirty called after rev-list failed: %+v", fg)
+			}
+		},
+	},
+	{
+		name: "dirty check fails",
+		git: func() *fakeGit {
+			return &fakeGit{headCommitID: "head-end", revListCount: 2, dirtyErr: errors.New("boom: status")}
+		},
+		binding: store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineHead: "head-start"},
+		want:    CommitResult{Reason: "dirty check: boom: status"},
+	},
+	{
+		name:    "not a repository is silent",
+		git:     func() *fakeGit { return &fakeGit{headCommitErr: fmt.Errorf("%w: nope", git.ErrNotRepo)} },
+		binding: store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineHead: "head-start"},
+		want:    CommitResult{},
+	},
+	{
+		name:    "all succeed",
+		git:     func() *fakeGit { return &fakeGit{headCommitID: "head-end", revListCount: 3, dirtyResult: true} },
+		binding: store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineHead: "head-start"},
+		want:    CommitResult{Known: true, Commits: 3, Dirty: true},
+		check: func(t *testing.T, fg *fakeGit) {
+			if fg.lastRevListDir != "/repo" || fg.lastRevListFrom != "head-start" || fg.lastRevListTo != "head-end" {
+				t.Fatalf("rev-list range: dir=%q from=%q to=%q", fg.lastRevListDir, fg.lastRevListFrom, fg.lastRevListTo)
+			}
+			if fg.lastDirtyDir != "/repo" {
+				t.Fatalf("Dirty dir = %q, want /repo", fg.lastDirtyDir)
+			}
+		},
+	},
 }
 
 func TestCommitFacts(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
 	s := store.New(t.TempDir())
-	newRT := func(g Git) Runtime {
-		return Runtime{Store: s, Git: g, Gates: testGateKV(t)}
+	for _, tc := range commitFactsCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var fg *fakeGit
+			var g Git
+			if tc.git != nil {
+				fg = tc.git()
+				if fg != nil {
+					g = fg
+				}
+			}
+			got := CommitFacts(context.Background(), Deps{Store: s, Git: g}, tc.binding)
+			if got != tc.want {
+				t.Fatalf("got %+v, want %+v", got, tc.want)
+			}
+			if tc.check != nil && fg != nil {
+				tc.check(t, fg)
+			}
+		})
 	}
-	withHead := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, RoundBaselineHead: "head-start"}
-
-	t.Run("nil git", func(t *testing.T) {
-		got := CommitFacts(ctx, newRT(nil), withHead)
-		if got.Known || got.Reason != "" {
-			t.Fatalf("got %+v, want Known=false, Reason empty", got)
-		}
-	})
-
-	t.Run("no baseline head", func(t *testing.T) {
-		fg := &fakeGit{headCommitID: "h"}
-		got := CommitFacts(ctx, newRT(fg), store.Binding{Name: "webshop", CWD: "/repo", Round: 1})
-		if got.Known || got.Reason != "no baseline" {
-			t.Fatalf("got %+v, want Reason \"no baseline\"", got)
-		}
-		if fg.headCalls != 0 || fg.revListCalls != 0 || fg.dirtyCalls != 0 {
-			t.Fatalf("git was called without a baseline: %+v", fg)
-		}
-	})
-
-	t.Run("head fails", func(t *testing.T) {
-		fg := &fakeGit{headCommitErr: errors.New("boom: head")}
-		got := CommitFacts(ctx, newRT(fg), withHead)
-		if got.Known || got.Reason != "head: boom: head" {
-			t.Fatalf("got %+v, want Reason \"head: boom: head\"", got)
-		}
-		if fg.revListCalls != 0 || fg.dirtyCalls != 0 {
-			t.Fatalf("sequence did not stop at the first failure: %+v", fg)
-		}
-	})
-
-	t.Run("rev-list fails", func(t *testing.T) {
-		fg := &fakeGit{headCommitID: "head-end", revListErr: errors.New("boom: rev-list")}
-		got := CommitFacts(ctx, newRT(fg), withHead)
-		if got.Known || got.Reason != "rev-list: boom: rev-list" {
-			t.Fatalf("got %+v, want Reason \"rev-list: boom: rev-list\"", got)
-		}
-		if fg.dirtyCalls != 0 {
-			t.Fatalf("Dirty called after rev-list failed: %+v", fg)
-		}
-	})
-
-	t.Run("dirty check fails", func(t *testing.T) {
-		fg := &fakeGit{headCommitID: "head-end", revListCount: 2, dirtyErr: errors.New("boom: status")}
-		got := CommitFacts(ctx, newRT(fg), withHead)
-		if got.Known || got.Reason != "dirty check: boom: status" {
-			t.Fatalf("got %+v, want Reason \"dirty check: boom: status\"", got)
-		}
-	})
-
-	t.Run("not a repository is silent", func(t *testing.T) {
-		fg := &fakeGit{headCommitErr: fmt.Errorf("%w: nope", git.ErrNotRepo)}
-		got := CommitFacts(ctx, newRT(fg), withHead)
-		if got.Known || got.Reason != "" {
-			t.Fatalf("got %+v, want Known=false with empty Reason", got)
-		}
-	})
-
-	t.Run("all succeed", func(t *testing.T) {
-		fg := &fakeGit{headCommitID: "head-end", revListCount: 3, dirtyResult: true}
-		got := CommitFacts(ctx, newRT(fg), withHead)
-		want := CommitResult{Known: true, Commits: 3, Dirty: true}
-		if got != want {
-			t.Fatalf("got %+v, want %+v", got, want)
-		}
-		if fg.lastRevListDir != "/repo" || fg.lastRevListFrom != "head-start" || fg.lastRevListTo != "head-end" {
-			t.Fatalf("rev-list range: dir=%q from=%q to=%q", fg.lastRevListDir, fg.lastRevListFrom, fg.lastRevListTo)
-		}
-		if fg.lastDirtyDir != "/repo" {
-			t.Fatalf("Dirty dir = %q, want /repo", fg.lastDirtyDir)
-		}
-	})
 }
 
 func TestDiffTextWithCommitFacts(t *testing.T) {
@@ -641,8 +676,8 @@ func TestDiffLineFromNoteMatchesDiffLine(t *testing.T) {
 	}
 }
 
-// TestPathsLine pins the payload line for a changed_paths mismatch (#216):
-// its exact wording, and both plural forms formatFiles renders.
+// TestPathsLine pins the payload line for a changed_paths mismatch: its exact
+// wording, and both plural forms formatFiles renders.
 func TestPathsLine(t *testing.T) {
 	t.Parallel()
 
@@ -658,8 +693,8 @@ func TestPathsLine(t *testing.T) {
 }
 
 // TestPathsLineFromNote pins the reading of the clause out of a KindDiff
-// note (#216), including the position joinNotes leaves it in and the
-// no-clause cases that must stay silent.
+// note, including the position the note leaves it in and the no-clause cases
+// that must stay silent.
 func TestPathsLineFromNote(t *testing.T) {
 	t.Parallel()
 
@@ -672,5 +707,20 @@ func TestPathsLineFromNote(t *testing.T) {
 	}
 	if got := PathsLineFromNote(""); got != "" {
 		t.Errorf("PathsLineFromNote(\"\") = %q, want \"\"", got)
+	}
+}
+
+// TestPathsClauseReMatchesReconcileFormat pins pathsClauseRe against the exact
+// format reconcile renders the clause with, "paths: report %d, diff %d": if
+// either side changes shape, the two counts stop being read back.
+func TestPathsClauseReMatchesReconcileFormat(t *testing.T) {
+	t.Parallel()
+
+	// The literal below must stay identical to the format string reconcile
+	// passes when it appends the mismatch clause.
+	note := "24 files, +1 -2; 1 commit on relevo/x, tree clean " +
+		fmt.Sprintf("paths: report %d, diff %d", 2, 3)
+	if got, want := PathsLineFromNote(note), PathsLine(2, 3); got != want {
+		t.Fatalf("PathsLineFromNote(%q) = %q, want %q", note, got, want)
 	}
 }

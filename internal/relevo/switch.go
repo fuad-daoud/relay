@@ -66,7 +66,7 @@ func switchEntry(now time.Time, round int, reason string, res Resolution, u *usa
 // switchBuilder replaces b's builder mid-round with the next candidate the
 // policy order and the ledger's live gates pick, and hands it the SAME
 // round's plan. The round number does not change -- the new builder
-// inherits the partial diff CaptureRoundDiff already handles -- but
+// inherits the partial diff capture.RoundDiff already handles -- but
 // RoundStartedAt is restarted, so the replacement gets its own startGrace
 // before a nudge and its own round budget, exactly like a fresh handoff.
 //

@@ -1,4 +1,4 @@
-package relevo
+package capture
 
 import (
 	"context"
@@ -20,31 +20,31 @@ type DriftResult struct {
 	Reason    string   // why Available is false; "" when it is true
 }
 
-// CaptureDrift compares the tree a round ended at against the tree the next round
-// is opening at, writing the patch to rt.Store.DriftPath(b.Name, b.Round) when
+// Drift compares the tree a round ended at against the tree the next round
+// is opening at, writing the patch to d.Store.DriftPath(b.Name, b.Round) when
 // there is a body worth keeping.
 //
-// When baseline == b.RoundClosedTree, CaptureDrift short-circuits before any git
+// When baseline == b.RoundClosedTree, Drift short-circuits before any git
 // call. It NEVER returns an error: every failure lands in DriftResult.Reason.
 //
 // Preconditions: none.
 // Postconditions:
-//   - Available is false with empty Reason when rt.Git is nil, b.RoundClosedTree
+//   - Available is false with empty Reason when d.Git is nil, b.RoundClosedTree
 //     is empty, baseline is empty, or DiffTrees returned git.ErrNotRepo.
 //   - Available is true with zero Stat when baseline == b.RoundClosedTree.
 //   - Available is false with Reason set when DiffTrees or writing the patch failed.
 //   - When Available is true and Stat is non-empty, Path resolves through
 //     Store.ReadFile (a round_file row, no file on disk) unless Truncated is
 //     true.
-func CaptureDrift(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, baseline string) DriftResult {
-	if rt.Git == nil || b.RoundClosedTree == "" || baseline == "" {
+func Drift(ctx context.Context, d Deps, tx *store.Tx, b store.Binding, baseline string) DriftResult {
+	if d.Git == nil || b.RoundClosedTree == "" || baseline == "" {
 		return DriftResult{Available: false}
 	}
 	if baseline == b.RoundClosedTree {
 		return DriftResult{Available: true}
 	}
 
-	diff, err := rt.Git.DiffTrees(ctx, b.CWD, b.RoundClosedTree, baseline)
+	diff, err := d.Git.DiffTrees(ctx, b.CWD, b.RoundClosedTree, baseline)
 	if errors.Is(err, git.ErrNotRepo) {
 		return DriftResult{Available: false}
 	}
@@ -60,7 +60,7 @@ func CaptureDrift(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		return DriftResult{Available: true, Stat: diff.Stat, Truncated: true}
 	}
 
-	patchPath := rt.Store.DriftPath(b.Name, b.Round)
+	patchPath := d.Store.DriftPath(b.Name, b.Round)
 	if err := tx.PutRoundFile(b.Name, b.Round, patchPath, diff.Patch); err != nil {
 		return DriftResult{Available: false, Reason: brief(err)}
 	}
@@ -85,13 +85,13 @@ func DriftSummary(res DriftResult) string {
 	return fmt.Sprintf("%s, +%d -%d", formatFiles(res.Stat.FilesChanged), res.Stat.Insertions, res.Stat.Deletions)
 }
 
-// DriftLine renders the stdout line for drift detected between rounds, or "" when
-// there is nothing worth telling the planner (rt.Git off, not a repository, or
-// an empty Stat).
+// DriftLine renders the stdout line for drift detected between rounds, or ""
+// when there is nothing worth telling the planner (no git, not a repository,
+// or an empty Stat).
 //
 // round is the opening round; the prose names round-1, the round that closed,
 // and points the planner at `relevo show <name> --round <round> --drift`
-// instead of the patch's path (P4a round 2 §4.2).
+// instead of the patch's path.
 func DriftLine(res DriftResult, name string, round int) string {
 	if !res.Available {
 		if res.Reason == "" {
@@ -117,13 +117,13 @@ func DriftLine(res DriftResult, name string, round int) string {
 // It is the read path behind `relevo show --drift`.
 //
 // Errors: store.ErrNotFound for an unknown binding; a wrapped read error.
-func ReadDrift(rt Runtime, name string, round int) ([]byte, bool, error) {
-	if _, err := rt.Store.Load(name); err != nil {
+func ReadDrift(s *store.Store, name string, round int) ([]byte, bool, error) {
+	if _, err := s.Load(name); err != nil {
 		return nil, false, err
 	}
 
-	path := rt.Store.DriftPath(name, round)
-	data, err := rt.Store.ReadFile(path)
+	path := s.DriftPath(name, round)
+	data, err := s.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}

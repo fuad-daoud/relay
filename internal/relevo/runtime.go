@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -303,6 +304,13 @@ func IngestDeps(rt Runtime) ingest.Deps {
 		Sessions: ingest.SessionLocator(rt.Sessions),
 		Now:      time.Now,
 	}
+}
+
+// captureDeps builds internal/capture's Deps from rt. Git carries through
+// nil-safe: a nil rt.Git converts to a nil capture.Git, since both are true
+// nil interfaces at the assignment.
+func captureDeps(rt Runtime) capture.Deps {
+	return capture.Deps{Git: rt.Git, Store: rt.Store}
 }
 
 // ErrRemoteUnavailable is returned when a remote operation is attempted without a configured remote client.

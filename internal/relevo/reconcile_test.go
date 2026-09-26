@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/hooks"
@@ -900,7 +901,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if !strings.HasSuffix(diff.Note, "paths: report 2, diff 3") {
 			t.Errorf("diff.Note = %q, want suffix 'paths: report 2, diff 3'", diff.Note)
 		}
-		if want := PathsLine(2, 3); !strings.Contains(report.Payload, want) {
+		if want := capture.PathsLine(2, 3); !strings.Contains(report.Payload, want) {
 			t.Errorf("payload = %q, want it to contain %q", report.Payload, want)
 		}
 	})
@@ -945,7 +946,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if !strings.HasSuffix(diff.Note, "paths: report 0, diff 3") {
 			t.Errorf("diff.Note = %q, want suffix 'paths: report 0, diff 3'", diff.Note)
 		}
-		if want := PathsLine(0, 3); !strings.Contains(report.Payload, want) {
+		if want := capture.PathsLine(0, 3); !strings.Contains(report.Payload, want) {
 			t.Errorf("payload = %q, want it to contain %q", report.Payload, want)
 		}
 	})

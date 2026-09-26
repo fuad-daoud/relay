@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -116,7 +117,7 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 		t.Errorf("Show(report) = %q (missing %v), want %q", res.Text, res.Missing, report)
 	}
 
-	patch, ok, err := ReadDiff(rt, "webshop", 1)
+	patch, ok, err := capture.ReadDiff(rt.Store, "webshop", 1)
 	if err != nil || !ok || !bytes.Equal(patch, diff) {
 		t.Errorf("ReadDiff = %q (ok %v, err %v), want %q", patch, ok, err, diff)
 	}

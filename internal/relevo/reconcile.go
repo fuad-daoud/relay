@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -403,10 +404,11 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 	closed := ""
 	if !HasEntry(entries, b.Round, store.DirToPlanner, store.KindDiff) {
-		result := CaptureRoundDiff(ctx, rt, tx, b)
-		facts := CommitFacts(ctx, rt, b)
+		d := captureDeps(rt)
+		result := capture.RoundDiff(ctx, d, tx, b)
+		facts := capture.CommitFacts(ctx, d, b)
 		closed = result.EndTree
-		diffNote := DiffSummary(result, facts)
+		diffNote := capture.DiffSummary(result, facts)
 		// The key's presence, not the list's, is what makes the counts
 		// comparable (#216): changed_paths: [] is a real list of zero paths
 		// and must be checked against the diff, while a report with no key
@@ -434,11 +436,11 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		if err := tx.AppendLog(b.Name, diffEntry); err != nil {
 			return b, err
 		}
-		if line := DiffLine(result, facts, b.Branch, b.Name, b.Round); line != "" {
+		if line := capture.DiffLine(result, facts, b.Branch, b.Name, b.Round); line != "" {
 			payload = payload + "\n" + line
 		}
 		if pathsMismatch {
-			payload = payload + "\n" + PathsLine(len(tail.ChangedPaths), result.Stat.FilesChanged)
+			payload = payload + "\n" + capture.PathsLine(len(tail.ChangedPaths), result.Stat.FilesChanged)
 		}
 	}
 

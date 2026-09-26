@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -354,7 +355,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 
 	// The baseline snapshot adds git objects, so it stays out of the
 	// read-only preflight and is taken here, before the lock.
-	baseline, baselineHead := CaptureBaseline(ctx, rt, pf.b)
+	baseline, baselineHead := capture.Baseline(ctx, captureDeps(rt), pf.b)
 	hintRound := pf.b.Round
 
 	// spawned is the process startRound launched, if any: the deferred
@@ -530,16 +531,16 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 
 		driftLine := ""
 		if b.Round == hintRound {
-			res := CaptureDrift(ctx, rt, tx, b, baseline)
+			res := capture.Drift(ctx, captureDeps(rt), tx, b, baseline)
 			if (res.Available && !res.Stat.Empty()) || res.Reason != "" {
 				driftEntry := store.LogEntry{
 					TS: rt.Now().UTC(), Round: b.Round,
 					Direction: store.DirToPlanner, Kind: store.KindDrift,
-					Path: res.Path, Note: DriftSummary(res),
+					Path: res.Path, Note: capture.DriftSummary(res),
 					Confirmed: true,
 				}
 				pending = append(pending, driftEntry)
-				driftLine = DriftLine(res, b.Name, b.Round)
+				driftLine = capture.DriftLine(res, b.Name, b.Round)
 			}
 		}
 

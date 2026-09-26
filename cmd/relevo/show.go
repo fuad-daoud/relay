@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/capture"
 	diffpatch "github.com/fuad-daoud/relevo/internal/patch"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -327,9 +328,9 @@ func printDiff(rt relevo.Runtime, name string, round int, stat, drift, anchors b
 	var patch []byte
 	var ok bool
 	if drift {
-		patch, ok, err = relevo.ReadDrift(rt, name, targetRound)
+		patch, ok, err = capture.ReadDrift(rt.Store, name, targetRound)
 	} else {
-		patch, ok, err = relevo.ReadDiff(rt, name, targetRound)
+		patch, ok, err = capture.ReadDiff(rt.Store, name, targetRound)
 	}
 	if err != nil {
 		return err
