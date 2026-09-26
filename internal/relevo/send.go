@@ -94,6 +94,10 @@ type preflight struct {
 	argv []string      // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
 	gate *ledger.Gate  // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
 	pick *Resolution   // --builder's resolution to apply under the lock; nil when the builder does not change
+	// staleToken is the binding's old BuilderCandidate when the preflight
+	// re-picked because the token was stale; "" otherwise. When it is
+	// non-empty, pick is non-nil.
+	staleToken string
 
 	planPath, reportPath, donePath string
 	prompt                         string // composePrompt(...) -- computed, never sent
@@ -146,6 +150,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	// A remote binding's candidates decide on the server, so only the token's
 	// shape is checked here (§5.1).
 	var pick *Resolution
+	var staleToken string
 	// remoteBuilder is what a remote binding's sendRemote is handed: the
 	// canonical token when --builder resolved to one, else the argument as
 	// typed (A1 §4.2).
@@ -190,6 +195,22 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		}
 	}
 
+	// A binding whose candidate was edited or deleted holds a stale token:
+	// the configured set no longer serves the triple the running round is
+	// on. Pick again by the actor's order, exactly as a switch does, so
+	// every precondition below is computed against the builder this round
+	// will actually use.
+	if pick == nil && staleBuilder(rt, b) {
+		old := b.BuilderCandidate
+		var res *Resolution
+		b, res, err = repickStale(rt, b, opts.AllowYolo)
+		if err != nil {
+			return preflight{}, err
+		}
+		pick = res
+		staleToken = old
+	}
+
 	if tier == "" {
 		tier = effectiveTier(b)
 	}
@@ -202,7 +223,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	pf := preflight{
 		b: b, body: body, tier: tier,
 		planPath: planPath, reportPath: reportPath, donePath: donePath,
-		prompt: prompt, pick: pick,
+		prompt: prompt, pick: pick, staleToken: staleToken,
 		remoteBuilder: remoteBuilder,
 	}
 
@@ -366,13 +387,16 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// --builder is re-applied under the lock, against the fresh binding:
 		// the preflight's resolution must not be trusted over a round that
 		// opened in between. The re-check writes nothing when it fires (§5.2).
+		// A stale re-pick is not a --builder change, so it skips the refusal.
 		if pf.pick != nil {
-			entries, err := tx.ReadLog(name)
-			if err != nil {
-				return err
-			}
-			if roundOpenIn(entries, b.Round) {
-				return fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --builder", name, b.Round, name)
+			if pf.staleToken == "" {
+				entries, err := tx.ReadLog(name)
+				if err != nil {
+					return err
+				}
+				if roundOpenIn(entries, b.Round) {
+					return fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --builder", name, b.Round, name)
+				}
 			}
 			b, err = applyBuilder(b, *pf.pick, rt.RoleRegistry(), rt.Policy, opts.AllowYolo)
 			if err != nil {
@@ -459,7 +483,11 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// change that did not happen must not be recorded.
 		if pf.pick != nil {
 			pending = append(pending, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick))
-			pickLine = PickText("builder", *pf.pick, rt.Candidates)
+			if pf.staleToken != "" {
+				pickLine = "note: builder " + pf.staleToken + " is no longer configured; " + PickText("builder", *pf.pick, rt.Candidates)
+			} else {
+				pickLine = PickText("builder", *pf.pick, rt.Candidates)
+			}
 		}
 
 		entry := store.LogEntry{

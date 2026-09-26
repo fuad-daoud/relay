@@ -251,6 +251,22 @@ func Available(rt Runtime, subject, source string) (provider string, removed int
 	return provider, removed, nil
 }
 
+// ledgerGates projects the live ledger onto tokens, whether or not the configured set holds them:
+// a rate limit gates every token of its provider, a spawn failure gates its own token.
+func ledgerGates(rt Runtime, tokens []string) []ledger.Gate {
+	if rt.Gates == nil {
+		return nil
+	}
+
+	l, err := ledger.LoadKV(rt.Gates, ledgerLegacyPath(rt))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relevo: could not read ledger: %v\n", err)
+		return nil
+	}
+
+	return ledger.Gated(l, tokens, providerOf, rt.Now())
+}
+
 // Gates is what every reader renders from: the live ledger projected onto
 // the configured candidates. A load error is reported once on stderr and
 // read as an empty ledger -- status, candidates and doctor must not go
@@ -260,17 +276,7 @@ func Gates(rt Runtime) []ledger.Gate {
 		return nil
 	}
 
-	l := ledger.Ledger{}
-	if rt.Gates != nil {
-		loaded, err := ledger.LoadKV(rt.Gates, ledgerLegacyPath(rt))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "relevo: could not read ledger: %v\n", err)
-			return nil
-		}
-		l = loaded
-	}
-
-	gates := ledger.Gated(l, rt.Candidates.Refs(), providerOf, rt.Now())
+	gates := ledgerGates(rt, rt.Candidates.Refs())
 	gates = append(gates, rolesMissingGates(rt)...)
 
 	// A1 §4.4, round 3 F3: every gate carries the candidate's short name
@@ -443,7 +449,7 @@ func GateUntilText(until time.Time) string {
 // the agent is already running, and refusing is #61 step 4's job.
 func gatedNote(rt Runtime, token string) string {
 	var parts []string
-	for _, g := range Gates(rt) {
+	for _, g := range append(ledgerGates(rt, []string{token}), rolesMissingGates(rt)...) {
 		if g.Token != token {
 			continue
 		}

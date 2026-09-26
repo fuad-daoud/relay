@@ -841,6 +841,15 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			return b, nil
 		}
 
+		// A candidate the configured set no longer holds cannot be resumed
+		// or relaunched: pick again the way a switch does. Accepted cost:
+		// switchBuilder restarts RoundStartedAt, unlike the same-candidate
+		// relaunch below.
+		if staleBuilder(rt, b) {
+			return switchBuilder(ctx, rt, tx, b,
+				"lost to a daemon restart; candidate "+b.BuilderCandidate+" is no longer configured", false, false)
+		}
+
 		text := composePrompt(b, rt.Store.PlanPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round)) +
 			"\n\n" + interruptedNote(rt.StartedAt)
 		keep := b.RoundStartedAt

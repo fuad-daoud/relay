@@ -278,10 +278,11 @@ func inLimitWindow(t, now time.Time, max time.Duration) bool {
 }
 
 // limitPatterns is the harness defaults for token's kind followed by the
-// candidate's own limit_patterns, each compiled. Empty when token does not
-// resolve to a configured candidate (an adopted builder) -- and then no
-// decision point matches anything. Compiled on each call; decision points
-// fire at most once per round, so caching buys nothing.
+// candidate's own limit_patterns, each compiled. When token does not resolve
+// to a configured candidate (the candidate was edited or deleted after the
+// binding picked it), the harness's patterns alone stand in -- the candidate
+// is gone, so it has no patterns of its own. Compiled on each call; decision
+// points fire at most once per round, so caching buys nothing.
 //
 // A candidate pattern that fails to compile here cannot happen -- Load
 // already refused the file -- so a pattern that somehow doesn't compile is
@@ -294,16 +295,20 @@ func limitPatterns(rt Runtime, token string) []*regexp.Regexp {
 	if err != nil {
 		return nil
 	}
-	c, err := rt.Candidates.Lookup(ref)
-	if err != nil {
-		return nil
-	}
 
 	var raw []string
-	if h, ok := harness.Lookup(c.Harness); ok {
-		raw = append(raw, h.LimitPatterns...)
+	c, err := rt.Candidates.Lookup(ref)
+	if err != nil {
+		// The candidate is gone: fall back to the harness's own patterns.
+		if h, ok := harness.Lookup(ref.Harness); ok {
+			raw = append(raw, h.LimitPatterns...)
+		}
+	} else {
+		if h, ok := harness.Lookup(c.Harness); ok {
+			raw = append(raw, h.LimitPatterns...)
+		}
+		raw = append(raw, c.LimitPatterns...)
 	}
-	raw = append(raw, c.LimitPatterns...)
 
 	var compiled []*regexp.Regexp
 	for _, p := range raw {

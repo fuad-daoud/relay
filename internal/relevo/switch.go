@@ -13,13 +13,15 @@ import (
 )
 
 // gatedBuilder reports the first live rate-limit gate on b's own builder
-// candidate, if any. Pure over Gates(rt).
+// candidate, if any. Pure over the ledger and b's own token: a token the
+// configured set no longer holds (the candidate was edited or deleted
+// mid-round) is still checked, because the running process is on that triple.
 //
 // SpawnFailed gates are ignored: a running builder is not a failed spawn, so
 // a spawn-failure gate recorded against this same token by an earlier switch
 // attempt must not itself trigger another switch.
 func gatedBuilder(rt Runtime, b store.Binding) (ledger.Gate, bool) {
-	for _, g := range Gates(rt) {
+	for _, g := range ledgerGates(rt, []string{b.BuilderCandidate}) {
 		if g.Token == b.BuilderCandidate && g.Kind == ledger.RateLimited {
 			return g, true
 		}
