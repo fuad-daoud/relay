@@ -331,21 +331,31 @@ function initialTab(row: any): "report" | "transcript" {
   return "transcript";
 }
 
-// §3.2: `word` is the state word a row shows ("" for a row with no word) and
-// `tone` picks the colour. The word order is the Claude status line's: NEEDS
-// YOU, else a relevo state word (HELD, PAUSED, DONE), else REPORT IN, else no
-// word at all for ACTIVE or empty.
-type StateWord = { word: string; tone: "needs" | "held" | "quiet" | "report" | "none" };
+// §3.2: `word` is the status a row shows and `tone` picks the colour. The
+// document computes both (statusline.go's rowStatus); the fallback body below
+// keeps an older binary's document readable.
+type StateWord = {
+  word: string;
+  tone: "needs" | "held" | "quiet" | "report" | "phase" | "none";
+};
 
-// §4.1: one rule for a row's state word and its colour, used by the sidebar,
-// the fleet page and the binding header.
+// §4.1: one rule for a row's status and its colour, used by the sidebar, the
+// fleet page and the binding header. The document carries one status per row,
+// so no surface derives the phase word (plan sent, report in) again.
 function stateWord(row: any): StateWord {
+  if (typeof row?.status === "string") return { word: row.status, tone: row.tone };
   if (row?.needs_you) return { word: "NEEDS YOU", tone: "needs" };
   if (row?.display && row.display !== "ACTIVE") {
     return { word: row.display, tone: row.display === "HELD" ? "held" : "quiet" };
   }
   if (row?.report_in) return { word: "REPORT IN", tone: "report" };
   return { word: "", tone: "none" };
+}
+
+// §4.1: the actor a row names: the document's actor, else the row's role for an
+// older binary, else builder.
+function rowActor(row: any): string {
+  return row?.actor || row?.role || "builder";
 }
 
 // §4.1: toneColor maps a StateWord tone to a theme colour. The quiet choice
@@ -360,6 +370,8 @@ function toneColor(api: any, tone: StateWord["tone"]): any {
     case "report":
       return paint(api, "text.feedback.info.base") || paint(api, "text.muted");
     case "quiet":
+      return paint(api, "text.muted");
+    case "phase":
       return paint(api, "text.muted");
     default:
       return paint(api, "text.feedback.success.base");
@@ -689,16 +701,23 @@ export default {
               const isNeedsYou = !!row.needs_you;
               const sw = stateWord(row);
               const dot = isNeedsYou ? "●" : "○";
-              // §4.1: one rule for the state word and its colour; the dot
-              // keeps the warning/info/muted colour of the word's tone.
+              // §4.1: one rule for the status and its colour; the dot keeps the
+              // warning/info/muted colour of the status's tone.
               const stateText = sw.word;
               const stateColor = toneColor(api, sw.tone);
               const dotColor =
                 sw.tone === "needs" ? warningColor : sw.tone === "report" ? infoColor : mutedColor;
               const displayRound = row.report_round || row.round;
-              const lineA = padLine(`${dot} ${row.name}`, stateText, 37);
+              // Line A is the dot, the name (ellipsized), the status in its tone
+              // colour, then the clock right-aligned last: padLine right-aligns
+              // the status plus " " plus the clock at width 37, so the clock
+              // never moves when the status or the name changes length.
+              const clockText = row.clock || "--";
+              const statusRoom = Math.max(0, 37 - row.name.length - clockText.length - 3);
               const lineB = ellipsize(
-                `  r${displayRound} · ${row.harness || "opencode"} · ${row.waiting || "--"} · ${row.clock || "--"}`,
+                `  r${displayRound} · ${rowActor(row)} on ${row.harness || "opencode"}` +
+                  (row.reason ? ` · ${row.reason}` : "") +
+                  (row.tokens ? ` · ${row.tokens}` : ""),
                 37,
               );
 
@@ -712,11 +731,12 @@ export default {
                       {isNeedsYou ? <b>{dot} </b> : `${dot} `}
                     </text>
                     <text fg={baseColor}>
-                      {ellipsize(row.name, 37 - stateText.length - 4)}
+                      {ellipsize(row.name, Math.max(0, 37 - stateText.length - clockText.length - 4))}
                     </text>
                     <text fg={stateColor}>
-                      {isNeedsYou ? <b>{padLine("", stateText, 37 - row.name.length - 2)}</b> : padLine("", stateText, 37 - row.name.length - 2)}
+                      {isNeedsYou ? <b>{padLine("", stateText, statusRoom)}</b> : padLine("", stateText, statusRoom)}
                     </text>
+                    <text fg={mutedColor}>{` ${clockText}`}</text>
                   </box>
                   <text fg={mutedColor}>{lineB}</text>
                 </box>
@@ -911,32 +931,31 @@ export default {
 
             <box marginTop={1}>
               <text fg={mutedColor}>
-                {padLine(
-                  `${ROW_PREFIX}NAME           ACTOR     ON                   RND  STATE      NOW`,
-                  "TOKENS",
-                  96,
-                )}
+                {`${ROW_PREFIX}NAME           ACTOR     ON                   RND  TOKENS    STATUS              TIME   REASON`}
               </text>
             </box>
 
             {rows.map((row, i) => {
               const isSelected = (store.fleetSelected ?? 0) === i;
               const sw = stateWord(row);
-              const actor = row.role || "builder";
+              const actor = rowActor(row);
               const model = parseModel(row.candidate);
               const displayRound = row.report_round || row.round;
-              const state = sw.word || "ACTIVE";
-              const nowCol = `${row.waiting || "--"} · ${row.clock || "--"}`;
-              const tokensCol = row.tokens || "";
+              const status = sw.word || "ACTIVE";
 
               const namePad = row.name.padEnd(14, " ");
               const actorPad = actor.padEnd(9, " ");
               const modelPad = ellipsize(model, 20).padEnd(21, " ");
               const rndPad = `r${displayRound}`.padEnd(5, " ");
-              const statePad = state.padEnd(10, " ");
-              const nowPad = ellipsize(nowCol, 26).padEnd(28, " ");
+              const tokensPad = (row.tokens || "").padEnd(9, " ");
+              const statusPad = ellipsize(status, 19).padEnd(20, " ");
+              const clockPad = (row.clock || "--").padEnd(7, " ");
 
-              const line = `${namePad} ${actorPad} ${modelPad} ${rndPad} ${statePad} ${nowPad} ${tokensCol}`;
+              // The fixed columns fill the page's 96-wide grid; the reason takes
+              // what is left of it, so STATUS and TIME hold their columns.
+              const fixed = `${namePad} ${actorPad} ${modelPad}${rndPad}${tokensPad} ${statusPad}${clockPad}`;
+              const reasonPad = Math.max(0, 96 - ROW_PREFIX.length - fixed.length);
+              const line = `${fixed}${ellipsize(row.reason || "", reasonPad)}`;
 
               return (
                 <box
@@ -1500,7 +1519,7 @@ export default {
         const cacheKey = `${name}:${round}:${currentTab}`;
         const tabContent = showCache.get(cacheKey) || "";
 
-        const actor = row.role || "builder";
+        const actor = rowActor(row);
         const model = parseModel(row.candidate);
         // §4.1: one rule for the header's word and its colour.
         const sw = stateWord(row);

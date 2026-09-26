@@ -87,11 +87,12 @@ func TestRenderPlannerLine(t *testing.T) {
 func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 	now := baseTime
 	tests := []struct {
-		name        string
-		binding     BindingStatus
-		expectMid   string
-		expectRight string
-		noSeparator bool
+		name         string
+		binding      BindingStatus
+		expectMid    string
+		expectStatus string
+		expectRight  string
+		noSeparator  bool
 	}{
 		{
 			name: "report note",
@@ -102,7 +103,8 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 				BuilderCandidate: "agy",
 				LastPayload:      &LastEvent{Kind: store.KindReport, Note: "unmarked"},
 			},
-			expectMid: "report in (unmarked)",
+			expectMid:    "r1 · builder on agy",
+			expectStatus: "report in",
 		},
 		{
 			name: "question",
@@ -113,7 +115,8 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 				BuilderCandidate: "agy",
 				LastPayload:      &LastEvent{Kind: store.KindQuestion},
 			},
-			expectMid: "question in",
+			expectMid:    "r1 · builder on agy",
+			expectStatus: "question in",
 		},
 		{
 			name: "answer",
@@ -124,7 +127,8 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 				BuilderCandidate: "agy",
 				LastPayload:      &LastEvent{Kind: store.KindAnswer},
 			},
-			expectMid: "answered",
+			expectMid:    "r1 · builder on agy",
+			expectStatus: "answered",
 		},
 		{
 			name: "last nil",
@@ -135,8 +139,9 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 				BuilderCandidate: "agy",
 				LastPayload:      nil,
 			},
-			expectMid:   "no plan yet",
-			expectRight: "--",
+			expectMid:    "r1 · builder on agy",
+			expectStatus: "no plan yet",
+			expectRight:  "--",
 		},
 		{
 			name: "empty candidate",
@@ -147,8 +152,9 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 				BuilderCandidate: "",
 				LastPayload:      &LastEvent{Kind: store.KindPlan},
 			},
-			expectMid:   "r1 · plan sent",
-			noSeparator: true,
+			expectMid:    "r1 · builder",
+			expectStatus: "plan sent",
+			noSeparator:  true,
 		},
 		{
 			name: "candidate with no slash",
@@ -159,7 +165,8 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 				BuilderCandidate: "agy",
 				LastPayload:      &LastEvent{Kind: store.KindPlan},
 			},
-			expectMid: "r1 · agy · plan sent",
+			expectMid:    "r1 · builder on agy",
+			expectStatus: "plan sent",
 		},
 	}
 
@@ -172,8 +179,11 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 				t.Fatalf("got %d lines, want 1", len(lines))
 			}
 			plain := stripSGR(lines[0])
-			if !strings.Contains(plain, tt.expectMid) {
+			if tt.expectMid != "" && !strings.Contains(plain, tt.expectMid) {
 				t.Errorf("line %q does not contain mid %q", plain, tt.expectMid)
+			}
+			if tt.expectStatus != "" && !strings.Contains(plain, tt.expectStatus) {
+				t.Errorf("line %q does not contain status %q", plain, tt.expectStatus)
 			}
 			if tt.expectRight != "" && !strings.Contains(plain, tt.expectRight) {
 				t.Errorf("line %q does not contain right %q", plain, tt.expectRight)
@@ -238,8 +248,11 @@ func TestRenderStatusLineLiveSegment(t *testing.T) {
 			Tokens: usage.Tokens{In: 4_000, CacheRead: 30_000, Out: 7_000}, Cost: usage.Cost{USD: 0.02, Basis: usage.Measured}, Samples: 1},
 	}
 	plain := stripSGR(splitLines(RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120))[0])
-	if !strings.Contains(plain, "plan sent · 41k tok") {
+	if !strings.Contains(plain, "builder on opencode · 41k tok") {
 		t.Errorf("no live tokens segment: %q", plain)
+	}
+	if !strings.Contains(plain, "plan sent") {
+		t.Errorf("the row's phase must show in its status column: %q", plain)
 	}
 	if strings.Contains(plain, "$") {
 		t.Errorf("must not contain dollar figure: %q", plain)
@@ -407,6 +420,260 @@ func TestWaitingReportOutcome(t *testing.T) {
 	})
 }
 
+// TestRowStatus pins the one status column: Status and Tone come from one
+// rule in one order, so no surface has to derive a status again.
+func TestRowStatus(t *testing.T) {
+	now := baseTime
+	tests := []struct {
+		name       string
+		binding    BindingStatus
+		wantStatus string
+		wantTone   string
+		wantReason string
+	}{
+		{
+			name: "plan sent",
+			binding: BindingStatus{
+				Name:             "api",
+				Round:            1,
+				Display:          "ACTIVE",
+				BuilderCandidate: "agy",
+				LastPayload:      &LastEvent{Kind: store.KindPlan, Direction: store.DirToBuilder, TS: now.Add(-2 * time.Minute)},
+			},
+			wantStatus: "plan sent",
+			wantTone:   "phase",
+		},
+		{
+			name: "no payload",
+			binding: BindingStatus{
+				Name:    "api",
+				Round:   1,
+				Display: "ACTIVE",
+			},
+			wantStatus: "no plan yet",
+			wantTone:   "phase",
+		},
+		{
+			name: "delivered plain report",
+			binding: BindingStatus{
+				Name:             "api",
+				Round:            1,
+				Display:          "ACTIVE",
+				BuilderCandidate: "agy",
+				LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, Round: 1, TS: now.Add(-2 * time.Minute)},
+			},
+			wantStatus: "REPORT IN",
+			wantTone:   "report",
+		},
+		{
+			name: "delivered report with a note and an outcome",
+			binding: BindingStatus{
+				Name:             "api",
+				Round:            1,
+				Display:          "ACTIVE",
+				BuilderCandidate: "agy",
+				LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, Note: "unmarked", Outcome: "halted", TS: now.Add(-2 * time.Minute)},
+			},
+			wantStatus: "REPORT IN · unmarked · halted",
+			wantTone:   "report",
+		},
+		{
+			name: "delivered report whose outcome is done",
+			binding: BindingStatus{
+				Name:             "api",
+				Round:            1,
+				Display:          "ACTIVE",
+				BuilderCandidate: "agy",
+				LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, Outcome: "done", TS: now.Add(-2 * time.Minute)},
+			},
+			wantStatus: "REPORT IN",
+			wantTone:   "report",
+		},
+		{
+			name: "delivered question",
+			binding: BindingStatus{
+				Name:             "api",
+				Round:            1,
+				Display:          "ACTIVE",
+				BuilderCandidate: "agy",
+				LastPayload:      &LastEvent{Kind: store.KindQuestion, Direction: store.DirToPlanner, TS: now.Add(-2 * time.Minute)},
+			},
+			wantStatus: "QUESTION IN",
+			wantTone:   "report",
+		},
+		{
+			name: "report still in flight on a live deliverer route",
+			binding: BindingStatus{
+				Name:             "api",
+				Round:            1,
+				Display:          "ACTIVE",
+				BuilderCandidate: "agy",
+				PlannerRoute:     "deliverer",
+				PlannerRouteLive: true,
+				Pending:          &PendingInfo{Round: 1, Kind: store.KindReport},
+				LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, TS: now.Add(-5 * time.Second)},
+			},
+			wantStatus: "report in",
+			wantTone:   "phase",
+		},
+		{
+			name: "stalled report",
+			binding: BindingStatus{
+				Name:             "api",
+				Round:            1,
+				Display:          "ACTIVE",
+				BuilderCandidate: "agy",
+				PlannerRoute:     "deliverer",
+				PlannerRouteLive: true,
+				Pending:          &PendingInfo{Round: 1, Kind: store.KindReport},
+				LastPayload:      &LastEvent{Kind: store.KindReport, Direction: store.DirToPlanner, TS: now.Add(-2 * time.Minute)},
+			},
+			wantStatus: "NEEDS YOU",
+			wantTone:   "needs",
+			wantReason: "report in",
+		},
+		{
+			name:       "paused display",
+			binding:    BindingStatus{Name: "api", Round: 1, Display: "PAUSED", BuilderCandidate: "agy"},
+			wantStatus: "PAUSED",
+			wantTone:   "quiet",
+		},
+		{
+			name:       "held display",
+			binding:    BindingStatus{Name: "api", Round: 1, Display: "HELD", BuilderCandidate: "agy"},
+			wantStatus: "HELD",
+			wantTone:   "held",
+		},
+		{
+			name: "needs you display carries its detail as the reason",
+			binding: BindingStatus{
+				Name:             "api",
+				Round:            1,
+				Display:          "NEEDS YOU",
+				BuilderCandidate: "agy",
+				Detail:           "round 1 was open",
+			},
+			wantStatus: "NEEDS YOU",
+			wantTone:   "needs",
+			wantReason: "round 1 was open",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows := StatusLineRows(Report{Bindings: []BindingStatus{tt.binding}}, now)
+			if len(rows) != 1 {
+				t.Fatalf("len(rows) = %d, want 1", len(rows))
+			}
+			if rows[0].Status != tt.wantStatus {
+				t.Errorf("Status = %q, want %q", rows[0].Status, tt.wantStatus)
+			}
+			if rows[0].Tone != tt.wantTone {
+				t.Errorf("Tone = %q, want %q", rows[0].Tone, tt.wantTone)
+			}
+			if rows[0].Reason != tt.wantReason {
+				t.Errorf("Reason = %q, want %q", rows[0].Reason, tt.wantReason)
+			}
+		})
+	}
+}
+
+// TestStatusLineRowActor pins the actor a row names: a builder binding stores
+// an empty role (normRole), so its row still names "builder".
+func TestStatusLineRowActor(t *testing.T) {
+	tests := []struct {
+		name string
+		role string
+		want string
+	}{
+		{name: "builder stores no role", role: "", want: "builder"},
+		{name: "reviewer", role: "reviewer", want: "reviewer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := BindingStatus{Name: "api", Round: 1, Display: "ACTIVE", Role: tt.role}
+			rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, baseTime)
+			if len(rows) != 1 {
+				t.Fatalf("len(rows) = %d, want 1", len(rows))
+			}
+			if rows[0].Actor != tt.want {
+				t.Errorf("Actor = %q, want %q", rows[0].Actor, tt.want)
+			}
+		})
+	}
+}
+
+// TestRenderStatusLineOneStatusClockLast pins the row's three parts: the middle
+// names the actor, the status column holds the row's one status, and the clock
+// is right-aligned last. Only the status column carries the status word, and
+// the status and the clock hold their columns on every row, so neither moves
+// when another row's text changes length.
+func TestRenderStatusLineOneStatusClockLast(t *testing.T) {
+	now := baseTime
+	rep := Report{Bindings: []BindingStatus{
+		{
+			Name:             "planner-policy",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy/google/gemini-3.8-flash-high",
+			RoundStart:       now.Add(-7 * time.Minute),
+			LastPayload:      &LastEvent{TS: now.Add(-7 * time.Minute), Kind: store.KindPlan, Direction: store.DirToBuilder},
+		},
+		{
+			Name:             "leaves1",
+			Round:            2,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy/google/gemini-3.8-flash-high",
+			RoundStart:       now.Add(-33 * time.Minute),
+			RoundEnd:         now.Add(-31 * time.Minute),
+			LastPayload:      &LastEvent{TS: now.Add(-31 * time.Minute), Round: 2, Kind: store.KindReport, Direction: store.DirToPlanner},
+		},
+		{
+			Name:             "proc",
+			Round:            1,
+			Display:          "ACTIVE",
+			BuilderCandidate: "agy/google/gemini-3.8-flash-high",
+			RoundStart:       now.Add(-21 * time.Minute),
+			RoundEnd:         now.Add(-20 * time.Minute),
+			LastPayload:      &LastEvent{TS: now.Add(-20 * time.Minute), Round: 1, Kind: store.KindReport, Direction: store.DirToPlanner, Outcome: "halted"},
+		},
+	}}
+
+	rows := StatusLineRows(rep, now)
+	lines := splitLines(RenderStatusLine(rep, now, 140))
+	if len(lines) != len(rows) {
+		t.Fatalf("got %d lines and %d rows, want one line per row", len(lines), len(rows))
+	}
+
+	statusCol, clockEnd := -1, -1
+	for i, row := range rows {
+		plain := stripSGR(lines[i])
+		t.Logf("row %d: %q", i, plain)
+
+		if got := strings.Count(strings.ToLower(plain), strings.ToLower(row.Status)); got != 1 {
+			t.Errorf("line %d %q carries its status %q %d times, want exactly once", i, plain, row.Status, got)
+		}
+		if !strings.HasSuffix(plain, row.Clock) {
+			t.Errorf("line %d %q does not end with its clock %q", i, plain, row.Clock)
+		}
+		if end := utf8.RuneCountInString(plain); clockEnd < 0 {
+			clockEnd = end
+		} else if end != clockEnd {
+			t.Errorf("line %d ends at column %d, want %d, so the clock's last rune never moves", i, end, clockEnd)
+		}
+		if col := strings.Index(plain, row.Status); col < 0 {
+			t.Errorf("line %d %q does not carry its status %q at all", i, plain, row.Status)
+		} else if statusCol < 0 {
+			statusCol = col
+		} else if col != statusCol {
+			t.Errorf("line %d status starts at column %d, want %d", i, col, statusCol)
+		}
+		if !strings.Contains(plain, "builder on agy") {
+			t.Errorf("line %d %q does not name the actor and the harness in the middle", i, plain)
+		}
+	}
+}
+
 func statuslineFixture(now time.Time) Report {
 	return Report{
 		Bindings: []BindingStatus{
@@ -463,10 +730,10 @@ func TestRenderStatusLineAt80(t *testing.T) {
 	}
 
 	plain0 := stripSGR(lines[0])
-	if !strings.HasPrefix(plain0, "○ api     r3 · agy · plan sent") {
+	if !strings.HasPrefix(plain0, "○ api     r3 · builder on agy") {
 		t.Errorf("line 0 prefix mismatch: %q", plain0)
 	}
-	if !strings.HasSuffix(plain0, " 12m") {
+	if !strings.HasSuffix(plain0, "plan sent  12m") {
 		t.Errorf("line 0 suffix mismatch: %q", plain0)
 	}
 	if strings.Contains(plain0, "ACTIVE") {
@@ -474,18 +741,18 @@ func TestRenderStatusLineAt80(t *testing.T) {
 	}
 
 	plain1 := stripSGR(lines[1])
-	if !strings.HasPrefix(plain1, "● client  r1 · opencode · plan sent") {
+	if !strings.HasPrefix(plain1, "● client  r1 · builder on opencode · plan sent") {
 		t.Errorf("line 1 prefix mismatch: %q", plain1)
 	}
-	if !strings.HasSuffix(plain1, " 4m · NEEDS YOU") {
+	if !strings.HasSuffix(plain1, "NEEDS YOU   4m") {
 		t.Errorf("line 1 suffix mismatch: %q", plain1)
 	}
 
 	plain2 := stripSGR(lines[2])
-	if !strings.HasPrefix(plain2, "○ docs    r2 · agy · report in") {
+	if !strings.HasPrefix(plain2, "○ docs    r2 · builder on agy") {
 		t.Errorf("line 2 prefix mismatch: %q", plain2)
 	}
-	if !strings.HasSuffix(plain2, " 23s · PAUSED") {
+	if !strings.HasSuffix(plain2, "PAUSED     23s") {
 		t.Errorf("line 2 suffix mismatch: %q", plain2)
 	}
 }
@@ -507,7 +774,7 @@ func TestRenderStatusLineTruncatesAt40(t *testing.T) {
 		t.Errorf("line 2 expected to contain '…': %q", plain2)
 	}
 
-	suffixes := []string{" 12m", " 4m · NEEDS YOU", " 23s · PAUSED"}
+	suffixes := []string{"plan sent  12m", "NEEDS YOU   4m", "PAUSED     23s"}
 	for i, line := range lines {
 		plain := stripSGR(line)
 		if !strings.HasSuffix(plain, suffixes[i]) {
@@ -531,7 +798,7 @@ func TestRenderStatusLineUnpaddedWhenTooNarrow(t *testing.T) {
 		t.Fatalf("got %d lines, want 3", len(lines))
 	}
 	plain0 := stripSGR(lines[0])
-	want := "○ api  r3 · agy · plan sent · 12m"
+	want := "○ api  r3 · builder on agy · plan sent · 12m"
 	if plain0 != want {
 		t.Errorf("line 0 = %q, want %q", plain0, want)
 	}
@@ -707,14 +974,14 @@ func TestRenderStatusLineRemoteServer(t *testing.T) {
 	}
 	out := RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120)
 	plain := stripSGR(splitLines(out)[0])
-	if !strings.Contains(plain, "r1 · opencode@contabo · plan sent") {
+	if !strings.Contains(plain, "r1 · builder on opencode@contabo") {
 		t.Errorf("expected opencode@contabo, got: %q", plain)
 	}
 
 	b.Server = ""
 	outLocal := RenderStatusLine(Report{Bindings: []BindingStatus{b}}, baseTime, 120)
 	plainLocal := stripSGR(splitLines(outLocal)[0])
-	if !strings.Contains(plainLocal, "r1 · opencode · plan sent") {
+	if !strings.Contains(plainLocal, "r1 · builder on opencode") {
 		t.Errorf("expected opencode, got: %q", plainLocal)
 	}
 }
@@ -798,6 +1065,15 @@ func TestStatusLineRows(t *testing.T) {
 		if row.Route != "deliverer" {
 			t.Errorf("Route = %q, want 'deliverer'", row.Route)
 		}
+		if row.Actor != "builder" {
+			t.Errorf("Actor = %q, want 'builder'", row.Actor)
+		}
+		if row.Status != "NEEDS YOU" || row.Tone != "needs" {
+			t.Errorf("Status/Tone = %q/%q, want 'NEEDS YOU'/'needs'", row.Status, row.Tone)
+		}
+		if row.Reason != "report in (halted)" {
+			t.Errorf("Reason = %q, want 'report in (halted)'", row.Reason)
+		}
 	})
 
 	t.Run("open round with LiveUsage samples -> tokens = <n> tok", func(t *testing.T) {
@@ -855,6 +1131,9 @@ func TestStatusLineRows(t *testing.T) {
 		if rows[0].Harness != "opencode@contabo" {
 			t.Errorf("Harness = %q, want 'opencode@contabo'", rows[0].Harness)
 		}
+		if rows[0].Actor != "builder" {
+			t.Errorf("Actor = %q, want 'builder'", rows[0].Actor)
+		}
 	})
 
 	t.Run("no RoundStart -> clock --", func(t *testing.T) {
@@ -886,6 +1165,9 @@ func TestStatusLineRows(t *testing.T) {
 		}
 		if rows[0].LastTS != "" {
 			t.Errorf("LastTS = %q, want empty", rows[0].LastTS)
+		}
+		if rows[0].Status != "no plan yet" || rows[0].Tone != "phase" {
+			t.Errorf("Status/Tone = %q/%q, want 'no plan yet'/'phase'", rows[0].Status, rows[0].Tone)
 		}
 	})
 
@@ -935,6 +1217,15 @@ func TestStatusLineRows(t *testing.T) {
 		}
 		if rows[0].ReportRound != 3 {
 			t.Errorf("ReportRound = %d, want 3", rows[0].ReportRound)
+		}
+		if rows[0].Actor != "builder" {
+			t.Errorf("Actor = %q, want 'builder'", rows[0].Actor)
+		}
+		if rows[0].Status != "REPORT IN" || rows[0].Tone != "report" {
+			t.Errorf("Status/Tone = %q/%q, want 'REPORT IN'/'report'", rows[0].Status, rows[0].Tone)
+		}
+		if rows[0].Reason != "" {
+			t.Errorf("Reason = %q, want empty (nothing to explain)", rows[0].Reason)
 		}
 	})
 
