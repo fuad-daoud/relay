@@ -180,8 +180,9 @@ func applyRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 // applyRemoteErr classifies a failed fetch exactly as the inline observe did:
 // a revoked key halts at once, every other 401 gets its grace, a 404 or a
-// round unreachable past its budget halts, and anything else only updates the
-// reported status.
+// round unreachable past its budget halts, a server this machine's config does
+// not name only updates the reported status -- the round may be running fine
+// there -- and anything else does the same.
 func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, err error, now time.Time) (store.Binding, bool, error) {
 	server := b.Builder.Server
 	name := b.Name
@@ -240,6 +241,13 @@ func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 			slog.Warn("server certificate changed", "server", server, "binding", name)
 		}
 		b.Builder.RemoteStatus = "cert"
+		return b, false, nil
+	}
+	if errors.Is(err, client.ErrUnknownServer) {
+		b.Builder.RemoteStatus = "unknown server"
+		warnOnce(name, "unknown-server",
+			name+": server "+server+" is not in this machine's config; run relevo config server list",
+			"server", server, "binding", name)
 		return b, false, nil
 	}
 	slog.Warn("remote get binding failed", "server", server, "binding", name, "err", err)
