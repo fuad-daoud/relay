@@ -9,25 +9,14 @@ import (
 )
 
 // PutRoundFile writes one round file of a live binding directly as a
-// round_file row, with no file on disk. It is PutRoundFile for the handful of
-// artifacts relevo produces without ever writing bytes to the binding
-// directory -- the drift patch, the round's diff patch and a consult's
-// findings.
+// round_file row, with no file on disk: the artifacts relevo produces without
+// ever writing bytes to the binding directory (a drift or diff patch, a
+// consult's findings). It is a Tx method, so the state lock is already held.
 //
-// It is a Tx method, so the state lock is already held; it never re-locks.
-//
-// Validation refuses, with nothing written:
-//   - a path outside the binding's own directory;
-//   - a basename that is not a round file name (the NNN- prefix);
-//   - a basename whose NNN- is not round;
-//   - a round below 1.
-//
-// The live record is looked up exactly as SealRound does. A name with no live
-// record is an error wrapping ErrNotFound, never a silent no-op: an
-// unrecorded put would vanish, which is what writing a file never did.
-//
-// Postconditions: s.ReadFile(path) returns body, s.RoundFiles(name) lists the
-// basename, and no file exists at path.
+// A path outside the binding's directory, a basename without the round-file
+// NNN- prefix, a mismatched NNN- or a round below 1 is refused with nothing
+// written. A name with no live record is an ErrNotFound error, never a silent
+// no-op: an unrecorded put would vanish, which is what writing a file never did.
 func (t *Tx) PutRoundFile(name string, round int, path string, body []byte) error {
 	if filepath.Dir(path) != t.s.Dir(name) {
 		return fmt.Errorf("put round file %s: not in binding %q's directory", path, name)

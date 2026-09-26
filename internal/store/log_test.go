@@ -11,15 +11,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-func seedBinding(t *testing.T) (*Store, string) {
-	t.Helper()
-	s := New(t.TempDir())
-	if err := s.Save(newBinding("webshop", "/repo")); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	return s, "webshop"
-}
-
 func TestAppendAndReadLog(t *testing.T) {
 	s, name := seedBinding(t)
 
@@ -90,9 +81,7 @@ func TestReadLogRefusesOversizedLogInsteadOfTruncating(t *testing.T) {
 	}
 }
 
-// TestSaveWithLogWritesBindingAndEntriesTogether pins the happy path (#471):
-// the binding and both entries land, the entries keep argument order with
-// consecutive seqs after the seed's, and each gets a TS.
+// TestSaveWithLogWritesBindingAndEntriesTogether pins the happy path.
 func TestSaveWithLogWritesBindingAndEntriesTogether(t *testing.T) {
 	s, name := seedBinding(t)
 
@@ -130,7 +119,7 @@ func TestSaveWithLogWritesBindingAndEntriesTogether(t *testing.T) {
 		t.Errorf("entries out of order: %+v", entries)
 	}
 	if entries[0].Seq != 1 || entries[1].Seq != 2 {
-		t.Errorf("seqs = %d,%d, want 1,2 (after the seed's 0 entries)", entries[0].Seq, entries[1].Seq)
+		t.Errorf("seqs = %d,%d, want 1,2", entries[0].Seq, entries[1].Seq)
 	}
 	for i, e := range entries {
 		if e.TS.IsZero() {
@@ -139,14 +128,13 @@ func TestSaveWithLogWritesBindingAndEntriesTogether(t *testing.T) {
 	}
 }
 
-// TestSaveWithLogWritesNothingWhenAnEntryFails pins all-or-nothing (#471):
-// the second entry passes the cap, so neither it nor the binding's new state
-// may survive.
+// TestSaveWithLogWritesNothingWhenAnEntryFails pins all-or-nothing: the second
+// entry passes the cap, so neither it nor the binding's new state may survive.
 func TestSaveWithLogWritesNothingWhenAnEntryFails(t *testing.T) {
 	s, name := seedBinding(t)
 
-	// Seed the log with one entry below the cap, written through log.jsonl so
-	// importPresent adopts it, exactly as the oversized-log test seeds.
+	// Seed the log with entries below the cap, written through log.jsonl so
+	// importPresent adopts them.
 	entry := LogEntry{Round: 1, Direction: DirToPlanner, Kind: KindReport, Payload: "x", Confirmed: true}
 	raw, err := json.Marshal(entry)
 	if err != nil {
@@ -160,12 +148,9 @@ func TestSaveWithLogWritesNothingWhenAnEntryFails(t *testing.T) {
 	if err := os.WriteFile(s.logPath(name), buf.Bytes(), bindingFileMode); err != nil {
 		t.Fatalf("seed log: %v", err)
 	}
-	if _, err := s.ReadLog(name); err != nil {
-		t.Fatalf("ReadLog (adopt the seed): %v", err)
-	}
 	seeded, err := s.ReadLog(name)
 	if err != nil {
-		t.Fatalf("ReadLog: %v", err)
+		t.Fatalf("ReadLog (adopt the seed): %v", err)
 	}
 	if len(seeded) != maxLogEntries-1 {
 		t.Fatalf("seeded %d entries, want %d", len(seeded), maxLogEntries-1)
@@ -178,11 +163,10 @@ func TestSaveWithLogWritesNothingWhenAnEntryFails(t *testing.T) {
 	oldState := b.State
 	b.State = StateNeedsYou
 
-	e1 := LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true}
-	e2 := LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true}
-
 	err = s.WithLock(func(tx *Tx) error {
-		return tx.SaveWithLog(b, e1, e2)
+		return tx.SaveWithLog(b,
+			LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true},
+			LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan, Confirmed: true})
 	})
 	if err == nil {
 		t.Fatal("SaveWithLog: got nil error, want a cap failure")
@@ -198,13 +182,8 @@ func TestSaveWithLogWritesNothingWhenAnEntryFails(t *testing.T) {
 	if got.State != oldState {
 		t.Errorf("State = %q, want the old %q: the binding must not have been saved", got.State, oldState)
 	}
-
-	entries, err := s.ReadLog(name)
-	if err != nil {
-		t.Fatalf("ReadLog: %v", err)
-	}
-	if len(entries) != maxLogEntries-1 {
-		t.Errorf("got %d entries, want %d: nothing may have been appended", len(entries), maxLogEntries-1)
+	if entries, err := s.ReadLog(name); err != nil || len(entries) != maxLogEntries-1 {
+		t.Errorf("entries = %d, %v; want %d: nothing may have been appended", len(entries), err, maxLogEntries-1)
 	}
 }
 
@@ -270,73 +249,69 @@ func TestLogEntryCommitFactsRoundTripAndAreOmittedWhenUnknown(t *testing.T) {
 	}
 }
 
-func TestAppendLogAssignsSeq(t *testing.T) {
-	s, name := seedBinding(t)
-
-	for i := 1; i <= 3; i++ {
-		if err := s.AppendLog(name, LogEntry{Round: 1, Direction: DirToBuilder, Kind: KindPlan}); err != nil {
-			t.Fatalf("AppendLog %d: %v", i, err)
-		}
-	}
-	// A caller-supplied Seq is overwritten: appendLog owns the numbering.
-	if err := s.AppendLog(name, LogEntry{Seq: 99, Round: 1, Direction: DirToBuilder, Kind: KindPlan}); err != nil {
-		t.Fatalf("AppendLog 4: %v", err)
-	}
-
-	got, err := s.ReadLog(name)
-	if err != nil {
-		t.Fatalf("ReadLog: %v", err)
-	}
-	if len(got) != 4 {
-		t.Fatalf("got %d entries, want 4", len(got))
-	}
-	for i, e := range got {
-		if e.Seq != i+1 {
-			t.Errorf("entry %d: Seq = %d, want %d", i, e.Seq, i+1)
-		}
-	}
-}
-
-func TestReadLogFillsSeqForPreSeqFile(t *testing.T) {
-	s, name := seedBinding(t)
-
-	// Three raw lines with no seq key: a file written before Seq existed.
-	raw := `{"ts":"2026-09-10T10:00:00.000Z","round":1,"direction":"to_builder","kind":"plan","confirmed":true}
+// TestLogSeqNumbering pins that appendLog assigns the next position -- also
+// when the caller supplied one -- and that a pre-Seq log is numbered on read.
+func TestLogSeqNumbering(t *testing.T) {
+	preSeqLines := `{"ts":"2026-09-10T10:00:00.000Z","round":1,"direction":"to_builder","kind":"plan","confirmed":true}
 {"ts":"2026-09-10T10:00:01.000Z","round":1,"direction":"to_planner","kind":"report","confirmed":true}
 {"ts":"2026-09-10T10:01:00.000Z","round":2,"direction":"to_builder","kind":"plan","confirmed":true}
 `
-	if err := os.WriteFile(s.logPath(name), []byte(raw), bindingFileMode); err != nil {
-		t.Fatalf("seed pre-Seq log: %v", err)
+
+	cases := []struct {
+		name    string
+		seed    func(t *testing.T, s *Store, name string)
+		appends []LogEntry
+		want    []int
+	}{
+		{
+			name: "append assigns consecutive seqs",
+			appends: []LogEntry{
+				{Round: 1, Direction: DirToBuilder, Kind: KindPlan},
+				{Round: 1, Direction: DirToBuilder, Kind: KindPlan},
+				{Round: 1, Direction: DirToBuilder, Kind: KindPlan},
+				// A caller-supplied Seq is overwritten: appendLog owns the
+				// numbering.
+				{Seq: 99, Round: 1, Direction: DirToBuilder, Kind: KindPlan},
+			},
+			want: []int{1, 2, 3, 4},
+		},
+		{
+			name: "a pre-Seq file is numbered on read",
+			seed: func(t *testing.T, s *Store, name string) {
+				t.Helper()
+				if err := os.WriteFile(s.logPath(name), []byte(preSeqLines), bindingFileMode); err != nil {
+					t.Fatalf("seed pre-Seq log: %v", err)
+				}
+			},
+			appends: []LogEntry{{Round: 2, Direction: DirToPlanner, Kind: KindReport}},
+			want:    []int{1, 2, 3, 4},
+		},
 	}
 
-	got, err := s.ReadLog(name)
-	if err != nil {
-		t.Fatalf("ReadLog: %v", err)
-	}
-	if len(got) != 3 {
-		t.Fatalf("got %d entries, want 3", len(got))
-	}
-	for i, e := range got {
-		if e.Seq != i+1 {
-			t.Errorf("pre-Seq entry %d: Seq = %d, want %d", i, e.Seq, i+1)
-		}
-	}
-
-	if err := s.AppendLog(name, LogEntry{Round: 2, Direction: DirToPlanner, Kind: KindReport}); err != nil {
-		t.Fatalf("AppendLog: %v", err)
-	}
-
-	got, err = s.ReadLog(name)
-	if err != nil {
-		t.Fatalf("ReadLog after append: %v", err)
-	}
-	if len(got) != 4 {
-		t.Fatalf("got %d entries, want 4", len(got))
-	}
-	for i, e := range got {
-		if e.Seq != i+1 {
-			t.Errorf("entry %d after append: Seq = %d, want %d", i, e.Seq, i+1)
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, name := seedBinding(t)
+			if tc.seed != nil {
+				tc.seed(t, s, name)
+			}
+			for _, e := range tc.appends {
+				if err := s.AppendLog(name, e); err != nil {
+					t.Fatalf("AppendLog: %v", err)
+				}
+			}
+			got, err := s.ReadLog(name)
+			if err != nil {
+				t.Fatalf("ReadLog: %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d entries, want %d", len(got), len(tc.want))
+			}
+			for i, want := range tc.want {
+				if got[i].Seq != want {
+					t.Errorf("entry %d Seq = %d, want %d", i, got[i].Seq, want)
+				}
+			}
+		})
 	}
 }
 
@@ -357,12 +332,8 @@ func TestReadLogAfter(t *testing.T) {
 		t.Fatalf("ReadLogAfter(2) = %+v, want just Seq 3", got)
 	}
 
-	none, err := s.ReadLogAfter(name, 3)
-	if err != nil {
-		t.Fatalf("ReadLogAfter(3): %v", err)
-	}
-	if none != nil {
-		t.Errorf("ReadLogAfter(3) = %+v, want nil", none)
+	if none, err := s.ReadLogAfter(name, 3); err != nil || none != nil {
+		t.Errorf("ReadLogAfter(3) = %+v, %v; want nil, nil", none, err)
 	}
 
 	all, err := s.ReadLogAfter(name, 0)
@@ -405,12 +376,11 @@ func TestLogEntryUsageRoundTrip(t *testing.T) {
 	}
 }
 
+// TestPendingForPlannerReturnsArrivalOrder pins oldest-first delivery: a
+// report queued before a question and a drift note must be delivered first.
 func TestPendingForPlannerReturnsArrivalOrder(t *testing.T) {
 	s, name := seedBinding(t)
 
-	// A report, a blocked-dialog question and a drift note can already be
-	// pending together today; consults only make it routine. Arrival order is
-	// the only order relevo can defend without judging content.
 	for _, e := range []LogEntry{
 		{Round: 3, Direction: DirToPlanner, Kind: KindReport, Payload: "report r3"},
 		{Round: 3, Direction: DirToPlanner, Kind: KindQuestion, Payload: "question r3"},
@@ -421,8 +391,7 @@ func TestPendingForPlannerReturnsArrivalOrder(t *testing.T) {
 		}
 	}
 
-	want := []string{"report r3", "question r3", "drift r3"}
-	for i, w := range want {
+	for i, w := range []string{"report r3", "question r3", "drift r3"} {
 		var got LogEntry
 		var idx int
 		var ok bool
@@ -510,9 +479,9 @@ func TestConfirmIndexConfirmsOnlyTheNamedEntry(t *testing.T) {
 		}
 	}
 
-	// Confirm the OLDER of the two pending entries. Naming index 2 would pin
-	// nothing: index 2 is also the newest unconfirmed entry, so an
-	// implementation that ignored idx and confirmed the newest would pass.
+	// Confirm the OLDER of the two pending entries: index 2 would pin nothing,
+	// since an implementation that ignored idx and confirmed the newest would
+	// pass.
 	if err := s.ConfirmIndex(name, 1, ""); err != nil {
 		t.Fatalf("ConfirmIndex: %v", err)
 	}
@@ -525,7 +494,7 @@ func TestConfirmIndexConfirmsOnlyTheNamedEntry(t *testing.T) {
 		t.Error("index 1 not confirmed; ConfirmIndex must confirm the index it was given")
 	}
 	if entries[2].Confirmed {
-		t.Error("index 2 confirmed; ConfirmIndex must confirm ONLY the index it was given, never the newest")
+		t.Error("index 2 confirmed; ConfirmIndex must confirm ONLY the index it was given")
 	}
 	if entries[1].DeliveredAt == nil {
 		t.Error("DeliveredAt not stamped on the confirmed entry")
@@ -554,7 +523,7 @@ func TestConfirmIndexRejectsAnIndexOutsideTheLog(t *testing.T) {
 	}
 
 	if err := s.ConfirmIndex(name, 7, ""); err == nil {
-		t.Fatal("ConfirmIndex(7) on a 1-entry log returned nil; an out-of-range index is a caller bug, not a no-op")
+		t.Fatal("ConfirmIndex(7) on a 1-entry log returned nil; an out-of-range index is a caller bug")
 	}
 }
 
@@ -584,7 +553,7 @@ func TestConfirmIndexKeepsSeq(t *testing.T) {
 	}
 
 	// The rewrite writes Seq through: the second entry's entry_json now
-	// carries "seq":2 (D2: the log is a DB row, not a file).
+	// carries "seq":2.
 	stored := bindingEvents(t, s, name)
 	if len(stored) != 3 {
 		t.Fatalf("stored events = %d, want 3", len(stored))
@@ -594,9 +563,8 @@ func TestConfirmIndexKeepsSeq(t *testing.T) {
 	}
 }
 
-// TestConfirmIndexPreservesUnknownKeys pins #372 §4.3: confirmIndex patches
-// the one line it changes from a map, so a key a newer relevo wrote survives,
-// and every line it does not change keeps its exact bytes.
+// TestConfirmIndexPreservesUnknownKeys pins that a key a newer relevo wrote
+// survives, and every unchanged line keeps its bytes.
 func TestConfirmIndexPreservesUnknownKeys(t *testing.T) {
 	s, name := seedBinding(t)
 

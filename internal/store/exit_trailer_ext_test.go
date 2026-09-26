@@ -7,11 +7,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestExitTrailerMatchesProc pins store.ExitTrailer to proc.ExitTrailer (P3c
-// round 2 §3). internal/store cannot import internal/proc to share the
-// literal -- proc imports internal/relevo, which imports store, so the import
-// would cycle -- so the literal is repeated in store and this external test
-// keeps the two from drifting apart.
+// TestExitTrailerMatchesProc pins store.ExitTrailer to proc.ExitTrailer:
+// internal/store cannot import internal/proc to share the literal -- proc
+// imports internal/relevo, which imports store -- so this external test keeps
+// the two from drifting apart.
 func TestExitTrailerMatchesProc(t *testing.T) {
 	if store.ExitTrailer != proc.ExitTrailer {
 		t.Errorf("store.ExitTrailer = %q, proc.ExitTrailer = %q; they must name the same line",
