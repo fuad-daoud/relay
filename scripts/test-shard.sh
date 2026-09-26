@@ -15,8 +15,7 @@
 # ~1,000 tests are split without splitting the package itself: whole package i
 # goes to shard i mod TOTAL, and test j of a split package goes to shard
 # j mod TOTAL, both over LC_ALL=C sorted lists. The assignment is
-# deterministic, so the shards are always disjoint and cover everything
-# (docs/plans/2026-09-26-ci-speed-a.md §3).
+# deterministic, so the shards are always disjoint and cover everything.
 #
 # Test names come from the package sources rather than `go test -list`: reading
 # a file is free, while -list would compile the package a second time.

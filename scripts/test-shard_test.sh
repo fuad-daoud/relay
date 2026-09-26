@@ -2,8 +2,8 @@
 # scripts/test-shard_test.sh -- tests for the shard assignment.
 #
 # Every assertion runs --dry-run, which needs only `go list` and the package
-# sources: no test is compiled or run. The invariant under test is §3.1 of
-# docs/plans/2026-09-26-ci-speed-a.md -- for any TOTAL, the shards are pairwise
+# sources: no test is compiled or run. The invariant under test: for any
+# TOTAL, the shards are pairwise
 # disjoint and their union is every whole package plus every test name of every
 # split package.
 set -eu

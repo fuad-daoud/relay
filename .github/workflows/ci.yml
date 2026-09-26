@@ -186,6 +186,9 @@ jobs:
         with:
           name: shard-${{ matrix.shard }}
           path: .shard/
+          # upload-artifact skips dot-paths unless told otherwise.
+          include-hidden-files: true
+          if-no-files-found: error
           retention-days: 1
 
   # Merges the shards' coverage and runs the unchanged baseline guard on it.

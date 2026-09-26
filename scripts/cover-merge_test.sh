@@ -4,7 +4,7 @@
 # The fixtures are two hand-written shard output dirs over the same four
 # blocks: shard A covers blocks 1-2, shard B covers blocks 2-3, and block 4 is
 # covered by neither, so the expected percentage needs the union of both
-# profiles (docs/plans/2026-09-26-ci-speed-a.md §3.3).
+# profiles.
 set -eu
 
 # shellcheck disable=SC1007 # CDPATH= scopes an empty CDPATH to this one command

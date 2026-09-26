@@ -16,7 +16,6 @@
 # The synthesized percentage is the arithmetic `go test -cover` itself uses --
 # a block counts as covered when any shard reports count > 0 for it -- so an
 # unsharded run and a merged sharded run agree for that package.
-# See docs/plans/2026-09-26-ci-speed-a.md §3.3.
 set -eu
 
 usage() {
