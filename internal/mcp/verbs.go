@@ -8,26 +8,21 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// Verbs is what a tools/call dispatches to: the three verbs, each returning
-// what the CLI's --json would (or an error, turned into an isError result
-// by the caller).
+// Verbs is what a tools/call dispatches to, each returning what the CLI's
+// --json would, or an error the caller turns into an isError result.
 type Verbs interface {
 	Status(ctx context.Context, a StatusArgs) (any, error)
 	Send(ctx context.Context, a SendArgs) (any, error)
 	Done(ctx context.Context, a DoneArgs) (any, error)
 }
 
-// RelevoVerbs adapts internal/relevo's functions to Verbs, resolved against
-// one planner (spec docs/specs/2026-09-21-planner-channel-design.md §4, §5;
-// keyed by planner id in #303 §4.5).
+// RelevoVerbs adapts internal/relevo's functions to Verbs, resolved against one planner.
 type RelevoVerbs struct {
 	RT      relevo.Runtime
 	Planner string
 }
 
-// Status returns relevo.Status filtered to this planner's bindings (unless
-// a.All), narrowed to a.Name when given, with the same DONE-hiding the CLI
-// applies by default.
+// Status filters relevo.Status to this planner's bindings (unless a.All), narrowed to a.Name.
 func (v *RelevoVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
 	rep, err := relevo.Status(ctx, v.RT)
 	if err != nil {
@@ -65,17 +60,13 @@ func (v *RelevoVerbs) Status(ctx context.Context, a StatusArgs) (any, error) {
 	return rep, nil
 }
 
-// sendResult is relevo.SendResult plus the tools-mode background-wait budget:
-// the binding's round budget, rendered the way `relevo wait --timeout`
-// accepts it (#303 §4.5). Empty on a dry run, where no round was opened.
+// sendResult is relevo.SendResult plus the tools-mode wait budget, empty on a dry run.
 type sendResult struct {
 	relevo.SendResult
 	WaitBudget string `json:"wait_budget,omitempty"`
 }
 
-// waitBudget renders a binding's round budget (ms) as a duration string for
-// `relevo wait --timeout`. A non-positive value reads as "", which leaves the
-// wait command out of the send result.
+// waitBudget renders roundTimeoutMS for `relevo wait --timeout`; non-positive reads as "".
 func waitBudget(roundTimeoutMS int) string {
 	if roundTimeoutMS <= 0 {
 		return ""
@@ -83,8 +74,7 @@ func waitBudget(roundTimeoutMS int) string {
 	return (time.Duration(roundTimeoutMS) * time.Millisecond).String()
 }
 
-// budgetOf pulls the wait budget out of a Send result. A result that is not
-// a sendResult (a dry run, or a fake in a test) has none.
+// budgetOf pulls the wait budget out of a Send result; a non-sendResult has none.
 func budgetOf(res any) string {
 	if sr, ok := res.(sendResult); ok {
 		return sr.WaitBudget
@@ -92,8 +82,7 @@ func budgetOf(res any) string {
 	return ""
 }
 
-// Send calls relevo.Send, or relevo.SendDryRun when a.DryRun. AllowYolo is
-// always false: escalation to yolo stays on the CLI (spec §2 non-goals).
+// Send calls relevo.Send, or relevo.SendDryRun when a.DryRun; AllowYolo is always false.
 func (v *RelevoVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
 	opts := relevo.SendOptions{
 		Tier:      a.Tier,
@@ -116,8 +105,7 @@ func (v *RelevoVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
 		return nil, err
 	}
 	out := sendResult{SendResult: res}
-	// The budget is read back from the binding Send just saved: store fills
-	// the default in, so a binding with no --timeout still reads 24h.
+	// Reload so a binding with no --timeout still reports store's 24h default.
 	if v.RT.Store != nil {
 		if b, lerr := v.RT.Store.Load(a.Name); lerr == nil {
 			out.WaitBudget = waitBudget(b.RoundTimeoutMS)
@@ -126,9 +114,6 @@ func (v *RelevoVerbs) Send(ctx context.Context, a SendArgs) (any, error) {
 	return out, nil
 }
 
-// doneResult is relevo.DoneResult plus the CLI's rendered text, so a model
-// reading the tool result gets both the structured fields and the sentence
-// a human would see.
 type doneResult struct {
 	relevo.DoneResult
 	Text string `json:"text"`

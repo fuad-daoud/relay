@@ -11,9 +11,7 @@ import (
 	"testing"
 )
 
-// update rewrites every testdata/contract/*.golden file this test binary
-// touches. No other test in this package declares an "update" flag (verified
-// with grep before adding it).
+// update rewrites every testdata/contract/*.golden file this test binary touches.
 var update = flag.Bool("update", false, "rewrite testdata/contract/*.golden")
 
 func assertGolden(t *testing.T, name string, got []byte) {
@@ -44,11 +42,7 @@ func assertGolden(t *testing.T, name string, got []byte) {
 	}
 }
 
-// TestContractToolsList pins the tools/list result: the three tools' names,
-// descriptions and JSON Schema, in order. Static and volatility-free -- Tools()
-// takes no input -- so this drives the server exactly the way
-// TestServerInitializePinsProtocolVersionAndAdvertisesChannel does, with an
-// empty fakeVerbs (never called).
+// TestContractToolsList pins the tools/list result via one golden file.
 func TestContractToolsList(t *testing.T) {
 	out := runServer(t, &fakeVerbs{}, []string{
 		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
@@ -65,9 +59,6 @@ func TestContractToolsList(t *testing.T) {
 	assertGolden(t, "tools-list", raw)
 }
 
-// TestContractInstructions pins the initialize result's instructions text,
-// for the mode cmd/relevo runs an MCP server in by default (tools mode: no
-// channel claim, so the model must start its own background wait).
 func TestContractInstructions(t *testing.T) {
 	out := runServer(t, &fakeVerbs{}, []string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`,
@@ -91,12 +82,8 @@ func TestContractInstructions(t *testing.T) {
 }
 
 // TestContractToolResults pins the result text of status, send (dry_run:
-// true) and done, over a fakeVerbs returning fixed literal results: what is
-// under test here is tools.go/server.go's wrapping (JSON indentation, and,
-// for send, the background-wait line tools mode appends), not the full
-// relevo.Status/.Send/.Done computation those already have their own tests
-// for. A fixed literal result carries no path, timestamp or id, so none of
-// it needs normalizing.
+// true) and done over a fakeVerbs: what is under test is the wrapping
+// (JSON indentation, the background-wait line), not the verbs' own computation.
 func TestContractToolResults(t *testing.T) {
 	cases := []struct {
 		golden  string

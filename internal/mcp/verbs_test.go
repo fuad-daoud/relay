@@ -13,8 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// testGateKV is a real t.TempDir() database for a Runtime literal's Gates
-// field (P3b plan §4.5, §7).
+// testGateKV is a real t.TempDir() database for a Runtime literal's Gates field.
 func testGateKV(t *testing.T) *db.DB {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -25,17 +24,14 @@ func testGateKV(t *testing.T) *db.DB {
 	return d
 }
 
-// mcpTestPlannerA and mcpTestPlannerB are valid planner ids (pl_ plus 12
-// characters of [a-z2-7]); the status filter keys on them.
+// mcpTestPlannerA and mcpTestPlannerB are valid planner ids; the status filter keys on them.
 const (
 	mcpTestPlannerA = "pl_aaaaaaaabbbb"
 	mcpTestPlannerB = "pl_ccccccccdddd"
 )
 
-// stubRunner implements relevo.Runner with no-op stubs, for a headless
-// binding whose PID is 0 (Alive is never actually called on that path, but
-// Runtime.Runner must be non-nil or sendPreflight refuses before it gets
-// that far).
+// stubRunner implements relevo.Runner with no-op stubs: a headless binding's
+// PID is 0, but Runtime.Runner must still be non-nil or sendPreflight refuses first.
 type stubRunner struct{}
 
 func (stubRunner) Start(ctx context.Context, spec relevo.ProcSpec) (relevo.ProcHandle, error) {
@@ -79,10 +75,6 @@ func saveVerbBinding(t *testing.T, s *store.Store, b store.Binding) {
 	}
 }
 
-// TestRelevoVerbsStatusFiltersByPlannerThenName is the one status.go RelevoVerbs
-// behaviour the plan calls out as needing a real test: bindings are scoped to
-// this planner id unless All is set, narrowed further by Name, with the same
-// DONE-hiding the CLI applies by default.
 func TestRelevoVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 	s := store.New(t.TempDir())
 	rt := relevo.Runtime{
@@ -131,9 +123,7 @@ func TestRelevoVerbsStatusFiltersByPlannerThenName(t *testing.T) {
 	}
 }
 
-// TestMCPStatusFiltersByPlanner is the plan's required case for §4.5: the
-// status tool filters by planner id. The two bindings here share a pane, so
-// only the id can tell them apart.
+// TestMCPStatusFiltersByPlanner: the two bindings here share a pane, so only the planner id tells them apart.
 func TestMCPStatusFiltersByPlanner(t *testing.T) {
 	s := store.New(t.TempDir())
 	rt := relevo.Runtime{
@@ -158,11 +148,10 @@ func TestMCPStatusFiltersByPlanner(t *testing.T) {
 	}
 }
 
-// TestRelevoVerbsSendDryRunHeadless exercises Send's real forwarding into
-// relevo.SendDryRun: a headless binding needs no harness at all (only
-// Store, Candidates and Runner), so this runs against the real function,
-// not a seam.
-func TestRelevoVerbsSendDryRunHeadless(t *testing.T) {
+// newHeadlessSendFixture builds a RelevoVerbs and a plan file for a headless
+// binding needing no harness or live pane, and the plan path to send.
+func newHeadlessSendFixture(t *testing.T) (*RelevoVerbs, string) {
+	t.Helper()
 	s := store.New(t.TempDir())
 	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]}]`)
 	rt := relevo.Runtime{
@@ -179,72 +168,50 @@ func TestRelevoVerbsSendDryRunHeadless(t *testing.T) {
 		BuilderCandidate: "agy/test/m",
 		Round:            1, State: store.StateActive,
 	})
-
-	v := &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}
-	plan := writeTempPlan(t, "# do the thing")
-
-	res, err := v.Send(context.Background(), SendArgs{Name: "webshop", File: plan, DryRun: true})
-	if err != nil {
-		t.Fatalf("Send dry-run: %v", err)
-	}
-	d, ok := res.(relevo.DryRun)
-	if !ok {
-		t.Fatalf("result = %#v, want relevo.DryRun", res)
-	}
-	if d.Mode != "headless" {
-		t.Errorf("Mode = %q, want headless", d.Mode)
-	}
-	if d.Name != "webshop" || d.Round != 1 {
-		t.Errorf("DryRun = %+v, want Name webshop, Round 1", d)
-	}
+	return &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}, writeTempPlan(t, "# do the thing")
 }
 
-// TestRelevoVerbsSendRealRunHeadless proves DryRun false takes the real
-// relevo.Send path, not SendDryRun: for a headless binding this needs no
-// live pane either, so it runs to completion against stubRunner.
-func TestRelevoVerbsSendRealRunHeadless(t *testing.T) {
-	s := store.New(t.TempDir())
-	set := writeCandidates(t, `[{"harness":"agy","provider":"test","model":"m","roles":["builder"],"extra_args":["--dangerously-skip-permissions"]}]`)
-	rt := relevo.Runtime{
-		Store:      s,
-		Candidates: set,
-		Runner:     stubRunner{},
-		Gates:      testGateKV(t),
-		Now:        func() time.Time { return time.Unix(0, 0) },
-	}
-	saveVerbBinding(t, s, store.Binding{
-		Name: "webshop", CWD: "/repo",
-		Planner:          store.Endpoint{PaneID: "w2:p3"},
-		Builder:          store.Endpoint{Mode: store.ModeHeadless},
-		BuilderCandidate: "agy/test/m",
-		Round:            1, State: store.StateActive,
+// TestRelevoVerbsSendHeadless covers both of Send's headless paths, replacing
+// TestRelevoVerbsSendDryRunHeadless and TestRelevoVerbsSendRealRunHeadless.
+func TestRelevoVerbsSendHeadless(t *testing.T) {
+	t.Run("dry run takes relevo.SendDryRun, not a seam", func(t *testing.T) {
+		v, plan := newHeadlessSendFixture(t)
+		res, err := v.Send(context.Background(), SendArgs{Name: "webshop", File: plan, DryRun: true})
+		if err != nil {
+			t.Fatalf("Send dry-run: %v", err)
+		}
+		d, ok := res.(relevo.DryRun)
+		if !ok {
+			t.Fatalf("result = %#v, want relevo.DryRun", res)
+		}
+		if d.Mode != "headless" {
+			t.Errorf("Mode = %q, want headless", d.Mode)
+		}
+		if d.Name != "webshop" || d.Round != 1 {
+			t.Errorf("DryRun = %+v, want Name webshop, Round 1", d)
+		}
 	})
 
-	v := &RelevoVerbs{RT: rt, Planner: mcpTestPlannerA}
-	plan := writeTempPlan(t, "# do the thing")
-
-	res, err := v.Send(context.Background(), SendArgs{Name: "webshop", File: plan})
-	if err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	sr, ok := res.(sendResult)
-	if !ok {
-		t.Fatalf("result = %#v, want sendResult", res)
-	}
-	if sr.Round != 1 {
-		t.Errorf("Round = %d, want 1", sr.Round)
-	}
-	// #303 §4.5: the tools-mode send result names the round budget so the
-	// model's background wait cannot time out before the round does. store
-	// filled the 24h default in, since the fixture set no --timeout.
-	if sr.WaitBudget != "24h0m0s" {
-		t.Errorf("WaitBudget = %q, want 24h0m0s", sr.WaitBudget)
-	}
+	t.Run("real run takes relevo.Send, not SendDryRun", func(t *testing.T) {
+		v, plan := newHeadlessSendFixture(t)
+		res, err := v.Send(context.Background(), SendArgs{Name: "webshop", File: plan})
+		if err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		sr, ok := res.(sendResult)
+		if !ok {
+			t.Fatalf("result = %#v, want sendResult", res)
+		}
+		if sr.Round != 1 {
+			t.Errorf("Round = %d, want 1", sr.Round)
+		}
+		// store filled in the 24h default, since the fixture set no --timeout.
+		if sr.WaitBudget != "24h0m0s" {
+			t.Errorf("WaitBudget = %q, want 24h0m0s", sr.WaitBudget)
+		}
+	})
 }
 
-// TestRelevoVerbsDoneForwardsAndReportsText proves Done calls relevo.Done
-// (which flips the binding's stored State to done) and reports relevo.DoneText
-// alongside the structured DoneResult.
 func TestRelevoVerbsDoneForwardsAndReportsText(t *testing.T) {
 	s := store.New(t.TempDir())
 	rt := relevo.Runtime{Store: s, Now: func() time.Time { return time.Unix(0, 0) }}
