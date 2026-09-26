@@ -282,6 +282,12 @@ func execLine(line string, env Env, p prefs) tea.Cmd {
 		}
 		v, init := newAgentsView(env)
 		return rootThen(init, v)
+	case "settings":
+		if env.Actions == nil {
+			return notice("the config views need relevo ui on this machine")
+		}
+		v, init := newSettingsView(env)
+		return rootThen(init, v)
 	case "ungate":
 		if len(args) == 0 {
 			return notice("usage: ungate <provider|candidate>")

@@ -748,6 +748,18 @@ func goldenAgentsModel(t *testing.T, width, height int, fa *fakeActions) Model {
 	return drain(t, m, execLine("agents", m.env(), m.prefs))
 }
 
+// goldenSettingsModel is the settings goldens' builder: a loaded shell, the
+// `:settings` command, and its doc load drained. It pins numCPU to 22 so the
+// serve.max_builders default is deterministic, restoring it on cleanup.
+func goldenSettingsModel(t *testing.T, width, height int, fa *fakeActions) Model {
+	t.Helper()
+	orig := numCPU
+	numCPU = func() int { return 22 }
+	t.Cleanup(func() { numCPU = orig })
+	m := goldenActionModel(t, width, height, fa, relevo.Report{})
+	return drain(t, m, execLine("settings", m.env(), m.prefs))
+}
+
 // goldenAgentResearcherModel is `:agents` with the cursor on researcher and
 // its detail pushed.
 func goldenAgentResearcherModel(t *testing.T, width, height int, fa *fakeActions) Model {
@@ -1117,6 +1129,39 @@ func TestGoldenViews(t *testing.T) {
 				}
 				fa := &fakeActions{doc: candFixtureDoc(t), files: files}
 				m := candDown(t, goldenAgentResearcherModel(t, 132, 34, fa), 1) // claude, yours
+				return candKeys(t, m, key('r'))
+			},
+		},
+		{
+			name: "settings-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})
+				return candDown(t, m, 3) // gate.default
+			},
+		},
+		{
+			name: "settings-100", width: 100, height: 34,
+			build: func(t *testing.T) Model {
+				return goldenSettingsModel(t, 100, 34, &fakeActions{doc: settingsFixtureDoc(t)})
+			},
+		},
+		{
+			name: "settings-check-form-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})
+				m = candDown(t, m, 3) // gate.default
+				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+			},
+		},
+		{
+			name: "settings-reset-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				// No actor's tier is above edit here, so the reset behind r
+				// succeeds and the confirm opens (unlike settingsFixtureDoc,
+				// whose yolo-tier actors would refuse this reset before any
+				// confirm shows).
+				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDocNoTiers(t)})
+				m = candDown(t, m, 1) // max_tier
 				return candKeys(t, m, key('r'))
 			},
 		},
