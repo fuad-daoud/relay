@@ -95,7 +95,8 @@ func TestParseBy(t *testing.T) {
 		input string
 		want  Axis
 	}{
-		{"by:builder", AxisBuilder},
+		{"by:candidate", AxisCandidate},
+		{"by:actor", AxisActor},
 		{"by:day", AxisDay},
 		{"by:none", AxisNone},
 	}
@@ -126,7 +127,7 @@ func TestParseWordsAndQuotes(t *testing.T) {
 }
 
 func TestParseLastDuplicateWins(t *testing.T) {
-	q, err := ParseAt("harness:agy harness:codex outcome:open outcome:halted by:day by:builder since:7d since:24h", parseNow)
+	q, err := ParseAt("harness:agy harness:codex outcome:open outcome:halted by:day by:candidate since:7d since:24h", parseNow)
 	if err != nil {
 		t.Fatalf("ParseAt: %v", err)
 	}
@@ -136,8 +137,8 @@ func TestParseLastDuplicateWins(t *testing.T) {
 	if q.Filter.Outcome != "halted" {
 		t.Errorf("Filter.Outcome = %q, want halted (last wins)", q.Filter.Outcome)
 	}
-	if q.By != AxisBuilder {
-		t.Errorf("By = %q, want builder (last wins)", q.By)
+	if q.By != AxisCandidate {
+		t.Errorf("By = %q, want candidate (last wins)", q.By)
 	}
 	if q.Since != "24h" {
 		t.Errorf("Since = %q, want 24h (last wins)", q.Since)
@@ -181,7 +182,7 @@ func TestParseErrors(t *testing.T) {
 func TestStringRoundTrip(t *testing.T) {
 	canonical := []string{
 		"harness:agy outcome:halted since:30d",
-		`harness:agy outcome:halted since:30d cost>1 cost>2 auth "api v2" by:builder`,
+		`harness:agy outcome:halted since:30d cost>1 cost>2 auth "api v2" by:candidate`,
 		"report:done state:needs_you gate:pass basis:estimated server:contabo mode:headless round:3 archived:true",
 		"binding:api repo:https://github.com/o/r feature:checkout planner:sess-1 provider:anthropic model:sonnet candidate:agy/x/y",
 		`"api v2" by:day`,
@@ -209,12 +210,54 @@ func TestStringRoundTrip(t *testing.T) {
 	// One exact string pins the canonical key order independent of input order:
 	// filter keys sort into their fixed order, numeric conditions keep input
 	// order, then the words, then by.
-	q, err := ParseAt("mode:remote outcome:halted harness:agy auth cost>1 by:builder since:30d", parseNow)
+	q, err := ParseAt("mode:remote outcome:halted harness:agy auth cost>1 by:candidate since:30d", parseNow)
 	if err != nil {
 		t.Fatalf("ParseAt: %v", err)
 	}
-	want := "harness:agy outcome:halted mode:remote since:30d cost>1 auth by:builder"
+	want := "harness:agy outcome:halted mode:remote since:30d cost>1 auth by:candidate"
 	if got := q.String(); got != want {
 		t.Errorf("String() = %q, want %q", got, want)
+	}
+}
+
+// TestHistqByBuilderIsUnknown pins the clean break: by:builder is no longer an
+// axis, and the error lists the valid ones, so no caller can keep using it.
+func TestHistqByBuilderIsUnknown(t *testing.T) {
+	_, err := ParseAt("by:builder", parseNow)
+	var eq ErrQuery
+	if !errors.As(err, &eq) {
+		t.Fatalf("ParseAt(by:builder) err = %v, want ErrQuery", err)
+	}
+	if !strings.Contains(eq.Reason, "candidate") {
+		t.Errorf("reason = %q, want the valid axes (candidate among them)", eq.Reason)
+	}
+	if strings.Contains(eq.Reason, "builder") {
+		t.Errorf("reason = %q still names builder", eq.Reason)
+	}
+}
+
+// TestHistqByCandidateGroups pins that by:candidate regroups the rows on the
+// candidate token the round ran on.
+func TestHistqByCandidateGroups(t *testing.T) {
+	q, err := ParseAt("by:candidate", parseNow)
+	if err != nil {
+		t.Fatalf("ParseAt: %v", err)
+	}
+	if q.By != AxisCandidate {
+		t.Fatalf("By = %q, want candidate", q.By)
+	}
+	groups := Group(fixtureRows(), q.By, fxLoc)
+	if len(groups) != 3 {
+		t.Fatalf("len(groups) = %d, want 3", len(groups))
+	}
+	for _, g := range groups {
+		if len(g.Rows) == 0 {
+			t.Errorf("group %q has no rows", g.Key)
+		}
+		for _, r := range g.Rows {
+			if r.Candidate == nil || *r.Candidate != g.Key {
+				t.Errorf("group %q holds a row with candidate %v", g.Key, r.Candidate)
+			}
+		}
 	}
 }

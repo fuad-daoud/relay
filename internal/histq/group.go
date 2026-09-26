@@ -133,8 +133,8 @@ func Totals(rows []db.RoundRow) Tiles {
 			t.Exited++
 		}
 		bindings[r.BindingID] = true
-		if r.BuilderCandidate != nil {
-			builders[*r.BuilderCandidate] = true
+		if r.Candidate != nil {
+			builders[*r.Candidate] = true
 		}
 		if r.DurationMS != nil {
 			durations = append(durations, *r.DurationMS)
@@ -154,14 +154,16 @@ func groupKey(r db.RoundRow, by Axis, loc *time.Location) string {
 		return derefKey(r.Repo)
 	case AxisFeature:
 		return derefKey(r.Feature)
-	case AxisBuilder:
-		return derefKey(r.BuilderCandidate)
+	case AxisCandidate:
+		return derefKey(r.Candidate)
+	case AxisActor:
+		return r.Actor
 	case AxisHarness:
-		return derefKey(r.BuilderHarness)
+		return derefKey(r.Harness)
 	case AxisProvider:
-		return derefKey(r.BuilderProvider)
+		return derefKey(r.Provider)
 	case AxisModel:
-		return derefKey(r.BuilderModel)
+		return derefKey(r.Model)
 	case AxisDay:
 		return r.StartedAt.In(loc).Format("2006-01-02")
 	case AxisOutcome:

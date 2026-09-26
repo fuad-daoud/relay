@@ -242,7 +242,7 @@ func TestHistoryOptionsByOverridesQuery(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
-	opts := HistoryOptions{Query: "by:day harness:agy", By: "builder"}
+	opts := HistoryOptions{Query: "by:day harness:agy", By: "candidate"}
 
 	f, notes, err := opts.Filter(context.Background(), Runtime{}, now)
 	if err != nil {
@@ -251,8 +251,8 @@ func TestHistoryOptionsByOverridesQuery(t *testing.T) {
 	if f.Harness != "agy" {
 		t.Errorf("Harness = %q, want agy (no flag overrode it)", f.Harness)
 	}
-	if got := opts.ParsedQuery().By; got != histq.AxisBuilder {
-		t.Errorf("ParsedQuery().By = %q, want %q", got, histq.AxisBuilder)
+	if got := opts.ParsedQuery().By; got != histq.AxisCandidate {
+		t.Errorf("ParsedQuery().By = %q, want %q", got, histq.AxisCandidate)
 	}
 	if len(notes) != 1 {
 		t.Fatalf("notes = %q, want exactly one", notes)
@@ -305,7 +305,7 @@ func TestHistoryOptionsFilterDefaultsAxisNone(t *testing.T) {
 func TestHistoryOptionsByAloneGivesNoNote(t *testing.T) {
 	t.Parallel()
 
-	opts := HistoryOptions{By: "builder"}
+	opts := HistoryOptions{By: "candidate"}
 
 	_, notes, err := opts.Filter(context.Background(), Runtime{}, time.Now())
 	if err != nil {
@@ -314,17 +314,17 @@ func TestHistoryOptionsByAloneGivesNoNote(t *testing.T) {
 	if len(notes) != 0 {
 		t.Errorf("notes = %q, want none: --by has no -q by: to override", notes)
 	}
-	if got := opts.ParsedQuery().By; got != histq.AxisBuilder {
-		t.Errorf("ParsedQuery().By = %q, want %q", got, histq.AxisBuilder)
+	if got := opts.ParsedQuery().By; got != histq.AxisCandidate {
+		t.Errorf("ParsedQuery().By = %q, want %q", got, histq.AxisCandidate)
 	}
 }
 
 // TestHistoryOptionsByOverridesQueryByNote pins that a real conflict is
-// kept: -q named by:binding and --by builder still notes the override.
+// kept: -q named by:binding and --by candidate still notes the override.
 func TestHistoryOptionsByOverridesQueryByNote(t *testing.T) {
 	t.Parallel()
 
-	opts := HistoryOptions{Query: "by:binding", By: "builder"}
+	opts := HistoryOptions{Query: "by:binding", By: "candidate"}
 
 	_, notes, err := opts.Filter(context.Background(), Runtime{}, time.Now())
 	if err != nil {
@@ -336,8 +336,8 @@ func TestHistoryOptionsByOverridesQueryByNote(t *testing.T) {
 	if want := "note: --by overrides by:binding from -q"; notes[0] != want {
 		t.Errorf("note = %q, want %q", notes[0], want)
 	}
-	if got := opts.ParsedQuery().By; got != histq.AxisBuilder {
-		t.Errorf("ParsedQuery().By = %q, want %q", got, histq.AxisBuilder)
+	if got := opts.ParsedQuery().By; got != histq.AxisCandidate {
+		t.Errorf("ParsedQuery().By = %q, want %q", got, histq.AxisCandidate)
 	}
 }
 

@@ -51,31 +51,32 @@ type Binding struct {
 }
 
 type Round struct {
-	ID               string
-	BindingID        string
-	Number           int
-	StartedAt        time.Time
-	ClosedAt         *time.Time
-	Outcome          string
-	BuilderCandidate *string
-	BuilderHarness   *string
-	BuilderProvider  *string
-	BuilderModel     *string
-	BuilderMode      *string
-	Tier             *string
-	Commits          *int
-	Tree             *string
-	GateResult       *string
-	GateExit         *int
-	GateDurationMS   *int64
-	InTokens         *int64
-	CacheTokens      *int64
-	WriteTokens      *int64
-	OutTokens        *int64
-	CostUSD          *float64
-	CostBasis        *string
-	ReportOutcome    *string
-	Switches         int
+	ID             string
+	BindingID      string
+	Number         int
+	StartedAt      time.Time
+	ClosedAt       *time.Time
+	Outcome        string
+	Candidate      *string
+	Harness        *string
+	Provider       *string
+	Model          *string
+	Mode           *string
+	Actor          string
+	Tier           *string
+	Commits        *int
+	Tree           *string
+	GateResult     *string
+	GateExit       *int
+	GateDurationMS *int64
+	InTokens       *int64
+	CacheTokens    *int64
+	WriteTokens    *int64
+	OutTokens      *int64
+	CostUSD        *float64
+	CostBasis      *string
+	ReportOutcome  *string
+	Switches       int
 }
 
 type Event struct {
@@ -157,20 +158,21 @@ type Filter struct {
 }
 
 type RoundRow struct {
-	BindingID, BindingName                                          string
-	Repo, Feature                                                   *string
-	Number                                                          int
-	StartedAt                                                       time.Time
-	ClosedAt                                                        *time.Time
-	Outcome                                                         string
-	BuilderCandidate, BuilderHarness, BuilderProvider, BuilderModel *string
-	Commits                                                         *int
-	Tree, GateResult                                                *string
-	CostUSD                                                         *float64
-	CostBasis                                                       *string
-	InTokens, CacheTokens, WriteTokens, OutTokens                   *int64
-	ReportOutcome                                                   *string
-	BuilderMode, Server                                             *string
+	BindingID, BindingName                        string
+	Repo, Feature                                 *string
+	Number                                        int
+	StartedAt                                     time.Time
+	ClosedAt                                      *time.Time
+	Outcome                                       string
+	Actor                                         string
+	Candidate, Harness, Provider, Model           *string
+	Commits                                       *int
+	Tree, GateResult                              *string
+	CostUSD                                       *float64
+	CostBasis                                     *string
+	InTokens, CacheTokens, WriteTokens, OutTokens *int64
+	ReportOutcome                                 *string
+	Mode, Server                                  *string
 	// DurationMS is *ClosedAt - StartedAt in milliseconds; nil when the
 	// round has no closed_at (still open, or a source that records none).
 	DurationMS *int64

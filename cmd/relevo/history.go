@@ -30,8 +30,8 @@ func historyJSONRows(rows []db.RoundRow, set *candidate.Set) []historyJSONRow {
 	out := make([]historyJSONRow, len(rows))
 	for i, r := range rows {
 		row := historyJSONRow{RoundRow: r}
-		if r.BuilderCandidate != nil {
-			row.BuilderName = set.NameOf(*r.BuilderCandidate)
+		if r.Candidate != nil {
+			row.BuilderName = set.NameOf(*r.Candidate)
 		}
 		out[i] = row
 	}
@@ -68,7 +68,7 @@ func cmdHistory(args []string) error {
 	since := fs.String("since", "", "only rounds started after this: 24h, 7d, or YYYY-MM-DD")
 	limit := fs.Int("limit", 200, "max rows to print; 0 = all")
 	_ = fs.Bool("json", false, "machine-readable output: a JSON array of RoundRow")
-	query := fs.String("q", "", "a query: harness:agy outcome:halted since:30d cost>1 by:builder")
+	query := fs.String("q", "", "a query: harness:agy outcome:halted since:30d cost>1 by:candidate")
 	withRows := fs.Bool("rows", false, "with grouped JSON, include each group's rows")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), historyUsage)

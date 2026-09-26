@@ -78,8 +78,8 @@ func TestIngestFixtureLiveRounds(t *testing.T) {
 	if !strEq(rounds[1].ReportOutcome, "halted") {
 		t.Errorf("round 2 report_outcome = %v, want halted", rounds[1].ReportOutcome)
 	}
-	if !strEq(rounds[1].BuilderHarness, "agy") || !strEq(rounds[1].BuilderProvider, "google") {
-		t.Errorf("round 2 builder = %v/%v, want agy/google", rounds[1].BuilderHarness, rounds[1].BuilderProvider)
+	if !strEq(rounds[1].Harness, "agy") || !strEq(rounds[1].Provider, "google") {
+		t.Errorf("round 2 builder = %v/%v, want agy/google", rounds[1].Harness, rounds[1].Provider)
 	}
 	if rounds[2].Outcome != db.OutcomeExited {
 		t.Errorf("round 3 outcome = %q, want exited", rounds[2].Outcome)
@@ -219,9 +219,9 @@ func compareBindings(t *testing.T, live, arch db.BindingRow) {
 func roundsEqual(lr, ar db.Round) bool {
 	return lr.Number == ar.Number && lr.Outcome == ar.Outcome &&
 		strPtrEq(lr.ReportOutcome, ar.ReportOutcome) &&
-		strPtrEq(lr.BuilderHarness, ar.BuilderHarness) &&
-		strPtrEq(lr.BuilderProvider, ar.BuilderProvider) &&
-		strPtrEq(lr.BuilderModel, ar.BuilderModel) && intPtrEq(lr.Commits, ar.Commits) &&
+		strPtrEq(lr.Harness, ar.Harness) &&
+		strPtrEq(lr.Provider, ar.Provider) &&
+		strPtrEq(lr.Model, ar.Model) && intPtrEq(lr.Commits, ar.Commits) &&
 		strPtrEq(lr.Tree, ar.Tree) && strPtrEq(lr.GateResult, ar.GateResult) &&
 		lr.Switches == ar.Switches
 }
@@ -675,5 +675,99 @@ func TestLogEntryToEventOptionalFields(t *testing.T) {
 	}
 	if !ev.Confirmed || !ev.Late {
 		t.Errorf("confirmed/late = %v/%v, want true/true", ev.Confirmed, ev.Late)
+	}
+}
+
+// writePickFixture writes a minimal live binding directory: bind.json for b and
+// a one-entry log.jsonl whose pick note is note.
+func writePickFixture(t *testing.T, b store.Binding, note string) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	bind, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("marshal bind.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bind.json"), bind, 0o644); err != nil {
+		t.Fatalf("write bind.json: %v", err)
+	}
+
+	entry := store.LogEntry{
+		TS:        time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC),
+		Round:     1,
+		Direction: store.DirToPlanner,
+		Kind:      store.KindPick,
+		Confirmed: true,
+		Note:      note,
+	}
+	line, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("marshal log entry: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "log.jsonl"), append(line, '\n'), 0o644); err != nil {
+		t.Fatalf("write log.jsonl: %v", err)
+	}
+	return dir
+}
+
+// TestIngestCountsACustomWriterActorsOwnPicks pins the bug this round fixes: a
+// binding whose actor is designer owns "picked <tok> for designer: ...", so the
+// round is counted on <tok> and carries the actor designer.
+func TestIngestCountsACustomWriterActorsOwnPicks(t *testing.T) {
+	d := openTestDB(t)
+	dir := writePickFixture(t, store.Binding{
+		Name:             "fixture",
+		CWD:              "/work/fixture",
+		Builder:          store.Endpoint{Kind: "opencode", Mode: store.ModeHeadless},
+		Role:             "designer",
+		BuilderCandidate: "opencode/openrouter/z-ai/glm-5.3-flash",
+		CreatedAt:        time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC),
+		Round:            1,
+	}, "picked claude/anthropic/sonnet for designer: order #1")
+
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{}); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	rounds := mustRounds(t, d, mustBinding(t, d, "fixture").ID)
+	if len(rounds) != 1 {
+		t.Fatalf("len(rounds) = %d, want 1", len(rounds))
+	}
+	if !strEq(rounds[0].Candidate, "claude/anthropic/sonnet") {
+		t.Errorf("Candidate = %v, want claude/anthropic/sonnet (the actor's own pick counts)", rounds[0].Candidate)
+	}
+	if rounds[0].Actor != "designer" {
+		t.Errorf("Actor = %q, want designer", rounds[0].Actor)
+	}
+}
+
+// TestIngestSkipsAConsultPick pins that a builder binding's round does not take
+// a pick note naming another actor: "picked <tok> for reviewer: ..." is skipped
+// and the round falls back to the binding's own candidate.
+func TestIngestSkipsAConsultPick(t *testing.T) {
+	d := openTestDB(t)
+	dir := writePickFixture(t, store.Binding{
+		Name:             "fixture",
+		CWD:              "/work/fixture",
+		Builder:          store.Endpoint{Kind: "opencode", Mode: store.ModeHeadless},
+		Role:             "builder",
+		BuilderCandidate: "opencode/fallback/model",
+		CreatedAt:        time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC),
+		Round:            1,
+	}, "picked claude/anthropic/sonnet for reviewer: order #1")
+
+	if _, err := Ingest(context.Background(), DirSource(dir), d, Deps{}); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	rounds := mustRounds(t, d, mustBinding(t, d, "fixture").ID)
+	if len(rounds) != 1 {
+		t.Fatalf("len(rounds) = %d, want 1", len(rounds))
+	}
+	if !strEq(rounds[0].Candidate, "opencode/fallback/model") {
+		t.Errorf("Candidate = %v, want the binding's own candidate (the consult pick is skipped)", rounds[0].Candidate)
+	}
+	if rounds[0].Actor != "builder" {
+		t.Errorf("Actor = %q, want builder", rounds[0].Actor)
 	}
 }

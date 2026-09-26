@@ -73,7 +73,7 @@ func TestDeriveOutcome(t *testing.T) {
 	}
 }
 
-type builderCase struct {
+type candidateCase struct {
 	name    string
 	events  []store.LogEntry
 	b       store.Binding
@@ -82,9 +82,9 @@ type builderCase struct {
 	want    candidate.Ref
 }
 
-func TestBuilderForRound(t *testing.T) {
-	for _, c := range builderForRoundCases() {
-		tok, ref, ok := builderForRound(c.events, c.n, c.b)
+func TestCandidateForRound(t *testing.T) {
+	for _, c := range candidateForRoundCases() {
+		tok, ref, ok := candidateForRound(c.events, c.n, c.b)
 		if !ok {
 			t.Errorf("%s: ok = false, want true", c.name)
 			continue
@@ -95,8 +95,8 @@ func TestBuilderForRound(t *testing.T) {
 	}
 }
 
-func builderForRoundCases() []builderCase {
-	return []builderCase{
+func candidateForRoundCases() []candidateCase {
+	return []candidateCase{
 		{
 			"pick note",
 			[]store.LogEntry{{Round: 1, Kind: store.KindPick, Note: "picked opencode/openrouter/z-ai/glm-5.3-flash on host1: initial spawn"}},
@@ -191,24 +191,27 @@ func TestParseSwitchNoteForms(t *testing.T) {
 	}
 }
 
-// TestIsRolePick pins the negative rule: only "picked <tok> for <role>:" with a
-// role other than builder is a role pick.
-func TestIsRolePick(t *testing.T) {
+// TestIsOtherActorPick pins the rule: only "picked <tok> for <role>:" with a role
+// other than the binding's own actor is another actor's pick.
+func TestIsOtherActorPick(t *testing.T) {
 	tests := []struct {
-		note string
-		want bool
+		note  string
+		actor string
+		want  bool
 	}{
-		{"picked claude/anthropic/sonnet for reviewer: order #1", true},
-		{"picked a/b/c for verify: sole candidate", true},
-		{"picked a/b/c for builder: order #1", false},
-		{"picked a/b/c on host1: spawn", false},
-		{"picked a/b/c", false},
-		{"picked a/b/c for : x", false},
-		{"switched builder (exited (code 1) without a report): picked a/b/c for builder: order #5", false},
+		{"picked claude/anthropic/sonnet for reviewer: order #1", "builder", true},
+		{"picked a/b/c for verify: sole candidate", "builder", true},
+		{"picked a/b/c for builder: order #1", "builder", false},
+		{"picked a/b/c for designer: order #1", "designer", false},
+		{"picked a/b/c for designer: order #1", "builder", true},
+		{"picked a/b/c on host1: spawn", "builder", false},
+		{"picked a/b/c", "builder", false},
+		{"picked a/b/c for : x", "builder", false},
+		{"switched builder (exited (code 1) without a report): picked a/b/c for builder: order #5", "builder", false},
 	}
 	for _, tt := range tests {
-		if got := isRolePick(tt.note); got != tt.want {
-			t.Errorf("isRolePick(%q) = %v, want %v", tt.note, got, tt.want)
+		if got := isOtherActorPick(tt.note, tt.actor); got != tt.want {
+			t.Errorf("isOtherActorPick(%q, %q) = %v, want %v", tt.note, tt.actor, got, tt.want)
 		}
 	}
 }
