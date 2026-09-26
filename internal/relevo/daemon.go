@@ -275,6 +275,10 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 		}
 	}()
 
+	// The fetch runs unlocked, before the critical section: a slow or dead
+	// server must not hold the state lock against every writer.
+	pre := d.prefetchRemote(ctx, name)
+
 	return d.rt.Store.WithLock(func(tx *store.Tx) error {
 		loaded, err := tx.Load(name)
 		if errors.Is(err, store.ErrNotFound) {
@@ -306,7 +310,7 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 
 		fresh := backfillPlannerID(d.rt, loaded)
 
-		next, err := Reconcile(ctx, d.rt, tx, fresh)
+		next, err := reconcileWith(ctx, d.rt, tx, fresh, pre)
 		if err != nil {
 			return err
 		}
@@ -318,6 +322,29 @@ func (d *Daemon) tickOne(ctx context.Context, name string) (err error) {
 
 		return tx.Save(next)
 	})
+}
+
+// prefetchRemote reads what a remote binding's next reconcile needs from the
+// server, before tickOne takes the state lock. It returns nil for anything
+// that is not a live remote binding and for any read that fails: the tick then
+// reconciles as it did before and the next one retries. It runs inside
+// tickOne's deferred recover, so a panic in the fetch is contained there.
+func (d *Daemon) prefetchRemote(ctx context.Context, name string) *remoteFetch {
+	if d.rt.Remote == nil {
+		return nil
+	}
+	b, err := d.rt.Store.Load(name)
+	if err != nil {
+		return nil
+	}
+	if !b.Builder.Remote() || b.State == store.StateDone || b.State == store.StatePaused {
+		return nil
+	}
+	if !store.KnownState(b.State) || b.Format > store.BindingFormat {
+		return nil
+	}
+	f := fetchRemote(ctx, d.rt, b)
+	return &f
 }
 
 // archivedMirrorOnce runs the archived-record mirror feed once per process,

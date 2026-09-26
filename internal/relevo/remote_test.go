@@ -87,6 +87,8 @@ type fakeRemote struct {
 	stopResp            remote.BindingView
 	stopErr             error
 
+	beforeCall func(call string)
+
 	onCreateBinding func()
 	onUnbind        func()
 }
@@ -111,7 +113,11 @@ func (f *fakeRemote) CreateBinding(ctx context.Context, server string, req remot
 }
 
 func (f *fakeRemote) GetBinding(ctx context.Context, server, name string) (remote.BindingView, error) {
-	f.calls = append(f.calls, "GetBinding:"+server+":"+name)
+	call := "GetBinding:" + server + ":" + name
+	if f.beforeCall != nil {
+		f.beforeCall(call)
+	}
+	f.calls = append(f.calls, call)
 	return f.getBindingResp, f.getBindingErr
 }
 
@@ -125,7 +131,11 @@ func (f *fakeRemote) StartRound(ctx context.Context, server, name string, round 
 }
 
 func (f *fakeRemote) RoundFile(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-	f.calls = append(f.calls, fmt.Sprintf("RoundFile:%s:%s:%d:%s", server, name, round, kind))
+	call := fmt.Sprintf("RoundFile:%s:%s:%d:%s", server, name, round, kind)
+	if f.beforeCall != nil {
+		f.beforeCall(call)
+	}
+	f.calls = append(f.calls, call)
 	if f.roundFileFunc != nil {
 		return f.roundFileFunc(ctx, server, name, round, kind)
 	}
@@ -133,7 +143,11 @@ func (f *fakeRemote) RoundFile(ctx context.Context, server, name string, round i
 }
 
 func (f *fakeRemote) RoundFileFrom(ctx context.Context, server, name string, round int, kind string, from int64) (io.ReadCloser, remote.FileRange, error) {
-	f.calls = append(f.calls, fmt.Sprintf("RoundFileFrom:%s:%s:%d:%s:%d", server, name, round, kind, from))
+	call := fmt.Sprintf("RoundFileFrom:%s:%s:%d:%s:%d", server, name, round, kind, from)
+	if f.beforeCall != nil {
+		f.beforeCall(call)
+	}
+	f.calls = append(f.calls, call)
 	f.roundFileFromCalls = append(f.roundFileFromCalls, from)
 	if f.roundFileFromFunc != nil {
 		return f.roundFileFromFunc(ctx, server, name, round, kind, from)
