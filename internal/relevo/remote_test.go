@@ -4614,7 +4614,7 @@ func TestCatchUpFetchesStream(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	got, err := os.ReadFile(st.BuilderStreamPath("api", 1))
+	got, err := os.ReadFile(st.RunnerStreamPath("api", 1))
 	if err != nil {
 		t.Fatalf("read stream file: %v", err)
 	}
@@ -4660,7 +4660,7 @@ func TestCatchUpStreamMissingIsFine(t *testing.T) {
 	if got.State == store.StateNeedsYou {
 		t.Fatalf("a missing stream file must not halt: %+v", got)
 	}
-	if _, err := os.Stat(st.BuilderStreamPath("api", 1)); !os.IsNotExist(err) {
+	if _, err := os.Stat(st.RunnerStreamPath("api", 1)); !os.IsNotExist(err) {
 		t.Fatalf("stream file exists (stat err = %v), want none", err)
 	}
 
