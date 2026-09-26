@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/setup"
 )
 
@@ -69,12 +69,19 @@ func cmdInit(args []string) error {
 		return err
 	}
 
-	fmt.Printf("wrote candidates (%d: %s)\n", len(files.Kinds), strings.Join(files.Kinds, ", "))
-	names, err := actorNames(files.Candidates)
+	fmt.Printf("wrote candidates (%d: %s)\n", len(files.CandidateNames), strings.Join(files.CandidateNames, ", "))
+	summary, err := actorSummary(files.Actors, files.ActorOrder)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("wrote actors (builder: %s)\n", strings.Join(names, ", "))
+	fmt.Printf("wrote actors (%s)\n", summary)
+	actorSet, _, err := roles.ParseActors(files.Actors)
+	if err != nil {
+		return err
+	}
+	if len(actorSet["builder"].Candidates) == 0 {
+		fmt.Println(`note: no builder candidate (claude only plans); add one: relevo config set actors.builder.candidates '["<name>"]'`)
+	}
 
 	if !*noRoles {
 		failed := false
@@ -99,13 +106,30 @@ func cmdInit(args []string) error {
 	return nil
 }
 
-// actorNames renders the candidate names setup.Plan's builder actor wrote, in
-// order. It is the same derivation Plan uses (candidate.DeriveNames), so init
-// reports the names a planner will see.
-func actorNames(candidates []byte) ([]string, error) {
-	var cs []candidate.Candidate
-	if err := json.Unmarshal(candidates, &cs); err != nil {
-		return nil, err
+// actorSummary renders every actor in order as the text inside the `wrote
+// actors (...)` line: `builder: a, b; planner: c`. An actor with no candidates
+// renders as `builder: none`. Each actor's names come from parsing the actors
+// section Plan wrote.
+func actorSummary(actors []byte, order []string) (string, error) {
+	set, _, err := roles.ParseActors(actors)
+	if err != nil {
+		return "", err
 	}
-	return candidate.DeriveNames(cs), nil
+	parts := make([]string, 0, len(order))
+	for _, name := range order {
+		a, ok := set[name]
+		if !ok {
+			continue
+		}
+		names := make([]string, 0, len(a.Candidates))
+		for _, e := range a.Candidates {
+			names = append(names, e.Candidate)
+		}
+		rendered := strings.Join(names, ", ")
+		if len(names) == 0 {
+			rendered = "none"
+		}
+		parts = append(parts, name+": "+rendered)
+	}
+	return strings.Join(parts, "; "), nil
 }

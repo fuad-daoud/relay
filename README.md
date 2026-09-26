@@ -155,16 +155,20 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
    relevo config init
    ```
    It finds the harness binaries on `PATH`, writes one builder candidate per
-   harness to the candidates section, writes the policy section and the builder
-   actor, and installs the agent definitions into each of those harnesses. The
+   harness to the candidates section except claude, which only plans (it gets the
+   `planner` actor), writes the policy section and the builder
+   actor, plus a `planner` and a `lite-planner` reader actor for claude and
+   opencode, and installs the agent definitions into each of those harnesses. The
    configuration lives in relevo.db under the state root, not in a file; a
    file you drop into `~/.config/relevo` is imported on the next command and
    removed. It refuses to overwrite the candidates, policy or actors section
-   without `--force`, and `--no-roles` skips the definitions. It says what it wrote and
+   without `--force`, and `--no-roles` skips the definitions. With claude as the
+   only harness on `PATH`, the builder is written with no candidates, and init
+   prints the command to add one. It says what it wrote and
    the command to run next, e.g.:
    ```
-   wrote candidates (2: claude, opencode)
-   wrote actors (builder: sonnet, glm-5.3-flash)
+   wrote candidates (3: glm-5.3-flash, opus, deepseek-v4.1-flash)
+   wrote actors (builder: glm-5.3-flash; planner: opus; lite-planner: deepseek-v4.1-flash)
    wrote  ~/.claude/agents/plan-executor.md
    wrote  ~/.config/opencode/agents/plan-executor.md
    next: edit the model names, then run: relevo doctor
@@ -373,7 +377,9 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
   candidates, in three blocks; `relevo config --probe` runs each candidate
   once and records its time to first output.
 - `relevo config init` — seed the candidates, policy and actors sections from
-  the harnesses on `PATH` and install the agent definitions (`--force`,
+  the harnesses on `PATH` (one builder candidate per harness except claude,
+  which only plans, plus a `planner` and a `lite-planner` reader actor for
+  claude and opencode) and install the agent definitions (`--force`,
   `--no-roles`).
 - `relevo config agents` — install the per-kind agent definitions
   (`--kind`, `--role`, `--force`, `--dry-run`).
@@ -1202,6 +1208,8 @@ An actor is relevo's name for a job; its agent is the harness definition `relevo
 | `codex` | `-p <agent> -m <id> -c model_provider=<provider> [-c model_reasoning_effort=<effort>]` |
 
 For `codex` the candidate's `model` is `<id>[:<effort>]`: `gpt-5.6-terra:high` runs `-m gpt-5.6-terra -c model_reasoning_effort=high`, and the suffix stays in the token so two efforts are two candidates.
+
+For `claude` the `model` may end in `:low|medium|high|xhigh|max`: `opus:medium` runs `--model opus --effort medium`, and any other suffix stays part of the model id, so a Bedrock id such as `...-v1:0` passes through whole. For `opencode` the effort is a variant, `model#<variant>`, passed as is to `opencode run -m`: variants are per model, and opencode refuses an unknown one.
 
 Under `workspace-write`, codex also cannot write to Go's default build cache (`~/.cache/go-build`), so a Go plan fails at `go build` unless the plan sets `GOCACHE` inside the worktree or `/tmp`, or your `~/.codex/config.toml` lists it under `sandbox_workspace_write.writable_roots`. relevo adds only its own state directory.
 

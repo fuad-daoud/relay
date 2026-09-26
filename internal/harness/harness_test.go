@@ -424,6 +424,71 @@ func checkLaunchExtras(t *testing.T, builder RoleSpec) {
 	}
 }
 
+func TestLaunchClaudeEffort(t *testing.T) {
+	builder, ok := RoleByName("builder")
+	if !ok {
+		t.Fatal("RoleByName(\"builder\") not found")
+	}
+	h, ok := Lookup("claude")
+	if !ok {
+		t.Fatal("Lookup(\"claude\") not found")
+	}
+
+	base := func(model string, rest ...string) []string {
+		return append([]string{"-p", PromptPlaceholder, "--model", model}, rest...)
+	}
+	tail := []string{"--agent", builder.Definition, "--output-format", "stream-json", "--verbose"}
+	tests := []struct {
+		model string
+		want  []string
+	}{
+		{"opus:medium", append(base("opus", "--effort", "medium"), tail...)},
+		{"opus:max", append(base("opus", "--effort", "max"), tail...)},
+		{"sonnet", append(base("sonnet"), tail...)},
+		{"anthropic.claude-x-v1:0", append(base("anthropic.claude-x-v1:0"), tail...)},
+		{"opus:turbo", append(base("opus:turbo"), tail...)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			got, err := h.Launch("anthropic", tt.model, nil, builder, TierHarness)
+			if err != nil {
+				t.Fatalf("Launch(%q) error = %v", tt.model, err)
+			}
+			if !reflect.DeepEqual(got.Print, tt.want) {
+				t.Errorf("Print = %v, want %v", got.Print, tt.want)
+			}
+			if got.PromptAt != 1 {
+				t.Errorf("PromptAt = %d, want 1", got.PromptAt)
+			}
+		})
+	}
+}
+
+func TestLaunchOpencodeKeepsVariant(t *testing.T) {
+	builder, ok := RoleByName("builder")
+	if !ok {
+		t.Fatal("RoleByName(\"builder\") not found")
+	}
+	h, ok := Lookup("opencode")
+	if !ok {
+		t.Fatal("Lookup(\"opencode\") not found")
+	}
+
+	got, err := h.Launch("cline-pass", "cline-pass/deepseek-v4.1-flash#max", nil, builder, TierHarness)
+	if err != nil {
+		t.Fatalf("Launch error = %v", err)
+	}
+	if !containsAdjacent(got.Print, "-m", "cline-pass/cline-pass/deepseek-v4.1-flash#max") {
+		t.Errorf("Print = %v, want -m cline-pass/cline-pass/deepseek-v4.1-flash#max", got.Print)
+	}
+	if contains(got.Print, "--effort") {
+		t.Errorf("Print carries --effort: %v", got.Print)
+	}
+	if contains(got.Print, "--variant") {
+		t.Errorf("Print carries --variant: %v", got.Print)
+	}
+}
+
 func TestLaunchCodex(t *testing.T) {
 	builder, ok := RoleByName("builder")
 	if !ok {
