@@ -1,3 +1,4 @@
+# measured with go1.27 linux/amd64
 github.com/fuad-daoud/relevo/cmd/relevo 47.9
 github.com/fuad-daoud/relevo/internal/actors 92.5
 github.com/fuad-daoud/relevo/internal/agentsrc 92.6
@@ -5,7 +6,7 @@ github.com/fuad-daoud/relevo/internal/candidate 96.3
 github.com/fuad-daoud/relevo/internal/chatlabel 91.8
 github.com/fuad-daoud/relevo/internal/classify 86.8
 github.com/fuad-daoud/relevo/internal/config 81.1
-github.com/fuad-daoud/relevo/internal/db 76.8
+github.com/fuad-daoud/relevo/internal/db 76.9
 github.com/fuad-daoud/relevo/internal/doctor 87.0
 github.com/fuad-daoud/relevo/internal/git 83.3
 github.com/fuad-daoud/relevo/internal/harness 89.6

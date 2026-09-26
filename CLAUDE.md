@@ -77,7 +77,10 @@ without the logic is not pinning anything.
   one point below `testdata/coverage-baseline.txt`; a round that moves code
   between packages regenerates the baseline with
   `sh scripts/check-coverage.sh --write` and says so in its report, and no
-  round lowers a baseline to get green.
+  round lowers a baseline to get green. The baseline is tied to the Go minor
+  version and platform recorded in its header, is enforced on CI's
+  ubuntu-latest/go-stable leg, and is skipped elsewhere; a Go upgrade on that
+  leg means regenerating it.
 
 ## Merging and CI
 
