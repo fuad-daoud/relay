@@ -45,8 +45,8 @@ type DB struct {
 	have  int // schema version on disk
 	know  int // highest migration this binary embeds
 
-	// beginRetry bounds how long Tx retries a busy BEGIN IMMEDIATE; it is
-	// resolved when the DB opens, so it is never zero.
+	// beginRetry bounds how long Tx retries a busy BEGIN IMMEDIATE; zero, as
+	// on a read-only handle, means beginRetryFor.
 	beginRetry time.Duration
 }
 
@@ -251,6 +251,10 @@ func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
 	// BEGIN IMMEDIATE takes the write lock at once, so a competing writer
 	// fails busy instead of blocking. fn never runs until BEGIN succeeds, so it
 	// runs at most once.
+	retryFor := d.beginRetry
+	if retryFor <= 0 {
+		retryFor = beginRetryFor
+	}
 	start := time.Now()
 	for {
 		_, beginErr := conn.ExecContext(ctx, "BEGIN IMMEDIATE")
@@ -258,7 +262,7 @@ func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
 			break
 		}
 		mapped := mapBusy(beginErr)
-		if !errors.Is(mapped, ErrBusy) || time.Since(start) >= d.beginRetry {
+		if !errors.Is(mapped, ErrBusy) || time.Since(start) >= retryFor {
 			return fmt.Errorf("db: tx begin: %w", mapped)
 		}
 		time.Sleep(time.Duration(25+rand.Intn(76)) * time.Millisecond)
