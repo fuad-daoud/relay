@@ -5,20 +5,24 @@ import (
 	"path/filepath"
 	"testing"
 	"testing/fstest"
-
-	_ "modernc.org/sqlite"
 )
 
-// TestMigrationsApplyInOrder injects a second migration through the
-// unexported applyMigrations(db, fs) entry point, so it never touches the
-// embedded migration set Open uses.
-func TestMigrationsApplyInOrder(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relevo.db")
+// rawSQLDB opens a driver connection straight to path, without Open's
+// migration, so a test can drive applyMigrations itself.
+func rawSQLDB(t *testing.T, path string) *sql.DB {
+	t.Helper()
 	sqlDB, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
-	defer sqlDB.Close()
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	return sqlDB
+}
+
+// TestMigrationsApplyInOrder injects a second migration through the unexported
+// applyMigrations(db, fs) entry point, so it never touches the embedded set.
+func TestMigrationsApplyInOrder(t *testing.T) {
+	sqlDB := rawSQLDB(t, filepath.Join(t.TempDir(), "relevo.db"))
 
 	fsys := fstest.MapFS{
 		"migrations/001_initial.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE IF NOT EXISTS a (id TEXT PRIMARY KEY);`)},
@@ -29,12 +33,12 @@ func TestMigrationsApplyInOrder(t *testing.T) {
 		t.Fatalf("applyMigrations: %v", err)
 	}
 
-	var versions []int
 	rows, err := sqlDB.Query(`SELECT version FROM schema_version ORDER BY version ASC`)
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
+	var versions []int
 	for rows.Next() {
 		var v int
 		if err := rows.Scan(&v); err != nil {
@@ -55,15 +59,8 @@ func TestMigrationsApplyInOrder(t *testing.T) {
 	}
 }
 
-// TestMigrationsApplyInOrderIsIdempotent pins that a migration whose number
-// is already recorded is skipped, not re-applied.
 func TestMigrationsApplyInOrderIsIdempotent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relevo.db")
-	sqlDB, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	defer sqlDB.Close()
+	sqlDB := rawSQLDB(t, filepath.Join(t.TempDir(), "relevo.db"))
 
 	fsys := fstest.MapFS{
 		"migrations/001_initial.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE IF NOT EXISTS a (id TEXT PRIMARY KEY);`)},

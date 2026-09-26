@@ -10,42 +10,37 @@ import (
 	"testing"
 )
 
-// update rewrites testdata/schema.golden. No other test in this package
-// declares an "update" flag (verified with grep before adding it).
+// update rewrites testdata/schema.golden.
 var update = flag.Bool("update", false, "rewrite testdata/schema.golden")
 
 // TestContractSchema pins C10: the database schema a fresh db.Open produces.
-// sqlite_master's CREATE TABLE/INDEX statements are static text, fixed by the
-// embedded migrations; the one thing migrate.go writes that is not (each
-// schema_version row's applied_at, stamped from time.Now()) is data, not
-// schema, and this golden never selects from that table -- only its own
-// CREATE TABLE line, which is as fixed as every other. SchemaVersions is
-// appended as a plain line, since a fresh database's (have, know) are both
-// the number of migrations this binary embeds, host- and clock-independent.
+// sqlite_master's CREATE TABLE/INDEX statements are static text fixed by the
+// embedded migrations, and SchemaVersions is appended as a plain line, since a
+// fresh database's (have, know) are both host- and clock-independent.
 func TestContractSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	d, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 
 	rows, err := d.sqlDB.Query(`SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name`)
 	if err != nil {
 		t.Fatalf("query sqlite_master: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var buf bytes.Buffer
 	for rows.Next() {
 		var typ, name, tblName string
-		var sqlText sql.NullString
+		var sqlText sql.Null[string]
 		if err := rows.Scan(&typ, &name, &tblName, &sqlText); err != nil {
 			t.Fatalf("scan sqlite_master row: %v", err)
 		}
 		// An implicit index (a UNIQUE column's autoindex) has a NULL sql
 		// column; every explicit CREATE TABLE/INDEX has its own text.
-		fmt.Fprintf(&buf, "%s %s %s\n%s\n\n", typ, name, tblName, sqlText.String)
+		fmt.Fprintf(&buf, "%s %s %s\n%s\n\n", typ, name, tblName, sqlText.V)
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate sqlite_master: %v", err)

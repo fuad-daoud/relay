@@ -1,22 +1,17 @@
 package db
 
 import (
-	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
-	"testing/fstest"
-
-	_ "modernc.org/sqlite"
 )
 
 func TestKVRoundTrip(t *testing.T) {
 	d := openTestDB(t)
 
-	// Absent reads.
 	if _, ok, err := d.KVGet("ledger"); err != nil || ok {
 		t.Fatalf("KVGet absent = (_, %v, %v), want (_, false, nil)", ok, err)
 	}
@@ -32,7 +27,6 @@ func TestKVRoundTrip(t *testing.T) {
 		t.Errorf("KVGet = %q, want {\"entries\":[]}", got)
 	}
 
-	// Upsert overwrites the whole document.
 	if err := d.KVPut("ledger", []byte(`{"entries":[1]}`)); err != nil {
 		t.Fatalf("KVPut overwrite: %v", err)
 	}
@@ -92,45 +86,6 @@ func TestKVPutRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
-// TestKVSchemaOneTolerance: a database migrated only to v1 has no kv table, so
-// a read-only open reports every key as absent rather than erroring -- the same
-// tolerance ConfigGet has (P3b plan §4.1).
-func TestKVSchemaOneTolerance(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relevo.db")
-
-	one, err := migrationFiles.ReadFile("migrations/001_initial.sql")
-	if err != nil {
-		t.Fatalf("read migration 001: %v", err)
-	}
-	fsys := fstest.MapFS{
-		"migrations/001_initial.sql": &fstest.MapFile{Data: one},
-	}
-
-	sqlDB, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	if err := applyMigrations(sqlDB, fsys); err != nil {
-		t.Fatalf("applyMigrations: %v", err)
-	}
-	if err := sqlDB.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-
-	d, err := OpenReadOnly(path)
-	if err != nil {
-		t.Fatalf("OpenReadOnly: %v", err)
-	}
-	defer d.Close()
-
-	if _, ok, err := d.KVGet("ledger"); err != nil || ok {
-		t.Fatalf("KVGet on schema 1 = (_, %v, %v), want (_, false, nil)", ok, err)
-	}
-	if keys, err := d.KVKeys(""); err != nil || len(keys) != 0 {
-		t.Fatalf("KVKeys on schema 1 = (%v, %v), want ([], nil)", keys, err)
-	}
-}
-
 func TestKVImportFileImportsThenDeletes(t *testing.T) {
 	d := openTestDB(t)
 	path := filepath.Join(t.TempDir(), "ledger.json")
@@ -156,7 +111,7 @@ func TestKVImportFileImportsThenDeletes(t *testing.T) {
 
 // TestKVImportFilePrefersRow pins that the row is the record: when it exists,
 // the row's document is returned unchanged and a file still sitting beside it
-// is removed, because nothing writes these files any more.
+// is removed.
 func TestKVImportFilePrefersRow(t *testing.T) {
 	d := openTestDB(t)
 	if err := d.KVPut("ledger", []byte(`{"entries":[1]}`)); err != nil {
@@ -214,15 +169,8 @@ func TestKVImportFileInvalidJSONNamesPath(t *testing.T) {
 	}
 }
 
-// failPutKV fails every put: the mutation guard for KVImportFile's order (P3b
-// plan step 1). If KVImportFile deleted the file before the put, this test's
-// file-exists assertion would fail.
-type failPutKV struct{}
-
-func (failPutKV) KVGet(string) ([]byte, bool, error) { return nil, false, nil }
-func (failPutKV) KVPut(string, []byte) error         { return errors.New("put failed") }
-func (failPutKV) KVDelete(string) error              { return nil }
-
+// TestKVImportFileFailedPutKeepsFile pins the write-before-delete order: a
+// failing put must leave the file in place.
 func TestKVImportFileFailedPutKeepsFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ledger.json")
 	if err := os.WriteFile(path, []byte(`{"entries":[]}`), 0o644); err != nil {

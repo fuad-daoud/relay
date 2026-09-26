@@ -40,7 +40,7 @@ func TestRewritePathPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer d2.Close()
+	t.Cleanup(func() { _ = d2.Close() })
 
 	cases := []struct {
 		name string
@@ -65,7 +65,7 @@ func TestRewritePathPrefix(t *testing.T) {
 }
 
 // TestRewritePathPrefixNewerSchema checks that a newer database is reported and
-// left alone, as Open's #372 rule requires.
+// left alone.
 func TestRewritePathPrefixNewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	seedNewerSchema(t, path)
