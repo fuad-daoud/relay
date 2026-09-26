@@ -252,9 +252,6 @@ internal/relevo/watched_test.go
 internal/relevo/writer_role.go
 internal/relevo/writer_role_test.go
 internal/remote/bundle_test.go
-internal/remote/client/client.go
-internal/remote/client/client_internal_test.go
-internal/remote/client/client_test.go
 internal/remote/proto.go
 internal/remote/proto_test.go
 internal/roles/file.go

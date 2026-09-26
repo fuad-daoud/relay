@@ -54,8 +54,6 @@ linters:
         text: '.*'
       - path: '^internal/remote/[^/]+\.go$'
         text: '.*'
-      - path: '^internal/remote/client/'
-        text: '.*'
       - path: '^internal/roles/'
         text: '.*'
       - path: '^internal/setup/'
