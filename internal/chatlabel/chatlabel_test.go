@@ -12,8 +12,7 @@ import (
 	"unicode/utf8"
 )
 
-// readFixture reads one synthetic transcript from testdata. Fixtures are
-// hand-written, never copied from a real session.
+// readFixture reads one synthetic transcript from testdata; never a real session.
 func readFixture(t *testing.T, name string) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", name))
@@ -23,11 +22,6 @@ func readFixture(t *testing.T, name string) []byte {
 	return raw
 }
 
-// TestClaudeTable is every source Claude reads from a transcript tail and how
-// they rank: a custom title beats an ai title beats the last prompt, a
-// garbled line is skipped rather than fatal, and a bridge session id needs its
-// cse_ prefix to become a link. The zero Label row's "-" rendering is
-// TestLabelString's "nothing" row, not repeated here.
 func TestClaudeTable(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -79,9 +73,8 @@ func TestClaudeTable(t *testing.T) {
 	}
 }
 
-// TestClaudePromptTruncatesToMaxTextRunes pins the truncation cap itself, so a
-// change to MaxTextRunes cannot drift silently past the literal expected text
-// in TestClaudeTable.
+// TestClaudePromptTruncatesToMaxTextRunes pins the cap so it can't drift
+// silently past TestClaudeTable's literal expected text.
 func TestClaudePromptTruncatesToMaxTextRunes(t *testing.T) {
 	label := Claude(readFixture(t, "claude-prompt.jsonl"))
 	if got := utf8.RuneCountInString(strings.Trim(label.Text, "\"")); got != MaxTextRunes {
@@ -98,8 +91,7 @@ func TestReadTail(t *testing.T) {
 		t.Fatalf("write %s: %v", big, err)
 	}
 
-	// The window opens mid-line: everything up to the first newline goes, so
-	// the bytes returned start at a line boundary.
+	// The window opens mid-line, so everything to the first newline is dropped.
 	got, err := ReadTail(big, 8)
 	if err != nil {
 		t.Fatalf("ReadTail(max 8): %v", err)
@@ -120,7 +112,6 @@ func TestReadTail(t *testing.T) {
 		t.Errorf("ReadTail(max 64) = %q, want the whole file", got)
 	}
 
-	// max <= 0 means DefaultTailBytes, which is larger than this file.
 	got, err = ReadTail(small, 0)
 	if err != nil {
 		t.Fatalf("ReadTail(max 0): %v", err)
@@ -166,16 +157,13 @@ func TestOpencode(t *testing.T) {
 	}
 }
 
-// TestOpencodeLegacyQuery pins the pre-2.0 query: it reads the legacy
-// session table, and it doubles the id's single quotes.
 func TestOpencodeLegacyQuery(t *testing.T) {
 	if got, want := OpencodeLegacyQuery("ses_a'b"), "select title from session where id = 'ses_a''b'"; got != want {
 		t.Errorf("OpencodeLegacyQuery = %q, want %q", got, want)
 	}
 }
 
-// fakeExec records every invocation and answers with fixed output, so a test
-// can prove what a Resolver asked sqlite3 for.
+// fakeExec records every invocation and answers with fixed output.
 type fakeExec struct {
 	calls [][]string
 	out   []byte
@@ -209,7 +197,6 @@ func TestResolveOpencode(t *testing.T) {
 		t.Errorf("Exec ran %q, want %q", fake.calls[0], wantArgs)
 	}
 
-	// An invalid session id never reaches sqlite3.
 	if got := res.Resolve(context.Background(), "opencode", "bad id", ""); got != (Label{}) {
 		t.Errorf("invalid session id gave %+v, want the zero Label", got)
 	}
@@ -217,15 +204,13 @@ func TestResolveOpencode(t *testing.T) {
 		t.Errorf("invalid session id reached Exec: %q", fake.calls[1:])
 	}
 
-	// A nil Exec means sqlite3 is not available.
 	noExec := Resolver{OpencodeDB: "/tmp/opencode.db"}
 	if got := noExec.Resolve(context.Background(), "opencode", "ses_abc123", ""); got != (Label{}) {
 		t.Errorf("nil Exec gave %+v, want the zero Label", got)
 	}
 }
 
-// fallbackExec fails its first Run and answers the second, so a test can
-// prove Resolve falls back to OpencodeLegacyQuery when session_v2 is missing.
+// fallbackExec fails its first Run and answers the second.
 type fallbackExec struct {
 	calls [][]string
 	out   []byte
@@ -239,8 +224,6 @@ func (f *fallbackExec) Run(_ context.Context, bin string, args ...string) ([]byt
 	return f.out, nil
 }
 
-// TestResolveOpencodeLegacyFallback pins the pre-2.0 path: a first
-// query that errors runs the legacy query, whose output is the label.
 func TestResolveOpencodeLegacyFallback(t *testing.T) {
 	fake := &fallbackExec{out: []byte("Pre-2 title\n")}
 	res := Resolver{Exec: fake, OpencodeDB: "/tmp/opencode.db"}
@@ -258,16 +241,14 @@ func TestResolveOpencodeLegacyFallback(t *testing.T) {
 	}
 }
 
-// cliExec is usage.Exec over the real sqlite3 binary, so a test can read a
-// fixture database the way the daemon does.
+// cliExec is usage.Exec over the real sqlite3 binary.
 type cliExec struct{}
 
 func (cliExec) Run(ctx context.Context, bin string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, bin, args...).Output()
 }
 
-// opencodeFixture builds a fixture opencode.db with the sqlite3 binary: no
-// test may touch the real ~/.local/share/opencode/opencode.db.
+// opencodeFixture builds a fixture db: no test may touch the real opencode.db.
 func opencodeFixture(t *testing.T, stmts ...string) string {
 	t.Helper()
 	if _, err := exec.LookPath("sqlite3"); err != nil {
@@ -283,9 +264,7 @@ func opencodeFixture(t *testing.T, stmts ...string) string {
 	return path
 }
 
-// TestResolveOpencodeV2Title proves the title is read from session_v2 first:
-// OpenCode 2.0.14 keeps its sessions there, and the legacy session
-// table is only the fallback for pre-2.0 rows.
+// TestResolveOpencodeV2Title pins that OpenCode 2.0.14's session_v2 wins over the legacy table.
 func TestResolveOpencodeV2Title(t *testing.T) {
 	db := opencodeFixture(t,
 		"create table session (id text, title text)",
@@ -304,9 +283,6 @@ func TestResolveOpencodeV2Title(t *testing.T) {
 	}
 }
 
-// TestResolveOpencodePre2 proves the fallback works against a real
-// pre-2.0-shaped database: a database with no session_v2 table at all still
-// gives the session's title from the legacy session table.
 func TestResolveOpencodePre2(t *testing.T) {
 	db := opencodeFixture(t,
 		"create table session (id text, title text)",

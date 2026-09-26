@@ -5,16 +5,14 @@ import (
 	"strings"
 )
 
-// opencodeSessionID matches an opencode session id. It duplicates
-// internal/relevo/deliver_opencode.go's opencodeSessionIDPattern instead of
-// importing it: internal/relevo imports this package in round 2, so the import
-// back would be a cycle.
+// opencodeSessionID matches an opencode session id; duplicated from
+// internal/relevo/deliver_opencode.go to avoid an import cycle (that package
+// imports chatlabel).
 var opencodeSessionID = regexp.MustCompile(`^ses_[A-Za-z0-9]+$`)
 
-// OpencodeQuery is the sqlite3 read of an opencode session's title. OpenCode
-// 2.0.14 keeps titles in session_v2, and the legacy session table only holds
-// pre-2.0 rows, so a session_v2 row wins and the legacy row is the fallback.
-// The id's single quotes are doubled, the SQL string-literal escape.
+// OpencodeQuery reads a title from OpenCode 2.0.14's session_v2, falling back
+// to the legacy session table for pre-2.0 rows. Single quotes in id are
+// doubled, the SQL string-literal escape.
 func OpencodeQuery(sessionID string) string {
 	id := strings.ReplaceAll(sessionID, "'", "''")
 	return "select title from session_v2 where id = '" + id + "'" +
@@ -23,18 +21,14 @@ func OpencodeQuery(sessionID string) string {
 		" and not exists (select 1 from session_v2 where id = '" + id + "')"
 }
 
-// OpencodeLegacyQuery is the pre-2.0 fallback for OpencodeQuery: a database
-// that predates session_v2 keeps its sessions (and titles) in the legacy
-// session table, so the query names that table. The id's single quotes are
-// doubled, the SQL string-literal escape.
+// OpencodeLegacyQuery is OpencodeQuery's fallback for a database that predates session_v2.
 func OpencodeLegacyQuery(sessionID string) string {
 	id := strings.ReplaceAll(sessionID, "'", "''")
 	return "select title from session where id = '" + id + "'"
 }
 
-// Opencode builds the Label for the stdout of OpencodeQuery: its first line,
-// trimmed and cleaned, is the title. Empty output, or a blank first line, gives
-// the empty Label; an opencode title carries no link.
+// Opencode builds the Label from OpencodeQuery's stdout: its first line,
+// cleaned, is the title; empty output gives the empty Label.
 func Opencode(out []byte) Label {
 	first, _, _ := strings.Cut(string(out), "\n")
 	text := clean(strings.TrimSpace(first))

@@ -2,8 +2,6 @@ package release
 
 import "testing"
 
-// decideUpdateCase is one row of TestDecideUpdate: a request and the exact
-// decision DecideUpdate must return for it.
 type decideUpdateCase struct {
 	name    string
 	req     UpdateRequest
@@ -12,11 +10,8 @@ type decideUpdateCase struct {
 	message string
 }
 
-// decideUpdateCases walks every ordered rule as one table. DecideUpdate is
-// pure, so each row is the whole truth about the decision: the Kind, the
-// running and latest versions, and the flags. Action, Target and the exact
-// Message are asserted, because the Message is what `relevo update` prints as
-// is.
+// decideUpdateCases walks every ordered rule; Message is asserted exactly
+// because it is what `relevo update` prints as is.
 var decideUpdateCases = []decideUpdateCase{
 	{
 		name:    "go install without --to prints latest",
@@ -195,7 +190,6 @@ var decideUpdateCases = []decideUpdateCase{
 	},
 }
 
-// TestDecideUpdate runs decideUpdateCases.
 func TestDecideUpdate(t *testing.T) {
 	for _, tc := range decideUpdateCases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -5,17 +5,12 @@ import (
 	"testing"
 )
 
-// detectCase is one row of TestDetectTable: the inputs Detect reads, and the
-// Kind it must classify them as.
 type detectCase struct {
 	name string
 	in   Inputs
 	want Kind
 }
 
-// detectCases is the classification, in order. A binary that sits next to an
-// old plugin manifest is no longer special: with no manifest input it reads
-// as the kind it otherwise is.
 var detectCases = []detectCase{
 	{
 		name: "go install: the module supplied the version",
@@ -64,8 +59,6 @@ var detectCases = []detectCase{
 		want: KindLocalBuild,
 	},
 	{
-		// An old plugin install left ./relevo beside a manifest; with the
-		// manifest input gone nothing distinguishes it, so it claims nothing.
 		name: "old plugin install: a clean tag claims nothing",
 		in:   Inputs{Version: "v0.7.0", ExeDir: "/plugins/relevo"},
 		want: KindUnknown,
@@ -87,8 +80,7 @@ var detectCases = []detectCase{
 		want: KindRelease,
 	},
 	{
-		// A stamp on a build inside a checkout is not a release; it is a
-		// local build by the unchanged rule 3.
+		// Not a release: a stamp on a checkout build falls through to rule 3.
 		name: "release stamp with a describe suffix is a local build",
 		in:   Inputs{Version: "v0.9.0-3-gabc1234", ExeDir: "/worktrees/relevo", Distribution: "release"},
 		want: KindLocalBuild,
@@ -99,22 +91,18 @@ var detectCases = []detectCase{
 		want: KindLocalBuild,
 	},
 	{
-		// An unrecognised distribution value falls through to the
-		// existing rules, so a clean tag claims nothing.
 		name: "unknown distribution value claims nothing",
 		in:   Inputs{Version: "v0.9.0", ExeDir: "/usr/local/bin", Distribution: "homebrew"},
 		want: KindUnknown,
 	},
 	{
-		// Rule 1 comes first: the module supplied the version, so the
-		// distribution stamp does not make it a release.
+		// Rule 1 comes first: module-supplied version beats the distribution stamp.
 		name: "go install wins over the release stamp",
 		in:   Inputs{Version: "v0.9.0", ExeDir: "/home/fuad/go/bin", FromModule: true, Distribution: "release"},
 		want: KindGoInstall,
 	},
 }
 
-// TestDetectTable runs detectCases.
 func TestDetectTable(t *testing.T) {
 	for _, tc := range detectCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,8 +113,7 @@ func TestDetectTable(t *testing.T) {
 	}
 }
 
-// TestHasVCSRevision pins the one signal that separates a build from a VCS
-// checkout from a build from the module cache.
+// TestHasVCSRevision pins the signal separating a VCS checkout build from a module-cache build.
 func TestHasVCSRevision(t *testing.T) {
 	tests := []struct {
 		name     string

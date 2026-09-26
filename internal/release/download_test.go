@@ -18,16 +18,13 @@ import (
 	"testing"
 )
 
-// These tests are httptest-only: no test in this package may reach the
-// network, and none may reach github.com. The archive is built in memory,
-// which is the whole truth about what FetchBinary consumes.
+// These tests are httptest-only: none may reach the network or github.com.
 const (
 	testTag     = "v0.13.0"
 	testArchive = "relevo_v0.13.0_linux_amd64.tar.gz"
 	fakeBinary  = "#!/bin/sh\necho fake\n"
 )
 
-// tarEntry is one entry of an in-memory archive.
 type tarEntry struct {
 	name     string
 	data     []byte
@@ -35,7 +32,6 @@ type tarEntry struct {
 	linkname string
 }
 
-// tarGz builds a gzip-compressed tar in memory from entries, in order.
 func tarGz(t *testing.T, entries ...tarEntry) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -65,21 +61,18 @@ func tarGz(t *testing.T, entries ...tarEntry) []byte {
 	return buf.Bytes()
 }
 
-// checksumLine is one checksums.txt line for data, in sha256sum's format.
 func checksumLine(data []byte, name string) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]) + "  " + name + "\n"
 }
 
-// assetServer is what the httptest server serves.
 type assetServer struct {
 	archive       []byte
 	checksums     []byte
 	archiveStatus int
 }
 
-// newAssetServer serves /<tag>/checksums.txt and /<tag>/relevo_<tag>_...tar.gz
-// and returns the base URL to hand to Downloader.Base.
+// newAssetServer serves /<tag>/checksums.txt and /<tag>/<archive> and returns the base URL.
 func newAssetServer(t *testing.T, s assetServer) string {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -102,8 +95,7 @@ func newAssetServer(t *testing.T, s assetServer) string {
 	return srv.URL
 }
 
-// assertEmptyDir pins the postcondition that no temp file is left behind on
-// any failure path.
+// assertEmptyDir pins that no temp file is left behind on any failure path.
 func assertEmptyDir(t *testing.T, dir string) {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -119,9 +111,6 @@ func assertEmptyDir(t *testing.T, dir string) {
 	}
 }
 
-// TestFetchBinaryHappyPath pins the whole success path: verified bytes, mode
-// 0755, and a temp file that sits in destDir holding exactly the archive's
-// relevo entry.
 func TestFetchBinaryHappyPath(t *testing.T) {
 	archive := tarGz(t,
 		tarEntry{name: "relevo", data: []byte(fakeBinary), typeflag: tar.TypeReg},
@@ -156,8 +145,6 @@ func TestFetchBinaryHappyPath(t *testing.T) {
 	}
 }
 
-// fetchBinaryRefusal is one row of TestFetchBinaryRefusals: an archive and a
-// checksums.txt builder, and what FetchBinary must refuse with.
 type fetchBinaryRefusal struct {
 	name          string
 	entries       []tarEntry
@@ -167,10 +154,7 @@ type fetchBinaryRefusal struct {
 	wantSubstr    string
 }
 
-// fetchBinaryRefusals is every way FetchBinary must refuse and write nothing:
-// a bad checksum, an archive with no relevo binary at its root, and a non-200
-// response. Each row builds its own archive and checksums.txt, so a row's
-// want is the whole truth about what makes it fail.
+// fetchBinaryRefusals is every way FetchBinary must refuse and write nothing.
 var fetchBinaryRefusals = []fetchBinaryRefusal{
 	{
 		name:    "wrong checksum is refused before anything is written",
@@ -195,8 +179,7 @@ var fetchBinaryRefusals = []fetchBinaryRefusal{
 		wantErr:   ErrNoBinary,
 	},
 	{
-		// Neither "../relevo" nor "sub/relevo" is the binary: only the
-		// archive root counts.
+		// Only the archive root counts, not "../relevo" or "sub/relevo".
 		name: "a relevo outside the archive root is not the binary",
 		entries: []tarEntry{
 			{name: "../relevo", data: []byte(fakeBinary), typeflag: tar.TypeReg},
@@ -212,7 +195,6 @@ var fetchBinaryRefusals = []fetchBinaryRefusal{
 		wantErr:   ErrNoBinary,
 	},
 	{
-		// checksums.txt naming the archive twice is ambiguous.
 		name:    "a duplicate checksum line",
 		entries: []tarEntry{{name: "relevo", data: []byte(fakeBinary), typeflag: tar.TypeReg}},
 		checksums: func(archive []byte) []byte {
@@ -249,7 +231,6 @@ var fetchBinaryRefusals = []fetchBinaryRefusal{
 	},
 }
 
-// TestFetchBinaryRefusals runs fetchBinaryRefusals.
 func TestFetchBinaryRefusals(t *testing.T) {
 	for _, tc := range fetchBinaryRefusals {
 		t.Run(tc.name, func(t *testing.T) {
@@ -277,9 +258,8 @@ func TestFetchBinaryRefusals(t *testing.T) {
 	}
 }
 
-// TestFetchBinaryRefusesNonReleaseTag pins the guard at the point of use: a
-// tag IsReleaseTag rejects must be refused before any request, and nothing
-// is written. The counter proves the server was never asked.
+// TestFetchBinaryRefusesNonReleaseTag pins that a bad tag is refused before
+// any request; the counter proves the server was never asked.
 func TestFetchBinaryRefusesNonReleaseTag(t *testing.T) {
 	var requests atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

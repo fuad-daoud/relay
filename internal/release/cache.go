@@ -12,25 +12,20 @@ import (
 // TTL is how long a cached answer stands before the daemon refreshes it.
 const TTL = 24 * time.Hour
 
-// cacheKey is the kv row the release cache lives in.
 const cacheKey = "release-check"
 
-// Cache is the last answer relevo got from the release endpoint. It lives in
-// the machine database's kv row "release-check", which was the
-// file <state>/release-check.json: Load and Save take the db.KV and the
-// legacy path, so nothing here builds an XDG path of its own.
+// Cache is the last answer relevo got from the release endpoint, stored in
+// the machine database's kv row "release-check" (formerly the file
+// <state>/release-check.json).
 type Cache struct {
-	Latest    string    `json:"latest"` // "v0.7.0"
+	Latest    string    `json:"latest"`
 	CheckedAt time.Time `json:"checked_at"`
-	Source    string    `json:"source"` // the URL it came from
+	Source    string    `json:"source"`
 }
 
-// Load reads the cache from the kv row "release-check", importing a present
-// legacyPath file (release-check.json) on first read. An
-// absent row and no file is (Cache{}, false, nil) -- not an error. A malformed
-// document is the same: a corrupt cache must never fail a caller, it must only
-// fail to inform one. That includes a legacy file whose bytes are not JSON: the
-// import refuses to store it, and Load reads the refusal as "no cache".
+// Load reads the cache, importing a present legacyPath file on first read.
+// An absent or malformed cache is (Cache{}, false, nil), never an error: a
+// corrupt cache must only fail to inform a caller, never fail it.
 func Load(kv db.KV, legacyPath string) (Cache, bool, error) {
 	data, ok, err := db.KVImportFile(kv, cacheKey, legacyPath)
 	if err != nil {
@@ -60,8 +55,7 @@ func Save(kv db.KV, c Cache) error {
 	return kv.KVPut(cacheKey, data)
 }
 
-// Stale reports whether a refresh is due: no cache, or CheckedAt older
-// than TTL.
+// Stale reports whether a refresh is due: no cache, or CheckedAt older than ttl.
 func Stale(c Cache, ok bool, now time.Time, ttl time.Duration) bool {
 	if !ok {
 		return true

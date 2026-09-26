@@ -9,7 +9,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// testKV is a real t.TempDir() database, the medium the cache lives in.
 func testKV(t *testing.T) *db.DB {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -20,11 +19,8 @@ func testKV(t *testing.T) *db.DB {
 	return d
 }
 
-// TestLoadMissingAndMalformed pins the promise that neither a missing record
-// nor a corrupt one is an error, because a cache that cannot be read must only
-// fail to inform, never fail a caller. Return an error for malformed and this
-// test fails. The corrupt document arrives as a legacy release-check.json,
-// which the import refuses to store.
+// TestLoadMissingAndMalformed pins that neither a missing nor a corrupt cache
+// is an error: a cache that cannot be read must only fail to inform.
 func TestLoadMissingAndMalformed(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -84,14 +80,12 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Errorf("round trip = %+v, want %+v", got, want)
 	}
 
-	// The whole document is one row, and only that row.
 	if _, ok, err := kv.KVGet("release-check"); err != nil || !ok {
 		t.Errorf("KVGet(release-check) = (_, %v, %v), want the row", ok, err)
 	}
 }
 
-// TestStaleTTL is a fake clock either side of TTL: the daemon must ask for a
-// refresh only once the day is up.
+// TestStaleTTL is a fake clock either side of TTL.
 func TestStaleTTL(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 
