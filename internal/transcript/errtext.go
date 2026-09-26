@@ -5,16 +5,12 @@ import (
 	"strings"
 )
 
-// ErrorText reports whether one raw line of a harness's stream is a fatal
-// error event, and returns the harness's own message for it, trimmed of
-// surrounding whitespace.
-//
-// It is pure, and it is the probe's view of failure: a probe reports the
-// harness's own reason instead of the stderr tail, because the real reason
-// (a usage limit, say) arrives as a JSON event on stdout. It returns
-// ("", false) for anything else: a non-JSON line, an unknown kind, or an
-// empty message. A non-fatal warning a harness logs mid-run is not a run
-// failure and is false here too.
+// ErrorText reports whether one raw line of a harness's stream is a fatal error
+// event, and returns the harness's own message, trimmed of surrounding
+// whitespace. It is the probe's view of failure: a probe reports the harness's
+// own reason instead of the stderr tail, because the real reason (a usage
+// limit, say) arrives as a JSON event on stdout. A non-JSON line, an unknown
+// kind, an empty message, and a non-fatal mid-run warning are all ("", false).
 func ErrorText(kind string, line []byte) (string, bool) {
 	var obj map[string]any
 	if json.Unmarshal(line, &obj) != nil || obj == nil {
@@ -28,8 +24,6 @@ func ErrorText(kind string, line []byte) (string, bool) {
 	return msg, true
 }
 
-// errorText is the harness's own fatal-error message in one event, or "" when
-// the event is not a fatal error for its kind.
 func errorText(kind string, obj map[string]any) string {
 	switch kind {
 	case "codex":
@@ -71,8 +65,8 @@ func errorText(kind string, obj map[string]any) string {
 	return ""
 }
 
-// agyErrorText reads agy's result event: a status other than SUCCESS is
-// fatal, and its error is a string or an object.
+// agyErrorText reads agy's result event: a status other than SUCCESS is fatal,
+// and its error is a string or an object.
 func agyErrorText(obj map[string]any) string {
 	if str(obj["event"]) != "result" {
 		return ""

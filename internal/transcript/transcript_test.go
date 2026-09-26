@@ -11,8 +11,6 @@ import (
 
 var update = flag.Bool("update", false, "rewrite testdata/*.log from the renderer")
 
-// TestFixtures renders every testdata/<kind>.jsonl line by line and compares
-// the joined output to testdata/<kind>.log. Add a kind by adding its pair.
 func TestFixtures(t *testing.T) {
 	streams, err := filepath.Glob(filepath.Join("testdata", "*.jsonl"))
 	if err != nil || len(streams) == 0 {
@@ -81,11 +79,6 @@ func TestRenderRules(t *testing.T) {
 	}
 }
 
-// TestRenderDropsSupervisorTrailers: the lines the supervisor appends after
-// the builder exits -- a rusage trailer and an exit trailer, in the current
-// spellings or the pre-rename ones -- are relevo's own bookkeeping, not the
-// builder's, so a rendered transcript carries none of them and every other
-// line is unchanged.
 func TestRenderDropsSupervisorTrailers(t *testing.T) {
 	body := map[string]string{
 		"claude":   `{"type":"assistant","message":{"content":[{"type":"text","text":"the answer"}]}}`,
@@ -261,8 +254,6 @@ func TestAgyTable(t *testing.T) {
 	}
 }
 
-// TestOpencodeTable covers the branches the fixture cannot (the fixture covers
-// the happy shapes).
 func TestOpencodeTable(t *testing.T) {
 	cases := map[string]struct {
 		line string
@@ -307,8 +298,6 @@ type lineCase struct {
 	want []string
 }
 
-// codexCases covers the branches the fixture cannot (the fixture covers the
-// happy shapes).
 var codexCases = map[string]lineCase{
 	"thread.started is noise": {
 		`{"type":"thread.started","thread_id":"t1"}`,

@@ -1,6 +1,6 @@
 package transcript
 
-// renderOpencode is the table for `opencode run --format json`. A tool_use
+// renderOpencode is the table for `opencode run --format json`: a tool_use
 // event carries the call and its result in one event.
 func renderOpencode(obj map[string]any) []string {
 	switch str(obj["type"]) {

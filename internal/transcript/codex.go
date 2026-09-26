@@ -5,9 +5,8 @@ import (
 	"sort"
 )
 
-// renderCodex is the table for `codex exec --json`. A spawned [agents.*] role
-// is a thread inside the same process, reported on the parent's stream as
-// collab_tool_call items.
+// renderCodex is the table for `codex exec --json`: a spawned [agents.*] role
+// is a thread inside the same process, reported as collab_tool_call items.
 func renderCodex(obj map[string]any) []string {
 	switch str(obj["type"]) {
 	case "thread.started", "turn.started", "turn.completed", "item.started":
@@ -71,9 +70,6 @@ func renderCodexFileChange(item map[string]any) []string {
 	return lines
 }
 
-// renderCodexCollab renders a collab_tool_call: a spawn shows its prompt, a
-// wait shows each completed agent's message, and any other tool degrades to
-// its name.
 func renderCodexCollab(item map[string]any) []string {
 	switch tool := str(item["tool"]); tool {
 	case "spawn_agent":

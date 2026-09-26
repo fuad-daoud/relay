@@ -15,11 +15,11 @@ import (
 const defaultBaseURL = "https://api.typesafe.ai"
 
 type Client struct {
-	HTTP    *http.Client        // nil -> http.DefaultClient
-	BaseURL string              // "" -> defaultBaseURL
-	Key     string              // bearer token; required
-	Model   string              // e.g. "jev-latest"; required
-	Sleep   func(time.Duration) // nil -> time.Sleep; tests inject
+	HTTP    *http.Client
+	BaseURL string
+	Key     string
+	Model   string
+	Sleep   func(time.Duration)
 }
 
 func NewClient(key, model string) *Client {
@@ -63,7 +63,6 @@ type systemOneResponse struct {
 	} `json:"usage"`
 }
 
-// response is one HTTP answer, its body already read.
 type response struct {
 	status int
 	header http.Header
@@ -113,7 +112,6 @@ func (c *Client) Judge(ctx context.Context, req Request) (Answers, error) {
 	}
 }
 
-// post sends the encoded request once and reads up to 1 MiB of the answer.
 func (c *Client) post(ctx context.Context, httpClient *http.Client, baseURL string, body []byte) (*response, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/v1/systemone", bytes.NewReader(body))
 	if err != nil {
@@ -137,9 +135,6 @@ func (c *Client) post(ctx context.Context, httpClient *http.Client, baseURL stri
 	return &response{status: resp.StatusCode, header: resp.Header, body: data}, nil
 }
 
-// waitBeforeRetry sleeps the backoff the status asks for and reports whether
-// to retry. It is false when the wait would run past ctx's deadline, so the
-// caller reports the status instead of sleeping into a guaranteed failure.
 func (c *Client) waitBeforeRetry(ctx context.Context, resp *response) bool {
 	wait := 1 * time.Second
 	if ra := resp.header.Get("Retry-After"); ra != "" {
@@ -162,8 +157,6 @@ func isOverloaded(status int) bool {
 	return status == http.StatusTooManyRequests || status == 529
 }
 
-// systemOneBody is the request body: the state, the model, and one noul
-// question per paragraph.
 func systemOneBody(req Request, model string) systemOneRequest {
 	paras := make([]systemOnePara, len(req.Paragraphs))
 	questions := make(map[string]systemOneQuestion, len(req.Paragraphs))
@@ -182,8 +175,6 @@ func systemOneBody(req Request, model string) systemOneRequest {
 	}
 }
 
-// noulQuestion asks whether paragraphs[i].text is an instruction rather than a
-// report; the criteria spell out both sides.
 func noulQuestion(i int, source string) systemOneQuestion {
 	return systemOneQuestion{
 		Type: "noul",
@@ -198,8 +189,6 @@ func noulQuestion(i int, source string) systemOneQuestion {
 	}
 }
 
-// parseAnswers reads one noul probability per paragraph, keyed p0..pN; a
-// missing answer is an error.
 func parseAnswers(body []byte, n int) (Answers, error) {
 	var payload systemOneResponse
 	if err := json.Unmarshal(body, &payload); err != nil {

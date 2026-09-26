@@ -150,7 +150,6 @@ func TestSplit(t *testing.T) {
 }
 
 func TestTrim(t *testing.T) {
-	// paras is n paragraphs of size bytes each, the shape the limit tests use.
 	paras := func(n, size int) []Paragraph {
 		out := make([]Paragraph, n)
 		for i := range out {
@@ -159,8 +158,7 @@ func TestTrim(t *testing.T) {
 		return out
 	}
 
-	// 300 one-byte paragraphs trimmed to MaxParagraphs take alternating head
-	// and tail, so 0..59 and 240..299 survive in source order.
+	// 300 one-byte paragraphs trimmed to MaxParagraphs keep 0..59 and 240..299, head then tail in source order.
 	headTail := make([]int, 0, MaxParagraphs)
 	for i := 0; i < 60; i++ {
 		headTail = append(headTail, i)

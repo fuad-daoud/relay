@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-// newTestClient points a Client at srv and stubs its sleeps out, so a test
-// never waits on a retry backoff; sleep may be nil.
 func newTestClient(t *testing.T, srv *httptest.Server, sleep func(time.Duration)) *Client {
 	t.Helper()
 	c := NewClient("k", "jev-latest")
@@ -21,8 +19,6 @@ func newTestClient(t *testing.T, srv *httptest.Server, sleep func(time.Duration)
 	return c
 }
 
-// proseRequest is a one-paragraph report request, the shape most Judge tests
-// send.
 func proseRequest() Request {
 	return Request{
 		Source: "report",
@@ -32,8 +28,6 @@ func proseRequest() Request {
 	}
 }
 
-// twoParagraphRequest is a prose paragraph followed by a fenced one, the
-// shape the request-shape tests pin.
 func twoParagraphRequest() Request {
 	return Request{
 		Source:  "report",
@@ -45,8 +39,6 @@ func twoParagraphRequest() Request {
 	}
 }
 
-// answersBody is a systemone response with one noul answer per probability,
-// keyed p0..pN.
 func answersBody(model string, inputTokens int, probs ...float64) map[string]any {
 	answers := make(map[string]any, len(probs))
 	for i, p := range probs {
@@ -59,7 +51,6 @@ func answersBody(model string, inputTokens int, probs ...float64) map[string]any
 	}
 }
 
-// jsonServer answers every request with body.
 func jsonServer(t *testing.T, body map[string]any) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,15 +61,12 @@ func jsonServer(t *testing.T, body map[string]any) *httptest.Server {
 	return srv
 }
 
-// capturedRequest is the request one captureServer received.
 type capturedRequest struct {
 	auth        string
 	contentType string
 	body        map[string]any
 }
 
-// captureServer records the request it receives and answers with two noul
-// probabilities, the response shape a two-paragraph request expects.
 func captureServer(t *testing.T) (*httptest.Server, *capturedRequest) {
 	t.Helper()
 	captured := &capturedRequest{}

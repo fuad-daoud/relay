@@ -2,9 +2,6 @@ package transcript
 
 import "testing"
 
-// TestFinalText pins FinalText per kind and per rule: the last assistant text
-// wins, each kind's fallback stands when none appears, and a non-JSON line or
-// the trailer contributes nothing.
 func TestFinalText(t *testing.T) {
 	cases := []struct {
 		name   string

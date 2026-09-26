@@ -6,26 +6,12 @@ import (
 	"strings"
 )
 
-// FinalText returns the last assistant text a harness stream carries: the
-// message a one-shot process leaves behind that reads as its answer. It is a
-// pure function of the stream and the kind, "" when the stream carries none.
-//
-// A headless consult asks the model for its findings as its final message
-// rather than a file (`relevo ask --headless`), because a read-tier process
-// may not be able to write one; relevo extracts that message here. Rules per
-// kind:
-//
-//	claude:   the last assistant event's concatenated text blocks; if the
-//	          stream carries no assistant text at all, the result event's
-//	          result string.
-//	opencode: the last {"type":"text", part.text} event's text.
-//	agy:      the result event's result.response; when it is empty, the last
-//	          step_update's text.
-//	codex:    the last item.completed whose item.type is agent_message,
-//	          item.text.
-//
-// The relevo-exit trailer and any line that is not a JSON object are ignored,
-// and the result is trimmed. An unknown kind yields "".
+// FinalText returns the last assistant text a harness stream carries -- the
+// message a one-shot process leaves behind that reads as its answer -- trimmed,
+// or "" when the stream carries none. Per kind: claude's last assistant text
+// blocks, falling back to the result string; opencode's last text event; agy's
+// result.response, falling back to the last step_update text; codex's last
+// agent_message. A non-JSON line and the relevo-exit trailer are ignored.
 func FinalText(kind string, stream []byte) string {
 	var last, fallback string
 
@@ -53,9 +39,6 @@ func FinalText(kind string, stream []byte) string {
 	return strings.TrimSpace(last)
 }
 
-// finalCandidates is one event's candidate last message and the fallback its
-// kind keeps for when no last message appears; both are "" when the event
-// carries neither.
 func finalCandidates(kind string, obj map[string]any) (last, fallback string) {
 	switch kind {
 	case "claude":
@@ -88,8 +71,8 @@ func finalCandidates(kind string, obj map[string]any) (last, fallback string) {
 }
 
 // claudeTextBlocks is an assistant event's message.content text blocks, in
-// order. It is final.go's own reader of the shape renderClaude walks: a
-// change to the renderer must not silently change what FinalText returns.
+// order. It is final.go's own reader of the shape renderClaude walks, so a
+// change to the renderer does not silently change what FinalText returns.
 func claudeTextBlocks(obj map[string]any) []string {
 	var out []string
 	for _, b := range asList(asMap(obj["message"])["content"]) {

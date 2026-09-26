@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// streamFixture is line n (1-based) of a usage stream fixture, without its
-// trailing newline.
 func streamFixture(t *testing.T, name string, n int) string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "usage", "testdata", name))
@@ -22,7 +20,6 @@ func streamFixture(t *testing.T, name string, n int) string {
 	return lines[n-1]
 }
 
-// fixture returns a testdata/<name> reader, the captured stream for one kind.
 func fixture(name string) func(t *testing.T) []byte {
 	return func(t *testing.T) []byte {
 		t.Helper()
@@ -34,7 +31,6 @@ func fixture(name string) func(t *testing.T) []byte {
 	}
 }
 
-// raw returns a stream reader over a literal.
 func raw(s string) func(*testing.T) []byte {
 	return func(*testing.T) []byte { return []byte(s) }
 }

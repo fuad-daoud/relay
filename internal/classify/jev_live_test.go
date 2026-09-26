@@ -16,8 +16,7 @@ import (
 func TestJevInjectionFixtures(t *testing.T) {
 	key := strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY"))
 	if key == "" {
-		// Local convenience: accept a leftover key file when the environment
-		// has none. Production reads the key from the database.
+		// Local convenience: accept a leftover key file when the environment has none.
 		if cfgDir, err := os.UserConfigDir(); err == nil {
 			if data, err := os.ReadFile(filepath.Join(cfgDir, "relevo", "typesafe.key")); err == nil {
 				key = strings.TrimSpace(string(data))
