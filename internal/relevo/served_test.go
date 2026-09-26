@@ -116,6 +116,7 @@ func TestServedBuilderTier(t *testing.T) {
 // served round resolves comes from the runtime's roles registry, not from
 // whichever candidate the legacy fallback happens to rank first.
 func TestServedBuilderTierFollowsTheRoleRegistry(t *testing.T) {
+	t.Parallel()
 	set := candidateSet(t, servedNoTierCandidateJSON)
 
 	actorsSection := map[string]actors.Actor{
