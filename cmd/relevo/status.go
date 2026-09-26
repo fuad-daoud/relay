@@ -1,0 +1,222 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"strconv"
+	"time"
+
+	"github.com/fuad-daoud/relevo/internal/doctor"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+)
+
+// filterReport narrows a status report to one binding. An empty name keeps
+// every row, because listing them all is what a bare `relevo status` is for.
+//
+// An unknown name is an error rather than an empty report: a silent blank
+// would read exactly like a healthy binding with nothing outstanding.
+// scopeReport decides what a status-shaped command shows. A named binding is
+// always shown, DONE or not: asking for one by name is already a request for
+// that specific thing. Otherwise DONE rows are hidden unless --all, and the
+// same rule applies to --json so the two formats never disagree about what
+// exists. It is a pure function so the rule can be tested without a harness.
+func scopeReport(rep relevo.Report, name string, all bool) relevo.Report {
+	if name != "" || all {
+		return rep
+	}
+	return relevo.HideDone(rep)
+}
+
+func filterReport(rep relevo.Report, name string) (relevo.Report, error) {
+	if name == "" {
+		return rep, nil
+	}
+	for _, b := range rep.Bindings {
+		if b.Name == name {
+			return relevo.Report{Bindings: []relevo.BindingStatus{b}}, nil
+		}
+	}
+	return relevo.Report{}, fmt.Errorf("no binding named %q", name)
+}
+
+// filterReportPlanner narrows a status report to one planner's bindings. It
+// is a pure function so the rule is testable without a harness. An empty
+// planner id keeps every row, which is what a runtime with no registry gets.
+func filterReportPlanner(rep relevo.Report, plannerID string) relevo.Report {
+	if plannerID == "" {
+		return rep
+	}
+	kept := rep.Bindings[:0:0]
+	for _, b := range rep.Bindings {
+		if b.PlannerID == plannerID {
+			kept = append(kept, b)
+		}
+	}
+	rep.Bindings = kept
+	return rep
+}
+
+func cmdStatus(args []string) error {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	all := fs.Bool("all", false, "include bindings marked DONE (hidden by default; relevo unbind --done clears them)")
+	asJSON := fs.Bool("json", false, "machine-readable output")
+	name := fs.String("name", "", "show only this binding (default: all)")
+	line := fs.Bool("line", false, "this planner's builders, one row each, for Claude Code's statusLine setting; with --json, output as JSON")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+
+	// --line is today's statusline: one row per builder of the calling
+	// planner, so it takes no binding and no other output mode (§4.5).
+	if *line {
+		if *all || *name != "" || len(fs.Args()) > 0 {
+			fmt.Fprintln(os.Stderr, "relevo: --line cannot be combined with --all/--name")
+			return exitCodeErr{code: 2}
+		}
+		return runStatusline(*asJSON)
+	}
+
+	target, err := bindingArg(*name, fs.Args())
+	if err != nil {
+		return err
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		return err
+	}
+	if rt.Remote != nil {
+		if _, serr := relevo.SyncRemote(context.Background(), rt); serr != nil {
+			fmt.Fprintf(os.Stderr, "relevo: sync remote bindings: %v\n", serr)
+		}
+	}
+	rep, err := relevo.Status(context.Background(), rt)
+	if err != nil {
+		return err
+	}
+
+	// §3.3: a bare `relevo status` shows the calling planner's bindings. A
+	// session with no planner -- no registry, no match -- keeps the old
+	// behaviour and lists everything.
+	if target == "" {
+		if rec, ok := plannerFilter(rt); ok {
+			rep = filterReportPlanner(rep, rec.ID)
+		}
+	}
+
+	rep, err = filterReport(rep, target)
+	if err != nil {
+		return err
+	}
+	rep = scopeReport(rep, target, *all)
+
+	// #386: the planner's chat label is computed here, in the command a
+	// person ran, and only printed. internal/relevo.Status leaves it empty,
+	// so no label is ever computed on, or sent to, a server.
+	annotatePlannerChat(rt, &rep, chatResolver())
+
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(rep)
+	}
+
+	// #293: one line above the rows, only when the daemon's cached check has
+	// seen a newer release. Read through the doctor's own Env so `status` and
+	// `doctor` can never disagree about the same file. JSON output above stays
+	// notice-free.
+	env := doctor.NewEnv(rt.Store, releaseInputs())
+	running, latest, ok, kind := env.ReleaseState()
+	if notice := statusNotice(running, latest, ok, kind); notice != "" {
+		fmt.Println(notice)
+	}
+	// #370: one line above the rows only when a daemon restart right now would
+	// kill a process running outside its own scope. The same computation
+	// doctor's restart row makes -- cheap, one small file read per running
+	// process. JSON output above stays notice-free.
+	if notice := restartNotice(restartCheck(rt)); notice != "" {
+		fmt.Println(notice)
+	}
+
+	// #371: the daemon's own version state, read from its record rather than
+	// probed. A read error prints nothing: a status must never fail because a
+	// sidecar file could not be read.
+	if daemonRunning, derr := rt.Store.DaemonRunning(); derr == nil {
+		if info, iok, ierr := rt.Store.ReadDaemonInfo(); ierr == nil {
+			if notice := daemonNotice(buildVersion(), info, iok, daemonRunning); notice != "" {
+				fmt.Println(notice)
+			}
+		}
+	}
+
+	fmt.Print(relevo.RenderStatus(rep))
+	return nil
+}
+
+// runStatusline is statusline's body (the old cmdStatusline), now reached
+// through `status --line` (§4.5): the same output, COLUMNS,
+// RELEVO_STATUSLINE_MARGIN and planner filtering. With asJSON, it prints
+// StatusLineDoc as JSON.
+func runStatusline(asJSON bool) error {
+	if fi, err := os.Stdin.Stat(); err != nil || relevo.ShouldDrainStdin(fi.Mode()) {
+		_, _ = io.Copy(io.Discard, os.Stdin)
+	}
+	if !asJSON {
+		columns, err := strconv.Atoi(os.Getenv("COLUMNS"))
+		if err != nil || columns <= 0 {
+			columns = 0
+		}
+		columns = relevo.StatusLineWidth(columns, os.Getenv("RELEVO_STATUSLINE_MARGIN"))
+		rt, err := newRuntime()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
+			return nil
+		}
+		// §3.3: the row set is the calling planner's bindings. A session with no
+		// planner renders nothing, the same as no planner did
+		// before #303.
+		rec, ok := plannerFilter(rt)
+		if !ok {
+			return nil
+		}
+		// #386: the first line names the planner, so each terminal shows which
+		// planner it is. It is printed before PlannerStatus and survives a
+		// PlannerStatus failure: the line is the planner's identity, not a
+		// binding row.
+		fmt.Print(relevo.RenderPlannerLine(rec.Name, columns))
+		rep, err := relevo.PlannerStatus(context.Background(), rt, rec.ID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
+			return nil
+		}
+		fmt.Print(relevo.RenderStatusLine(rep, rt.Now(), columns))
+		return nil
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		doc := relevo.StatusLineDoc{Now: time.Now().UTC(), Rows: []relevo.StatusLineRow{}}
+		data, _ := json.Marshal(doc)
+		fmt.Println(string(data))
+		return nil
+	}
+	rec, ok := plannerFilter(rt)
+	now := rt.Now().UTC()
+	doc := relevo.StatusLineDoc{Now: now, Rows: []relevo.StatusLineRow{}}
+	if ok {
+		doc.Planner = &relevo.StatusLinePlanner{ID: rec.ID, Name: rec.Name}
+		rep, err := relevo.PlannerStatus(context.Background(), rt, rec.ID)
+		if err == nil {
+			doc.Rows = relevo.StatusLineRows(rep, rt.Now())
+		} else {
+			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
+		}
+	}
+	data, _ := json.Marshal(doc)
+	fmt.Println(string(data))
+	return nil
+}

@@ -1,7 +1,3 @@
-cmd/relevo/config.go
-cmd/relevo/doctor.go
-cmd/relevo/main.go
-cmd/relevo/serve.go
 internal/db/read.go
 internal/db/write.go
 internal/doctor/doctor.go
