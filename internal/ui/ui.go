@@ -72,10 +72,11 @@ func Run(ctx context.Context, rt relevo.Runtime, opts Options) error {
 	if rt.Store == nil {
 		return errors.New("runtime requires Store")
 	}
+	live := newLiveRuntime(rt)
 	if opts.Actions == nil {
-		opts.Actions = &plannerActions{rt: rt, repo: repoRoot(ctx, rt), probe: opts.ProbeExec}
+		opts.Actions = &plannerActions{live: live, repo: repoRoot(ctx, rt), probe: opts.ProbeExec}
 	}
-	return RunSource(ctx, plannerSource{rt}, opts)
+	return RunSource(ctx, liveSource{live}, opts)
 }
 
 // repoRoot is the directory bind would create a worktree of: os.Getwd(), or

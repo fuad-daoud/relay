@@ -66,7 +66,7 @@ func newRoundsView(env Env, query, sortKey string) (View, tea.Cmd, error) {
 	d := dash.New(env.Src.Base().DB, time.Local, envNow(env), query, sortKey)
 	d.Embedded = true
 	d.Running = runningRounds(env)
-	d.Names = env.Src.Base().Candidates.NameOf
+	d.Names = func(token string) string { return env.Src.Base().Candidates.NameOf(token) }
 	d.SetStyles(dashStyles())
 	d.SetSize(env.Width, bodyHeight(env))
 	return roundsView{dash: d}, d.Init(), nil
