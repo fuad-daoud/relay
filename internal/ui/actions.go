@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -42,7 +43,14 @@ type Actions interface {
 	// applied and reloaded, and one candidate probed.
 	ConfigDoc() (relevo.ConfigDoc, error)                        // the stored config, freshly read
 	ApplyConfig(ctx context.Context, e relevo.ConfigEdit) Result // write one edit, then reload this adapter's runtime
-	Probe(ctx context.Context, name string) Result               // probe one candidate (spawns its harness)
+	// The audit view (round 6): every revision, one revision's changes in
+	// human words, the same for a roll back's preview, and the roll back
+	// itself.
+	ConfigLog() ([]db.RevisionRow, error)                 // every revision, newest first, no snapshots
+	ConfigChanges(rev int64) ([]relevo.ChangeLine, error) // one revision's changes, in human words
+	RollbackPreview(rev int64) ([]relevo.ChangeLine, error)
+	Rollback(ctx context.Context, rev int64) Result
+	Probe(ctx context.Context, name string) Result // probe one candidate (spawns its harness)
 
 	// The agents view (round 5): one agent's definition files across the
 	// harnesses that carry it, one file reset to the copy relevo ships,

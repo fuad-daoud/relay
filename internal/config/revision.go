@@ -170,6 +170,16 @@ func (s *Store) Revision(rev int64) (db.RevisionRow, error) {
 	return r, nil
 }
 
+// RevisionDoc returns revision rev's stored document: the snapshot that
+// revision wrote. ErrNoRevision passes through when the revision is absent.
+func (s *Store) RevisionDoc(rev int64) (Doc, error) {
+	row, err := s.Revision(rev)
+	if err != nil {
+		return nil, err
+	}
+	return decodeSnapshot(row.Snapshot)
+}
+
 // RollbackPlan returns the changes rolling back to rev would make (current to
 // rev's snapshot). When there are none it returns ErrNoChange, so the CLI can
 // answer "already equals" without opening a transaction.
@@ -277,6 +287,11 @@ func (s *Store) Rollback(rev int64) (db.RevisionRow, error) {
 	}
 	return rows[0], nil
 }
+
+// Current returns the stored document, the one RollbackPlan diffs a revision's
+// snapshot against. It is currentDoc's exported form, for callers outside this
+// package.
+func (s *Store) Current() (Doc, error) { return s.currentDoc() }
 
 // currentDoc reads the stored document through the *DB readers, for callers
 // with no transaction open.

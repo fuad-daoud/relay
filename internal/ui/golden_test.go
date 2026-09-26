@@ -760,6 +760,94 @@ func goldenSettingsModel(t *testing.T, width, height int, fa *fakeActions) Model
 	return drain(t, m, execLine("settings", m.env(), m.prefs))
 }
 
+// auditFixtureRevs is this machine's five revisions (§8): the newest today, the
+// one before it yesterday, and the first three together on an earlier day, with
+// the stored change counts 1, 1, 2, 7 and 0.
+func auditFixtureRevs() []db.RevisionRow {
+	today := func(hour, min int) time.Time {
+		return time.Date(railNow.Year(), railNow.Month(), railNow.Day(), hour, min, 0, 0, railNow.Location())
+	}
+	back := func(days, hour, min int) time.Time {
+		d := railNow.AddDate(0, 0, -days)
+		return time.Date(d.Year(), d.Month(), d.Day(), hour, min, 0, 0, railNow.Location())
+	}
+	return []db.RevisionRow{
+		{
+			Rev: 5, At: today(1, 36), Source: "ui", Message: "add actor planner", Version: 16,
+			Changes: []byte(`[{"path":"actors.planner","op":"add","after":{"agent":"architect"}}]`),
+		},
+		{
+			Rev: 4, At: back(1, 9, 59), Source: "cli", Message: "config set candidates", Version: 15,
+			Changes: []byte(`[{"path":"candidates[1].provider","op":"change","before":"antigravity","after":"agy-extra"}]`),
+		},
+		{
+			Rev: 3, At: back(3, 23, 18), Source: "migration", Message: "roles → actors", Version: 14,
+			Changes: auditChangesJSON(2),
+		},
+		{
+			Rev: 2, At: back(3, 21, 52), Source: "migration", Message: "candidate names derived", Version: 13,
+			Changes: auditChangesJSON(7),
+		},
+		{
+			Rev: 1, At: back(3, 21, 52), Source: "baseline", Message: "config before revisions", Version: 12,
+			Changes: []byte(`[]`),
+		},
+	}
+}
+
+// auditChangesJSON is a stored change array of n entries: the goldens' CHANGES
+// column counts them, and nothing else reads them.
+func auditChangesJSON(n int) []byte {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `{"path":"policy.x%d","op":"change","before":%d,"after":%d}`, i, i, i+1)
+	}
+	b.WriteByte(']')
+	return []byte(b.String())
+}
+
+// auditFixtureChanges is what ConfigChanges answers for those revisions (§8):
+// #4 is the claude-sonnet-4-6 provider line, #5 the added planner actor, #3 a
+// roles-to-actors migration, #2 the seven derived names, and #1 the baseline
+// with none.
+func auditFixtureChanges() map[int64][]relevo.ChangeLine {
+	return map[int64][]relevo.ChangeLine{
+		5: {{Op: "+", Subject: "actor planner", After: "agent architect"}},
+		4: {{Op: "~", Subject: "claude-sonnet-4-6", Field: "provider", Before: "antigravity", After: "agy-extra"}},
+		3: {
+			{Op: "-", Subject: "roles", Before: "plan-executor"},
+			{Op: "+", Subject: "actors", After: "builder"},
+		},
+		2: {
+			{Op: "+", Subject: "gemini-3.8-flash-high", Field: "name", After: "gemini-3.8-flash-high"},
+			{Op: "+", Subject: "claude-sonnet-4-6", Field: "name", After: "claude-sonnet-4-6"},
+			{Op: "+", Subject: "sonnet", Field: "name", After: "sonnet"},
+			{Op: "+", Subject: "haiku", Field: "name", After: "haiku"},
+			{Op: "+", Subject: "glm-5.3-flash", Field: "name", After: "glm-5.3-flash"},
+			{Op: "+", Subject: "deepseek-v4.1-flash", Field: "name", After: "deepseek-v4.1-flash"},
+			{Op: "+", Subject: "gpt-5.6-terra", Field: "name", After: "gpt-5.6-terra"},
+		},
+	}
+}
+
+// auditFixtureFake is the fake the audit goldens run on: the five revisions and
+// their changes.
+func auditFixtureFake() *fakeActions {
+	return &fakeActions{revs: auditFixtureRevs(), changes: auditFixtureChanges()}
+}
+
+// goldenAuditModel is the audit goldens' builder: a loaded shell, the `:audit`
+// command, and its log load drained.
+func goldenAuditModel(t *testing.T, width, height int, fa *fakeActions) Model {
+	t.Helper()
+	m := goldenActionModel(t, width, height, fa, relevo.Report{})
+	return drain(t, m, execLine("audit", m.env(), m.prefs))
+}
+
 // goldenAgentResearcherModel is `:agents` with the cursor on researcher and
 // its detail pushed.
 func goldenAgentResearcherModel(t *testing.T, width, height int, fa *fakeActions) Model {
@@ -1179,6 +1267,35 @@ func TestGoldenViews(t *testing.T) {
 				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDocNoTiers(t)})
 				m = candDown(t, m, 1) // max_tier
 				return candKeys(t, m, key('r'))
+			},
+		},
+		{
+			name: "audit-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				// The cursor on #4: the list opens on #5, so one down.
+				return candKeys(t, goldenAuditModel(t, 132, 34, auditFixtureFake()), tea.KeyMsg{Type: tea.KeyDown})
+			},
+		},
+		{
+			name: "audit-100", width: 100, height: 30,
+			build: func(t *testing.T) Model {
+				return candKeys(t, goldenAuditModel(t, 100, 30, auditFixtureFake()), tea.KeyMsg{Type: tea.KeyDown})
+			},
+		},
+		{
+			name: "audit-rollback-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				fa := auditFixtureFake()
+				fa.preview = []relevo.ChangeLine{{Op: "-", Subject: "actor planner", Before: "agent architect"}}
+				m := candKeys(t, goldenAuditModel(t, 132, 34, fa), tea.KeyMsg{Type: tea.KeyDown})
+				return candKeys(t, m, key('R'))
+			},
+		},
+		{
+			name: "audit-rev-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := candDown(t, goldenAuditModel(t, 132, 34, auditFixtureFake()), 3) // #5, #4, #3, #2
+				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 			},
 		},
 	}

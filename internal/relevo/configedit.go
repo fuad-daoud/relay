@@ -495,18 +495,8 @@ func actorEdit(d ConfigDoc, acts map[string]actors.Actor, name, message string) 
 // validateCandidateInput applies §4.1's rules in order. skip is the index of
 // the entry an edit is replacing, excluded from the duplicate checks, or -1.
 func validateCandidateInput(in CandidateInput, d ConfigDoc, skip int) (CandidateInput, error) {
-	h, ok := harness.Lookup(in.Harness)
-	if !ok {
-		return in, &FieldError{"harness", "pick a harness"}
-	}
-	if in.Provider == "" {
-		return in, &FieldError{"provider", "a provider is required"}
-	}
-	if strings.Contains(in.Provider, "/") {
-		return in, &FieldError{"provider", "a provider is one word, with no /"}
-	}
-	if h.Providers != nil && !slices.Contains(h.Providers, in.Provider) {
-		return in, &FieldError{"provider", "pick one of " + in.Harness + "'s providers"}
+	if err := checkProvider(in.Harness, in.Provider); err != nil {
+		return in, err
 	}
 	if strings.TrimSpace(in.Model) == "" {
 		return in, &FieldError{"model", "a model is required"}
@@ -531,6 +521,28 @@ func validateCandidateInput(in CandidateInput, d ConfigDoc, skip int) (Candidate
 		}
 	}
 	return in, nil
+}
+
+// checkProvider is the provider lock: the harness must be one relevo knows, and
+// the provider a non-empty single word among the harness's providers when the
+// harness names any. It is validateCandidateInput's first four rules, extracted
+// so the cockpit's whole-document check can run them over a stored config
+// without going through a form.
+func checkProvider(harnessKind, provider string) error {
+	h, ok := harness.Lookup(harnessKind)
+	if !ok {
+		return &FieldError{"harness", "pick a harness"}
+	}
+	if provider == "" {
+		return &FieldError{"provider", "a provider is required"}
+	}
+	if strings.Contains(provider, "/") {
+		return &FieldError{"provider", "a provider is one word, with no /"}
+	}
+	if h.Providers != nil && !slices.Contains(h.Providers, provider) {
+		return &FieldError{"provider", "pick one of " + harnessKind + "'s providers"}
+	}
+	return nil
 }
 
 // dryRun validates the whole post-edit config the way the store will: it
