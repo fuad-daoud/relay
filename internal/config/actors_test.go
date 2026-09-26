@@ -9,9 +9,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// TestLoadPrefersActors pins §4.2's Load precedence: with actors, agents and
-// roles all present the registry comes from actors, the roles section is
-// ignored with a warning, and the agents section is kept for round 2.
 func TestLoadPrefersActors(t *testing.T) {
 	t.Parallel()
 
@@ -62,8 +59,6 @@ func TestLoadPrefersActors(t *testing.T) {
 	}
 }
 
-// TestValidateActorsAgents pins §4.2's Validate cases: a bad agents or actors
-// body is refused by the same single-section check every other section uses.
 func TestValidateActorsAgents(t *testing.T) {
 	t.Parallel()
 
@@ -83,8 +78,6 @@ func TestValidateActorsAgents(t *testing.T) {
 	}
 }
 
-// TestExportIncludesActors pins §4.2's export order: EncodeDoc walks Sections,
-// so agents comes before actors.
 func TestExportIncludesActors(t *testing.T) {
 	t.Parallel()
 

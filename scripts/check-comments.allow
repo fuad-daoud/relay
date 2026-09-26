@@ -52,15 +52,6 @@ internal/actors/convert.go
 internal/actors/convert_test.go
 internal/actors/shipped.go
 internal/actors/shipped_test.go
-internal/config/actors_test.go
-internal/config/config.go
-internal/config/config_test.go
-internal/config/diff.go
-internal/config/import.go
-internal/config/migrate_actors.go
-internal/config/names.go
-internal/config/names_test.go
-internal/config/revision.go
 internal/e2e/fakes_test.go
 internal/e2e/headless_test.go
 internal/e2e/remote_test.go

@@ -9,26 +9,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 )
-
-// revAt is the fixed instant every revision test stamps.
-var revAt = time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
-
-// atTime is a WithClock seam pinned to one instant.
-func atTime(t time.Time) func() time.Time { return func() time.Time { return t } }
-
-// revChanges decodes a revision row's raw JSON change list.
-func revChanges(t *testing.T, r db.RevisionRow) []Change {
-	t.Helper()
-	var cs []Change
-	if err := json.Unmarshal(r.Changes, &cs); err != nil {
-		t.Fatalf("revision changes %q: %v", r.Changes, err)
-	}
-	return cs
-}
 
 func TestPutRecordsRevision(t *testing.T) {
 	t.Parallel()
@@ -251,7 +234,7 @@ func TestRevisionInsertFailureRollsBackWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { _ = d.Close() })
 	s := Open(d).WithClock(atTime(revAt))
 
 	// Seed a section so the write is a real change, not a no-op.
@@ -268,10 +251,10 @@ func TestRevisionInsertFailureRollsBackWrite(t *testing.T) {
 		t.Fatalf("sql.Open: %v", err)
 	}
 	if _, err := raw.Exec(`DROP TABLE config_revision`); err != nil {
-		raw.Close()
+		_ = raw.Close()
 		t.Fatalf("drop config_revision: %v", err)
 	}
-	raw.Close()
+	_ = raw.Close()
 
 	if _, err := s.As("cli", "config set policy").Put(Policy, []byte(`{"max_switches":2}`)); err == nil {
 		t.Fatal("Put with no config_revision table: want an error, got nil")
@@ -416,8 +399,6 @@ func TestImportFilesRecordsImport(t *testing.T) {
 	}
 }
 
-// RevisionDoc returns the document a known revision wrote, comparing bodies by
-// their compact encoding: a snapshot is re-indented, not stored verbatim.
 func TestRevisionDoc(t *testing.T) {
 	t.Parallel()
 

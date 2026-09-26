@@ -28,8 +28,6 @@ linters:
         text: '.*'
       - path: '^internal/actors/'
         text: '.*'
-      - path: '^internal/config/'
-        text: '.*'
       - path: '^internal/e2e/'
         text: '.*'
       - path: '^internal/history/'
