@@ -63,6 +63,10 @@ type Store struct {
 	// row outside it.
 	owner string
 
+	// logCap is the binding log's entry cap; 0 means maxLogEntries. Only tests
+	// set it.
+	logCap int
+
 	// shared is the machine-database handle a NewShared store borrows: the
 	// caller owns its lifetime, and the store never closes it. Nil for a New
 	// store, which opens <root>/relevo.db lazily.
@@ -95,6 +99,15 @@ func New(root string) *Store {
 // call.
 func NewShared(root, owner string, d *db.DB) *Store {
 	return &Store{root: root, owner: owner, shared: d}
+}
+
+// maxLog is the binding log's entry cap: logCap when a test set one, else the
+// package default.
+func (s *Store) maxLog() int {
+	if s.logCap > 0 {
+		return s.logCap
+	}
+	return maxLogEntries
 }
 
 // DefaultRoot resolves $XDG_STATE_HOME/relevo, falling back to

@@ -24,6 +24,18 @@ func openStore(t *testing.T) *Store {
 	return Open(d)
 }
 
+// openStoreWith opens a store over a database whose busy waits are the given
+// options, for a test that must not wait out the defaults.
+func openStoreWith(t *testing.T, o db.Options) *Store {
+	t.Helper()
+	d, err := db.OpenWith(filepath.Join(t.TempDir(), "relevo.db"), o)
+	if err != nil {
+		t.Fatalf("db.OpenWith: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return Open(d)
+}
+
 func writeFile(t *testing.T, path, body string, mode os.FileMode) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

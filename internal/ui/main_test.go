@@ -8,5 +8,6 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	staticCursor = true
 	os.Exit(dbtest.Main(m))
 }
