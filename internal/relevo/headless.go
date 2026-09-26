@@ -931,6 +931,16 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			b.Name, codeText, denialLine, b.Name, showCommand(b.Name, b.Round, "log")))
 	}
 
+	// A builder that ended its turn cleanly without a report has left a
+	// session nothing will wake: resume it once with a nudge and hand the
+	// round back, rather than spend a switch on work that is nearly done.
+	if next, resumed, err := nudgeResume(ctx, rt, tx, b, entries, codeText, now); err != nil {
+		return next, err
+	} else if resumed {
+		slog.Info("headless builder nudged to finish", "binding", b.Name, "round", b.Round, "session", b.Builder.StreamSessionID)
+		return next, nil
+	}
+
 	if !switchable {
 		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder exited (code %s) without a report; see %s", b.Name, codeText, showCommand(b.Name, b.Round, "log")))
 	}
