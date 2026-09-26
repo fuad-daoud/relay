@@ -66,7 +66,7 @@ type SendOptions struct {
 	Tier      string // "" means the binding's Tier; else a one-round override (headless only)
 	AllowYolo bool
 	// Builder is a candidate token that persists as the binding's builder from
-	// this round on, until another --builder or a mid-round switch changes it.
+	// this round on, until another --candidate or a mid-round switch changes it.
 	// "" means the binding's current builder. In contrast to Tier, it is not a
 	// one-round override: the issue's failure was a plain send silently going
 	// to the builder the binding was bound to (#318).
@@ -96,7 +96,7 @@ type preflight struct {
 	tier harness.Tier       // effective tier for this round (opts.Tier parsed, or effectiveTier(b))
 	argv []string           // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
 	gate *availability.Gate // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
-	pick *Resolution        // --builder's resolution to apply under the lock; nil when the builder does not change
+	pick *Resolution        // --candidate's resolution to apply under the lock; nil when the builder does not change
 	// staleToken is the binding's old BuilderCandidate when the preflight
 	// re-picked because the token was stale; "" otherwise. When it is
 	// non-empty, pick is non-nil.
@@ -107,7 +107,7 @@ type preflight struct {
 
 	remoteSHA string // remote: the resolved branch tip, for the dry run's Where
 	// remoteBuilder is the value Send hands sendRemote for a remote binding:
-	// --builder's canonical token when the argument resolved to one, or the
+	// --candidate's canonical token when the argument resolved to one, or the
 	// argument unchanged ("" included) when it did not.
 	remoteBuilder string
 }
@@ -160,7 +160,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		return preflight{}, fmt.Errorf("binding %q is paused; relevo bind --resume --name %s first", name, name)
 	}
 
-	// --builder resolves the new candidate read-only and substitutes it in
+	// --candidate resolves the new candidate read-only and substitutes it in
 	// memory, so every later precondition (the argv, the advisory gate note,
 	// the dry run) is computed against the builder this round will actually
 	// use. Nothing is saved here: Send re-applies the change under its lock.
@@ -169,7 +169,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	var pick *Resolution
 	var staleToken string
 	// remoteBuilder is what a remote binding's sendRemote is handed: the
-	// canonical token when --builder resolved to one, else the argument as
+	// canonical token when --candidate resolved to one, else the argument as
 	// typed (A1 §4.2).
 	remoteBuilder := opts.Builder
 	if opts.Builder != "" {
@@ -417,10 +417,10 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			return fmt.Errorf("binding %q round %d: %s exists: %w", name, b.Round, filepath.Base(path), ErrReportPending)
 		}
 
-		// --builder is re-applied under the lock, against the fresh binding:
+		// --candidate is re-applied under the lock, against the fresh binding:
 		// the preflight's resolution must not be trusted over a round that
 		// opened in between. The re-check writes nothing when it fires (§5.2).
-		// A stale re-pick is not a --builder change, so it skips the refusal.
+		// A stale re-pick is not a --candidate change, so it skips the refusal.
 		if pf.pick != nil {
 			if pf.staleToken == "" {
 				entries, err := tx.ReadLog(name)

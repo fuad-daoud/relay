@@ -431,7 +431,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 // planner and reactivates the binding locally.
 //
 // Errors: "cannot change a remote builder; unbind and add" when the caller
-// asked to change the builder (--rebind, --candidate, --builder pane, or
+// asked to change the builder (--rebind, --candidate, or
 // --headless); ErrRemoteUnavailable; a wrapped server error; a wrapped git
 // error; or a message naming the binding when its branch is gone.
 func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.Endpoint, b store.Binding) (store.Binding, Resolution, error) {

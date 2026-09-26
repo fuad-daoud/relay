@@ -580,8 +580,8 @@ func TestRolesMissingSkipsInOrder(t *testing.T) {
 	if res.Token() != testClaudeRef {
 		t.Errorf("picked %q, want %q", res.Token(), testClaudeRef)
 	}
-	if explain := ExplainResolution("builder", res); !strings.Contains(explain, "skipped "+testOpencodeRef+" (roles missing") {
-		t.Errorf("ExplainResolution = %q, want it to contain %q", explain, "skipped "+testOpencodeRef+" (roles missing")
+	if explain := ExplainResolution("builder", res); !strings.Contains(explain, "skipped "+testOpencodeRef+" (agents missing") {
+		t.Errorf("ExplainResolution = %q, want it to contain %q", explain, "skipped "+testOpencodeRef+" (agents missing")
 	}
 
 	// Control: rt.Roles == nil means no check is configured, so nothing is
@@ -599,7 +599,7 @@ func TestRolesMissingSkipsInOrder(t *testing.T) {
 
 // TestRolesMissingRefusesExplicit pins #238's explicit-pick half: unlike
 // every other gate (recorded, but the pick proceeds), roles_missing refuses
-// an explicit --builder pick outright, because it cannot succeed.
+// an explicit --candidate pick outright, because it cannot succeed.
 func TestRolesMissingRefusesExplicit(t *testing.T) {
 	t.Parallel()
 

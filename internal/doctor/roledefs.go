@@ -155,7 +155,7 @@ func rolesCheck(env Env, kind string) Check {
 		case harness.OutcomeError:
 			return Check{
 				Group: kind, Name: "roles", Severity: SevWarn,
-				Detail:      fmt.Sprintf("could not check the role definitions: %s", r.Err),
+				Detail:      fmt.Sprintf("could not check the agent definitions: %s", r.Err),
 				ProbeFailed: true,
 			}
 		}
@@ -165,7 +165,7 @@ func rolesCheck(env Env, kind string) Check {
 	case stale:
 		return Check{
 			Group: kind, Name: "roles", Severity: SevWarn,
-			Detail: "role definitions are stale; the daemon refreshes them on its next start, or run relevo config agents",
+			Detail: "agent definitions are stale; the daemon refreshes them on its next start, or run relevo config agents",
 			Fix:    "relevo config agents",
 		}
 	case edited:

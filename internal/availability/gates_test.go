@@ -360,8 +360,8 @@ func TestGateKindTextExitedNoReport(t *testing.T) {
 func TestGateKindTextRolesMissing(t *testing.T) {
 	t.Parallel()
 
-	if got := GateKindText(RolesMissing); got != "roles missing" {
-		t.Errorf("GateKindText(RolesMissing) = %q, want %q", got, "roles missing")
+	if got := GateKindText(RolesMissing); got != "agents missing" {
+		t.Errorf("GateKindText(RolesMissing) = %q, want %q", got, "agents missing")
 	}
 }
 

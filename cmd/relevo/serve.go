@@ -448,9 +448,9 @@ func cmdServeRun(args []string) error {
 			continue
 		}
 		if missing := roles.Missing(r.Harness, spec.Definitions); len(missing) > 0 {
-			slog.Warn("candidate roles missing; those candidates will be skipped", "harness", r.Harness, "missing", missing, "fix", "relevo config agents --kind "+r.Harness)
+			slog.Warn("candidate agent definitions missing; those candidates will be skipped", "harness", r.Harness, "missing", missing, "fix", "relevo config agents --kind "+r.Harness)
 		} else {
-			slog.Info("roles present", "harness", r.Harness)
+			slog.Info("agent definitions present", "harness", r.Harness)
 		}
 	}
 

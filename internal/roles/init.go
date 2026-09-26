@@ -14,7 +14,7 @@ import (
 
 // ErrAmbiguousTier reports candidates of one role carrying different tiers, so
 // no single tier can be written for the role (#374 §3.1). It stops `relevo
-// config roles-init` before anything is written.
+// config init` before anything is written.
 var ErrAmbiguousTier = errors.New("candidates of one role carry different tiers")
 
 // FromLegacy translates today's candidates.json roles/tier and policy.json

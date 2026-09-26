@@ -257,7 +257,7 @@ func TestDoctorRolesRow(t *testing.T) {
 		wantDetail string
 		wantFix    string
 	}{
-		{name: "stale", wantRow: true, wantSev: SevWarn, wantDetail: "role definitions are stale", wantFix: "relevo config agents"},
+		{name: "stale", wantRow: true, wantSev: SevWarn, wantDetail: "agent definitions are stale", wantFix: "relevo config agents"},
 		{name: "user edited is kept", wantRow: true, wantSev: SevOK, wantDetail: "differs from every copy relevo has shipped (kept as your edit)",
 			contents: func(*testing.T) map[string]string {
 				return fill(func(string) string { return "---\nmodel: haiku\n---\nmine\n" })

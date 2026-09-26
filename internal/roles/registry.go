@@ -45,7 +45,7 @@ type Ranked struct {
 	// for "unlisted, after order" (legacy mode only).
 	Position int
 	// Off is true when the entry is off: it keeps its position and Resolved
-	// still includes it, so an explicit `--builder <off one>` is served; only
+	// still includes it, so an explicit `--candidate <off one>` is served; only
 	// the pick with no explicit token skips it (A2 §3.4).
 	Off bool
 }

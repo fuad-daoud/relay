@@ -107,7 +107,7 @@ func cmdSend(args []string) error {
 	if res.Drift != "" {
 		fmt.Println(res.Drift)
 	}
-	fmt.Printf("sent round %d to %s's builder\n", res.Round, target)
+	fmt.Printf("sent round %d to %s's runner\n", res.Round, target)
 	warnWaitingOnYou(rt, target)
 	return nil
 }

@@ -191,7 +191,7 @@ func installRoles(env InstallEnv, opts InstallOptions, h Harness, manifest map[s
 }
 
 // installFiles handles a kind's opt-in shipped files. Only a full install (no
-// --role) touches them, never a single-role probe.
+// --agent) touches them, never a single-role probe.
 func installFiles(env InstallEnv, opts InstallOptions, h Harness, manifest map[string]string) ([]InstallResult, bool, error) {
 	if opts.Role != "" {
 		return nil, false, nil

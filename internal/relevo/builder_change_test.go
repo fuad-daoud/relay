@@ -35,7 +35,7 @@ func TestResolveSendBuilderUnknownToken(t *testing.T) {
 
 // TestResolveSendBuilderRolesMissingRefused pins #238's explicit-pick half
 // through ResolveSendBuilder: roles_missing is the one gate that refuses an
-// explicit --builder pick, and the refusal is wrapped as ErrBadBuilder.
+// explicit --candidate pick, and the refusal is wrapped as ErrBadBuilder.
 func TestResolveSendBuilderRolesMissingRefused(t *testing.T) {
 	t.Parallel()
 

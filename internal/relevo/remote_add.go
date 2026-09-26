@@ -175,7 +175,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		}
 	}
 
-	// 4.5. feature probe: a requested --tier or custom --role requires the
+	// 4.5. feature probe: a requested --tier or custom --actor requires the
 	// server to advertise the matching feature before any binding is created
 	// there. One WhoAmI answers both, and it is called at most once.
 	wireTier := ""
@@ -357,7 +357,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 // wording assumes a local resolveCandidate call that never ran here, so it
 // would misdescribe a token the server picked on its own. round is the round
 // the pick is filed under: 1 for a fresh binding, the sent round for a
-// `relevo send --builder` (#318).
+// `relevo send --candidate` (#318).
 func remotePickEntry(now time.Time, server, token string, explicit bool, round int) store.LogEntry {
 	how := "server's pick"
 	if explicit {

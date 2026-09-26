@@ -393,7 +393,7 @@ func GateKindText(k Kind) string {
 	case ExitedNoReport:
 		return "exited without a report"
 	case RolesMissing:
-		return "roles missing"
+		return "agents missing"
 	default:
 		return string(k)
 	}

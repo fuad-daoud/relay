@@ -32,7 +32,7 @@ func askFlagSet(fs *flag.FlagSet) *askFlagValues {
 	v.file = fs.String("file", "", "file containing the question")
 	v.question = fs.String("question", "", "the question itself; with --round, exactly one of --file and -q")
 	fs.StringVar(v.question, "q", "", "the question itself (shorthand for --question)")
-	v.round = fs.Int("round", 0, "ask the builder that built this closed round: resumes its session, headless and read-only")
+	v.round = fs.Int("round", 0, "ask the runner that ran this closed round: resumes its session, headless and read-only")
 	v.nameFlag = fs.String("name", "", "binding name")
 	v.plannerFlag = fs.String("planner", "", "act as this planner (id or name; default: $RELEVO_PLANNER, else this session's host)")
 	return v

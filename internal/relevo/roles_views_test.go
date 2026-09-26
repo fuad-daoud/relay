@@ -119,17 +119,17 @@ func TestRolesViewsPerRoleGateFiltering(t *testing.T) {
 	set := candidateSet(t, testCandidatesJSON)
 	gates := []availability.Gate{{
 		Token: testClaudeRef, Kind: availability.RolesMissing, Role: "reviewer",
-		Note: "roles missing for reviewer",
+		Note: "agents missing for reviewer",
 	}}
 
 	got := FormatPolicy(set, policy.Policy{}, gates, availability.History{}, baseTime, time.UTC)
 
 	builder := rolesViewsSection(t, got, "builder  (no order set)", "reviewer  (no order set)")
-	if strings.Contains(builder, "roles missing") {
+	if strings.Contains(builder, "agents missing") {
 		t.Errorf("a reviewer-scoped gate must not show on builder rows:\n%s", builder)
 	}
 	reviewer := rolesViewsSection(t, got, "reviewer  (no order set)", "researcher  (no order set)")
-	if !strings.Contains(reviewer, "roles missing") {
+	if !strings.Contains(reviewer, "agents missing") {
 		t.Errorf("a reviewer-scoped gate must show on reviewer rows:\n%s", reviewer)
 	}
 }
@@ -210,7 +210,7 @@ func TestRolesViewsFormatCandidatesLatencyForFileMode(t *testing.T) {
 	got := view.FormatCandidatesLatencyFor(reg, set, nil, nil)
 	// claude's entry takes "m" first, so opencode's becomes "opencode-m".
 	want := "m" + strings.Repeat(" ", 11) + "claude/test/m  " + "  builder, reviewer\n" +
-		"opencode-m" + strings.Repeat(" ", 2) + "opencode/test/m" + "  (no role)\n"
+		"opencode-m" + strings.Repeat(" ", 2) + "opencode/test/m" + "  (no actor)\n"
 	if got != want {
 		t.Errorf("view.FormatCandidatesLatencyFor =\n%q\nwant:\n%q", got, want)
 	}
@@ -301,13 +301,13 @@ func TestRolesViewsMergedGateTexts(t *testing.T) {
 
 	got := view.FormatCandidates(set, gates)
 
-	want := "   unavailable: roles missing (builder, reviewer) until cleared; " +
+	want := "   unavailable: agents missing (builder, reviewer) until cleared; " +
 		availability.GateKindText(availability.RateLimited) + " " + availability.GateUntilText(until)
 	if !strings.Contains(got, want) {
 		t.Errorf("view.FormatCandidates =\n%q\nwant it to contain:\n%q", got, want)
 	}
-	if n := strings.Count(got, "roles missing"); n != 1 {
-		t.Errorf("roles missing appears %d times, want the merged part once:\n%s", n, got)
+	if n := strings.Count(got, "agents missing"); n != 1 {
+		t.Errorf("agents missing appears %d times, want the merged part once:\n%s", n, got)
 	}
 }
 

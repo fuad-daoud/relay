@@ -61,7 +61,7 @@ func RenderStatus(r Report) string {
 }
 
 // writeBindingRow renders one binding's block: the round line, the planner
-// line, the builder line and the trailer lines.
+// line, the runner line and the trailer lines.
 func writeBindingRow(sb *strings.Builder, b BindingStatus) {
 	writeRoundLine(sb, b)
 	writePlannerLine(sb, b)
@@ -127,15 +127,15 @@ func writePlannerLine(sb *strings.Builder, b BindingStatus) {
 	fmt.Fprint(sb, "\n")
 }
 
-// writeBuilderLine renders the builder line: the process word, the kind and
-// status, and the builder's short name when it has one, its token otherwise.
+// writeBuilderLine renders the runner line: the process word, the kind and
+// status, and the runner's short name when it has one, its token otherwise.
 func writeBuilderLine(sb *strings.Builder, b BindingStatus) {
 	builderLabel := b.BuilderName
 	if builderLabel == "" {
 		builderLabel = b.BuilderCandidate
 	}
 	if b.Headless != nil {
-		fmt.Fprintf(sb, "  builder  %-14s %-8s %-9s", b.ProcessWord(), b.BuilderKind, b.BuilderStatus)
+		fmt.Fprintf(sb, "  runner  %-14s %-8s %-9s", b.ProcessWord(), b.BuilderKind, b.BuilderStatus)
 		if b.Headless.PID != 0 {
 			fmt.Fprintf(sb, " pid %d since %s ", b.Headless.PID, b.Headless.StartedAt.Local().Format("15:04"))
 		} else {
@@ -143,7 +143,7 @@ func writeBuilderLine(sb *strings.Builder, b BindingStatus) {
 		}
 		fmt.Fprintf(sb, "`%s`", builderLabel)
 	} else {
-		fmt.Fprintf(sb, "  builder  %-14s %-8s %-9s `%s`",
+		fmt.Fprintf(sb, "  runner  %-14s %-8s %-9s `%s`",
 			"remote", b.BuilderKind, b.BuilderStatus, builderLabel)
 	}
 	if b.Role != "" {
@@ -155,7 +155,7 @@ func writeBuilderLine(sb *strings.Builder, b BindingStatus) {
 	fmt.Fprint(sb, "\n")
 }
 
-// writeRowTrailer renders the lines below the builder line: the headless log
+// writeRowTrailer renders the lines below the runner line: the headless log
 // tail, the detail, the last event, the usage and spend, and the pending
 // payload.
 func writeRowTrailer(sb *strings.Builder, b BindingStatus) {

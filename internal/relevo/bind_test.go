@@ -585,7 +585,7 @@ func TestSanitizeName(t *testing.T) {
 // TestBindResumeStillAdoptsAnExistingName guards the exit the refusal offers.
 // TestResumePausedRestoresAndRebinds pins #137: resuming a PAUSED binding
 // restores the released worktree and rebinds a fresh builder even though the
-// caller passed neither --rebind nor --builder, because a paused binding has
+// caller passed neither --rebind nor --candidate, because a paused binding has
 // no builder identity left to keep.
 func TestBindRefusesExistingName(t *testing.T) {
 	t.Parallel()
@@ -853,7 +853,7 @@ func TestResumeRestoresMissingWorktree(t *testing.T) {
 
 // TestResumePausedRestoresAndRebinds pins #137: resuming a PAUSED binding
 // restores the released worktree and rebinds a fresh builder even though the
-// caller passed neither --rebind nor --builder, because a paused binding has
+// caller passed neither --rebind nor --candidate, because a paused binding has
 // no builder identity left to keep.
 func TestResumePausedRestoresAndRebinds(t *testing.T) {
 	t.Parallel()
