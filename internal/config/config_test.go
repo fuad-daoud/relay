@@ -217,7 +217,7 @@ func TestLoadFilesEqualsLoadAfterImport(t *testing.T) {
 func TestImportTxFailureKeepsFiles(t *testing.T) {
 	t.Parallel()
 
-	s := openStore(t)
+	s := openStoreWith(t, db.Options{BusyTimeout: 20 * time.Millisecond, BeginRetry: time.Millisecond})
 	dir := filepath.Join(t.TempDir(), "relevo")
 	writeFile(t, filepath.Join(dir, "candidates.json"),
 		`[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}]`, 0o644)

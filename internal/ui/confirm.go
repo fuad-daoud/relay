@@ -143,7 +143,7 @@ type promptBox struct {
 // its own: the box's title is the question, and the modals already label their
 // fields (§2.4).
 func newPromptInput() textinput.Model {
-	in := textinput.New()
+	in := newTextInput()
 	in.Prompt = ""
 	in.Focus()
 	return in

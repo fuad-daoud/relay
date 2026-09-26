@@ -62,7 +62,7 @@ type eventLogMsg struct {
 }
 
 func newLogView(env Env) (View, tea.Cmd) {
-	in := textinput.New()
+	in := newTextInput()
 	in.Prompt = ""
 	v := logView{
 		follow: true,
@@ -631,7 +631,7 @@ func (v logView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 			v.editing = true
 			in := v.input
 			if in.Prompt == "" && in.Placeholder == "" && in.Width == 0 {
-				in = textinput.New()
+				in = newTextInput()
 				in.Prompt = ""
 			}
 			in.SetValue(v.filter)

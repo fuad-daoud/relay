@@ -45,7 +45,7 @@ type cmdLine struct {
 
 // newCmdLine builds the command line with its ':' prompt.
 func newCmdLine() cmdLine {
-	in := textinput.New()
+	in := newTextInput()
 	in.Prompt = ":"
 	return cmdLine{input: in}
 }

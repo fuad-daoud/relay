@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -478,7 +477,7 @@ func TestLogViewFilter(t *testing.T) {
 	now := time.Date(2026, 9, 25, 19, 0, 0, 0, time.Local)
 	v := logView{
 		loaded: true,
-		input:  textinput.New(),
+		input:  newTextInput(),
 		events: []db.EventLogRow{
 			{TS: now.Add(-10 * time.Minute), Seq: 1, Kind: "exit", BindingName: "oc-496"},
 			{TS: now.Add(-20 * time.Minute), Seq: 2, Kind: "exit", BindingName: "atlas"},

@@ -44,6 +44,20 @@ type DB struct {
 	newer bool
 	have  int // schema version on disk
 	know  int // highest migration this binary embeds
+
+	// beginRetry bounds how long Tx retries a busy BEGIN IMMEDIATE; zero, as
+	// on a read-only handle, means beginRetryFor.
+	beginRetry time.Duration
+}
+
+// Options tunes OpenWith. A negative value is treated as 0, which selects the
+// package default; an empty Options opens exactly as Open does.
+type Options struct {
+	// BusyTimeout is the per-connection busy_timeout; 0 selects busyTimeoutMS.
+	BusyTimeout time.Duration
+	// BeginRetry bounds how long Tx retries a busy BEGIN IMMEDIATE; 0 selects
+	// beginRetryFor.
+	BeginRetry time.Duration
 }
 
 // journalSizeLimit caps the -wal file after a checkpoint resets it, in bytes;
@@ -54,12 +68,26 @@ const journalSizeLimit = 64 << 20
 // pending migrations. A database whose schema is newer than this binary's is
 // left untouched, so an older relevo cannot downgrade it.
 func Open(path string) (*DB, error) {
-	return open(path)
+	return OpenWith(path, Options{})
 }
 
-func open(path string) (_ *DB, err error) {
+// OpenWith opens path like Open, with the busy waits tunable so a caller that
+// must fail fast does not wait out the defaults.
+func OpenWith(path string, o Options) (*DB, error) {
+	return open(path, o)
+}
+
+func open(path string, o Options) (_ *DB, err error) {
 	seedFromTemplate(path)
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(%d)", path, busyTimeoutMS, journalSizeLimit)
+	busy := busyTimeoutMS
+	if o.BusyTimeout > 0 {
+		busy = int(o.BusyTimeout.Milliseconds())
+	}
+	retry := beginRetryFor
+	if o.BeginRetry > 0 {
+		retry = o.BeginRetry
+	}
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=journal_size_limit(%d)", path, busy, journalSizeLimit)
 
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -97,11 +125,11 @@ func open(path string) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open %s: migrations: %w: %w", path, ErrOpen, err)
 	}
 	if have > know {
-		return &DB{sqlDB: sqlDB, newer: true, have: have, know: know}, nil
+		return &DB{sqlDB: sqlDB, beginRetry: retry, newer: true, have: have, know: know}, nil
 	}
 	// A current schema needs no write: BEGIN IMMEDIATE here failed under load.
 	if have == know {
-		return &DB{sqlDB: sqlDB, have: have, know: know}, nil
+		return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know}, nil
 	}
 
 	if err = applyMigrations(sqlDB, migrationFiles); err != nil {
@@ -113,7 +141,7 @@ func open(path string) (_ *DB, err error) {
 		return nil, fmt.Errorf("db: open %s: version: %w: %w", path, ErrOpen, err)
 	}
 
-	return &DB{sqlDB: sqlDB, have: have, know: know}, nil
+	return &DB{sqlDB: sqlDB, beginRetry: retry, have: have, know: know}, nil
 }
 
 // Newer reports whether the database's schema is newer than this relevo's.
@@ -199,9 +227,9 @@ type Tx struct {
 }
 
 // Tx runs fn inside one BEGIN IMMEDIATE transaction: commit on a nil return,
-// rollback otherwise. A busy BEGIN IMMEDIATE is retried until beginRetryFor has
-// elapsed since the first attempt; COMMIT is not retried. A database whose
-// schema is newer than this binary is never written.
+// rollback otherwise. A busy BEGIN IMMEDIATE is retried until the DB's retry
+// window has elapsed since the first attempt; COMMIT is not retried. A
+// database whose schema is newer than this binary is never written.
 func (d *DB) Tx(fn func(*Tx) error) error {
 	if d.newer {
 		return fmt.Errorf("db: tx: schema version %d is newer than this relevo (knows %d); refusing to write: %w", d.have, d.know, ErrNewerSchema)
@@ -223,6 +251,10 @@ func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
 	// BEGIN IMMEDIATE takes the write lock at once, so a competing writer
 	// fails busy instead of blocking. fn never runs until BEGIN succeeds, so it
 	// runs at most once.
+	retryFor := d.beginRetry
+	if retryFor <= 0 {
+		retryFor = beginRetryFor
+	}
 	start := time.Now()
 	for {
 		_, beginErr := conn.ExecContext(ctx, "BEGIN IMMEDIATE")
@@ -230,7 +262,7 @@ func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
 			break
 		}
 		mapped := mapBusy(beginErr)
-		if !errors.Is(mapped, ErrBusy) || time.Since(start) >= beginRetryFor {
+		if !errors.Is(mapped, ErrBusy) || time.Since(start) >= retryFor {
 			return fmt.Errorf("db: tx begin: %w", mapped)
 		}
 		time.Sleep(time.Duration(25+rand.Intn(76)) * time.Millisecond)

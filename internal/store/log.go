@@ -257,8 +257,8 @@ func (s *Store) appendLog(name string, e LogEntry) error {
 	if err != nil {
 		return err
 	}
-	if n >= maxLogEntries {
-		return fmt.Errorf("log exceeds %d entries", maxLogEntries)
+	if n >= s.maxLog() {
+		return fmt.Errorf("log exceeds %d entries", s.maxLog())
 	}
 
 	ev, err := encodeEvent(e, n+1)
