@@ -118,3 +118,63 @@ matches the gate verbs and is intended; no fallback to the default cap.
 
 Report: the diff stat, the golden diff, the mutation check's failure text, and
 the `make check` result.
+
+## Round 2
+
+# Fix #518, round 2 -- the gate verbs load config once
+
+## 0. Rules
+
+- This tree is `relevo/fix-518` with two commits on top of main: the #518 fix
+  (`serveAdminConfigWithPolicy`, `cmdServeStatus` using it, the pinned cap in
+  `serve-status.golden`) and the saved plan. Keep both.
+- First: `git fetch origin && git rebase origin/main`. If the rebase conflicts,
+  stop and report.
+- If a step is impossible as written, or the code contradicts this plan, **stop
+  and report** -- do not improvise.
+- **Run every check in the foreground and wait for it.** Never run `make check`
+  or a test as a background task, and never end your turn to wait for one:
+  this process exits when your turn ends and nothing will wake it.
+- Comments: *why* only, no issue numbers, no `§`, no history. Functions <= 70 lines.
+- `cmd/relevo` tests must not spawn a harness or reach the network.
+
+## 1. Problem
+
+`serveAdminConfigWithCandidates` (`cmd/relevo/serve.go` ~376) now calls
+`serveAdminConfigWithPolicy` -- which runs `loadConfig(d)` -- and then calls
+`loadConfig(d)` a second time for the candidate set. `loadConfig` is not a pure
+read: it imports config files into the database and runs one-time config
+migrations. One admin verb must load once.
+
+## 2. Change (only `cmd/relevo/serve.go`)
+
+```
+serveAdminConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config
+  = serveAdminConfig(root, d) with Policy = L.Policy, Registry = L.Registry.
+  Pure; no error.
+
+serveAdminConfigWithPolicy(root, d) (serve.Config, error):
+  L, err := loadConfig(d); if err -> return
+  return serveAdminConfigFrom(root, d, L), nil
+
+serveAdminConfigWithCandidates(root, d) (serve.Config, error):
+  L, err := loadConfig(d); if err -> return
+  if L.Candidates.Len() == 0 -> errors.New("no candidates configured")   (unchanged text)
+  cfg := serveAdminConfigFrom(root, d, L)
+  cfg.Candidates = L.Candidates
+  return cfg, nil
+```
+
+Keep the existing doc comments' substance (the empty-candidates rationale),
+trimmed to fit.
+
+## 3. Steps
+
+1. Rebase (§0).
+2. The change (§2). `go build ./... && go test ./cmd/relevo -run 'ServeContract|ServeGate' -count=1` passes.
+3. `make check` in the foreground. `git diff --stat HEAD` shows only `cmd/relevo/serve.go`.
+   Commit: `fix(serve): the gate verbs load config once`.
+4. Append a "## Round 2" section to `docs/plans/2026-09-26-fix-518-serve-status-cap.md`
+   containing this plan, and commit it.
+
+Report: the diff, and the `make check` result.
