@@ -173,7 +173,11 @@ func (f *fakeRemote) RoundBundle(ctx context.Context, server, name string, round
 }
 
 func (f *fakeRemote) Ack(ctx context.Context, server, name string, round int) (remote.BindingView, error) {
-	f.calls = append(f.calls, fmt.Sprintf("Ack:%s:%s:%d", server, name, round))
+	call := fmt.Sprintf("Ack:%s:%s:%d", server, name, round)
+	if f.beforeCall != nil {
+		f.beforeCall(call)
+	}
+	f.calls = append(f.calls, call)
 	return f.ackResp, f.ackErr
 }
 
@@ -5848,5 +5852,128 @@ func TestReconcileRemoteUnknownServerIsNotRunning(t *testing.T) {
 	}
 	if got.Builder.RemoteStatus != "unknown server" {
 		t.Fatalf("RemoteStatus = %q, want the unknown-server status", got.Builder.RemoteStatus)
+	}
+}
+
+// TestCatchUpAckFailureLeavesTheReportUnqueued pins that the report waits for
+// the ack: a failed ack leaves the absorbed bookkeeping committed but queues
+// nothing, and the next pass re-collects the still-closed round and retries.
+func TestCatchUpAckFailureLeavesTheReportUnqueued(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	fr := roundClosedRemote()
+	fr.roundBundleResp = nil
+	fr.ackErr = errors.New("boom")
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if err := NewDaemon(rt, time.Second).Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+		t.Fatalf("report queued despite the ack failure: %+v", entries)
+	}
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Round != 1 {
+		t.Errorf("Round = %d after the failed ack, want 1", got.Round)
+	}
+	if got.Builder.LastKnown != "c0ffee" {
+		t.Errorf("LastKnown = %q, want the committed result commit", got.Builder.LastKnown)
+	}
+	if n := countCalls(fr, "Ack:"); n != 1 {
+		t.Errorf("Ack calls = %d, want 1", n)
+	}
+
+	fr.ackErr = nil
+	if err := NewDaemon(rt, time.Second).Tick(ctx); err != nil {
+		t.Fatalf("Tick (retry): %v", err)
+	}
+
+	entries, err = st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reports := 0
+	for _, e := range entries {
+		if e.Kind == store.KindReport {
+			reports++
+		}
+	}
+	if reports != 1 {
+		t.Errorf("report entries = %d, want exactly 1 after the retry", reports)
+	}
+	got, err = st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Round != 2 {
+		t.Errorf("Round = %d after the retry, want 2", got.Round)
+	}
+	if n := countCalls(fr, "Ack:"); n != 2 {
+		t.Errorf("Ack calls = %d, want 2", n)
+	}
+}
+
+// TestCatchUpSettleSkipsAChangedBinding pins the phase-B guard: a binding that
+// moved on between the ack and the report keeps its new state and gets no
+// report entry. The downloaded report file stays in place; the Idle recovery
+// collects a live binding on its next pass.
+func TestCatchUpSettleSkipsAChangedBinding(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	fr := roundClosedRemote()
+	fr.roundBundleResp = nil
+	fr.beforeCall = func(call string) {
+		if !strings.HasPrefix(call, "Ack:") {
+			return
+		}
+		cur, err := st.Load("api")
+		if err != nil {
+			t.Fatalf("load during ack: %v", err)
+		}
+		cur.State = store.StateDone
+		if err := st.Save(cur); err != nil {
+			t.Fatalf("mark done during ack: %v", err)
+		}
+	}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if _, err := SyncRemote(ctx, rt); err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != store.StateDone {
+		t.Fatalf("state = %s, want done: a binding that moved on must keep its state", got.State)
+	}
+	if got.Round != 1 {
+		t.Errorf("Round = %d, want 1", got.Round)
+	}
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if HasEntry(entries, 1, store.DirToPlanner, store.KindReport) {
+		t.Fatalf("report queued for a binding that moved on: %+v", entries)
 	}
 }
