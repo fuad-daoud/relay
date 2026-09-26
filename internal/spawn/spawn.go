@@ -158,6 +158,16 @@ type ScopeProber interface {
 	ScopeActive(ctx context.Context, unit string) (bool, error)
 }
 
+// ScopeResultProber is the optional half of a Runner that can report the
+// final systemd Result of a scope unit. Callers type-assert Runtime.Runner
+// to it; a Runner that lacks it, or whose probe errors, is treated as
+// "not oom-killed".
+type ScopeResultProber interface {
+	// ScopeResult is the systemd Result of the scope unit <unit>.scope, e.g.
+	// "success" or "oom-kill"; "" when the unit is unknown or systemctl is missing.
+	ScopeResult(ctx context.Context, unit string) (string, error)
+}
+
 // ErrRunnerUnavailable is returned by a headless path when Runtime.Runner is
 // nil: the binary was built or the runtime assembled without one.
 var ErrRunnerUnavailable = errors.New("no process runner configured")

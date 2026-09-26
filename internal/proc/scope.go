@@ -132,6 +132,24 @@ func firstNonEmptyLine(s string) string {
 	return ""
 }
 
+// ScopeResult returns the systemd Result of unit's transient scope, e.g.
+// "success" or "oom-kill". A missing systemctl returns ("", nil); any other
+// failure is returned and treated as not oom-killed by the caller.
+func (r *Runner) ScopeResult(ctx context.Context, unit string) (string, error) {
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(cctx, "systemctl", "--user", "show", "--property=Result", "--value", ScopeUnitFileName(unit))
+	out, err := cmd.Output()
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return firstNonEmptyLine(string(out)), nil
+}
+
 // ParseRusageTrailer parses a RusageTrailer line, or the legacy line a
 // pre-rename stream carries. Missing fields stay zero, unknown keys and
 // malformed numbers are ignored, and a line matching neither prefix is not ok.

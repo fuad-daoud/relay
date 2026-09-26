@@ -565,6 +565,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		b.HaltNotifiedRound = 0
 		b.RoundSwitches = 0
 		b.RoundExcluded = nil
+		b.RoundOOMKills = 0
 		// A fresh send is a fresh process: any stall stamp from the previous
 		// round is gone (#252), and so is the whole progress clock -- the
 		// tree, the output and the stale stamp all describe the round that

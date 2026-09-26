@@ -527,6 +527,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// and neither does an exclusion recorded against it (#191).
 	b.RoundSwitches = 0
 	b.RoundExcluded = nil
+	b.RoundOOMKills = 0
 	// The round's verify flag has been acted on by the close (#144): the
 	// consult, when there is one, is already running.
 	b.RoundVerify = false
