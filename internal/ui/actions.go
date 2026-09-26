@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -423,14 +424,13 @@ func plannedRound(base string) (int, bool) {
 }
 
 // Pull takes the human planner's pending payload for key, delivered with the
-// TUI's own route (§4.5): the cockpit shows it in the round view's report tab
-// and the binding stops reading "report ready".
+// TUI's own route: the cockpit shows it in the round view's report tab.
 func (a *plannerActions) Pull(ctx context.Context, key string) (string, bool, error) {
 	rt, name, ok := a.resolve(key)
 	if !ok {
 		return "", false, errors.New("unknown binding")
 	}
-	return relevo.Pull(ctx, rt, name, "tui")
+	return delivery.Pull(ctx, rt.Store, name, "tui")
 }
 
 // Candidates is a role's candidate names in the role's order (§4.5): what the

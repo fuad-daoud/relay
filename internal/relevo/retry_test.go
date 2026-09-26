@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -79,7 +80,7 @@ func TestPullMarksTuiRoute(t *testing.T) {
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
-	text, found, err := Pull(context.Background(), rt, "webshop", "tui")
+	text, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "tui")
 	if err != nil {
 		t.Fatalf("Pull: %v", err)
 	}

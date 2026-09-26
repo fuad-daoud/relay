@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -122,7 +123,7 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 		t.Errorf("ReadDiff = %q (ok %v, err %v), want %q", patch, ok, err, diff)
 	}
 
-	text, found, err := pullPending(context.Background(), rt, "webshop", "wait")
+	text, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil || !found {
 		t.Fatalf("pullPending: found=%v err=%v", found, err)
 	}

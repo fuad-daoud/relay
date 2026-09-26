@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"context"
@@ -8,16 +8,15 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// Pull is pullPending for the cockpit (cockpit B2 §4.5): the TUI's round view
-// calls it with route "tui" when it opens a binding whose report is ready for
-// the human planner, so the text it returns is shown and the entry is marked
-// delivered to the TUI rather than to `relevo wait`.
-func Pull(ctx context.Context, rt Runtime, name, route string) (text string, found bool, err error) {
-	return pullPending(ctx, rt, name, route)
+// Pull is pullPending for the cockpit: the round view calls it with route
+// "tui" when it opens a binding whose report is ready for the human planner,
+// so the text it returns is shown and the entry is marked delivered to the TUI
+// rather than to `relevo wait`.
+func Pull(ctx context.Context, st *store.Store, name, route string) (text string, found bool, err error) {
+	return pullPending(ctx, st, name, route)
 }
 
 // busyRetryDelays is the backoff retryBusy sleeps between attempts when a
@@ -48,24 +47,23 @@ func retryBusy(ctx context.Context, delays []time.Duration, sleep func(time.Dura
 
 // pullPending returns the oldest pending entry's text for name and marks it
 // delivered with route, WITHOUT pushing anything. It is what the removed pull
-// verb did, and the helper `relevo wait` calls once its round has ended
-// (P4a round 2 §4.1, #303 §5.4): the CLI prints the result to
-// stdout and the planner reads it as tool output.
+// verb did, and the helper `relevo wait` calls once its round has ended: the
+// CLI prints the result to stdout and the planner reads it as tool output.
 //
-// The text is delivery.PushText(entry, name, rt.Store.ReadFile): the stored payload
-// (origin line first) plus a blank line plus the report file's text, capped at
+// The text is PushText(entry, name, st.ReadFile): the stored payload (origin
+// line first) plus a blank line plus the report file's text, capped at
 // MaxPushBytes. found is false when nothing is pending.
 //
 // The lock and confirm step is wrapped in retryBusy: other relevo processes
 // and the daemon hold the database concurrently, so a busy begin is retried
-// with a short backoff rather than failing the delivery outright (#433).
-func pullPending(ctx context.Context, rt Runtime, name, route string) (text string, found bool, err error) {
+// with a short backoff rather than failing the delivery outright.
+func pullPending(ctx context.Context, st *store.Store, name, route string) (text string, found bool, err error) {
 	var entry store.LogEntry
 
 	// Same critical section as DeliverPending: the daemon may be delivering
 	// this very payload right now, and only one of us may claim it.
 	err = retryBusy(ctx, busyRetryDelays, nil, func() error {
-		return rt.Store.WithLock(func(tx *store.Tx) error {
+		return st.WithLock(func(tx *store.Tx) error {
 			pending, idx, ok, err := tx.PendingForPlanner(name)
 			if err != nil {
 				return err
@@ -91,26 +89,26 @@ func pullPending(ctx context.Context, rt Runtime, name, route string) (text stri
 
 	// The file read happens outside the lock: no file I/O under the state
 	// lock.
-	text, _ = delivery.PushText(entry, name, rt.Store.ReadFile)
+	text, _ = PushText(entry, name, st.ReadFile)
 	return text, true, nil
 }
 
-// pullPendingThrough returns the text for every pending planner payload of name
+// PullPendingThrough returns the text for every pending planner payload of name
 // whose round is at most round -- every round when round <= 0 -- and marks each
 // delivered with route, WITHOUT pushing anything. The waited round's text is
 // last; every earlier one is prefixed with a header naming its round, so an
 // older undelivered payload is neither dropped nor mistaken for the newest
-// text (#433).
+// text.
 //
 // The list and confirm step runs in ONE lock, wrapped in retryBusy: a busy
 // database is retried with a short backoff, and nothing is confirmed unless
 // the whole lock body succeeded. The file reads happen outside the lock, as in
 // pullPending.
-func pullPendingThrough(ctx context.Context, rt Runtime, name, route string, round int) (text string, found bool, err error) {
+func PullPendingThrough(ctx context.Context, st *store.Store, name, route string, round int) (text string, found bool, err error) {
 	var pending []store.PendingEntry
 
 	err = retryBusy(ctx, busyRetryDelays, nil, func() error {
-		return rt.Store.WithLock(func(tx *store.Tx) error {
+		return st.WithLock(func(tx *store.Tx) error {
 			entries, err := tx.PendingForPlannerThrough(name, round)
 			if err != nil {
 				return err
@@ -136,18 +134,18 @@ func pullPendingThrough(ctx context.Context, rt Runtime, name, route string, rou
 	// The file reads happen outside the lock: no file I/O under the state
 	// lock, as pullPending does.
 	if len(pending) == 1 {
-		text, _ = delivery.PushText(pending[0].Entry, name, rt.Store.ReadFile)
+		text, _ = PushText(pending[0].Entry, name, st.ReadFile)
 		return text, true, nil
 	}
 
 	var b strings.Builder
 	for _, p := range pending[:len(pending)-1] {
 		fmt.Fprintf(&b, "── round %d: not delivered earlier (%s) ──\n", p.Entry.Round, p.Entry.Path)
-		earlier, _ := delivery.PushText(p.Entry, name, rt.Store.ReadFile)
+		earlier, _ := PushText(p.Entry, name, st.ReadFile)
 		b.WriteString(earlier)
 		b.WriteString("\n\n")
 	}
-	last, _ := delivery.PushText(pending[len(pending)-1].Entry, name, rt.Store.ReadFile)
+	last, _ := PushText(pending[len(pending)-1].Entry, name, st.ReadFile)
 	b.WriteString(last)
 	return b.String(), true, nil
 }
