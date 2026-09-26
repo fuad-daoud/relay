@@ -4,7 +4,34 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 )
+
+type marshalLeaf struct {
+	N int
+}
+
+func (marshalLeaf) MarshalJSON() ([]byte, error) { return []byte(`{}`), nil }
+
+type fixtureInner struct {
+	NoTag   string
+	Tagged  int    `json:"tagged,omitempty"`
+	Skipped string `json:"-"`
+}
+
+// fixture exercises every rule Keys documents: a tagless field, a "-" field,
+// an omitempty option, an embedded struct, a pointer, a slice of structs, a
+// map of structs, a time.Time and a MarshalJSON leaf.
+type fixture struct {
+	fixtureInner
+	Ptr     *fixtureInner           `json:"ptr"`
+	Items   []fixtureInner          `json:"items"`
+	Lookup  map[string]fixtureInner `json:"lookup"`
+	When    time.Time               `json:"when"`
+	Leaf    marshalLeaf             `json:"leaf"`
+	Renamed string                  `json:"renamed_tag,omitempty"`
+	Plain   string
+}
 
 func TestKeys(t *testing.T) {
 	got := Keys(reflect.TypeOf(fixture{}))
@@ -27,8 +54,6 @@ func TestKeys(t *testing.T) {
 	}
 }
 
-// TestKeysSkipsTheDashField pins the other half of the "-" rule: a field
-// tagged json:"-" contributes no path at all.
 func TestKeysSkipsTheDashField(t *testing.T) {
 	for _, key := range Keys(reflect.TypeOf(fixture{})) {
 		if key == "Skipped" || key == "skipped" {

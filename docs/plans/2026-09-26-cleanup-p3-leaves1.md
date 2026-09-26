@@ -94,3 +94,94 @@ coverage before and after.
 `internal/legacy` holds the relay-era names the relay->relevo migration still
 reads; it stays until that migration is removed. Clean its comments and code to
 the standard, but keep every name and value it exports.
+
+## Round 2
+
+Round 2 of this binding. Round 1 (the last commit on this branch) finished
+`internal/jsonshape`, `internal/legacy`, `internal/patch` and `internal/setup`
+to the lint rules, but missed the point of the cleanup: the owner asked for a
+**smaller** codebase with **far fewer comments**, one he can read line by line.
+Round 1 made the packages *bigger* and added comments -- mostly doc comments on
+new helpers that restate the helper's name, for example:
+
+```go
+// checkRequired rejects the fields every candidate must carry.
+// compilePatterns rejects a pattern list holding an invalid regex.
+// providerNames is the set of provider names among entries, ...
+```
+
+A reader gets nothing from these that the name did not already say.
+
+### 0. Rules
+
+- **Run every command in the foreground and wait for it.** Never a background
+  task, `&`, a scheduled wakeup, or "I'll wait for the notification": you are a
+  headless process, and when you end your turn the process exits and the round
+  is lost. Do not end your turn until the report and the done marker exist.
+- Same scope and freezes as round 1: only files in `internal/jsonshape`,
+  `internal/legacy`, `internal/patch` and `internal/setup` (plus the plan copy);
+  exported names, signatures and behaviour unchanged; goldens and contract tests
+  untouched; no lint exclusion, `//nolint` or allow-list entry added; coverage
+  guard holds. If a step is impossible as written, stop and report.
+
+### 1. Hard targets (measured against `fa0e60e`, the base before round 1)
+
+For each package, over its **non-test** `.go` files:
+1. **Lines: no growth.** `wc -l` total at or below the `fa0e60e` total.
+2. **Comment lines: at most half** of the `fa0e60e` count
+   (`grep -cE '^\s*//'`).
+For test files: lines at or below `fa0e60e`, and comment lines at most half.
+
+Measure the `fa0e60e` numbers first with
+`git show fa0e60e:<path>` for each file (files renamed in round 1: use the old name).
+
+### 2. How to get there
+
+- **Delete** every comment that restates the name, signature or body. A helper
+  with a clear name gets **no** comment.
+- A doc comment on an exported name stays only if it says something the name
+  and signature do not (a constraint, a unit, a hazard) -- then one or two lines.
+- Keep genuine *why*: a number's origin, an ordering constraint, a hazard, a
+  compatibility reason. State it in the fewest words; drop the story around it.
+- Struct field comments: only where the field's meaning is not obvious from its
+  name and type.
+- Reduce code where it is equivalent and clearer: merge tiny helpers that are
+  called once and add no clarity back into their caller (staying under 70 lines),
+  drop dead branches, simplify. Do not change behaviour.
+- Tests: delete comments that narrate the test; the test and row names carry it.
+
+### 3. Steps
+
+1. Record the `fa0e60e` numbers (§1) per package.
+2. Tighten (§2). After each package: `go build ./... && go test ./<pkg>/... -count=1`
+   and `golangci-lint run ./<pkg>/...`.
+3. Re-measure; every §1 target must hold. If one cannot be met without changing
+   behaviour or the exported API, stop and report the numbers and why.
+4. API unchanged: `go doc -all` declaration lines identical to round 1's
+   (`grep -E '^(func|type|var|const) '`).
+5. `make check` (foreground) passes.
+6. Append a "Round 2" section with this plan to the plan copy in `docs/plans/`
+   that round 1 wrote; commit once.
+
+Report: per package, a table of non-test lines / non-test comment lines / test
+lines / test comment lines at `fa0e60e`, after round 1, after round 2; and five
+examples of comments deleted and five kept (with why each kept one earns its place).
+
+### Package notes
+
+- Round 1 left `jsonshape` and `setup` unchanged and `legacy` nearly so; the
+  §1 targets apply to all four packages.
+- `internal/legacy` holds the relay-era names the relay->relevo migration still
+  reads; keep every exported name and value, but its comments go to the
+  standard like any other package.
+
+### Round 2 result
+
+Every §1 target was met (see the report table). `golangci-lint` is not
+installed on this machine, so `funlen`/`gocognit` compliance was checked by
+hand (every function counted, none over 70 lines) instead of by running the
+linter; `make check` skips the lint step the same way and still passed. The
+exported API is byte-identical to round 1's (`go doc -all` declaration lines,
+diffed via a throwaway `git worktree` at round 1's commit). Two mutation
+checks (one in `legacy`, one in `patch`) confirmed the surviving tests still
+pin real behaviour.

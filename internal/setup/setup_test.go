@@ -15,7 +15,6 @@ import (
 
 func TestPlanFindsBinariesInHarnessOrder(t *testing.T) {
 	env := pathEnv{onPath: map[string]bool{"opencode": true, "claude": true}}
-
 	files, err := Plan(env)
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
@@ -25,18 +24,6 @@ func TestPlanFindsBinariesInHarnessOrder(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	cands := assertCandidatesCarryNoRoles(t, dir, files)
-	assertPolicyIsBareMaxTier(t, dir, files)
-	assertBuilderActorMatchesCandidates(t, files, cands)
-}
-
-// assertCandidatesCarryNoRoles checks that candidates.json loads with
-// candidate.Load to no "builder" role and that no entry carries a role or a
-// tier: the actors section decides who serves what, not the candidate list
-// (R5). It returns the decoded candidates for the caller to derive names
-// from.
-func assertCandidatesCarryNoRoles(t *testing.T, dir string, files Files) []candidate.Candidate {
-	t.Helper()
 	candPath := filepath.Join(dir, "candidates.json")
 	if err := os.WriteFile(candPath, files.Candidates, 0o644); err != nil {
 		t.Fatalf("write candidates: %v", err)
@@ -45,11 +32,9 @@ func assertCandidatesCarryNoRoles(t *testing.T, dir string, files Files) []candi
 	if err != nil {
 		t.Fatalf("candidate.Load: %v", err)
 	}
-	builders := set.ForRole("builder")
-	if len(builders) != 0 {
-		t.Errorf("ForRole(builder) = %v, want none: the candidates carry no roles (R5)", builders)
+	if builders := set.ForRole("builder"); len(builders) != 0 {
+		t.Errorf("ForRole(builder) = %v, want none", builders)
 	}
-
 	var cands []candidate.Candidate
 	if err := json.Unmarshal(files.Candidates, &cands); err != nil {
 		t.Fatalf("unmarshal candidates: %v", err)
@@ -59,16 +44,10 @@ func assertCandidatesCarryNoRoles(t *testing.T, dir string, files Files) []candi
 	}
 	for _, c := range cands {
 		if c.Roles != nil || c.Tier != "" {
-			t.Errorf("candidate %s carries roles %v / tier %q, want neither (R5)", c.Ref(), c.Roles, c.Tier)
+			t.Errorf("candidate %s carries roles %v / tier %q, want neither", c.Ref(), c.Roles, c.Tier)
 		}
 	}
-	return cands
-}
 
-// assertPolicyIsBareMaxTier checks that policy.json loads with policy.Load
-// carrying only MaxTier, with no order or tier list (R5).
-func assertPolicyIsBareMaxTier(t *testing.T, dir string, files Files) {
-	t.Helper()
 	polPath := filepath.Join(dir, "policy.json")
 	if err := os.WriteFile(polPath, files.Policy, 0o644); err != nil {
 		t.Fatalf("write policy: %v", err)
@@ -78,18 +57,12 @@ func assertPolicyIsBareMaxTier(t *testing.T, dir string, files Files) {
 		t.Fatalf("policy.Load: %v", err)
 	}
 	if len(pol.Order) != 0 || len(pol.Tier) != 0 {
-		t.Errorf("policy order/tier = %v/%v, want none (R5)", pol.Order, pol.Tier)
+		t.Errorf("policy order/tier = %v/%v, want none", pol.Order, pol.Tier)
 	}
 	if pol.MaxTier != "yolo" {
 		t.Errorf("MaxTier = %q, want yolo", pol.MaxTier)
 	}
-}
 
-// assertBuilderActorMatchesCandidates checks that actors.json parses to a
-// "builder" actor running plan-executor at tier yolo, over exactly the
-// candidate names cands derive to.
-func assertBuilderActorMatchesCandidates(t *testing.T, files Files, cands []candidate.Candidate) {
-	t.Helper()
 	actorSet, _, err := actors.ParseActors(files.Actors)
 	if err != nil {
 		t.Fatalf("actors.ParseActors: %v", err)
@@ -110,9 +83,6 @@ func assertBuilderActorMatchesCandidates(t *testing.T, files Files, cands []cand
 	}
 }
 
-// TestPlanCandidatesHaveNoRolesKey pins W4: config init must not write a
-// "roles": null; the field is omitempty, so the encoded candidates carry no
-// roles key at all.
 func TestPlanCandidatesHaveNoRolesKey(t *testing.T) {
 	files, err := Plan(pathEnv{onPath: map[string]bool{"opencode": true}})
 	if err != nil {

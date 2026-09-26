@@ -9,11 +9,9 @@ import (
 	"testing"
 )
 
-// TestRewriteJSON pins the substitution RewriteJSON applies: only a JSON
-// string value that starts with the old directory changes, a longer name that
-// merely begins with it does not, an unquoted occurrence inside a value does
-// not, and the input bytes are never modified. With no pairs the bytes come
-// back equal.
+// TestRewriteJSON pins that only a JSON string value starting with the old
+// directory changes, a longer name merely beginning with it does not, and the
+// input bytes are never modified.
 func TestRewriteJSON(t *testing.T) {
 	pairs := []Prefix{{Old: "/a/old", New: "/a/new"}}
 	body := []byte(`{"p":"/a/old/x","q":"/a/old","r":"/a/older/x","s":"pre /a/old/x","n":1}`)
@@ -34,9 +32,7 @@ func TestRewriteJSON(t *testing.T) {
 	}
 }
 
-// TestRootsPrefixes pins the substitution list a Roots builds: the state pair
-// first, then the config pair; a pair with an empty side or Old == New is left
-// out; the zero Roots yields nothing.
+// TestRootsPrefixes pins the pair order and the empty/equal-side drop rule.
 func TestRootsPrefixes(t *testing.T) {
 	t.Run("all four roots", func(t *testing.T) {
 		r := Roots{OldState: "/s/old", NewState: "/s/new", OldConfig: "/c/old", NewConfig: "/c/new"}
@@ -123,8 +119,6 @@ func TestProbeAllFourPresent(t *testing.T) {
 	}
 }
 
-// TestProbeNonDirectoryCountsAsPresent pins the rule that a path occupied by
-// a plain file, not a directory, still reports present: Probe only stats.
 func TestProbeNonDirectoryCountsAsPresent(t *testing.T) {
 	r := rootsUnder(t.TempDir())
 	if err := os.WriteFile(r.OldState, []byte("not a dir"), 0o644); err != nil {
@@ -151,9 +145,7 @@ func TestProbeUnreadableParentIsAnErrorNamingThePath(t *testing.T) {
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A parent the test can no longer stat into, restored for cleanup:
-	// RemoveAll cannot descend into a 000 directory.
-	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) }) // RemoveAll can't descend into 000
 	if err := os.Chmod(parent, 0o000); err != nil {
 		t.Fatal(err)
 	}
@@ -168,8 +160,8 @@ func TestProbeUnreadableParentIsAnErrorNamingThePath(t *testing.T) {
 	}
 }
 
-// TestUnmigratedAndStaleTruthTable pins both predicates over every one of the
-// sixteen Status values.
+// TestUnmigratedAndStaleTruthTable pins both predicates over all sixteen
+// Status values.
 func TestUnmigratedAndStaleTruthTable(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -186,9 +178,7 @@ func TestUnmigratedAndStaleTruthTable(t *testing.T) {
 		{"both config", false, false, true, true, false, true},
 		{"new state only", false, true, false, false, false, false},
 		{"new state, new config", false, true, false, true, false, false},
-		// Once the relevo state root exists, config lives in its DB, so a
-		// missing old config is no longer unmigrated.
-		{"new state, old config", false, true, true, false, false, false},
+		{"new state, old config", false, true, true, false, false, false}, // NewState exists: config is in its DB
 		{"new state, both config", false, true, true, true, false, true},
 		{"old state only", true, false, false, false, true, false},
 		{"old state, new config", true, false, false, true, true, false},
@@ -196,9 +186,7 @@ func TestUnmigratedAndStaleTruthTable(t *testing.T) {
 		{"old state, both config", true, false, true, true, true, true},
 		{"both state", true, true, false, false, false, true},
 		{"both state, new config", true, true, false, true, false, true},
-		// The new state root exists, so its DB holds config; a leftover old
-		// config directory is stale, not unmigrated.
-		{"both state, old config", true, true, true, false, false, true},
+		{"both state, old config", true, true, true, false, false, true}, // leftover old config is stale, not unmigrated
 		{"all four", true, true, true, true, false, true},
 	}
 

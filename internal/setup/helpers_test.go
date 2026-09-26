@@ -5,8 +5,7 @@ import (
 	"io/fs"
 )
 
-// pathEnv is the InstallEnv seam Plan consults. Only LookPath answers; every
-// other method is unreachable from Plan and returns a zero value.
+// pathEnv is the InstallEnv seam Plan consults; only LookPath answers.
 type pathEnv struct{ onPath map[string]bool }
 
 func (e pathEnv) LookPath(binary string) (string, error) {

@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// rootsUnder builds a Roots whose four paths sit under dir, named the way a
-// real relay/relevo pair would be: the Probe tests only care whether each one
-// exists.
 func rootsUnder(dir string) Roots {
 	return Roots{
 		OldState:  filepath.Join(dir, "relay-state"),
@@ -18,7 +15,6 @@ func rootsUnder(dir string) Roots {
 	}
 }
 
-// mkdirAll creates every path in paths, failing the test on the first error.
 func mkdirAll(t *testing.T, paths ...string) {
 	t.Helper()
 	for _, p := range paths {
