@@ -19,11 +19,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// ErrReaderRoundsNotYet reports a send to a binding bound to a reader actor.
-// Readers can be bound in A5 but do not run rounds yet; R4 adds reader rounds
-// and deletes this refusal.
-var ErrReaderRoundsNotYet = errors.New("reader rounds are not available yet")
-
 // builderPrompt is the fixed handoff template. It names both paths explicitly
 // because alternate-screen output is unrecoverable, so the report must be a
 // file rather than something relevo reads off the terminal. The marker is the
@@ -56,6 +51,33 @@ commands_run: []        # commands you ran, e.g. ["make check"]
 not_done: []            # adjacent work you deliberately left
 ` + "```" + `
 Reply here with only the report path.`
+
+// readerPrompt is a reader round's handoff template (A5 R4a): the reader works
+// in a throwaway scratch copy, writes only into its artifact directory, and its
+// final message is the actor's output label, saved as that directory's
+// summary.md. The first line is exactly `Your working tree is: ` because the
+// e2e fake parses it, as it does for builderPrompt.
+//
+// It is a format string: scratch tree, b.CWD, plan path, artifact dir, output
+// label, summary path, done marker.
+const readerPrompt = `Your working tree is: %s
+It is a throwaway copy of %s for this round: read anything in it, run
+anything read-only, change nothing you need to keep -- it is discarded when
+the round ends, and nothing in it is ever committed.
+
+Read: %s
+Write every file you produce into this directory (create it): %s
+Your final message is your %s: it is saved as %s.
+End that final message with this block, filled in honestly:
+
+` + "```relevo" + `
+status: done            # done | halted | blocked | deferred
+halted_at: ""           # which step, when halted or blocked
+changed_paths: []       # files you wrote into the artifact directory
+commands_run: []        # commands you ran
+not_done: []            # what you deliberately left
+` + "```" + `
+Then, as the very last thing you do, create this empty file: %s`
 
 // SendResult is what one successful Send produced.
 type SendResult struct {
@@ -164,14 +186,10 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	if b.State == store.StatePaused {
 		return preflight{}, fmt.Errorf("binding %q is paused; relevo bind --resume --name %s first", name, name)
 	}
-	// A reader binding runs no round yet (A5 §2): a plain send is refused, and
-	// --verify, which only a writer's gate round has, names its flag. Both
-	// refusals stand before any spawn.
-	if b.Shape == store.ShapeReader {
-		if opts.Verify != nil {
-			return preflight{}, errors.New("--verify: a reader round has no check")
-		}
-		return preflight{}, fmt.Errorf("%w: %s is bound to reader actor %s", ErrReaderRoundsNotYet, name, bindingRole(b))
+	// A reader round has no check, so --verify, which only a writer's gate
+	// round has, names its flag. It stands before any spawn.
+	if b.Shape == store.ShapeReader && opts.Verify != nil {
+		return preflight{}, errors.New("--verify: a reader round has no check")
 	}
 
 	// --candidate resolves the new candidate read-only and substitutes it in
@@ -249,7 +267,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	planPath := rt.Store.PlanPath(name, b.Round)
 	reportPath := rt.Store.ReportPath(name, b.Round)
 	donePath := rt.Store.DonePath(name, b.Round)
-	prompt := composePrompt(b, planPath, reportPath, donePath)
+	prompt := composePrompt(rt, b, planPath, reportPath, donePath)
 
 	pf := preflight{
 		b: b, body: body, tier: tier,
@@ -326,7 +344,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	if err != nil {
 		return preflight{}, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}
-	argv, err := spawn.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, b.CWD, rt.Store.Dir(b.Name))
+	argv, err := spawn.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, roundTree(rt, b), rt.Store.Dir(b.Name))
 	if err != nil {
 		return preflight{}, err
 	}
@@ -462,7 +480,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			return fmt.Errorf("stage plan at %s: %w", planPath, err)
 		}
 
-		text := composePrompt(b, planPath, reportPath, donePath)
+		text := composePrompt(rt, b, planPath, reportPath, donePath)
 
 		// Defer stages the round without spawning: the caller (serve.admit
 		// or relevo.Admit) starts the builder later (#285).
@@ -487,6 +505,15 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 						return fmt.Errorf("binding %q round %d: scope %s.scope is still running -- a builder for this round is already alive (an earlier send may have started it); inspect it with systemctl --user status %s.scope, and relevo stop %s ends it: %w",
 							name, b.Round, unit, unit, name, ErrScopeActive)
 					}
+				}
+			}
+			// A reader round runs in a throwaway scratch worktree, never in
+			// b.CWD (A5 §2, D6). Create it from the round's captured baseline
+			// before anything is spawned; if it cannot be created, the round
+			// does not start, and there is never a fallback to b.CWD.
+			if b.Shape == store.ShapeReader {
+				if _, err := CreateScratchFrom(ctx, rt, b, b.Round, baselineHead, baseline); err != nil {
+					return err
 				}
 			}
 			started, err := startRound(ctx, rt, tx, b, text)
@@ -546,7 +573,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		pending = append(pending, entry)
 
 		driftLine := ""
-		if b.Round == hintRound {
+		if b.Shape != store.ShapeReader && b.Round == hintRound {
 			res := capture.Drift(ctx, captureDeps(rt), tx, b, baseline)
 			if (res.Available && !res.Stat.Empty()) || res.Reason != "" {
 				driftEntry := store.LogEntry{
@@ -608,8 +635,11 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 
 		// Whether this round gets a reviewer at its close (#144): the flag,
 		// else policy.json verify.default. Persisted with the round, and
-		// cleared by queueReport once the close has acted on it.
-		if opts.Verify != nil {
+		// cleared by queueReport once the close has acted on it. A reader
+		// takes no verify (A5 §5), whatever the policy says.
+		if b.Shape == store.ShapeReader {
+			b.RoundVerify = false
+		} else if opts.Verify != nil {
 			b.RoundVerify = *opts.Verify
 		} else {
 			b.RoundVerify = rt.Policy.VerifyDefault()
@@ -757,11 +787,32 @@ func absoluteOr(path string) string {
 	return path
 }
 
-// composePrompt renders the builder prompt for this round. Line 1 is the
-// origin line naming the round and builder, followed by a blank line and the
-// handoff text (#139).
-func composePrompt(b store.Binding, planPath, reportPath, donePath string) string {
+// composePrompt renders this round's handoff prompt: the reader template for a
+// reader binding, the builder template for a writer. Line 1 is the origin line
+// naming the round and actor, followed by a blank line and the handoff text
+// (#139). rt is needed to name a reader's scratch tree, artifact dir and output
+// label.
+func composePrompt(rt Runtime, b store.Binding, planPath, reportPath, donePath string) string {
 	origin := delivery.OriginLine(b.Name, b.Round, store.DirToBuilder, store.KindPlan)
+	if b.Shape == store.ShapeReader {
+		return origin + "\n\n" + readerPromptFor(rt, b, planPath, donePath)
+	}
 	body := fmt.Sprintf(builderPrompt, b.CWD, planPath, reportPath, donePath)
 	return origin + "\n\n" + body
+}
+
+// readerPromptFor renders readerPrompt for one reader round. The artifact dir
+// is the actor's round directory; the output label is the actor's resolved
+// agent definition's label (ActorOutput), which defaults to "notes" when
+// nothing names one. The definition falls back to the actor name when the
+// role's spec cannot be resolved, so a shipped actor still gets its own label.
+func readerPromptFor(rt Runtime, b store.Binding, planPath, donePath string) string {
+	actor := bindingRole(b)
+	artifactDir := rt.Store.ArtifactDir(b.Name, b.Round, actor)
+	definition := actor
+	if spec, err := bindingSpec(rt, b, b.Builder.Kind); err == nil {
+		definition = spec.Definition
+	}
+	return fmt.Sprintf(readerPrompt, roundTree(rt, b), b.CWD, planPath, artifactDir,
+		actorOutput(rt, actor, definition), artifactDir+"/summary.md", donePath)
 }

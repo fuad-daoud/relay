@@ -88,6 +88,18 @@ func CreateScratchFrom(ctx context.Context, rt Runtime, b store.Binding, round i
 	return Scratch{Path: path, Head: head, Tree: tree}, nil
 }
 
+// roundTree is the working tree a round's process runs in (A5 R4a): the
+// binding's own CWD for a writer, its throwaway scratch worktree for a reader.
+// Every place a runner process is launched or relaunched for a round names its
+// tree through this, so a reader can never run in the binding's tree and a
+// writer is unchanged.
+func roundTree(rt Runtime, b store.Binding) string {
+	if b.Shape == store.ShapeReader {
+		return rt.Store.ScratchWorktreePath(b.Name, b.Round)
+	}
+	return b.CWD
+}
+
 // prepareScratchPath returns the path b's round should use, with the scratch
 // directory's parent in place. A path that is already there is a leftover from
 // a crash: it is taken away before `git worktree add`, which refuses an

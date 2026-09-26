@@ -2996,7 +2996,7 @@ func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
 	reportPath := rt.Store.ReportPath("webshop", 1)
 	donePath := rt.Store.DonePath("webshop", 1)
 	b, _ := rt.Store.Load("webshop")
-	wantPrompt := composePrompt(b, planPath, reportPath, donePath)
+	wantPrompt := composePrompt(rt, b, planPath, reportPath, donePath)
 	if spec.Argv[2] != wantPrompt {
 		t.Errorf("prompt handed to the process:\n%q\nwant the composePrompt:\n%q", spec.Argv[2], wantPrompt)
 	}

@@ -580,6 +580,12 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 		return store.Binding{}, Resolution{}, err
 	}
 	tier = resolveRoleTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), roleName)
+	if shape == store.ShapeReader {
+		tier, err = readerTier(tier, resCandidate.Candidate.Harness, rt.Policy)
+		if err != nil {
+			return store.Binding{}, Resolution{}, err
+		}
+	}
 	if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 		return store.Binding{}, Resolution{}, err
 	}

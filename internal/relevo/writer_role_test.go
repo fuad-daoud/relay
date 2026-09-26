@@ -282,29 +282,6 @@ func TestReaderRefusesGateRegateAndVerify(t *testing.T) {
 	}
 }
 
-// TestSendToAReaderIsNotYetAvailable pins A5 §2: send to a reader binding is
-// refused with ErrReaderRoundsNotYet until R4 adds reader rounds.
-func TestSendToAReaderIsNotYetAvailable(t *testing.T) {
-	t.Parallel()
-
-	rt := newRuntime(t)
-	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "reader-bind", Role: "reviewer", Candidate: testClaudeRef,
-		PlannerID: testPlannerName, CWD: "/reader-repo",
-	}); err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-
-	_, err := Send(context.Background(), rt, "reader-bind", writePlan(t, "do it"), SendOptions{})
-	if !errors.Is(err, ErrReaderRoundsNotYet) {
-		t.Fatalf("Send to a reader err = %v, want ErrReaderRoundsNotYet", err)
-	}
-	want := "reader rounds are not available yet: reader-bind is bound to reader actor reviewer"
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("err = %q, want %q", err.Error(), want)
-	}
-}
-
 // TestRemoteReaderIsRefusedLocally pins A5 §2's local-only rule: a remote add
 // of a reader is refused before any server contact.
 func TestRemoteReaderIsRefusedLocally(t *testing.T) {
