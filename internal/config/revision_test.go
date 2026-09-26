@@ -393,3 +393,36 @@ func TestImportFilesRecordsImport(t *testing.T) {
 		t.Errorf("secret changes = %v, want both secrets set", got)
 	}
 }
+
+// RevisionDoc returns the document a known revision wrote, comparing bodies by
+// their compact encoding: a snapshot is re-indented, not stored verbatim.
+func TestRevisionDoc(t *testing.T) {
+	s := openStore(t).WithClock(atTime(revAt))
+
+	if _, err := s.As("cli", "config set policy").Put(Policy, []byte(`{"max_switches":2}`)); err != nil {
+		t.Fatalf("seed Put: %v", err)
+	}
+	if _, err := s.As("cli", "config set policy.max_switches").Put(Policy, []byte(`{"max_switches":3}`)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	doc, err := s.RevisionDoc(1)
+	if err != nil {
+		t.Fatalf("RevisionDoc(1): %v", err)
+	}
+	if got := string(compactCopy(doc[Policy])); got != `{"max_switches":2}` {
+		t.Errorf("RevisionDoc(1)[policy] = %q, want the body revision 1 wrote", got)
+	}
+
+	if _, err := s.RevisionDoc(99); !errors.Is(err, ErrNoRevision) {
+		t.Errorf("RevisionDoc(99) = %v, want ErrNoRevision", err)
+	}
+
+	cur, err := s.Current()
+	if err != nil {
+		t.Fatalf("Current: %v", err)
+	}
+	if got := string(compactCopy(cur[Policy])); got != `{"max_switches":3}` {
+		t.Errorf("Current()[policy] = %q, want the newest stored body", got)
+	}
+}

@@ -69,6 +69,15 @@ type fakeActions struct {
 	resets   [][2]string
 	filesErr error
 
+	// The audit view (round 6) (§3.3): the revision rows, each revision's
+	// changes, the scripted roll back preview and its error, and the
+	// revisions a roll back was asked for.
+	revs       []db.RevisionRow
+	changes    map[int64][]relevo.ChangeLine
+	preview    []relevo.ChangeLine
+	previewErr error
+	rollbacks  []int64
+
 	result   Result
 	shellCmd *exec.Cmd
 	shellErr error
@@ -163,6 +172,26 @@ func (f *fakeActions) ResetAgentFile(_ context.Context, kind, agent string) Resu
 func (f *fakeActions) AgentEditor(path string) (*exec.Cmd, error) {
 	f.edited = append(f.edited, path)
 	return exec.Command("true"), nil
+}
+
+// ConfigLog answers the scripted revision rows (§3.3).
+func (f *fakeActions) ConfigLog() ([]db.RevisionRow, error) { return f.revs, nil }
+
+// ConfigChanges answers the scripted lines for rev: a revision the fixture does
+// not carry has no changes.
+func (f *fakeActions) ConfigChanges(rev int64) ([]relevo.ChangeLine, error) {
+	return f.changes[rev], nil
+}
+
+// RollbackPreview answers the scripted preview and its error (§3.3).
+func (f *fakeActions) RollbackPreview(rev int64) ([]relevo.ChangeLine, error) {
+	return f.preview, f.previewErr
+}
+
+// Rollback records the revision it was asked for (§3.3).
+func (f *fakeActions) Rollback(_ context.Context, rev int64) Result {
+	f.rollbacks = append(f.rollbacks, rev)
+	return f.result
 }
 
 // key is one rune keypress, as the tests send them.
