@@ -435,6 +435,24 @@ func TestStatusRowBranch(t *testing.T) {
 		t.Errorf("--cwd binding Branch = %q, want empty", row.Branch)
 	}
 }
+
+// TestStatusRowAlwaysNamesTheActor pins the status row's actor fallback: a
+// record whose stored role is empty still names the builder actor, so the row's
+// actor is never "". statusRow is driven directly because the store normalises
+// an empty role on save and on decode, so no record read back from disk can
+// reach it with "".
+func TestStatusRowAlwaysNamesTheActor(t *testing.T) {
+	rt, b := sentBinding(t)
+	b.Role = ""
+
+	row, err := statusRow(context.Background(), rt, b)
+	if err != nil {
+		t.Fatalf("statusRow: %v", err)
+	}
+	if row.Role != "builder" {
+		t.Errorf("row Role = %q, want builder for a stored role of \"\"", row.Role)
+	}
+}
 func TestStatusRowWaiting(t *testing.T) {
 	rt, b := sentBinding(t)
 	b.State = store.StateNeedsYou

@@ -287,6 +287,10 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 	if !ValidOutcome(r.Outcome) {
 		return "", fmt.Errorf("db: upsert round: Outcome: %w", ErrInvalid)
 	}
+	// An empty actor is the builder actor, the column's own default and the seeded actor.
+	if r.Actor == "" {
+		r.Actor = "builder"
+	}
 
 	var id string
 	err := t.queryRow(`SELECT id FROM round WHERE binding_id = ? AND number = ?`, r.BindingID, r.Number).Scan(&id)

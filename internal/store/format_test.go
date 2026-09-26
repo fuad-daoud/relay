@@ -189,16 +189,16 @@ func TestStoredFormat(t *testing.T) {
 	}
 }
 
-// TestSaveWritesFormat7 pins that every record carries the A4 format, so an
+// TestSaveWritesFormat8 pins that every record carries the A4 format, so an
 // older relevo refuses it rather than erasing the renamed keys.
-func TestSaveWritesFormat7(t *testing.T) {
+func TestSaveWritesFormat8(t *testing.T) {
 	s := New(t.TempDir())
 	if err := s.Save(newBinding("webshop", "/home/dev/projects/webshop")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	raw := bindingRecordJSON(t, s, "webshop")
-	if !bytes.Contains(raw, []byte(`"format":7`)) {
-		t.Errorf("a binding must carry format 7:\n%s", raw)
+	if !bytes.Contains(raw, []byte(`"format":8`)) {
+		t.Errorf("a binding must carry format 8:\n%s", raw)
 	}
 }
 
