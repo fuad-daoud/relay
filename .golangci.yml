@@ -66,8 +66,6 @@ linters:
         text: '.*'
       - path: '^internal/policy/'
         text: '.*'
-      - path: '^internal/proc/'
-        text: '.*'
       - path: '^internal/relevo/'
         text: '.*'
       - path: '^internal/remote/[^/]+\.go$'
