@@ -8,23 +8,13 @@ import (
 	"testing"
 )
 
-// gitFileTree makes dir a linked worktree -- a directory holding a regular .git
-// file, the marker orphanWorktrees looks for -- and returns dir.
-func gitFileTree(t *testing.T, dir string) string {
-	t.Helper()
-	mustMkdir(t, dir)
-	mustWrite(t, filepath.Join(dir, ".git"), "gitdir: /nowhere/worktrees/"+filepath.Base(dir)+"\n")
-	return dir
-}
-
 func TestOrphanWorktrees(t *testing.T) {
 	t.Run("finds linked worktrees and skips clones and empty dirs", func(t *testing.T) {
 		base := t.TempDir()
 
 		a := gitFileTree(t, filepath.Join(base, ".worktrees", "a"))
 		verify := gitFileTree(t, filepath.Join(base, ".worktrees", ".verify", "b-001"))
-		// An owner directory under serve/bindings with no bind.json: base
-		// holds no binding at all, yet the orphan under o1 must be found.
+		// o1 has no bind.json, yet its orphan must still be found.
 		c := gitFileTree(t, filepath.Join(base, "serve", "bindings", "o1", ".worktrees", "c"))
 
 		mustMkdir(t, filepath.Join(base, ".worktrees", "full", ".git"))

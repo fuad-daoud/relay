@@ -48,8 +48,6 @@ linters:
         text: '.*'
       - path: '^internal/legacy/'
         text: '.*'
-      - path: '^internal/migrate/'
-        text: '.*'
       - path: '^internal/patch/'
         text: '.*'
       - path: '^internal/pick/'

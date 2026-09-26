@@ -1,15 +1,9 @@
-// Package migrate is the core of `relevo migrate` (#292): detection and
-// refusals, the directory moves, the database file renames, the rewriting of
-// old-root paths inside relevo's own JSON records and database, and
-// `git worktree repair`.
-//
-// This is round 3a, so the package is a library: the CLI verb, the units and
-// the old binary are round 3b's. The two calls that would drag internal/git
-// and internal/db in are function values on Options, so tests use fakes and
-// the CLI supplies the real ones.
-//
-// Every step decides "already done" from the filesystem alone, so a re-run
-// after a crash between any two steps resumes, and the rewrites are
+// Package migrate is the core of `relevo migrate`: detection and refusals,
+// directory moves, database file renames, rewriting old-root paths in
+// relevo's own JSON records and database, and `git worktree repair`. The two
+// calls that would drag internal/git and internal/db in are function values
+// on Options, so tests use fakes. Every step decides "already done" from the
+// filesystem alone, so a re-run after a crash resumes and the rewrites stay
 // idempotent.
 package migrate
 
@@ -26,54 +20,35 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// Options configures one Run.
+// Options configures one Run. StateFrom/StateTo are required, absolute and
+// distinct; ConfigFrom/ConfigTo are both "" or both set.
 type Options struct {
-	// StateFrom and StateTo are the old and the new state root. Required,
-	// absolute and distinct.
-	StateFrom, StateTo string
-	// ConfigFrom and ConfigTo are the old and the new config root: both ""
-	// (no config to move) or both set.
+	StateFrom, StateTo   string
 	ConfigFrom, ConfigTo string
-	// DryRun makes Run report every step without writing, renaming or calling
-	// Repair or RewriteDB.
-	DryRun bool
-	// DefaultServeRoot is the old default serve root, where a running
-	// `relevo serve` writes daemon.json even when it serves an explicit
-	// --state. "" means StateFrom/serve only.
+	DryRun               bool
+	// DefaultServeRoot is the old default serve root, where `relevo serve`
+	// writes daemon.json even under an explicit --state. "" means StateFrom/serve only.
 	DefaultServeRoot string
-	// SkipDaemonCheck drops the daemon-lock refusal only. The CLI runs a dry
-	// run with it set before stopping the service -- the daemon is still up
-	// then -- and the real run without it after the stop.
+	// SkipDaemonCheck drops the daemon-lock refusal, for the CLI's dry run before it stops the service.
 	SkipDaemonCheck bool
 
-	// Alive reports whether a pid is live. Required.
-	Alive func(pid int) bool
-	// Repair repairs one git worktree:
-	// `git -C <repo> worktree repair <worktree>`. Required.
-	Repair func(ctx context.Context, repo, worktree string) error
-	// RewriteDB rewrites old-root paths in the database at dbPath. Required.
+	// Alive, Repair, RewriteDB and Out are all required.
+	Alive     func(pid int) bool
+	Repair    func(ctx context.Context, repo, worktree string) error
 	RewriteDB func(ctx context.Context, dbPath string, pairs []Prefix) (rows int64, newer bool, err error)
-	// Out receives one line per step. Required.
-	Out io.Writer
+	Out       io.Writer
 }
 
 // Prefix is legacy.Prefix, kept under this name for migrate's callers.
 type Prefix = legacy.Prefix
 
-// Step is one line of the migration report.
+// Step is one line of the migration report: Name is the step, Skipped means
+// already done or not applicable, Warn means done with a caveat to show.
 type Step struct {
-	// Name is the step: refuse, move-config, move-state, rename-db,
-	// rewrite-json, rewrite-db or repair-worktrees.
-	Name string
-	// Detail is the human line: what was (or would be) done, or why it was
-	// skipped.
-	Detail string
-	// Skipped is true when the step was already done (resume) or did not
-	// apply.
+	Name    string
+	Detail  string
 	Skipped bool
-	// Warn is true when the step was done with a caveat the user must see: a
-	// newer database, or a failed repair.
-	Warn bool
+	Warn    bool
 }
 
 // Result is what Run found and did.
@@ -86,11 +61,10 @@ type Result struct {
 // ErrRefused is what every Refusal unwraps to.
 var ErrRefused = errors.New("migrate: refused")
 
-// Refusal reports every reason the migration was refused, not just the first,
-// so the user can fix them all in one go.
+// Refusal reports every reason the migration was refused, so the user can fix
+// them all in one go.
 type Refusal struct{ Reasons []string }
 
-// Error renders every reason, one per line.
 func (r *Refusal) Error() string {
 	var b strings.Builder
 	b.WriteString("migrate: refused:")
@@ -101,16 +75,11 @@ func (r *Refusal) Error() string {
 	return b.String()
 }
 
-// Unwrap reports ErrRefused.
 func (r *Refusal) Unwrap() error { return ErrRefused }
 
 // Run performs the migration in the fixed step order, writing one line per
-// step to o.Out and returning the steps it took.
-//
-// A missing required option is a programming error and is returned plain. An
-// install that is not safe to move is returned as a *Refusal wrapping
-// ErrRefused, after every reason has been collected. Any other failure names
-// the step it happened in and leaves the state for a re-run to resume.
+// step to o.Out. A refused install returns a *Refusal; any other failure
+// names the step it happened in and leaves the state for a re-run to resume.
 func Run(ctx context.Context, o Options) (Result, error) {
 	if err := validateOptions(o); err != nil {
 		return Result{}, err
@@ -151,9 +120,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	return r.result, nil
 }
 
-// validateOptions rejects a missing or nonsensical option before any of the
-// filesystem is touched. Every failure here is a programming error, not a
-// refusal, so it is returned plain.
+// validateOptions rejects a bad option as a plain error before anything is touched.
 func validateOptions(o Options) error {
 	if o.StateFrom == "" {
 		return errors.New("migrate: StateFrom is required")
@@ -199,25 +166,22 @@ func validateOptions(o Options) error {
 	return nil
 }
 
-// runner accumulates the steps and knows how to report them.
 type runner struct {
 	opts   Options
 	result Result
 }
 
-// addStep records one step and writes its line. A dry run prefixes every line,
-// so the user cannot mistake a report for a performed migration.
+// addStep records one step and writes its line, prefixed for a dry run.
 func (r *runner) addStep(name, detail string, skipped, warn bool) {
 	r.result.Steps = append(r.result.Steps, Step{Name: name, Detail: detail, Skipped: skipped, Warn: warn})
 	prefix := ""
 	if r.opts.DryRun {
 		prefix = "(dry run) "
 	}
-	fmt.Fprintf(r.opts.Out, "%s%s: %s\n", prefix, name, detail)
+	_, _ = fmt.Fprintf(r.opts.Out, "%s%s: %s\n", prefix, name, detail)
 }
 
-// pairs is the substitution list every rewrite gets: the state root always,
-// the config root when there is one.
+// pairs is the substitution list every rewrite gets.
 func (r *runner) pairs() []Prefix {
 	pairs := []Prefix{{Old: r.opts.StateFrom, New: r.opts.StateTo}}
 	if r.opts.ConfigFrom != "" {
@@ -226,9 +190,8 @@ func (r *runner) pairs() []Prefix {
 	return pairs
 }
 
-// stateBase is the directory that holds the state root the later steps act on:
-// StateTo once it exists -- after this run's move, or because it was already
-// moved -- and in a dry run the old root that would become it.
+// stateBase is the directory the later steps act on: StateTo once it exists,
+// else the old root a dry run would move there.
 func (r *runner) stateBase(d detection) string {
 	if dirExists(r.opts.StateTo) {
 		return r.opts.StateTo
@@ -253,77 +216,51 @@ func (r *runner) configBase(d detection) string {
 	return ""
 }
 
-// moveConfig moves or merges the config root. A conflict was refused before
-// this runs, so the merge never has to decide one.
 func (r *runner) moveConfig(d detection) error {
-	o := r.opts
 	if !d.configPair {
 		r.addStep("move-config", "no config root", true, false)
 		return nil
 	}
-	switch {
-	case d.confOld && !d.confNew:
-		if o.DryRun {
-			r.addStep("move-config", fmt.Sprintf("rename %s to %s", o.ConfigFrom, o.ConfigTo), false, false)
-			return nil
-		}
-		if err := moveRoot(o.ConfigFrom, o.ConfigTo); err != nil {
-			return fmt.Errorf("move-config: %w", err)
-		}
-		r.addStep("move-config", fmt.Sprintf("renamed %s to %s", o.ConfigFrom, o.ConfigTo), false, false)
-	case d.confOld && d.confNew:
-		if o.DryRun {
-			r.addStep("move-config", fmt.Sprintf("merge %s into %s", o.ConfigFrom, o.ConfigTo), false, false)
-			return nil
-		}
-		if err := moveRoot(o.ConfigFrom, o.ConfigTo); err != nil {
-			return fmt.Errorf("move-config: %w", err)
-		}
-		r.addStep("move-config", fmt.Sprintf("merged %s into %s", o.ConfigFrom, o.ConfigTo), false, false)
-	case !d.confOld && d.confNew:
-		r.addStep("move-config", "already moved", true, false)
-	default:
-		r.addStep("move-config", "no config root", true, false)
-	}
-	return nil
+	return r.moveStep("move-config", d.confOld, d.confNew, r.opts.ConfigFrom, r.opts.ConfigTo, "no config root")
 }
 
-// moveState moves or merges the state root, exactly as moveConfig does. A new
-// root that exists and is not empty was refused before this runs, so a merge
-// only ever fills an empty or already-moved root.
 func (r *runner) moveState(d detection) error {
-	o := r.opts
+	return r.moveStep("move-state", d.stateOld, d.stateNew, r.opts.StateFrom, r.opts.StateTo, "no state root")
+}
+
+// moveStep is the shape moveConfig and moveState share: rename when only the
+// old root exists, merge when both do, skip when already moved.
+func (r *runner) moveStep(name string, oldExists, newExists bool, from, to, nothing string) error {
 	switch {
-	case d.stateOld && !d.stateNew:
-		if o.DryRun {
-			r.addStep("move-state", fmt.Sprintf("rename %s to %s", o.StateFrom, o.StateTo), false, false)
+	case oldExists && !newExists:
+		if r.opts.DryRun {
+			r.addStep(name, fmt.Sprintf("rename %s to %s", from, to), false, false)
 			return nil
 		}
-		if err := moveRoot(o.StateFrom, o.StateTo); err != nil {
-			return fmt.Errorf("move-state: %w", err)
+		if err := moveRoot(from, to); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
 		}
-		r.addStep("move-state", fmt.Sprintf("renamed %s to %s", o.StateFrom, o.StateTo), false, false)
-	case d.stateOld && d.stateNew:
-		if o.DryRun {
-			r.addStep("move-state", fmt.Sprintf("merge %s into %s", o.StateFrom, o.StateTo), false, false)
+		r.addStep(name, fmt.Sprintf("renamed %s to %s", from, to), false, false)
+	case oldExists && newExists:
+		if r.opts.DryRun {
+			r.addStep(name, fmt.Sprintf("merge %s into %s", from, to), false, false)
 			return nil
 		}
-		if err := moveRoot(o.StateFrom, o.StateTo); err != nil {
-			return fmt.Errorf("move-state: %w", err)
+		if err := moveRoot(from, to); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
 		}
-		r.addStep("move-state", fmt.Sprintf("merged %s into %s", o.StateFrom, o.StateTo), false, false)
-	case !d.stateOld && d.stateNew:
-		r.addStep("move-state", "already moved", true, false)
+		r.addStep(name, fmt.Sprintf("merged %s into %s", from, to), false, false)
+	case !oldExists && newExists:
+		r.addStep(name, "already moved", true, false)
 	default:
-		r.addStep("move-state", "no state root", true, false)
+		r.addStep(name, nothing, true, false)
 	}
 	return nil
 }
 
-// moveRoot renames from to to when to does not exist. When to exists it merges
-// the two: an entry absent from to is renamed in, an identical regular file in
-// both is dropped from from, and anything else is an error -- the refusal
-// phase normally catches that case first.
+// moveRoot renames from to to when to does not exist, else merges the two: an
+// entry absent from to is renamed in, an identical file in both is dropped
+// from from, and anything else is an error.
 func moveRoot(from, to string) error {
 	entries, err := os.ReadDir(from)
 	if err != nil {
@@ -367,8 +304,7 @@ func moveRoot(from, to string) error {
 	return nil
 }
 
-// renameDB renames the old database file and its -wal and -shm siblings inside
-// the new state root, each one only where the new name is not already taken.
+// renameDB renames the database file and its -wal/-shm siblings.
 func (r *runner) renameDB(d detection) error {
 	base := r.stateBase(d)
 	if base == "" {
@@ -383,8 +319,7 @@ func (r *runner) renameDB(d detection) error {
 			continue
 		}
 		if _, err := os.Stat(baseDB + s); err == nil {
-			// Both names already exist: leave them, the new one wins.
-			continue
+			continue // both names exist already: leave them, the new one wins
 		}
 		suffixes = append(suffixes, s)
 	}
@@ -420,8 +355,7 @@ func (r *runner) renameDB(d detection) error {
 	return nil
 }
 
-// rewriteJSON rewrites the old-root paths stored in the JSON records of both
-// roots. A dry run reports the roots it would walk and touches nothing.
+// rewriteJSON rewrites the old-root paths in the JSON records of both roots.
 func (r *runner) rewriteJSON(d detection) error {
 	var targets []string
 	if base := r.stateBase(d); base != "" {
@@ -453,9 +387,8 @@ func (r *runner) rewriteJSON(d detection) error {
 	return nil
 }
 
-// rewriteDB rewrites the old-root paths stored in the database. A newer schema
-// is a warning, not an error: the data moved and is correct, and the warning
-// says the paths inside it were not touched.
+// rewriteDB rewrites the old-root paths in the database; a newer schema is a
+// warning, since the data moved but the paths inside it did not.
 func (r *runner) rewriteDB(ctx context.Context, d detection) error {
 	base := r.stateBase(d)
 	if base == "" {
@@ -486,8 +419,7 @@ func (r *runner) rewriteDB(ctx context.Context, d detection) error {
 	return nil
 }
 
-// dbExists reports whether the database is there under either name: in a dry
-// run the rename has not happened yet, so the old name counts.
+// dbExists checks both names: in a dry run the rename has not happened yet.
 func (r *runner) dbExists(base string) bool {
 	if _, err := os.Stat(store.New(base).DBPath()); err == nil {
 		return true
@@ -501,8 +433,7 @@ func (r *runner) dbExists(base string) bool {
 }
 
 // repairWorktrees asks git to repair every worktree the move relocated. A
-// binding with no recorded repo or a failed repair is a warning, not an error:
-// the data is moved and a re-run can repair the tree once the cause is fixed.
+// missing repo or a failed repair is a warning: a re-run can fix it later.
 func (r *runner) repairWorktrees(ctx context.Context, d detection) {
 	base := r.stateBase(d)
 	if base == "" {
@@ -510,11 +441,26 @@ func (r *runner) repairWorktrees(ctx context.Context, d detection) {
 		return
 	}
 
-	repaired := 0
-	// repairedPaths holds every worktree the binding pass repaired, or counted
-	// in a dry run, so the orphan pass never repairs one of them twice.
-	repairedPaths := map[string]bool{}
-	var warnings []string
+	repaired, repairedPaths, warnings := r.repairBoundWorktrees(ctx, base)
+	n, w := r.repairOrphans(ctx, base, repairedPaths)
+	repaired += n
+	warnings = append(warnings, w...)
+
+	switch {
+	case len(warnings) > 0:
+		detail := fmt.Sprintf("repaired %d worktree(s); %s", repaired, strings.Join(warnings, "; "))
+		r.addStep("repair-worktrees", detail, false, true)
+	case repaired == 0:
+		r.addStep("repair-worktrees", "no worktrees needed repair", true, false)
+	default:
+		r.addStep("repair-worktrees", fmt.Sprintf("repaired %d worktree(s)", repaired), false, false)
+	}
+}
+
+// repairBoundWorktrees repairs every worktree a binding records and returns
+// the paths touched, so the orphan pass never repairs one twice.
+func (r *runner) repairBoundWorktrees(ctx context.Context, base string) (repaired int, repairedPaths map[string]bool, warnings []string) {
+	repairedPaths = map[string]bool{}
 	for _, root := range storeRoots(base) {
 		bindings, err := store.ListFiles(root)
 		if err != nil {
@@ -556,10 +502,12 @@ func (r *runner) repairWorktrees(ctx context.Context, d detection) {
 			repairedPaths[filepath.Clean(wt)] = true
 		}
 	}
+	return repaired, repairedPaths, warnings
+}
 
-	// Second pass: worktree directories no binding records, which the binding
-	// pass above never sees. A dry run has not moved anything, so the admin
-	// path maps from the old root onto itself.
+// repairOrphans repairs worktree directories no binding records, deriving
+// each one's repo from its .git file.
+func (r *runner) repairOrphans(ctx context.Context, base string, repairedPaths map[string]bool) (repaired int, warnings []string) {
 	from, to := r.opts.StateFrom, r.opts.StateTo
 	if r.opts.DryRun {
 		from = to
@@ -585,14 +533,5 @@ func (r *runner) repairWorktrees(ctx context.Context, d detection) {
 		}
 		repaired++
 	}
-
-	switch {
-	case len(warnings) > 0:
-		detail := fmt.Sprintf("repaired %d worktree(s); %s", repaired, strings.Join(warnings, "; "))
-		r.addStep("repair-worktrees", detail, false, true)
-	case repaired == 0:
-		r.addStep("repair-worktrees", "no worktrees needed repair", true, false)
-	default:
-		r.addStep("repair-worktrees", fmt.Sprintf("repaired %d worktree(s)", repaired), false, false)
-	}
+	return repaired, warnings
 }

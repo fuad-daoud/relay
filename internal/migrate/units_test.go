@@ -14,8 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/legacy"
 )
 
-// recServices records every call a unit step made, so a test can assert none,
-// one or many. It is the only Services CI ever sees.
+// recServices records every call a unit step made; it is the only Services CI ever sees.
 type recServices struct {
 	calls           []string
 	active, enabled bool
@@ -42,7 +41,6 @@ func (r *recServices) State(_ context.Context, u Unit) (bool, bool, error) {
 	return r.active, r.enabled, r.stateErr
 }
 
-// linuxUnitOptions builds the production shape of a Linux run in a temp dir.
 func linuxUnitOptions(t *testing.T, configHome string, svc *recServices) (UnitOptions, *bytes.Buffer) {
 	t.Helper()
 	out := &bytes.Buffer{}
@@ -56,8 +54,7 @@ func linuxUnitOptions(t *testing.T, configHome string, svc *recServices) (UnitOp
 	}, out
 }
 
-// TestDefaultClientUnits pins the four paths to the legacy names, so a
-// misspelled relay-era file name cannot slip through a platform branch. // name-guard: legacy
+// TestDefaultClientUnits pins the four unit paths to the old names. // name-guard: legacy
 func TestDefaultClientUnits(t *testing.T) {
 	configHome := "/cfg"
 	home := "/home/u"
@@ -90,9 +87,7 @@ func TestDefaultClientUnits(t *testing.T) {
 	}
 }
 
-// TestStopOldAndSwapClientLinuxHappyPath is the ordinary Linux cutover: the
-// old unit is installed, active and enabled, so it is stopped, the new unit is
-// written and enabled, and the old one is disabled and removed.
+// TestStopOldAndSwapClientLinuxHappyPath pins the ordinary cutover end to end.
 func TestStopOldAndSwapClientLinuxHappyPath(t *testing.T) {
 	configHome := t.TempDir()
 	svc := &recServices{active: true, enabled: true}
@@ -139,10 +134,7 @@ func TestStopOldAndSwapClientLinuxHappyPath(t *testing.T) {
 	}
 }
 
-// TestSwapClientInstalledButInactive is the contabo case: an installed,
-// inactive, disabled relay.service is not stopped and not replaced by an // name-guard: legacy
-// enabled relevo.service -- but the new file is installed and the old one
-// retired, so a re-run does not keep finding it.
+// TestSwapClientInstalledButInactive pins: not started, but still installed and retired.
 func TestSwapClientInstalledButInactive(t *testing.T) {
 	configHome := t.TempDir()
 	svc := &recServices{}
@@ -186,8 +178,7 @@ func TestSwapClientInstalledButInactive(t *testing.T) {
 	}
 }
 
-// TestSwapClientDarwinTemplate checks the plist is rendered: no placeholder
-// survives and the resolved executable path lands in the file.
+// TestSwapClientDarwinTemplate pins that no @BIN@/@HOME@ placeholder survives rendering.
 func TestSwapClientDarwinTemplate(t *testing.T) {
 	home := t.TempDir()
 	svc := &recServices{active: true, enabled: true}
@@ -227,8 +218,6 @@ func TestSwapClientDarwinTemplate(t *testing.T) {
 	}
 }
 
-// TestSwapClientNoOldUnit is the clean host: no old unit was ever installed,
-// so nothing is installed under this command's authority.
 func TestSwapClientNoOldUnit(t *testing.T) {
 	configHome := t.TempDir()
 	svc := &recServices{}
@@ -252,9 +241,7 @@ func TestSwapClientNoOldUnit(t *testing.T) {
 	}
 }
 
-// TestSwapClientIdempotent re-runs the swap after it already happened: the new
-// file is byte-identical and the old one is gone, so nothing is written and
-// nothing is retired.
+// TestSwapClientIdempotent pins that a re-run writes and retires nothing.
 func TestSwapClientIdempotent(t *testing.T) {
 	configHome := t.TempDir()
 	svc := &recServices{}
@@ -281,7 +268,6 @@ func TestSwapClientIdempotent(t *testing.T) {
 	}
 }
 
-// TestUnitDryRun makes no call and writes nothing, on both stop and swap.
 func TestUnitDryRun(t *testing.T) {
 	configHome := t.TempDir()
 	svc := &recServices{active: true, enabled: true}
@@ -310,160 +296,144 @@ func TestUnitDryRun(t *testing.T) {
 	}
 }
 
-// TestRemoveOldBinary covers the four outcomes the plan names.
+// TestRemoveOldBinary covers removed, self-same, kept and absent.
 func TestRemoveOldBinary(t *testing.T) {
-	t.Run("present", func(t *testing.T) {
-		dir := t.TempDir()
-		exe := filepath.Join(dir, "relevo")
-		mustWrite(t, exe, "relevo")
-		sibling := filepath.Join(dir, legacy.Binary)
-		mustWrite(t, sibling, legacy.Binary)
+	tests := []struct {
+		name       string
+		keep       bool
+		link       bool // hard-link sibling to exe: "this is the running binary"
+		noSibling  bool
+		wantSkip   bool
+		wantDetail string
+	}{
+		{name: "present"},
+		{name: "same file", link: true, wantSkip: true, wantDetail: "is this binary"},
+		{name: "keep", keep: true, wantSkip: true, wantDetail: "--keep-old-binary"},
+		{name: "absent", noSibling: true, wantSkip: true},
+	}
 
-		step, err := RemoveOldBinary(exe, false, false)
-		if err != nil {
-			t.Fatalf("RemoveOldBinary: %v", err)
-		}
-		if step.Skipped {
-			t.Errorf("step = %+v, want removed", step)
-		}
-		if _, err := os.Stat(sibling); !os.IsNotExist(err) {
-			t.Errorf("sibling still exists: %v", err)
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			exe := filepath.Join(dir, "relevo")
+			mustWrite(t, exe, "relevo")
+			sibling := filepath.Join(dir, legacy.Binary)
+			switch {
+			case tt.noSibling:
+			case tt.link:
+				if err := os.Link(exe, sibling); err != nil {
+					t.Fatalf("link: %v", err)
+				}
+			default:
+				mustWrite(t, sibling, legacy.Binary)
+			}
 
-	t.Run("same file", func(t *testing.T) {
-		dir := t.TempDir()
-		exe := filepath.Join(dir, "relevo")
-		mustWrite(t, exe, "relevo")
-		sibling := filepath.Join(dir, legacy.Binary)
-		if err := os.Link(exe, sibling); err != nil {
-			t.Fatalf("link: %v", err)
-		}
-
-		step, err := RemoveOldBinary(exe, false, false)
-		if err != nil {
-			t.Fatalf("RemoveOldBinary: %v", err)
-		}
-		if !step.Skipped || !strings.Contains(step.Detail, "is this binary") {
-			t.Errorf("step = %+v, want skipped is this binary", step)
-		}
-		if _, err := os.Stat(sibling); err != nil {
-			t.Errorf("sibling removed: %v", err)
-		}
-	})
-
-	t.Run("keep", func(t *testing.T) {
-		dir := t.TempDir()
-		exe := filepath.Join(dir, "relevo")
-		mustWrite(t, exe, "relevo")
-		sibling := filepath.Join(dir, legacy.Binary)
-		mustWrite(t, sibling, legacy.Binary)
-
-		step, err := RemoveOldBinary(exe, true, false)
-		if err != nil {
-			t.Fatalf("RemoveOldBinary: %v", err)
-		}
-		if !step.Skipped || !strings.Contains(step.Detail, "--keep-old-binary") {
-			t.Errorf("step = %+v, want skipped keep", step)
-		}
-		if _, err := os.Stat(sibling); err != nil {
-			t.Errorf("sibling removed: %v", err)
-		}
-	})
-
-	t.Run("absent", func(t *testing.T) {
-		dir := t.TempDir()
-		exe := filepath.Join(dir, "relevo")
-		mustWrite(t, exe, "relevo")
-
-		step, err := RemoveOldBinary(exe, false, false)
-		if err != nil {
-			t.Fatalf("RemoveOldBinary: %v", err)
-		}
-		if !step.Skipped {
-			t.Errorf("step = %+v, want skipped", step)
-		}
-	})
+			step, err := RemoveOldBinary(exe, tt.keep, false)
+			if err != nil {
+				t.Fatalf("RemoveOldBinary: %v", err)
+			}
+			if step.Skipped != tt.wantSkip {
+				t.Errorf("step = %+v, want Skipped=%v", step, tt.wantSkip)
+			}
+			if tt.wantDetail != "" && !strings.Contains(step.Detail, tt.wantDetail) {
+				t.Errorf("detail = %q, want containing %q", step.Detail, tt.wantDetail)
+			}
+			if tt.noSibling {
+				return
+			}
+			_, err = os.Stat(sibling)
+			if tt.wantSkip && err != nil {
+				t.Errorf("sibling removed: %v", err)
+			}
+			if !tt.wantSkip && !os.IsNotExist(err) {
+				t.Errorf("sibling still exists: %v", err)
+			}
+		})
+	}
 }
 
-// TestRenameSliceValue rewrites only the quoted relay.slice value, leaves // name-guard: legacy
-// every other byte alone, and touches nothing when there is nothing to change.
+type renameSliceCase struct {
+	name       string
+	before     string // "" means no policy.json file at all
+	dryRun     bool
+	wantSkip   bool
+	wantDetail string
+	want       string // expected content after; "" means unchanged from before
+	checkMtime bool
+}
+
+// TestRenameSliceValue pins that only the quoted relay.slice value changes. // name-guard: legacy
 func TestRenameSliceValue(t *testing.T) {
-	t.Run("rewrites", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "policy.json")
-		before := `{"serve":{"scope":{"slice":"` + legacy.Slice + `","mem":"6G"}}}`
-		mustWrite(t, path, before)
+	tests := []renameSliceCase{
+		{
+			name:   "rewrites",
+			before: `{"serve":{"scope":{"slice":"` + legacy.Slice + `","mem":"6G"}}}`,
+			want:   `{"serve":{"scope":{"slice":"relevo.slice","mem":"6G"}}}`,
+		},
+		{
+			name:       "untouched without the value",
+			before:     `{"serve":{"scope":{"slice":"relay.slicer"}}}`, // name-guard: legacy
+			wantSkip:   true,
+			checkMtime: true,
+		},
+		{
+			name:       "absent",
+			wantSkip:   true,
+			wantDetail: "no policy.json",
+		},
+		{
+			name:   "dry run",
+			before: `{"slice":"` + legacy.Slice + `"}`,
+			dryRun: true,
+		},
+	}
 
-		step, err := RenameSliceValue(dir, false)
-		if err != nil {
-			t.Fatalf("RenameSliceValue: %v", err)
-		}
-		if step.Skipped {
-			t.Errorf("step = %+v, want rewritten", step)
-		}
-		want := `{"serve":{"scope":{"slice":"relevo.slice","mem":"6G"}}}`
-		if got := readFixture(t, path); got != want {
-			t.Errorf("policy.json = %q, want %q", got, want)
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { runRenameSliceCase(t, tt) })
+	}
+}
 
-	t.Run("untouched without the value", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "policy.json")
-		before := `{"serve":{"scope":{"slice":"relay.slicer"}}}` // name-guard: legacy
-		mustWrite(t, path, before)
-
-		old := time.Now().Add(-time.Hour).Truncate(time.Second)
+func runRenameSliceCase(t *testing.T, tt renameSliceCase) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.json")
+	old := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if tt.before != "" {
+		mustWrite(t, path, tt.before)
 		if err := os.Chtimes(path, old, old); err != nil {
 			t.Fatalf("chtimes: %v", err)
 		}
+	}
 
-		step, err := RenameSliceValue(dir, false)
-		if err != nil {
-			t.Fatalf("RenameSliceValue: %v", err)
-		}
-		if !step.Skipped {
-			t.Errorf("step = %+v, want skipped", step)
-		}
-		if got := readFixture(t, path); got != before {
-			t.Errorf("policy.json = %q, want unchanged %q", got, before)
-		}
-		fi, err := os.Stat(path)
-		if err != nil {
-			t.Fatalf("stat: %v", err)
-		}
-		if !fi.ModTime().Equal(old) {
-			t.Errorf("mtime = %v, want untouched %v", fi.ModTime(), old)
-		}
-	})
+	step, err := RenameSliceValue(dir, tt.dryRun)
+	if err != nil {
+		t.Fatalf("RenameSliceValue: %v", err)
+	}
+	if step.Skipped != tt.wantSkip {
+		t.Errorf("step = %+v, want Skipped=%v", step, tt.wantSkip)
+	}
+	if tt.wantDetail != "" && !strings.Contains(step.Detail, tt.wantDetail) {
+		t.Errorf("detail = %q, want containing %q", step.Detail, tt.wantDetail)
+	}
+	if tt.before == "" {
+		return
+	}
 
-	t.Run("absent", func(t *testing.T) {
-		dir := t.TempDir()
-		step, err := RenameSliceValue(dir, false)
-		if err != nil {
-			t.Fatalf("RenameSliceValue: %v", err)
-		}
-		if !step.Skipped || !strings.Contains(step.Detail, "no policy.json") {
-			t.Errorf("step = %+v, want skipped no policy.json", step)
-		}
-	})
-
-	t.Run("dry run", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "policy.json")
-		before := `{"slice":"` + legacy.Slice + `"}`
-		mustWrite(t, path, before)
-
-		step, err := RenameSliceValue(dir, true)
-		if err != nil {
-			t.Fatalf("RenameSliceValue: %v", err)
-		}
-		if step.Skipped {
-			t.Errorf("step = %+v, want a reported step", step)
-		}
-		if got := readFixture(t, path); got != before {
-			t.Errorf("dry run changed policy.json: %q", got)
-		}
-	})
+	want := tt.want
+	if want == "" {
+		want = tt.before
+	}
+	if got := readFixture(t, path); got != want {
+		t.Errorf("policy.json = %q, want %q", got, want)
+	}
+	if !tt.checkMtime {
+		return
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if !fi.ModTime().Equal(old) {
+		t.Errorf("mtime = %v, want untouched %v", fi.ModTime(), old)
+	}
 }

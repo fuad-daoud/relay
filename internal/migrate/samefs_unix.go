@@ -7,10 +7,8 @@ import (
 	"syscall"
 )
 
-// sameFS reports whether a and b live on the same filesystem, by comparing
-// their device numbers. A path that cannot be stat'ed answers true: the
-// refusal exists to catch a move that would copy across devices, and refusing
-// on a path that is not there yet would be a false alarm.
+// sameFS compares device numbers; a path that cannot be stat'ed answers true,
+// since refusing a path that is not there yet would be a false alarm.
 func sameFS(a, b string) bool {
 	ia, err := os.Stat(a)
 	if err != nil {

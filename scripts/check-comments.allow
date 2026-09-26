@@ -102,12 +102,6 @@ internal/ledger/ledger.go
 internal/ledger/ledger_test.go
 internal/legacy/legacy.go
 internal/legacy/legacy_test.go
-internal/migrate/detect.go
-internal/migrate/migrate.go
-internal/migrate/migrate_test.go
-internal/migrate/orphans.go
-internal/migrate/services.go
-internal/migrate/units.go
 internal/pick/confirm.go
 internal/pick/list.go
 internal/pick/model.go
