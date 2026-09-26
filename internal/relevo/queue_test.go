@@ -19,6 +19,8 @@ import (
 // Mutation check: drop the `!deferred` guard around startRound in send.go
 // and this fails on fr.specs no longer being empty.
 func TestSendDeferQueues(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
 
@@ -79,6 +81,8 @@ func TestSendDeferQueues(t *testing.T) {
 // Mutation check: drop the `age` formatting (hardcode "0s") in queue.go and
 // this fails on the note not containing "1m30s".
 func TestAdmitStartsQueuedRound(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
@@ -125,6 +129,8 @@ func TestAdmitStartsQueuedRound(t *testing.T) {
 // TestAdmitNotQueued pins Admit's guard: a binding that was never deferred
 // (QueuedAt zero) is refused, and nothing spawns.
 func TestAdmitNotQueued(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 
@@ -145,6 +151,8 @@ func TestAdmitNotQueued(t *testing.T) {
 // spawn-failure handling, and QueuedAt is zeroed so the round is never
 // re-admitted.
 func TestAdmitSpawnFailure(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
@@ -188,6 +196,8 @@ func TestAdmitSpawnFailure(t *testing.T) {
 // Mutation check: drop the `gatedBuilder` branch in queue.go (always call
 // startRound) and this fails on BuilderCandidate staying "agy/other/m".
 func TestAdmitGatedSwitches(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt := newRuntime(t)
 	rt.Runner = fr

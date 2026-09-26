@@ -6,6 +6,8 @@ import (
 
 // TestFitKey pins FitKey's padding, right-clipping, and left-clipping (ported from TestRenderKeyFitting, D7.2).
 func TestFitKey(t *testing.T) {
+	t.Parallel()
+
 	if got := FitKey("abc", 5, false); got != "abc  " {
 		t.Errorf("FitKey pad = %q, want %q", got, "abc  ")
 	}
@@ -19,6 +21,8 @@ func TestFitKey(t *testing.T) {
 
 // TestShortTokens covers F2's k/M/B table, including the stripped ".0".
 func TestShortTokens(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		n    int64
 		want string
@@ -37,6 +41,8 @@ func TestShortTokens(t *testing.T) {
 }
 
 func TestPctText(t *testing.T) {
+	t.Parallel()
+
 	if got := PctText(85.4, 0); got != "-" {
 		t.Errorf("PctText(closed=0) = %q, want -", got)
 	}
@@ -46,6 +52,8 @@ func TestPctText(t *testing.T) {
 }
 
 func TestTTFTText(t *testing.T) {
+	t.Parallel()
+
 	if got := TTFTText(ScoreRow{HasTTFT: false}); got != "-" {
 		t.Errorf("TTFTText(false) = %q, want -", got)
 	}
@@ -55,6 +63,8 @@ func TestTTFTText(t *testing.T) {
 }
 
 func TestDuration(t *testing.T) {
+	t.Parallel()
+
 	if got := Duration(150_000); got != "2m" {
 		t.Errorf("Duration(150000) = %q, want 2m", got)
 	}
@@ -64,6 +74,8 @@ func TestDuration(t *testing.T) {
 }
 
 func TestMonthDay(t *testing.T) {
+	t.Parallel()
+
 	if got := MonthDay("2026-09-25"); got != "09-25" {
 		t.Errorf("MonthDay(2026-09-25) = %q, want 09-25", got)
 	}

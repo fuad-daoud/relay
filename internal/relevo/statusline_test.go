@@ -16,6 +16,8 @@ import (
 )
 
 func TestAgeText(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		input time.Duration
 		want  string
@@ -56,6 +58,8 @@ func splitLines(s string) []string {
 }
 
 func TestRenderStatusLineEmpty(t *testing.T) {
+	t.Parallel()
+
 	if got := RenderStatusLine(Report{}, baseTime, 80); got != "" {
 		t.Errorf("RenderStatusLine(Report{}, baseTime, 80) = %q, want empty", got)
 	}
@@ -65,6 +69,8 @@ func TestRenderStatusLineEmpty(t *testing.T) {
 // planner, an empty name renders nothing, and a narrow terminal cuts the
 // visible text to the column budget.
 func TestRenderPlannerLine(t *testing.T) {
+	t.Parallel()
+
 	got := RenderPlannerLine("architect-14", 80)
 	if !strings.Contains(got, "planner architect-14") {
 		t.Errorf("RenderPlannerLine(%q, 80) = %q, want it to contain %q", "architect-14", got, "planner architect-14")
@@ -85,6 +91,8 @@ func TestRenderPlannerLine(t *testing.T) {
 }
 
 func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
+	t.Parallel()
+
 	now := baseTime
 	tests := []struct {
 		name         string
@@ -200,6 +208,8 @@ func TestRenderStatusLineWaitingFallthrough(t *testing.T) {
 // most recent log entry is a drift note must still show the plan, and the
 // age of that plan, not the age of the drift note.
 func TestRenderStatusLineIgnoresBookkeepingLast(t *testing.T) {
+	t.Parallel()
+
 	now := baseTime
 	rep := Report{Bindings: []BindingStatus{
 		{
@@ -237,6 +247,8 @@ func TestRenderStatusLineIgnoresBookkeepingLast(t *testing.T) {
 // a row whose round is running shows the live figure last in the middle
 // cell, before the right cell's clock and state.
 func TestRenderStatusLineLiveSegment(t *testing.T) {
+	t.Parallel()
+
 	b := BindingStatus{
 		Name:             "api",
 		Round:            1,
@@ -268,6 +280,8 @@ func TestRenderStatusLineLiveSegment(t *testing.T) {
 // TestRenderStatusLineClosedRoundTokens pins the closed-round segment: a row
 // with a closed round shows that round's tokens.
 func TestRenderStatusLineClosedRoundTokens(t *testing.T) {
+	t.Parallel()
+
 	b := BindingStatus{
 		Name:             "api",
 		Round:            3,
@@ -292,6 +306,8 @@ func TestRenderStatusLineClosedRoundTokens(t *testing.T) {
 }
 
 func TestRenderStatusLineLiveWinsOverSpend(t *testing.T) {
+	t.Parallel()
+
 	b := BindingStatus{
 		Name:             "api",
 		Round:            4,
@@ -319,6 +335,8 @@ func TestRenderStatusLineLiveWinsOverSpend(t *testing.T) {
 // segment is the last thing in mid, so truncation drops it before the
 // waiting verb, and the right cell always survives.
 func TestRenderStatusLineNarrowDropsUsageFirst(t *testing.T) {
+	t.Parallel()
+
 	b := BindingStatus{
 		Name:             "api",
 		Round:            1,
@@ -339,6 +357,8 @@ func TestRenderStatusLineNarrowDropsUsageFirst(t *testing.T) {
 }
 
 func TestStatusLineWidth(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		columns  int
 		override string
@@ -363,6 +383,8 @@ func TestStatusLineWidth(t *testing.T) {
 }
 
 func TestShouldDrainStdin(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		mode os.FileMode
 		want bool
@@ -382,6 +404,8 @@ func TestShouldDrainStdin(t *testing.T) {
 }
 
 func TestWaitingReportOutcome(t *testing.T) {
+	t.Parallel()
+
 	t.Run("outcome halted", func(t *testing.T) {
 		b := BindingStatus{
 			LastPayload: &LastEvent{
@@ -718,6 +742,8 @@ func statuslineFixture(now time.Time) Report {
 }
 
 func TestRenderStatusLineAt80(t *testing.T) {
+	t.Parallel()
+
 	out := RenderStatusLine(statuslineFixture(baseTime), baseTime, 80)
 	lines := splitLines(out)
 	if len(lines) != 3 {
@@ -758,6 +784,8 @@ func TestRenderStatusLineAt80(t *testing.T) {
 }
 
 func TestRenderStatusLineTruncatesAt40(t *testing.T) {
+	t.Parallel()
+
 	out := RenderStatusLine(statuslineFixture(baseTime), baseTime, 40)
 	lines := splitLines(out)
 	if len(lines) != 3 {
@@ -784,6 +812,8 @@ func TestRenderStatusLineTruncatesAt40(t *testing.T) {
 }
 
 func TestRenderStatusLineZeroColumnsIs80(t *testing.T) {
+	t.Parallel()
+
 	out0 := RenderStatusLine(statuslineFixture(baseTime), baseTime, 0)
 	out80 := RenderStatusLine(statuslineFixture(baseTime), baseTime, 80)
 	if out0 != out80 {
@@ -792,6 +822,8 @@ func TestRenderStatusLineZeroColumnsIs80(t *testing.T) {
 }
 
 func TestRenderStatusLineUnpaddedWhenTooNarrow(t *testing.T) {
+	t.Parallel()
+
 	out := RenderStatusLine(statuslineFixture(baseTime), baseTime, 20)
 	lines := splitLines(out)
 	if len(lines) != 3 {
@@ -805,6 +837,8 @@ func TestRenderStatusLineUnpaddedWhenTooNarrow(t *testing.T) {
 }
 
 func TestRenderStatusLineColours(t *testing.T) {
+	t.Parallel()
+
 	out := RenderStatusLine(statuslineFixture(baseTime), baseTime, 80)
 	lines := splitLines(out)
 	if len(lines) != 3 {
@@ -925,6 +959,8 @@ func TestPlannerStatusEmptyPlannerIsEmpty(t *testing.T) {
 }
 
 func TestRoundClock(t *testing.T) {
+	t.Parallel()
+
 	start := baseTime.Add(-10 * time.Minute)
 	end := baseTime.Add(-3 * time.Minute)
 
@@ -963,6 +999,8 @@ func TestRoundClock(t *testing.T) {
 }
 
 func TestRenderStatusLineRemoteServer(t *testing.T) {
+	t.Parallel()
+
 	b := BindingStatus{
 		Name:             "api",
 		Round:            1,
@@ -987,6 +1025,8 @@ func TestRenderStatusLineRemoteServer(t *testing.T) {
 }
 
 func TestRoundTokensAddsPrior(t *testing.T) {
+	t.Parallel()
+
 	// 1. open round with live 41k plus prior 100k gives "141k tok"
 	b1 := BindingStatus{
 		RoundEnd: time.Time{}, // open
@@ -1024,6 +1064,8 @@ func TestRoundTokensAddsPrior(t *testing.T) {
 }
 
 func TestStatusLineRows(t *testing.T) {
+	t.Parallel()
+
 	now := baseTime
 
 	t.Run("NEEDS YOU row with a report LastPayload", func(t *testing.T) {
@@ -1365,6 +1407,8 @@ func TestStatusLineRows(t *testing.T) {
 // ACTIVE, REPORT IN for a delivered report, NEEDS YOU for a stalled pending or
 // a NEEDS YOU display.
 func TestRenderStatusLineSharesTheRowRule(t *testing.T) {
+	t.Parallel()
+
 	now := baseTime
 	rep := Report{Bindings: []BindingStatus{
 		{

@@ -41,6 +41,8 @@ func kinds(t *testing.T, rt Runtime, name string) []store.Kind {
 }
 
 func TestBindPicksFirstUngatedInOrder(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
@@ -75,6 +77,8 @@ func TestBindPicksFirstUngatedInOrder(t *testing.T) {
 }
 
 func TestBindResolvedReturnsTheResolution(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
@@ -98,6 +102,8 @@ func TestBindResolvedReturnsTheResolution(t *testing.T) {
 }
 
 func TestBindRefusesWhenEveryCandidateIsGated(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
 
@@ -119,6 +125,8 @@ func TestBindRefusesWhenEveryCandidateIsGated(t *testing.T) {
 }
 
 func TestBindExplicitGatedBypassesAndLogsIt(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	recordSpawnFailure(rt, testAgyRef, "earlier", errors.New("agent start: exit 1"))
@@ -153,6 +161,8 @@ func TestBindExplicitGatedBypassesAndLogsIt(t *testing.T) {
 // pick entry, so this checks the entry the resume itself adds, not the
 // total count.
 func TestResumeRebindLogsPickAtCurrentRound(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 	before := picks(t, rt, "webshop")
 
@@ -177,6 +187,8 @@ func TestResumeRebindLogsPickAtCurrentRound(t *testing.T) {
 }
 
 func TestAddLogsPick(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{headCommitID: "commit-head-123"}
 	rt := newTestRuntime(t, fg)
 	rt.Policy = orderOf("builder", testAgyRef)
@@ -201,6 +213,8 @@ func TestAddLogsPick(t *testing.T) {
 }
 
 func TestAskLogsPickBeforeAsk(t *testing.T) {
+	t.Parallel()
+
 	rt, b := seedForAsk(t)
 
 	qPath := writeQuestion(t, "what do you think?")
@@ -239,6 +253,8 @@ func TestAskLogsPickBeforeAsk(t *testing.T) {
 // total: seedForAsk's own seedBound already writes a leading pick entry for
 // the builder bind.
 func TestStrandedAskLogsNoPick(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedForAsk(t)
 	rt.Runner = fr

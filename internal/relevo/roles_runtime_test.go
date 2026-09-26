@@ -77,6 +77,8 @@ func rolesCandidate(t *testing.T, set *candidate.Set, token string) candidate.Ca
 // list, a gated candidate is skipped and named, and a candidate the row does
 // not list is never picked.
 func TestRolesRuntimeFileModeRanking(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesRuntimeCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder": {Candidates: []string{"claude/test/b", "claude/test/a"}},
@@ -132,6 +134,8 @@ func TestRolesRuntimeFileModeRanking(t *testing.T) {
 // explicit token the row does not list is refused, and in file mode the
 // refusal says so.
 func TestRolesRuntimeFileModeExplicitTokenNotListed(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesRuntimeCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder": {Candidates: []string{"claude/test/b", "claude/test/a"}},
@@ -153,6 +157,8 @@ func TestRolesRuntimeFileModeExplicitTokenNotListed(t *testing.T) {
 // row tier wins and the candidate's own tier is ignored; the explicit tier
 // still wins over both.
 func TestRolesRuntimeFileModeTier(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesRuntimeTierCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder": {
@@ -176,6 +182,8 @@ func TestRolesRuntimeFileModeTier(t *testing.T) {
 // TestRolesRuntimeVerifyTier pins §4.6/§9 step 6.4: verifyTier reads the
 // reviewer row in file mode, and gives yolo when the file sets no tier.
 func TestRolesRuntimeVerifyTier(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesRuntimeTierCandidatesJSON)
 	c := rolesCandidate(t, set, "claude/test/b")
 
@@ -201,6 +209,8 @@ func TestRolesRuntimeVerifyTier(t *testing.T) {
 // the argv carries, while a kind the file does not override keeps the shipped
 // one.
 func TestRolesRuntimeCustomBuilderLaunchesCustomAgent(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	set := rt.Candidates
 	rt.Registry = rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
@@ -254,6 +264,8 @@ func TestRolesRuntimeCustomBuilderLaunchesCustomAgent(t *testing.T) {
 // file adds is a real consult role -- Ask resolves it, spawns its definition,
 // and names it among the known roles when it refuses an unknown one.
 func TestRolesRuntimeCustomReaderRoleThroughAsk(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedForAsk(t)
 	set := rt.Candidates
 	rt.Registry = rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
@@ -309,6 +321,8 @@ func TestRolesRuntimeCustomReaderRoleThroughAsk(t *testing.T) {
 // probed role is whichever role's candidate list names the candidate, and a
 // candidate no role lists is still "no known role".
 func TestRolesRuntimeFileModeProbe(t *testing.T) {
+	t.Parallel()
+
 	rt, now := probeRuntime(t, testCandidatesJSON)
 	set := rt.Candidates
 	rt.Registry = rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{

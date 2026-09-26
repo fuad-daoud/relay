@@ -24,6 +24,8 @@ func openTestHistoryDB(t *testing.T) *db.DB {
 }
 
 func TestHistoryOptionsFilterHere(t *testing.T) {
+	t.Parallel()
+
 	g := &fakeGit{repoFactsOrigin: "git@github.com:o/r.git"}
 	rt := Runtime{Git: g}
 	opts := HistoryOptions{Here: "/work/repo"}
@@ -44,6 +46,8 @@ func TestHistoryOptionsFilterHere(t *testing.T) {
 }
 
 func TestHistoryOptionsFilterHereNoRemote(t *testing.T) {
+	t.Parallel()
+
 	g := &fakeGit{repoFactsCommonDir: "/work/repo/.git"}
 	rt := Runtime{Git: g}
 	opts := HistoryOptions{Here: "/work/repo"}
@@ -61,6 +65,8 @@ func TestHistoryOptionsFilterHereNoRemote(t *testing.T) {
 }
 
 func TestBindingsNoDatabase(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{}
 	_, err := Bindings(context.Background(), rt, "")
 	if !errors.Is(err, ErrNoDatabase) {
@@ -69,6 +75,8 @@ func TestBindingsNoDatabase(t *testing.T) {
 }
 
 func TestBindingsHereResolvesRepo(t *testing.T) {
+	t.Parallel()
+
 	d := openTestHistoryDB(t)
 
 	repoA, err := d.UpsertRepo(db.Repo{OriginURL: ptr("https://github.com/o/a"), FirstSeen: time.Now()})
@@ -118,6 +126,8 @@ func TestBindingsHereResolvesRepo(t *testing.T) {
 }
 
 func TestBindingsHereNotARepoMeansAll(t *testing.T) {
+	t.Parallel()
+
 	d := openTestHistoryDB(t)
 
 	repoA, err := d.UpsertRepo(db.Repo{OriginURL: ptr("https://github.com/o/a"), FirstSeen: time.Now()})
@@ -155,6 +165,8 @@ func TestBindingsHereNotARepoMeansAll(t *testing.T) {
 }
 
 func TestHistoryBindingArchivedFacts(t *testing.T) {
+	t.Parallel()
+
 	d := seedShowArchiveDB(t)
 	rt := Runtime{DB: d}
 
@@ -178,6 +190,8 @@ func TestHistoryBindingArchivedFacts(t *testing.T) {
 }
 
 func TestHistoryOptionsSinceUntil(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	opts := HistoryOptions{Since: "24h", Until: "2026-09-01"}
 
@@ -199,6 +213,8 @@ func TestHistoryOptionsSinceUntil(t *testing.T) {
 // parsed first, the explicit flag wins, and one note naming the override
 // comes back for the CLI to print to stderr.
 func TestHistoryOptionsQueryMergesWithFlagNote(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	opts := HistoryOptions{Query: "harness:agy", Harness: "codex"}
 
@@ -223,6 +239,8 @@ func TestHistoryOptionsQueryMergesWithFlagNote(t *testing.T) {
 // TestHistoryOptionsByOverridesQuery pins that --by overrides a by: in -q
 // the same way, both in the note and in the Query the caller reads back.
 func TestHistoryOptionsByOverridesQuery(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	opts := HistoryOptions{Query: "by:day harness:agy", By: "builder"}
 
@@ -247,6 +265,8 @@ func TestHistoryOptionsByOverridesQuery(t *testing.T) {
 // TestHistoryOptionsQueryError pins that a bad -q comes back as histq's own
 // ErrQuery, which the CLI maps to exit 2.
 func TestHistoryOptionsQueryError(t *testing.T) {
+	t.Parallel()
+
 	opts := HistoryOptions{Query: "outcome:nope"}
 	_, _, err := opts.Filter(context.Background(), Runtime{}, time.Now())
 	var eq histq.ErrQuery
@@ -263,6 +283,8 @@ func TestHistoryOptionsQueryError(t *testing.T) {
 // the zero value, so a caller reading ParsedQuery().By never sees "" (which
 // cmdHistory read as a regroup axis and turned into "no rounds").
 func TestHistoryOptionsFilterDefaultsAxisNone(t *testing.T) {
+	t.Parallel()
+
 	opts := HistoryOptions{}
 
 	_, notes, err := opts.Filter(context.Background(), Runtime{}, time.Now())
@@ -281,6 +303,8 @@ func TestHistoryOptionsFilterDefaultsAxisNone(t *testing.T) {
 // -q query has nothing to conflict with, so it must not print the spurious
 // `note: --by overrides by: from -q`.
 func TestHistoryOptionsByAloneGivesNoNote(t *testing.T) {
+	t.Parallel()
+
 	opts := HistoryOptions{By: "builder"}
 
 	_, notes, err := opts.Filter(context.Background(), Runtime{}, time.Now())
@@ -298,6 +322,8 @@ func TestHistoryOptionsByAloneGivesNoNote(t *testing.T) {
 // TestHistoryOptionsByOverridesQueryByNote pins that a real conflict is
 // kept: -q named by:binding and --by builder still notes the override.
 func TestHistoryOptionsByOverridesQueryByNote(t *testing.T) {
+	t.Parallel()
+
 	opts := HistoryOptions{Query: "by:binding", By: "builder"}
 
 	_, notes, err := opts.Filter(context.Background(), Runtime{}, time.Now())
@@ -318,6 +344,8 @@ func TestHistoryOptionsByOverridesQueryByNote(t *testing.T) {
 // TestHistoryFilterResolvesName pins A1 §4.2: a --candidate value with no "/"
 // resolves to its canonical token, and an unresolved value is left as typed.
 func TestHistoryFilterResolvesName(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, testCandidatesJSON)
 
 	o := HistoryOptions{Candidate: "claude-m", Names: set}
@@ -342,6 +370,8 @@ func TestHistoryFilterResolvesName(t *testing.T) {
 var tabNow = time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 
 func TestParseSince(t *testing.T) {
+	t.Parallel()
+
 	if got, err := ParseSince("", tabNow); err != nil || !got.IsZero() {
 		t.Errorf("empty: %v, %v", got, err)
 	}
@@ -366,6 +396,8 @@ func TestParseSince(t *testing.T) {
 // that ErrBadSince is the same sentinel histq returns, so a caller's
 // errors.Is(err, relevo.ErrBadSince) keeps working.
 func TestParseSinceMovedKeepsRelevoWrapper(t *testing.T) {
+	t.Parallel()
+
 	for _, s := range []string{"", "24h", "7d", "2026-09-01"} {
 		got, err := ParseSince(s, tabNow)
 		if err != nil {

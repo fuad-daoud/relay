@@ -96,6 +96,8 @@ func (notMineDeliverer) Deliver(context.Context, store.Endpoint, string, string,
 // stays pending with route=pull. For a Claude Code planner in tools mode
 // that is the normal path, not a fault (D6).
 func TestDeliverPendingNoRouteStaysPendingAsPull(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
@@ -120,6 +122,8 @@ func TestDeliverPendingNoRouteStaysPendingAsPull(t *testing.T) {
 // through to typing the payload into a pane. It now leaves the entry pending
 // with the deliverer's own reason.
 func TestDeliverPendingDelivererNotMineStaysPending(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	rt.Deliverers = map[string]PlannerDeliverer{"claude": notMineDeliverer{}}
 	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
@@ -145,6 +149,8 @@ func TestDeliverPendingDelivererNotMineStaysPending(t *testing.T) {
 // entry to the channel -- it stays pending for the claim holder's own poll,
 // which is what pushes and confirms it with route=channel.
 func TestDeliverPendingChannelByPlannerID(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	rt.Channels = fakeClaimStore{"pl_aaaaaaaabbbb": &Claim{Planner: "pl_aaaaaaaabbbb", PID: 1}}
 	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
@@ -166,6 +172,8 @@ func TestDeliverPendingChannelByPlannerID(t *testing.T) {
 // deliverer that reports OutcomeDelivered confirms the entry with
 // route=deliverer:<kind>.
 func TestDeliverPendingMarksDeliveredByDeliverer(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	rt.Deliverers = map[string]PlannerDeliverer{"claude": deliveredDeliverer{}}
 	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
@@ -190,6 +198,8 @@ func (deliveredDeliverer) Deliver(context.Context, store.Endpoint, string, strin
 // TestDeliverPendingWithNothingPendingIsNoop keeps the empty case: nothing
 // queued reads as nothing to do, never an error.
 func TestDeliverPendingWithNothingPendingIsNoop(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	b := store.Binding{
 		Name: "webshop", CWD: "/repo/webshop", Round: 1, State: store.StateActive,
@@ -225,6 +235,8 @@ func (s *stubDeliverer) Deliver(_ context.Context, _ store.Endpoint, _, _ string
 // pane; there is no pane now, so the assertion is the deliverer's own call
 // count plus the confirmed entry.
 func TestDeliverConsultsDelivererForMatchingKind(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "opencode")
 	stub := &stubDeliverer{outcome: OutcomeDelivered, reason: "already present"}
@@ -250,6 +262,8 @@ func TestDeliverConsultsDelivererForMatchingKind(t *testing.T) {
 // exactly as it did before this round: nothing is confirmed, and the payload
 // waits for `relevo wait`.
 func TestDeliverNilDeliverersBehavesAsToday(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	rt.Deliverers = nil
 	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "opencode")
@@ -273,6 +287,8 @@ func TestDeliverNilDeliverersBehavesAsToday(t *testing.T) {
 // makes this fail on the route (verified by hand per the plan's step
 // 2 instructions).
 func TestDeliverYieldsToLiveClaim(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	b := seedPending(t, rt, "webshop", testClaimPlanner, "claude")
 	rt.Channels = fakeClaimStore{b.PlannerID: &Claim{Planner: b.PlannerID, PID: 1, SeenAt: rt.Now()}}
@@ -298,6 +314,8 @@ func TestDeliverYieldsToLiveClaim(t *testing.T) {
 // falls through to the pull route exactly as it did before the channel
 // existed.
 func TestDeliverIgnoresStaleClaim(t *testing.T) {
+	t.Parallel()
+
 	rt := routeRuntime(t)
 	b := seedPending(t, rt, "webshop", testClaimPlanner, "claude")
 	rt.Channels = fakeClaimStore{} // no entry for this planner: Live returns nil, nil

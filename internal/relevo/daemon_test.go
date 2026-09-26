@@ -22,6 +22,8 @@ import (
 )
 
 func TestTickReconcilesAndPersists(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
@@ -52,6 +54,8 @@ func TestTickReconcilesAndPersists(t *testing.T) {
 }
 
 func TestRunStopsOnContextCancel(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedBound(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -62,6 +66,8 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 }
 
 func TestTickSkipsDoneBindings(t *testing.T) {
+	t.Parallel()
+
 	rt, b := sentBinding(t)
 	b.State = store.StateDone
 	if err := rt.Store.Save(b); err != nil {
@@ -89,6 +95,8 @@ func TestTickSkipsDoneBindings(t *testing.T) {
 // Planner.SessionID) when the registry knows that session, and leaves it
 // empty when it does not.
 func TestDaemonBackfillsPlannerID(t *testing.T) {
+	t.Parallel()
+
 	// A binding written before PlannerID existed: its planner endpoint names
 	// the session, and PlannerID is empty.
 	legacy := func(t *testing.T, rt Runtime, session string) store.Binding {
@@ -139,6 +147,8 @@ func TestDaemonBackfillsPlannerID(t *testing.T) {
 // daemon's one list call is now the store's, so the same contract is pinned
 // there: a tick whose binding list fails is visible to the caller.
 func TestTickSurfacesListAgentsFailure(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 	// A state root that cannot be prepared: the "directory" is a regular
 	// file, so MkdirAll fails and every store call with it.
@@ -163,6 +173,8 @@ func TestTickSurfacesListAgentsFailure(t *testing.T) {
 // (or hang) fails the test loudly instead of wedging the suite, the same
 // shape as store.TestNestedAccessDoesNotDeadlock.
 func TestRunSurvivesFailingTick(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 	// Every tick's first step fails: the state root cannot be prepared.
 	notADir := filepath.Join(t.TempDir(), "not-a-dir")
@@ -193,6 +205,8 @@ func TestRunSurvivesFailingTick(t *testing.T) {
 // TestNewDaemonFloorsInterval guards the floor by inspection made concrete:
 // a misconfigured (zero or negative) interval must not spin the tick.
 func TestNewDaemonFloorsInterval(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Gates: testGateKV(t)}
 
 	if d := NewDaemon(rt, 0); d.interval != minInterval {
@@ -232,6 +246,8 @@ func TestTickIgnoresBindingUnboundMidTick(t *testing.T) {
 }
 
 func TestTickDoesNotRestampAnUnchangedBinding(t *testing.T) {
+	t.Parallel()
+
 	// The next == fresh short-circuit this replaces was never tested. save()
 	// stamps UpdatedAt unconditionally, so without the short-circuit every tick
 	// rewrites every bind.json and UpdatedAt stops meaning "last change".
@@ -261,6 +277,8 @@ func TestTickDoesNotRestampAnUnchangedBinding(t *testing.T) {
 // before it reconciles, so the round the reconcile pass sees is whatever the
 // refresh just swapped in -- not last tick's copy.
 func TestTickRefreshesRuntimeBeforeReconcile(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 
 	const marker = "refreshed-marker"
@@ -288,6 +306,8 @@ func TestTickRefreshesRuntimeBeforeReconcile(t *testing.T) {
 // TestTickReconcilesAndPersists, the test this one relies on to prove the
 // nil-refresh path is untouched.
 func TestTickWithoutRefreshIsUnchanged(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
@@ -321,6 +341,8 @@ func TestTickWithoutRefreshIsUnchanged(t *testing.T) {
 // a tick over a live, sent binding must leave a matching binding and round
 // row behind.
 func TestTickIngestsLiveBindings(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -357,6 +379,8 @@ func TestTickIngestsLiveBindings(t *testing.T) {
 // fixture's Bind/Save creates, so the assertion is on the mirror's rows
 // (P3a round 3, B3).
 func TestTickWithoutDBIsUnchanged(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := sentBinding(t)
 
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
@@ -789,6 +813,8 @@ func countFDsOn(t *testing.T, path string) int {
 // backfillPlannerID: a finished binding is history, and a tick must not
 // rewrite it even when its planner session now has a record.
 func TestBackfillLeavesDoneBindingsAlone(t *testing.T) {
+	t.Parallel()
+
 	reg, _ := testPlannerRegistry(t, planner.Record{
 		ID:          "pl_aaaaaaaacccc",
 		Name:        "architect-1",
@@ -814,6 +840,8 @@ func TestBackfillLeavesDoneBindingsAlone(t *testing.T) {
 // fix has -- names no session for the registry to look up, so a tick leaves it
 // exactly as it was. relevo never guesses a planner for it.
 func TestBackfillLeavesPlannerlessBindingsAlone(t *testing.T) {
+	t.Parallel()
+
 	reg, _ := testPlannerRegistry(t, planner.Record{
 		ID:          "pl_aaaaaaaacccc",
 		Name:        "architect-1",
@@ -836,6 +864,8 @@ func TestBackfillLeavesPlannerlessBindingsAlone(t *testing.T) {
 // (Before the database the daemon skipped the binding after loading it; now
 // the load itself refuses it, so a tick over such a root fails its listing.)
 func TestTickSkipsANewerFormatBinding(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	b := store.Binding{
@@ -880,6 +910,8 @@ func TestTickSkipsANewerFormatBinding(t *testing.T) {
 // TestPlannerPruneDue pins §4.4's once-an-hour decision, pure so it needs no
 // daemon.
 func TestPlannerPruneDue(t *testing.T) {
+	t.Parallel()
+
 	now := time.Unix(1757000000, 0).UTC()
 	cases := []struct {
 		name string
@@ -907,6 +939,8 @@ func TestPlannerPruneDue(t *testing.T) {
 // record no binding names is forgotten, a live one survives, and the run is
 // stamped in the store database's kv row planner.pruned_at.
 func TestPrunePlannersForgetsAndStamps(t *testing.T) {
+	t.Parallel()
+
 	st := store.New(t.TempDir())
 	now := time.Unix(1757000000, 0).UTC()
 	d, err := st.DB()

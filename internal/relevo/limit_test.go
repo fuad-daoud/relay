@@ -21,6 +21,8 @@ func testNow() time.Time {
 }
 
 func TestParseReset(t *testing.T) {
+	t.Parallel()
+
 	now := testNow()
 	loc := now.Location()
 	// datedNow is the fixed instant the absolute-date rows below are stated
@@ -206,6 +208,8 @@ func codexPatterns(t *testing.T) []*regexp.Regexp {
 // non-limit errors. The fixture lives in the transcript package and is read
 // by relative path, so both packages scan the same bytes.
 func TestAgyLimitDetectedInRenderedStream(t *testing.T) {
+	t.Parallel()
+
 	now := testNow()
 	raw, err := os.ReadFile(filepath.Join("..", "transcript", "testdata", "agy-errors", "results.jsonl"))
 	if err != nil {
@@ -226,6 +230,8 @@ func TestAgyLimitDetectedInRenderedStream(t *testing.T) {
 }
 
 func TestMatchLimit(t *testing.T) {
+	t.Parallel()
+
 	now := testNow()
 	fallback := time.Hour
 
@@ -350,6 +356,8 @@ func rateLimitedEntries(l ledger.Ledger) []ledger.Entry {
 const gateFixtureLine = "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h48m52s."
 
 func TestGateOnLimit(t *testing.T) {
+	t.Parallel()
+
 	t.Run("match, no report", func(t *testing.T) {
 		fr := newFakeRunner()
 		rt, b := gateOnLimitSetup(t, fr)

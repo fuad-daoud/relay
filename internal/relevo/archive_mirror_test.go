@@ -13,6 +13,8 @@ import (
 // ingests each archived record into the mirror, keyed by kv
 // "ingested.archive.<recordID>", and a second pass changes nothing.
 func TestMirrorArchivedFeedsOnce(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {

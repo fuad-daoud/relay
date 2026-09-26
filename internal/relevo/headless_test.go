@@ -38,6 +38,8 @@ func sentHeadless(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 }
 
 func TestHandleOfConvertsUnixSeconds(t *testing.T) {
+	t.Parallel()
+
 	h := handleOf(store.Endpoint{PID: 42, StartedAt: 1_789_000_000})
 	if h.PID != 42 || !h.StartedAt.Equal(time.Unix(1_789_000_000, 0)) {
 		t.Errorf("handleOf = %+v", h)
@@ -48,6 +50,8 @@ func TestHandleOfConvertsUnixSeconds(t *testing.T) {
 }
 
 func TestRoundBudgetIsTheBindingsRoundTimeout(t *testing.T) {
+	t.Parallel()
+
 	if got := roundBudget(store.Binding{RoundTimeoutMS: 90 * 60 * 1000}); got != 90*time.Minute {
 		t.Errorf("roundBudget = %s, want 1h30m", got)
 	}
@@ -63,6 +67,8 @@ func TestRoundBudgetIsTheBindingsRoundTimeout(t *testing.T) {
 // a half identity is nil too, and a full one is exactly the four GIT_*
 // values a commit reads, in order.
 func TestBuilderEnv(t *testing.T) {
+	t.Parallel()
+
 	if got := builderEnv(store.Binding{}); got != nil {
 		t.Errorf("builderEnv(no Serve) = %v, want nil", got)
 	}
@@ -86,6 +92,8 @@ func TestBuilderEnv(t *testing.T) {
 }
 
 func TestHeadlessLaunchPerKind(t *testing.T) {
+	t.Parallel()
+
 	role, _ := harness.RoleByName("builder")
 	set := candidateSet(t, testCandidatesJSON)
 	lookup := func(token string) candidate.Candidate {
@@ -123,6 +131,8 @@ func TestHeadlessLaunchPerKind(t *testing.T) {
 }
 
 func TestStartRoundPassesStateDir(t *testing.T) {
+	t.Parallel()
+
 	const codexCandidatesJSON = `[
 	  {"harness":"codex","provider":"openai","model":"gpt-5.6-terra","roles":["builder"]}
 	]`
@@ -165,6 +175,8 @@ func TestStartRoundPassesStateDir(t *testing.T) {
 }
 
 func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 	// A new process announces its own session on the stream (#147): the
@@ -210,6 +222,8 @@ func TestStartRoundRecordsTheHandleAndTheLogPath(t *testing.T) {
 }
 
 func TestStartRoundOnTheSameRoundKeepsTheCursor(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 	b.Builder.StreamRound, b.Builder.StreamOffset = b.Round, 512 // a switch mid-round: the file already has 512 bytes rendered
@@ -223,6 +237,8 @@ func TestStartRoundOnTheSameRoundKeepsTheCursor(t *testing.T) {
 }
 
 func TestStartRoundOnALaterRoundMovesTheCursor(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 	b.Round = 2
@@ -240,6 +256,8 @@ func TestStartRoundOnALaterRoundMovesTheCursor(t *testing.T) {
 }
 
 func TestReconcileHeadlessExitReadsTheTrailerFromTheStream(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
@@ -265,6 +283,8 @@ func containsArg(argv []string, flag, value string) bool {
 }
 
 func TestStartRoundFailureRecordsSpawnFailedAndLeavesPIDZero(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	fr.startErr = errors.New("agy: not found on PATH")
 	rt, b := seedHeadless(t, fr)
@@ -293,6 +313,8 @@ func TestStartRoundFailureRecordsSpawnFailedAndLeavesPIDZero(t *testing.T) {
 }
 
 func TestStartRoundWithoutARunnerIsErrRunnerUnavailable(t *testing.T) {
+	t.Parallel()
+
 	rt, b := seedHeadless(t, newFakeRunner())
 	rt.Runner = nil
 	if _, err := startRound(context.Background(), rt, nil, b, "p"); !errors.Is(err, ErrRunnerUnavailable) {
@@ -304,6 +326,8 @@ func TestStartRoundWithoutARunnerIsErrRunnerUnavailable(t *testing.T) {
 // per-round unit name and the template's slice/weight/limits (#244, #216).
 
 func TestStartRoundSetsScope(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 	rt.Scope = &ScopeSpec{Slice: "relevo.slice", CPUWeight: 150, CPUQuota: "150%", MemoryMax: "2G", TasksMax: 64}
@@ -330,6 +354,8 @@ func TestStartRoundSetsScope(t *testing.T) {
 }
 
 func TestScopeUnitNameSafe(t *testing.T) {
+	t.Parallel()
+
 	if got, want := scopeUnitName(store.Binding{Name: "webshop", Round: 3}), "relevo-round-local-webshop-3"; got != want {
 		t.Errorf("scopeUnitName(no owner) = %q, want %q", got, want)
 	}
@@ -342,6 +368,8 @@ func TestScopeUnitNameSafe(t *testing.T) {
 // absent, an owned binding whose owner8 comes from a real ClientID, and a name
 // that needs sanitising.
 func TestScopeUnitNameFor(t *testing.T) {
+	t.Parallel()
+
 	ownerID, ok := remote.IDFromDir("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
 	if !ok {
 		t.Fatal("seed client id did not parse")
@@ -376,6 +404,8 @@ func TestScopeUnitNameFor(t *testing.T) {
 // falls back to CPUQuota when not, the returned spec always zeroes
 // GateCPUQuota, and the template is never mutated.
 func TestScopeFor(t *testing.T) {
+	t.Parallel()
+
 	base := ScopeSpec{Slice: "relevo.slice", CPUWeight: 150, MemoryMax: "2G", CPUQuota: "150%", TasksMax: 64}
 
 	t.Run("nil template gives nil", func(t *testing.T) {
@@ -469,6 +499,8 @@ func TestScopeFor(t *testing.T) {
 // process that could never start.
 
 func TestSendHeadlessWithoutRunnerStagesNothing(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedHeadless(t, newFakeRunner())
 	rt.Runner = nil
 
@@ -506,6 +538,8 @@ func TestSendHeadlessWithoutRunnerStagesNothing(t *testing.T) {
 }
 
 func TestSendHeadlessRefusesWhileThePreviousProcessIsAlive(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "round one"), SendOptions{}); err != nil {
@@ -526,6 +560,8 @@ func TestSendHeadlessRefusesWhileThePreviousProcessIsAlive(t *testing.T) {
 }
 
 func TestSendHeadlessStartsAgainOnceThePreviousProcessExited(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "one"), SendOptions{}); err != nil {
@@ -545,6 +581,8 @@ func TestSendHeadlessStartsAgainOnceThePreviousProcessExited(t *testing.T) {
 }
 
 func TestSendHeadlessStartFailureGoesNeedsYou(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	fr.startErr = errors.New("agy: not found on PATH")
 	rt, _ := seedHeadless(t, fr)
@@ -585,6 +623,8 @@ func TestSendHeadlessStartFailureGoesNeedsYou(t *testing.T) {
 // successfully handed over.
 
 func TestSendClearsAStaleHalt(t *testing.T) {
+	t.Parallel()
+
 	rt, b := seedBound(t)
 	b.Halt = "round 1 has run past 1s"
 	b.HaltAt = rt.Now()
@@ -613,6 +653,8 @@ func TestSendClearsAStaleHalt(t *testing.T) {
 }
 
 func TestLogTailReturnsTheLastLines(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p := filepath.Join(dir, "003-builder.log")
 	if err := os.WriteFile(p, []byte("a\nb\nc\nd\n"), 0o644); err != nil {
@@ -636,6 +678,8 @@ func TestLogTailReturnsTheLastLines(t *testing.T) {
 }
 
 func TestClearProcessKeepsIdentity(t *testing.T) {
+	t.Parallel()
+
 	e := store.Endpoint{AgentName: "x-builder", Kind: "agy", Mode: store.ModeHeadless, PID: 7, StartedAt: 9, LogPath: "/l", StreamRound: 3, StreamOffset: 99}
 	got := clearProcess(e)
 	want := store.Endpoint{AgentName: "x-builder", Kind: "agy", Mode: store.ModeHeadless, StreamRound: 3, StreamOffset: 99}
@@ -694,6 +738,8 @@ const (
 )
 
 func TestDrainStreamRendersNewLinesInOrderAndAdvances(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr) // round 1 open, cursor at 1/0
 	seedLegacyLog(t, rt, "webshop", 1)
@@ -728,6 +774,8 @@ func TestDrainStreamRendersNewLinesInOrderAndAdvances(t *testing.T) {
 }
 
 func TestDrainStreamWaitsForAPartialLine(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	seedLegacyLog(t, rt, "webshop", 1)
@@ -752,6 +800,8 @@ func TestDrainStreamWaitsForAPartialLine(t *testing.T) {
 }
 
 func TestDrainStreamCursorSurvivesAReload(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	seedLegacyLog(t, rt, "webshop", 1)
@@ -780,6 +830,8 @@ func TestDrainStreamCursorSurvivesAReload(t *testing.T) {
 }
 
 func TestDrainStreamCursorPastEndRendersFromTheStart(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	seedLegacyLog(t, rt, "webshop", 1)
@@ -795,6 +847,8 @@ func TestDrainStreamCursorPastEndRendersFromTheStart(t *testing.T) {
 }
 
 func TestDrainStreamNoiseAdvancesWithoutWriting(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	noise := `{"event":"init","init":{}}` + "\n"
@@ -812,6 +866,8 @@ func TestDrainStreamNoiseAdvancesWithoutWriting(t *testing.T) {
 }
 
 func TestReconcileHeadlessExitEntryCarriesTheRenderedResult(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
@@ -844,6 +900,8 @@ func TestReconcileHeadlessExitEntryCarriesTheRenderedResult(t *testing.T) {
 }
 
 func TestDrainStreamKeepsGoingAfterAMarkerClose(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	seedLegacyLog(t, rt, "webshop", 1)
@@ -874,6 +932,8 @@ func TestDrainStreamKeepsGoingAfterAMarkerClose(t *testing.T) {
 }
 
 func TestDrainStreamIsANoopBeforeAnyRound(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr) // bound, never sent: StreamRound 0
 	got := drainStream(rt, b)
@@ -883,6 +943,8 @@ func TestDrainStreamIsANoopBeforeAnyRound(t *testing.T) {
 }
 
 func TestDrainStreamDoesNotAdvanceOnAWriteFailure(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	if err := os.MkdirAll(rt.Store.BuilderLogPath("webshop", 1), 0o755); err != nil {
@@ -902,6 +964,8 @@ func TestDrainStreamDoesNotAdvanceOnAWriteFailure(t *testing.T) {
 // started on fr.
 
 func TestReconcileHeadlessSkipsQueued(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
 	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
@@ -936,6 +1000,8 @@ func TestReconcileHeadlessSkipsQueued(t *testing.T) {
 // reconcileHeadless's close path and this fails on addDetachedWorktreeCalls.
 
 func TestVerifyRoundStartsOnHeadlessClose(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	fg := &fakeGit{headCommitID: "head1"}
@@ -1007,6 +1073,8 @@ func TestVerifyRoundStartsOnHeadlessClose(t *testing.T) {
 // Mutation check (run and report): always os.WriteFile with the Read: prompt
 // fails the argv assertion.
 func TestVerifyInlinesItsQuestion(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.Git = &fakeGit{headCommitID: "head1"}
@@ -1061,6 +1129,8 @@ func TestVerifyInlinesItsQuestion(t *testing.T) {
 }
 
 func TestVerifyRoundHandsTheReviewerAGitDiff(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	fg := &fakeGit{
@@ -1133,6 +1203,8 @@ func TestVerifyRoundHandsTheReviewerAGitDiff(t *testing.T) {
 // bookkeeping along with Halt/HaltAt.
 
 func TestSendResetsRoundBudget(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	fr.script(b.Builder.PID, false) // previous round's process no longer running
@@ -1192,6 +1264,8 @@ func exits(t *testing.T, rt Runtime) []store.LogEntry {
 }
 
 func TestReconcileHeadlessReportWinsEvenIfTheProcessExitedNonZero(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	fr.script(b.Builder.PID, false)
@@ -1215,6 +1289,8 @@ func TestReconcileHeadlessReportWinsEvenIfTheProcessExitedNonZero(t *testing.T) 
 // re-check in the exited branch must close the round through the marker path,
 // so the report's note is the marked one (""), not "unmarked".
 func TestHeadlessMarkerWrittenBetweenChecksClosesMarked(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
@@ -1250,6 +1326,8 @@ func TestHeadlessMarkerWrittenBetweenChecksClosesMarked(t *testing.T) {
 // old path intact: an exited process with a report and still no marker is
 // closed "unmarked", exactly as before.
 func TestHeadlessExitWithReportNoMarkerStillUnmarked(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	fr.script(b.Builder.PID, false)
@@ -1275,6 +1353,8 @@ func TestHeadlessExitWithReportNoMarkerStillUnmarked(t *testing.T) {
 }
 
 func TestReconcileHeadlessStallClearsWhenStreamMoves(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 
@@ -1374,6 +1454,8 @@ func TestStatusHeadlessStalledLabel(t *testing.T) {
 }
 
 func TestReconcileHeadlessExitWithoutReportLogsAndSwitches(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
@@ -1428,6 +1510,8 @@ func TestReconcileHeadlessExitWithoutReportLogsAndSwitches(t *testing.T) {
 }
 
 func TestReconcileHeadlessExitUnknownCode(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
@@ -1453,6 +1537,8 @@ func TestReconcileHeadlessExitUnknownCode(t *testing.T) {
 // `lost` computation (making it always false) and this test must fail.
 
 func TestReconcileHeadlessLostToDaemonRestartRelaunches(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0) // the daemon started after the builder
@@ -1556,6 +1642,8 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunches(t *testing.T) {
 // Mutation check: drop the Seen clause from lostToRestart and this fails: the
 // marked pid is relaunched, so there is no switch and no exit entry.
 func TestReconcileHeadlessSeenBuilderIsNotLost(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
@@ -1592,6 +1680,8 @@ func TestReconcileHeadlessSeenBuilderIsNotLost(t *testing.T) {
 // builder that merely predates the command is never judged lost and takes the
 // normal counted switch instead of being relaunched (#244 kept).
 func TestReconcileHeadlessCLINeverRelaunchesLostBuilder(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
@@ -1626,6 +1716,8 @@ func TestReconcileHeadlessCLINeverRelaunchesLostBuilder(t *testing.T) {
 // handling and this fails on fr.specs staying at 1.
 
 func TestLostBuilderRequeuesOnServer(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	b.Owner = "owner1"
@@ -1678,6 +1770,8 @@ func TestLostBuilderRequeuesOnServer(t *testing.T) {
 // rt.StartedAt), the control case for every other test in this file.
 
 func TestReconcileHeadlessUnknownExitBeforeDaemonStartStillSwitches(t *testing.T) {
+	t.Parallel()
+
 	t.Run("builder started after the daemon: a real death", func(t *testing.T) {
 		fr := newFakeRunner()
 		rt, b := sentHeadless(t, fr)
@@ -1729,6 +1823,8 @@ func TestReconcileHeadlessUnknownExitBeforeDaemonStartStillSwitches(t *testing.T
 // charged.
 
 func TestReconcileHeadlessLostToDaemonRestartRelaunchFails(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.StartedAt = time.Unix(b.Builder.StartedAt+60, 0)
@@ -1759,6 +1855,8 @@ func TestReconcileHeadlessLostToDaemonRestartRelaunchFails(t *testing.T) {
 // Mutation check: drop the `sess != ""` branch and this fails: the second
 // Start carries no --resume and the note says "relaunched".
 func TestReconcileHeadlessLostToDaemonRestartResumesSession(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedClaudeHeadless(t, fr)
 	const sess = "sess-lost-1"
@@ -1819,6 +1917,8 @@ func TestReconcileHeadlessLostToDaemonRestartResumesSession(t *testing.T) {
 // Mutation check: drop the ErrResumeUnsupported fallback and this fails: the
 // binding halts instead of starting a second process.
 func TestReconcileHeadlessLostToDaemonRestartCodexFallsBackFresh(t *testing.T) {
+	t.Parallel()
+
 	const codexCandidatesJSON = `[
 	  {"harness":"codex","provider":"openai","model":"gpt-5.6-terra","roles":["builder"]}
 	]`
@@ -1879,6 +1979,8 @@ func TestReconcileHeadlessLostToDaemonRestartCodexFallsBackFresh(t *testing.T) {
 // round never announced a session has nothing to resume, so it takes round
 // 1's fresh relaunch and the note names the relaunch.
 func TestReconcileHeadlessLostToDaemonRestartWithoutSessionRelaunchesFresh(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	if b.Builder.StreamSessionID != "" {
@@ -1926,6 +2028,8 @@ func anyArgContains(argv []string, s string) bool {
 // Mutation check: drop the spawnFailure fallback and this fails: the binding
 // halts after the first Start and no fresh argv is ever started.
 func TestReconcileHeadlessLostToDaemonRestartResumeSpawnFailsFallsBackFresh(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedClaudeHeadless(t, fr)
 	const sess = "sess-lost-1"
@@ -1977,6 +2081,8 @@ func TestReconcileHeadlessLostToDaemonRestartResumeSpawnFailsFallsBackFresh(t *t
 }
 
 func TestReconcileHeadlessExitOnLimitGatesAndSwitchesUncounted(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := gateOnLimitSetup(t, fr)
 	oldPID := b.Builder.PID
@@ -2019,6 +2125,8 @@ func TestReconcileHeadlessExitOnLimitGatesAndSwitchesUncounted(t *testing.T) {
 }
 
 func TestReconcileHeadlessExitWithReportOnLimitGatesAndClosesUnmarked(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := gateOnLimitSetup(t, fr)
 	oldPID := b.Builder.PID
@@ -2063,6 +2171,8 @@ func TestReconcileHeadlessExitWithReportOnLimitGatesAndClosesUnmarked(t *testing
 }
 
 func TestReconcileHeadlessStrayProcessIsKilled(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr) // no round open
 	b.Builder.PID = 999
@@ -2089,6 +2199,8 @@ func TestReconcileHeadlessStrayProcessIsKilled(t *testing.T) {
 }
 
 func TestReconcileHeadlessAliveErrorIsTreatedAsAlive(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	fr.aliveErr = errors.New("ps: permission denied")
@@ -2106,6 +2218,8 @@ func TestReconcileHeadlessAliveErrorIsTreatedAsAlive(t *testing.T) {
 }
 
 func TestReconcileHeadlessOpenRoundWithNoProcessIsLeftAlone(t *testing.T) {
+	t.Parallel()
+
 	// A send whose Start failed: round open, PID 0, NEEDS YOU already set.
 	fr := newFakeRunner()
 	fr.startErr = errors.New("agy: not found")
@@ -2132,6 +2246,8 @@ func TestReconcileHeadlessOpenRoundWithNoProcessIsLeftAlone(t *testing.T) {
 }
 
 func TestDoneHeadlessStopsTheLiveProcess(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	h := handleOf(b.Builder)
@@ -2152,6 +2268,8 @@ func TestDoneHeadlessStopsTheLiveProcess(t *testing.T) {
 // `relevo stop` uses (builder-log spec §4.4). A live process gets one KindStop
 // entry with Note "stopped/done"; an idle binding gets none.
 func TestDoneRecordsTheStop(t *testing.T) {
+	t.Parallel()
+
 	t.Run("live process", func(t *testing.T) {
 		fr := newFakeRunner()
 		rt, _ := sentHeadless(t, fr)
@@ -2183,6 +2301,8 @@ func TestDoneRecordsTheStop(t *testing.T) {
 }
 
 func TestDoneHeadlessIdleKillsNothing(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
 	if _, err := Done(context.Background(), rt, "webshop"); err != nil {
@@ -2194,6 +2314,8 @@ func TestDoneHeadlessIdleKillsNothing(t *testing.T) {
 }
 
 func TestDoneHeadlessKillFailureStillMarksDone(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := sentHeadless(t, fr)
 	fr.killErr = errors.New("SIGTERM: operation not permitted")
@@ -2212,6 +2334,8 @@ func TestDoneHeadlessKillFailureStillMarksDone(t *testing.T) {
 }
 
 func TestDoneHeadlessKillFailureKeepsWorktree(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	fg := &fakeGit{}
@@ -2240,6 +2364,8 @@ func TestDoneHeadlessKillFailureKeepsWorktree(t *testing.T) {
 }
 
 func TestDoneHeadlessStopReleasesWorktree(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	fg := &fakeGit{dirtyResult: false}
@@ -2261,6 +2387,8 @@ func TestDoneHeadlessStopReleasesWorktree(t *testing.T) {
 }
 
 func TestUnbindHeadlessStopsTheProcessAndSaysSo(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	pid := b.Builder.PID
@@ -2285,6 +2413,8 @@ func TestUnbindHeadlessStopsTheProcessAndSaysSo(t *testing.T) {
 }
 
 func TestUnbindHeadlessKillFailureIsReportedNotFatal(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	fr.killErr = errors.New("SIGTERM: operation not permitted")
@@ -2406,6 +2536,8 @@ func TestStatusHeadlessWithoutRunnerIsUnknown(t *testing.T) {
 // Mutation: stat the report instead of the marker -> round 2, PID cleared.
 
 func TestReconcileHeadlessAliveWithReportButNoMarkerWaits(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("draft"), 0o644); err != nil {
@@ -2431,6 +2563,8 @@ func TestReconcileHeadlessAliveWithReportButNoMarkerWaits(t *testing.T) {
 // hard fact, so the report is trusted with the omission noted (spec §4.4).
 
 func TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	fr.script(b.Builder.PID, false)
@@ -2466,6 +2600,8 @@ func TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked(t *testing.T
 // round the same way for a process as for a pane, and the handle goes with it.
 
 func TestReconcileHeadlessMarkerClosesAndClearsTheHandle(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
@@ -2500,6 +2636,8 @@ func TestReconcileHeadlessMarkerClosesAndClearsTheHandle(t *testing.T) {
 // hold.
 
 func TestHeadlessMarkerCloseEscapedNote(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	fg := &fakeGit{snapshotTreeID: "tree-1", dirtyResult: true}
 	rt, b := escapeFixture(t, fr, fg, "/original/repo")
@@ -2531,6 +2669,8 @@ func TestHeadlessMarkerCloseEscapedNote(t *testing.T) {
 // rather than dispatching a replacement into the same broken setup (#192).
 
 func TestHeadlessExitNoReportEscapedHalts(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	fg := &fakeGit{snapshotTreeID: "tree-1", dirtyResult: true}
 	rt, b := escapeFixture(t, fr, fg, "/original/repo")
@@ -2565,6 +2705,8 @@ func TestHeadlessExitNoReportEscapedHalts(t *testing.T) {
 // behaviour exactly as it was.
 
 func TestHeadlessExitNoReportNoRepoSwitches(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
@@ -2602,6 +2744,8 @@ const twoBuilderJSON = `[
 // normally, and finishRound clears the exclusion with the switch count.
 
 func TestReconcileHeadlessExitPermissionBlockedHalts(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt := newRuntime(t)
 	rt.Runner = fr
@@ -2671,6 +2815,8 @@ func TestReconcileHeadlessExitPermissionBlockedHalts(t *testing.T) {
 // handling (no KindExit, no switch) -- exactly as the pane call site does.
 
 func TestGateHeadlessCallSiteHolds(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 	b.Gate = "make check"
@@ -2716,6 +2862,8 @@ func TestGateHeadlessCallSiteHolds(t *testing.T) {
 // with the repair plan as its prompt -- the same hand-off Send performs.
 
 func TestRegateHeadlessStartsRepairProcess(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 	b.Gate = "make check"
@@ -2824,6 +2972,8 @@ func escapeFixture(t *testing.T, fr *fakeRunner, fg *fakeGit, repo string) (Runt
 }
 
 func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedHeadless(t, fr)
 
@@ -2870,6 +3020,8 @@ func TestSendHeadlessStartsTheProcessInsteadOfPrompting(t *testing.T) {
 }
 
 func TestSwitchBuilderHeadlessStartsAProcessNotAPane(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	// Order claude first so the switch lands on a different candidate.
@@ -2908,6 +3060,8 @@ func TestSwitchBuilderHeadlessStartsAProcessNotAPane(t *testing.T) {
 }
 
 func TestSwitchBuilderHeadlessCloseOldKillsTheProcess(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
@@ -2922,6 +3076,8 @@ func TestSwitchBuilderHeadlessCloseOldKillsTheProcess(t *testing.T) {
 }
 
 func TestSwitchBuilderHeadlessStartFailureHalts(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
@@ -2943,6 +3099,8 @@ func TestSwitchBuilderHeadlessStartFailureHalts(t *testing.T) {
 }
 
 func TestReconcileHeadlessIdleIsNotBroken(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr) // bound, nothing sent: no round open
 
@@ -2967,6 +3125,8 @@ func TestReconcileHeadlessIdleIsNotBroken(t *testing.T) {
 }
 
 func TestReconcileHeadlessAliveWaits(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 
@@ -2991,6 +3151,8 @@ func TestReconcileHeadlessAliveWaits(t *testing.T) {
 // stamp is gone (#303, closed-list item 4); the stamp itself and the
 // builder_stalled hook event are what survive.
 func TestReconcileHeadlessStampsStallWhenStreamQuiet(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name     string
 		quietFor time.Duration
@@ -3047,6 +3209,8 @@ func TestReconcileHeadlessStampsStallWhenStreamQuiet(t *testing.T) {
 }
 
 func TestReconcileHeadlessBudgetHaltsButNeverKills(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	b.RoundTimeoutMS = 1000
@@ -3075,6 +3239,8 @@ func TestReconcileHeadlessBudgetHaltsButNeverKills(t *testing.T) {
 }
 
 func TestReconcileHeadlessExitHaltsAfterMaxSwitches(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	fr.script(b.Builder.PID, false)
@@ -3117,6 +3283,8 @@ func TestReconcileHeadlessExitHaltsAfterMaxSwitches(t *testing.T) {
 }
 
 func TestReconcileHeadlessGatedKillsAndSwitches(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := gateOnLimitSetup(t, fr)
 	old := handleOf(b.Builder)
@@ -3140,6 +3308,8 @@ func TestReconcileHeadlessGatedKillsAndSwitches(t *testing.T) {
 }
 
 func TestReconcileHeadlessBudgetOnLimitKillsAndSwitches(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := gateOnLimitSetup(t, fr)
 	b.RoundTimeoutMS = 1000
@@ -3179,6 +3349,8 @@ func TestReconcileHeadlessBudgetOnLimitKillsAndSwitches(t *testing.T) {
 }
 
 func TestReconcileHeadlessBudgetWithoutLimitStillHalts(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := gateOnLimitSetup(t, fr)
 	b.RoundTimeoutMS = 1000
@@ -3209,6 +3381,8 @@ func TestReconcileHeadlessBudgetWithoutLimitStillHalts(t *testing.T) {
 }
 
 func TestReconcileHeadlessRoundExclusionThenAllGatedHalts(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt := newRuntime(t)
 	rt.Runner = fr
@@ -3284,6 +3458,8 @@ func TestReconcileHeadlessRoundExclusionThenAllGatedHalts(t *testing.T) {
 // names a session records it on the endpoint, and a later line naming another
 // (a sub-agent's) leaves it alone.
 func TestDrainStreamRecordsSessionIDOnce(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedClaudeHeadless(t, fr) // round 1 open on a claude process
 	lines := claudeStreamLines(t)
@@ -3312,6 +3488,8 @@ func TestDrainStreamRecordsSessionIDOnce(t *testing.T) {
 // closed headless round names the stream's session, and the id is cleared
 // from the endpoint once the round has closed.
 func TestReportEntryCarriesHeadlessSession(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedClaudeHeadless(t, fr) // round 1 open on a claude process
 	lines := claudeStreamLines(t)
@@ -3343,6 +3521,8 @@ func TestReportEntryCarriesHeadlessSession(t *testing.T) {
 }
 
 func TestStartProcessSetsStreamStart(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt := newRuntime(t)
 	rt.Runner = fr
@@ -3400,6 +3580,8 @@ func TestStartProcessSetsStreamStart(t *testing.T) {
 // line's offset names the harness that wrote it, and anything before the first
 // Start falls back to the endpoint's own Kind.
 func TestSegmentKind(t *testing.T) {
+	t.Parallel()
+
 	segs := []store.StreamSegment{{Start: 100, Kind: "agy"}, {Start: 300, Kind: "claude"}}
 	cases := []struct {
 		name string
@@ -3427,6 +3609,8 @@ func TestSegmentKind(t *testing.T) {
 // TestCarryStream is §7.2 N4: the four cursor fields move onto the replacement
 // endpoint, and the replacement's own identity fields are untouched.
 func TestCarryStream(t *testing.T) {
+	t.Parallel()
+
 	from := store.Endpoint{
 		AgentName:      "old-builder",
 		Kind:           "agy",
@@ -3469,6 +3653,8 @@ func TestCarryStream(t *testing.T) {
 // offset replaces its predecessor's segment rather than appending a second
 // one there, and a later round starts a fresh list.
 func TestStartProcessAppendsSegments(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt := newRuntime(t)
 	rt.Runner = fr
@@ -3541,6 +3727,8 @@ func TestStartProcessAppendsSegments(t *testing.T) {
 // that wrote it, even though the endpoint's own Kind is the later one. Before
 // this, the whole file was re-rendered with the new kind.
 func TestDrainRendersEachSegmentWithItsKind(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	seedLegacyLog(t, rt, "webshop", 1)
@@ -3581,6 +3769,8 @@ func TestDrainRendersEachSegmentWithItsKind(t *testing.T) {
 // StreamSessionID once the cursor is carried over. Only bytes at or past
 // StreamStart -- the current process's own -- may name the session.
 func TestDrainSessionIDComesOnlyFromTheCurrentProcess(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	seedLegacyLog(t, rt, "webshop", 1)
@@ -3632,6 +3822,8 @@ func TestStatusExitCodeReadsTheStream(t *testing.T) {
 // stream, so the harness's stderr joins its stdout, and the endpoint points
 // there too (builder-log spec §4.4).
 func TestStartProcessSendsStderrToTheStream(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 
@@ -3659,6 +3851,8 @@ func TestStartProcessSendsStderrToTheStream(t *testing.T) {
 // history, or a round in flight across the upgrade -- keeps writing stderr to
 // that log (builder-log spec §4.5).
 func TestStartProcessKeepsALegacyRoundsLog(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedHeadless(t, fr)
 	legacy := rt.Store.BuilderLogPath("webshop", 1)
@@ -3679,6 +3873,8 @@ func TestStartProcessKeepsALegacyRoundsLog(t *testing.T) {
 // N3: for a new round the drain writes no log. It still advances the cursor
 // past every complete line and captures the session id (builder-log spec §4.4).
 func TestDrainWritesNoLogForANewRound(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	announce := `{"event":"init","conversation_id":"new-sess","init":{}}` + "\n"
@@ -3699,6 +3895,8 @@ func TestDrainWritesNoLogForANewRound(t *testing.T) {
 // N4: a legacy round keeps its log: the drain appends the rendered lines to it,
 // exactly as before (builder-log spec §4.4).
 func TestDrainKeepsAppendingALegacyLog(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	seedLegacyLog(t, rt, "webshop", 1)
@@ -3717,6 +3915,8 @@ func TestDrainKeepsAppendingALegacyLog(t *testing.T) {
 // (builder-log spec §4.4, item 2): builderTail reads the raw stderr line out of
 // the rendered stream, and the limit scan still matches it.
 func TestStderrLimitTextStillDetected(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
 	const stderrLine = "error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h0m0s."

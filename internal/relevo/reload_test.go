@@ -62,6 +62,8 @@ func loaded(t *testing.T, pol policy.Policy, rf *roles.File, warnings []string) 
 }
 
 func TestRefreshLoadsOnFirstCall(t *testing.T) {
+	t.Parallel()
+
 	pol := policy.Policy{Order: map[string][]string{"builder": {"agy"}}}
 	src := &fakeSource{version: 1, loaded: loaded(t, pol, nil, nil)}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
@@ -99,6 +101,8 @@ func TestRefreshLoadsOnFirstCall(t *testing.T) {
 }
 
 func TestRefreshSkipsWhenVersionUnchanged(t *testing.T) {
+	t.Parallel()
+
 	src := &fakeSource{version: 1, loaded: loaded(t, policy.Policy{}, nil, nil)}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
 
@@ -128,6 +132,8 @@ func TestRefreshSkipsWhenVersionUnchanged(t *testing.T) {
 }
 
 func TestRefreshReloadsOnVersionChange(t *testing.T) {
+	t.Parallel()
+
 	good := loaded(t, policy.Policy{Order: map[string][]string{"builder": {"good"}}}, nil, nil)
 	src := &fakeSource{version: 1, loaded: good}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
@@ -160,6 +166,8 @@ func TestRefreshReloadsOnVersionChange(t *testing.T) {
 }
 
 func TestRefreshKeepsLastGoodOnBadLoad(t *testing.T) {
+	t.Parallel()
+
 	good := loaded(t, policy.Policy{Order: map[string][]string{"builder": {"good"}}}, nil, nil)
 	src := &fakeSource{version: 1, loaded: good}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
@@ -214,6 +222,8 @@ func TestRefreshKeepsLastGoodOnBadLoad(t *testing.T) {
 }
 
 func TestRefreshKeepsLastGoodOnImportError(t *testing.T) {
+	t.Parallel()
+
 	good := loaded(t, policy.Policy{Order: map[string][]string{"builder": {"good"}}}, nil, nil)
 	src := &fakeSource{version: 1, loaded: good}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
@@ -246,6 +256,8 @@ func TestRefreshKeepsLastGoodOnImportError(t *testing.T) {
 }
 
 func TestRefreshWarnsOncePerDistinctError(t *testing.T) {
+	t.Parallel()
+
 	src := &fakeSource{version: 1}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
 	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
@@ -294,6 +306,8 @@ func TestRefreshWarnsOncePerDistinctError(t *testing.T) {
 // TestRefreshEmptyConfigIsNotAnError pins the "absent section = missing file"
 // invariant: a Loaded with every section empty replaces the runtime quietly.
 func TestRefreshEmptyConfigIsNotAnError(t *testing.T) {
+	t.Parallel()
+
 	src := &fakeSource{version: 1, loaded: loaded(t, policy.Policy{}, nil, nil)}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
 	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {
@@ -315,6 +329,8 @@ func TestRefreshEmptyConfigIsNotAnError(t *testing.T) {
 }
 
 func TestRefreshStartupFailureSaysStartup(t *testing.T) {
+	t.Parallel()
+
 	src := &fakeSource{version: 1, loadErr: errors.New("parse error")}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
 
@@ -335,6 +351,8 @@ func TestRefreshStartupFailureSaysStartup(t *testing.T) {
 // the config warnings on the Runtime, logs each distinct text once, and does
 // not repeat an unchanged warning on a later reload.
 func TestRefreshCarriesAndLogsConfigWarnings(t *testing.T) {
+	t.Parallel()
+
 	src := &fakeSource{
 		version: 1,
 		loaded: loaded(t, policy.Policy{}, nil,
@@ -371,6 +389,8 @@ func TestRefreshCarriesAndLogsConfigWarnings(t *testing.T) {
 // TestRefreshReloadsRegistry pins §5.1: a new version's roles section replaces
 // the runtime's registry.
 func TestRefreshReloadsRegistry(t *testing.T) {
+	t.Parallel()
+
 	first := &roles.File{Rows: map[string]roles.Row{
 		"builder": {Candidates: []string{"claude/test/m"}},
 	}}
@@ -407,6 +427,8 @@ func TestRefreshReloadsRegistry(t *testing.T) {
 // TestRefreshLoadsLegacyRegistryWhenNoRolesSection pins §5.1: a Loaded with no
 // roles file still has a registry, and it is the legacy derivation.
 func TestRefreshLoadsLegacyRegistryWhenNoRolesSection(t *testing.T) {
+	t.Parallel()
+
 	src := &fakeSource{version: 1, loaded: loaded(t, policy.Policy{}, nil, nil)}
 	w := NewConfigWatcher(src, "/cfg/relevo", nil)
 	w.resolve = func(cfg *policy.Classify, key string, getenv func(string) string) classify.Classifier {

@@ -14,6 +14,8 @@ import (
 )
 
 func TestSettings(t *testing.T) {
+	t.Parallel()
+
 	t.Run("real policy", func(t *testing.T) {
 		raw := `{"max_switches":2,"max_tier":"yolo","serve":{"scope":{"slice":"relevo.slice"}}}`
 		p, _, err := policy.Parse(config.FileName(config.Policy), []byte(raw))
@@ -79,6 +81,8 @@ func policyTestDoc(t *testing.T) ConfigDoc {
 }
 
 func TestEditPolicy(t *testing.T) {
+	t.Parallel()
+
 	doc := policyTestDoc(t)
 
 	t.Run("sets gate.timeout_ms and creates gate", func(t *testing.T) {
@@ -160,6 +164,8 @@ func TestEditPolicy(t *testing.T) {
 }
 
 func TestResetSetting(t *testing.T) {
+	t.Parallel()
+
 	doc := policyTestDoc(t)
 	raw := `{"max_switches":2,"max_tier":"yolo"}`
 	p, _, err := policy.Parse(config.FileName(config.Policy), []byte(raw))
@@ -199,6 +205,8 @@ func TestResetSetting(t *testing.T) {
 // leading "<name>.json: " and trailing ": bad <word>" stripped; anything that
 // matches neither passes through unchanged.
 func TestHumanPolicyError(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct{ in, want string }{
 		{
 			in:   `roles.json: builder.tier: yolo exceeds max_tier edit: bad roles`,
@@ -223,6 +231,8 @@ func TestHumanPolicyError(t *testing.T) {
 }
 
 func TestFormatDuration(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		d    time.Duration
 		want string
@@ -242,6 +252,8 @@ func TestFormatDuration(t *testing.T) {
 }
 
 func TestLoadConfigDocPolicyRaw(t *testing.T) {
+	t.Parallel()
+
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)

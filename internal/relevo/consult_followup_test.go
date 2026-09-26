@@ -55,6 +55,8 @@ func reconcileOnce(t *testing.T, rt Runtime, state store.State) store.Binding {
 // ConsultRunning and its findings undelivered. Consults reconcile first, so a
 // DONE binding still delivers them.
 func TestConsultOnADoneBindingIsStillFinished(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, c := seedHeadlessConsult(t, fr)
 
@@ -89,6 +91,8 @@ func TestConsultOnADoneBindingIsStillFinished(t *testing.T) {
 // failed, the save error was returned and the spawn failure, the half that
 // explains what actually went wrong, was thrown away.
 func TestStrandKeepsTheCauseWhenRecordingAlsoFails(t *testing.T) {
+	t.Parallel()
+
 	cause := errors.New(`start consult "webshop-reviewer-7f2a": spawn refused`)
 	saveErr := errors.New("state dir is read-only")
 
@@ -110,6 +114,8 @@ func TestStrandKeepsTheCauseWhenRecordingAlsoFails(t *testing.T) {
 // unwrapped: callers match on the spawn failure and the successful record adds
 // nothing worth saying.
 func TestStrandReturnsTheBareCauseWhenRecordingSucceeds(t *testing.T) {
+	t.Parallel()
+
 	cause := errors.New("spawn refused")
 
 	if got := strandError(cause, nil); got != cause {

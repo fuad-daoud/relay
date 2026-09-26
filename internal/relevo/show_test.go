@@ -186,6 +186,8 @@ func newShowLiveStore(t *testing.T) *store.Store {
 }
 
 func TestShowLiveDefaultsToNewestCompletedPlan(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Store: newShowLiveStore(t)}
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Section: ShowPlan})
 	if err != nil {
@@ -209,6 +211,8 @@ func TestShowLiveDefaultsToNewestCompletedPlan(t *testing.T) {
 }
 
 func TestShowLiveRoundReport(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Store: newShowLiveStore(t)}
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 1, Section: ShowReport})
 	if err != nil {
@@ -223,6 +227,8 @@ func TestShowLiveRoundReport(t *testing.T) {
 }
 
 func TestShowLiveMissingDiffIsMissingNotError(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Store: newShowLiveStore(t)}
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 2, Section: ShowDiff})
 	if err != nil {
@@ -237,6 +243,8 @@ func TestShowLiveMissingDiffIsMissingNotError(t *testing.T) {
 }
 
 func TestShowLiveLogFiltersRound(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Store: newShowLiveStore(t)}
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 1, Section: ShowLog})
 	if err != nil {
@@ -253,6 +261,8 @@ func TestShowLiveLogFiltersRound(t *testing.T) {
 }
 
 func TestShowLiveTranscriptReadsBuilderLog(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Store: newShowLiveStore(t)}
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 2, Section: ShowTranscript})
 	if err != nil {
@@ -271,6 +281,8 @@ func TestShowLiveTranscriptReadsBuilderLog(t *testing.T) {
 // closed (Round: 4, no round-4 plan sent yet) must still report Rounds ==
 // 3, not 4.
 func TestShowLiveRoundsIsHighestPlanned(t *testing.T) {
+	t.Parallel()
+
 	s := store.New(t.TempDir())
 	b := store.Binding{
 		Name:  "idle",
@@ -313,6 +325,8 @@ func TestShowLiveRoundsIsHighestPlanned(t *testing.T) {
 }
 
 func TestShowLiveNoCompletedRound(t *testing.T) {
+	t.Parallel()
+
 	s := store.New(t.TempDir())
 	b := store.Binding{
 		Name:  "openonly",
@@ -339,6 +353,8 @@ func TestShowLiveNoCompletedRound(t *testing.T) {
 }
 
 func TestShowDBFallsBackWhenNotLive(t *testing.T) {
+	t.Parallel()
+
 	d := seedShowDB(t)
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
 
@@ -362,6 +378,8 @@ func TestShowDBFallsBackWhenNotLive(t *testing.T) {
 }
 
 func TestShowDBTranscriptFromRows(t *testing.T) {
+	t.Parallel()
+
 	d := seedShowDB(t)
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
 
@@ -382,6 +400,8 @@ func TestShowDBTranscriptFromRows(t *testing.T) {
 // active state it derives to OutcomeOpen (internal/ingest/outcome.go), so
 // the newest *completed* round must be round 1.
 func TestShowDBSkipsOpenRoundForNewestCompleted(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	bind := `{
   "name": "openhead",
@@ -434,6 +454,8 @@ func TestShowDBSkipsOpenRoundForNewestCompleted(t *testing.T) {
 }
 
 func TestShowDBLogFromEvents(t *testing.T) {
+	t.Parallel()
+
 	d := seedShowDB(t)
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
 
@@ -455,6 +477,8 @@ func TestShowDBLogFromEvents(t *testing.T) {
 }
 
 func TestShowDBArchivedHeaderFacts(t *testing.T) {
+	t.Parallel()
+
 	d := seedShowArchiveDB(t)
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
 
@@ -471,6 +495,8 @@ func TestShowDBArchivedHeaderFacts(t *testing.T) {
 }
 
 func TestShowRoundOutOfRange(t *testing.T) {
+	t.Parallel()
+
 	d := seedShowDB(t)
 	rt := Runtime{Store: store.New(t.TempDir()), DB: d}
 
@@ -485,6 +511,8 @@ func TestShowRoundOutOfRange(t *testing.T) {
 }
 
 func TestShowUnknownBinding(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Store: store.New(t.TempDir())}
 
 	_, err := Show(context.Background(), rt, ShowOptions{Name: "nope", Section: ShowPlan})
@@ -501,6 +529,8 @@ func TestShowUnknownBinding(t *testing.T) {
 // no mirror at all. Mutation: drop Show's archived step and Show returns
 // not-found (DB is nil).
 func TestShowArchivedReadsSealedRoundFiles(t *testing.T) {
+	t.Parallel()
+
 	s := archiveShowFixture(t, map[string]string{"001-gate.log": "gate output\n"})
 	rt := Runtime{Store: s}
 
@@ -575,6 +605,8 @@ func TestShowArchivedReadsSealedRoundFiles(t *testing.T) {
 // step over the database: the record's sealed gate log answers where showDB
 // on its own reports Missing (it has no gate row).
 func TestShowArchivedWinsOverTheMirror(t *testing.T) {
+	t.Parallel()
+
 	s := archiveShowFixture(t, map[string]string{"001-gate.log": "gate output\n"})
 	archived, err := s.ListArchived()
 	if err != nil || len(archived) != 1 {
@@ -608,6 +640,8 @@ func TestShowArchivedWinsOverTheMirror(t *testing.T) {
 // is the highest KindReport entry round -- round 2 in the fixture -- not the
 // highest planned round (3).
 func TestShowArchivedDefaultsToNewestCompletedRound(t *testing.T) {
+	t.Parallel()
+
 	s := archiveShowFixture(t, nil)
 	rt := Runtime{Store: s}
 
@@ -787,6 +821,8 @@ func seedRoundMirror(t *testing.T, d *db.DB, dir string) {
 // N8: a live round with a stream and no NNN-builder.log renders the stream,
 // and the archived variant renders the sealed stream the same way.
 func TestShowTranscriptRendersTheStreamWithoutALog(t *testing.T) {
+	t.Parallel()
+
 	stream := "live stream line one\nlive stream line two\n"
 
 	t.Run("live", func(t *testing.T) {

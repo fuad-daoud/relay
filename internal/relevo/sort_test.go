@@ -27,6 +27,8 @@ func equalNames(a, b []string) bool {
 
 // TestAttentionRankPaused: PAUSED sorts after ACTIVE and before DONE.
 func TestAttentionRankPaused(t *testing.T) {
+	t.Parallel()
+
 	if attentionRank["PAUSED"] <= attentionRank["ACTIVE"] {
 		t.Errorf("PAUSED rank %d must follow ACTIVE rank %d", attentionRank["PAUSED"], attentionRank["ACTIVE"])
 	}
@@ -49,6 +51,8 @@ func TestAttentionRankPaused(t *testing.T) {
 // TestSortRowsAttentionOrder: every display state, in every input order,
 // lands NEEDS YOU, HELD, ACTIVE, PAUSED, DONE.
 func TestSortRowsAttentionOrder(t *testing.T) {
+	t.Parallel()
+
 	rows := []BindingStatus{
 		{Name: "d", Display: "DONE"},
 		{Name: "a", Display: "ACTIVE"},
@@ -70,6 +74,8 @@ func TestSortRowsAttentionOrder(t *testing.T) {
 // TestSortRowsWithinGroup: newest Last.TS first, nil Last last, name as
 // the tiebreak.
 func TestSortRowsWithinGroup(t *testing.T) {
+	t.Parallel()
+
 	t0 := time.Date(2026, 9, 17, 14, 0, 0, 0, time.UTC)
 	rows := []BindingStatus{
 		{Name: "old", Display: "ACTIVE", Last: &LastEvent{TS: t0.Add(-time.Hour)}},
@@ -88,6 +94,8 @@ func TestSortRowsWithinGroup(t *testing.T) {
 // TestSortRowsOwnerFirst: OwnerLabel is the primary key, before every
 // today's comparison -- a client's cards stay contiguous under a header.
 func TestSortRowsOwnerFirst(t *testing.T) {
+	t.Parallel()
+
 	rows := []BindingStatus{
 		{Name: "zz", Owner: "b", OwnerLabel: "b", Display: "NEEDS YOU"},
 		{Name: "aa", Owner: "a", OwnerLabel: "a", Display: "ACTIVE"},
@@ -110,6 +118,8 @@ func TestSortRowsOwnerFirst(t *testing.T) {
 // expected orders below are read from the existing tests' expectations, not
 // from the new implementation.
 func TestSortRowsOwnerEmptyLabelsPinsLegacyOrder(t *testing.T) {
+	t.Parallel()
+
 	t0 := time.Date(2026, 9, 17, 14, 0, 0, 0, time.UTC)
 
 	// TestSortRowsAttentionOrder's input and expectation.
@@ -152,6 +162,8 @@ func TestSortRowsOwnerEmptyLabelsPinsLegacyOrder(t *testing.T) {
 // TestSortRowsNameOrder: attention=false is plain name order regardless
 // of state, and the input slice is untouched either way.
 func TestSortRowsNameOrder(t *testing.T) {
+	t.Parallel()
+
 	rows := []BindingStatus{
 		{Name: "b", Display: "DONE"},
 		{Name: "a", Display: "NEEDS YOU"},
@@ -172,6 +184,8 @@ func TestSortRowsNameOrder(t *testing.T) {
 // stale row sorts before a fresh one, even when the fresh row has a newer
 // Last.TS. attention=false still ignores the flag and orders by name.
 func TestSortStaleFirst(t *testing.T) {
+	t.Parallel()
+
 	t0 := time.Date(2026, 9, 17, 14, 0, 0, 0, time.UTC)
 	rows := []BindingStatus{
 		{Name: "fresh", Display: "NEEDS YOU", Last: &LastEvent{TS: t0}},

@@ -13,6 +13,8 @@ import (
 )
 
 func TestCaptureRoundDiff_NilGit(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	rt := Runtime{Store: s, Gates: testGateKV(t)}
@@ -34,6 +36,8 @@ func TestCaptureRoundDiff_NilGit(t *testing.T) {
 }
 
 func TestCaptureRoundDiff_ErrNotRepo(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	fg := &fakeGit{snapshotTreeErr: git.ErrNotRepo}
@@ -56,6 +60,8 @@ func TestCaptureRoundDiff_ErrNotRepo(t *testing.T) {
 }
 
 func TestCaptureRoundDiff_GitFailure(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	fg := &fakeGit{snapshotTreeErr: errors.New("boom: git broken")}
@@ -82,6 +88,8 @@ func TestCaptureRoundDiff_GitFailure(t *testing.T) {
 }
 
 func TestCaptureRoundDiff_EmptyDiff(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	fg := &fakeGit{
@@ -117,6 +125,8 @@ func TestCaptureRoundDiff_EmptyDiff(t *testing.T) {
 }
 
 func TestCaptureRoundDiff_TruncatedDiff(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	fg := &fakeGit{
@@ -158,6 +168,8 @@ func TestCaptureRoundDiff_TruncatedDiff(t *testing.T) {
 }
 
 func TestCaptureRoundDiff_NormalDiff(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	fg := &fakeGit{
@@ -230,6 +242,8 @@ func TestCaptureRoundDiff_NormalDiff(t *testing.T) {
 }
 
 func TestCaptureBaseline(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	b := store.Binding{Name: "webshop", CWD: "/repo"}
@@ -260,6 +274,8 @@ func TestCaptureBaseline(t *testing.T) {
 }
 
 func TestCaptureRoundDiff_EmptyBaselineSkipsSnapshot(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	fg := &fakeGit{snapshotTreeID: "tree-end"}
@@ -285,6 +301,8 @@ func TestCaptureRoundDiff_EmptyBaselineSkipsSnapshot(t *testing.T) {
 }
 
 func TestCaptureRoundDiff_EndTree(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	cases := []struct {
@@ -428,6 +446,8 @@ func TestCaptureRoundDiff_EndTree(t *testing.T) {
 }
 
 func TestCommitFacts(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	s := store.New(t.TempDir())
 	newRT := func(g Git) Runtime {
@@ -508,6 +528,8 @@ func TestCommitFacts(t *testing.T) {
 }
 
 func TestDiffTextWithCommitFacts(t *testing.T) {
+	t.Parallel()
+
 	normal := DiffResult{Available: true, Path: "/p/007-diff.patch", Stat: git.Stat{FilesChanged: 6, Insertions: 120, Deletions: 30}}
 	empty := DiffResult{Available: true}
 	truncated := DiffResult{Available: true, Truncated: true, Stat: git.Stat{FilesChanged: 312, Insertions: 48120, Deletions: 9033}}
@@ -581,6 +603,8 @@ func TestDiffTextWithCommitFacts(t *testing.T) {
 // sees, so those cases are deliberately not compared here (see the
 // function's doc comment).
 func TestDiffLineFromNoteMatchesDiffLine(t *testing.T) {
+	t.Parallel()
+
 	unavailable := DiffResult{Available: false, Reason: "no baseline"}
 	empty := DiffResult{Available: true}
 	silent := DiffResult{Available: false}
@@ -620,6 +644,8 @@ func TestDiffLineFromNoteMatchesDiffLine(t *testing.T) {
 // TestPathsLine pins the payload line for a changed_paths mismatch (#216):
 // its exact wording, and both plural forms formatFiles renders.
 func TestPathsLine(t *testing.T) {
+	t.Parallel()
+
 	if got, want := PathsLine(0, 24), "Paths: the report's changed_paths lists 0, the diff has 24 files -- check the diff, not the list"; got != want {
 		t.Errorf("PathsLine(0, 24) = %q, want %q", got, want)
 	}
@@ -635,6 +661,8 @@ func TestPathsLine(t *testing.T) {
 // note (#216), including the position joinNotes leaves it in and the
 // no-clause cases that must stay silent.
 func TestPathsLineFromNote(t *testing.T) {
+	t.Parallel()
+
 	joined := "24 files, +1 -2; 1 commit on relevo/x, tree clean paths: report 0, diff 24"
 	if got, want := PathsLineFromNote(joined), PathsLine(0, 24); got != want {
 		t.Errorf("PathsLineFromNote(%q) = %q, want %q", joined, got, want)

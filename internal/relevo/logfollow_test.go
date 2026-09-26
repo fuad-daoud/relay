@@ -28,6 +28,8 @@ func followedBinding(t *testing.T, rt Runtime) string {
 }
 
 func TestFollowLogEmitsNewEntriesThenStopsOnDone(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	name := followedBinding(t, rt)
 
@@ -98,6 +100,8 @@ func TestFollowLogEmitsNewEntriesThenStopsOnDone(t *testing.T) {
 }
 
 func TestFollowLogStopsWhenBindingRemoved(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	name := followedBinding(t, rt)
 
@@ -127,6 +131,8 @@ func TestFollowLogStopsWhenBindingRemoved(t *testing.T) {
 }
 
 func TestFollowLogHonoursCancel(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	name := followedBinding(t, rt)
 

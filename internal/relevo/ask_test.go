@@ -79,6 +79,8 @@ func seedRoundReport(t *testing.T, rt Runtime, round int, session *store.Builder
 // the reservation is written or the question staged -- nothing on disk, no
 // pane split, no consult recorded.
 func TestAskRefusesAnOverlongConsultName(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedForAsk(t)
 
 	// seedBound fixes the binding name at "webshop", so seed a second binding
@@ -123,6 +125,8 @@ func TestAskRefusesAnOverlongConsultName(t *testing.T) {
 }
 
 func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -205,6 +209,8 @@ func TestAskSpawnsRecordsAndStagesTheQuestion(t *testing.T) {
 }
 
 func TestAskDoesNotAdvanceTheRound(t *testing.T) {
+	t.Parallel()
+
 	rt, before := seedForAsk(t)
 	q := writeQuestion(t, "look at this")
 
@@ -227,6 +233,8 @@ func TestAskDoesNotAdvanceTheRound(t *testing.T) {
 }
 
 func TestAskRefusesAnUnknownRole(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedForAsk(t)
 	q := writeQuestion(t, "x")
 
@@ -250,6 +258,8 @@ func TestAskRefusesAnUnknownRole(t *testing.T) {
 }
 
 func TestAskRefusesTheBuilderRole(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedForAsk(t)
 	q := writeQuestion(t, "x")
 
@@ -270,6 +280,8 @@ func TestAskRefusesTheBuilderRole(t *testing.T) {
 }
 
 func TestAskRefusesACandidateThatDoesNotServeTheRole(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedForAsk(t)
 	q := writeQuestion(t, "x")
 
@@ -287,6 +299,8 @@ func TestAskRefusesACandidateThatDoesNotServeTheRole(t *testing.T) {
 }
 
 func TestAskRefusesAnAmbiguousCandidate(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedForAsk(t)
 	rt.Candidates = candidateSet(t, `[{"harness":"claude","provider":"a","model":"m","roles":["reviewer"]},{"harness":"claude","provider":"b","model":"m","roles":["reviewer"]}]`)
 	q := writeQuestion(t, "x")
@@ -301,6 +315,8 @@ func TestAskRefusesAnAmbiguousCandidate(t *testing.T) {
 }
 
 func TestAskLaunchesTheCandidateWithTheRoleDefinition(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -333,6 +349,8 @@ func TestAskLaunchesTheCandidateWithTheRoleDefinition(t *testing.T) {
 // An agy consult is launched with --agent (#85); its prompt is the consult
 // prompt and carries no interactive preamble.
 func TestAskSendsTheConsultPromptAlone(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -370,6 +388,8 @@ func TestAskSendsTheConsultPromptAlone(t *testing.T) {
 // elements, in that order.
 
 func TestAskRefusesAtTheConsultCap(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedForAsk(t)
 	q := writeQuestion(t, "x")
 
@@ -392,6 +412,8 @@ func TestAskRefusesAtTheConsultCap(t *testing.T) {
 }
 
 func TestAskCountsAReservationAgainstTheCap(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedForAsk(t)
 	q := writeQuestion(t, "x")
 
@@ -414,6 +436,8 @@ func TestAskCountsAReservationAgainstTheCap(t *testing.T) {
 }
 
 func TestAskCountsOnlyRunningConsultsAgainstTheCap(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedForAsk(t)
 	q := writeQuestion(t, "x")
 
@@ -436,6 +460,8 @@ func TestAskCountsOnlyRunningConsultsAgainstTheCap(t *testing.T) {
 }
 
 func TestAskLogsTheQuestionOutbound(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedForAsk(t)
 	q := writeQuestion(t, "x")
 
@@ -463,6 +489,8 @@ func TestAskLogsTheQuestionOutbound(t *testing.T) {
 }
 
 func TestAskHoldsNoLockWhileSpawning(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -494,6 +522,8 @@ func TestAskHoldsNoLockWhileSpawning(t *testing.T) {
 }
 
 func TestAskReservesBeforeSpawning(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -539,6 +569,8 @@ func TestAskReservesBeforeSpawning(t *testing.T) {
 }
 
 func TestAskRecordsSilentWhenTheProcessFailsToStart(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -572,6 +604,8 @@ func TestAskRecordsSilentWhenTheProcessFailsToStart(t *testing.T) {
 }
 
 func TestAskUpsertsAnExpiredReservation(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -627,6 +661,8 @@ func TestAskUpsertsAnExpiredReservation(t *testing.T) {
 }
 
 func TestAskReappendsAReapedReservation(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -673,6 +709,8 @@ func TestAskReappendsAReapedReservation(t *testing.T) {
 }
 
 func TestAskReviewerOnClaudeTierRead(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -707,6 +745,8 @@ func TestAskReviewerOnClaudeTierRead(t *testing.T) {
 // and no tab, agent start or prompt ever happens. Routing Headless through
 // the pane branch fails on fr.specs.
 func TestAskHeadlessStartsAProcessNotAPane(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedForAsk(t)
 	rt.Runner = fr
@@ -791,6 +831,8 @@ func TestAskHeadlessStartsAProcessNotAPane(t *testing.T) {
 // Mutation check: restoring the pane branch behind `if false`, then flipping
 // it to `if true`, fails this test: no pane call is reachable at all.
 func TestAskIsAlwaysHeadless(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -819,6 +861,8 @@ func TestAskIsAlwaysHeadless(t *testing.T) {
 // exactly as a pane one does, so opencode on `read` is refused before any
 // reservation or process.
 func TestAskHeadlessRefusesUnsupportedTier(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -854,6 +898,8 @@ func TestAskHeadlessRefusesUnsupportedTier(t *testing.T) {
 // TestAskHeadlessWithoutRunnerIsRefused: a runtime with no Runner cannot run
 // a process, so it refuses before anything is reserved.
 func TestAskHeadlessWithoutRunnerIsRefused(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedForAsk(t)
 	rt.Runner = nil
 	q := writeQuestion(t, "x")
@@ -874,6 +920,8 @@ func TestAskHeadlessWithoutRunnerIsRefused(t *testing.T) {
 }
 
 func TestAskReviewerOnOpencodeTierReadRefused(t *testing.T) {
+	t.Parallel()
+
 	rt, _ := seedForAsk(t)
 	rt.Policy.Tier = map[string]string{"reviewer": "read"}
 	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
@@ -912,6 +960,8 @@ func TestAskReviewerOnOpencodeTierReadRefused(t *testing.T) {
 // Mutation check: launching the plain headless print form instead of Resume
 // leaves out --resume and this fails on the argv.
 func TestAskRoundResumesTheSession(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -1007,6 +1057,8 @@ func TestAskRoundResumesTheSession(t *testing.T) {
 // it would put two writers in one session. The refusal comes before anything
 // is reserved or a file staged.
 func TestAskRoundRefusesOpenRound(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -1040,6 +1092,8 @@ func TestAskRoundRefusesOpenRound(t *testing.T) {
 // TestAskRoundRefusesNoSession: a round closed before relevo recorded sessions
 // has nothing to resume, and guessing a session would resume the wrong one.
 func TestAskRoundRefusesNoSession(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -1067,6 +1121,8 @@ func TestAskRoundRefusesNoSession(t *testing.T) {
 // TestAskRoundRefusesCodex: codex resume is not verified, so the round is
 // refused with the kind named rather than run with a guessed flag.
 func TestAskRoundRefusesCodex(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -1099,6 +1155,8 @@ func TestAskRoundRefusesCodex(t *testing.T) {
 // the round runs at harness tier -- no permission flag, no --auto -- and
 // --fork keeps the original session untouched.
 func TestAskRoundOpencodeForksOnHarnessTier(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -1132,6 +1190,8 @@ func TestAskRoundOpencodeForksOnHarnessTier(t *testing.T) {
 // TestAskRoundNeedsExactlyOneQuestion: the round path takes either a file or
 // an inline question, never both and never neither.
 func TestAskRoundNeedsExactlyOneQuestion(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -1161,6 +1221,8 @@ func TestAskRoundNeedsExactlyOneQuestion(t *testing.T) {
 // FindingsPath and queued to the planner. No reconcile code is round-aware;
 // the headless branch carries it.
 func TestAskRoundFinalMessageBecomesFindings(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -1208,6 +1270,8 @@ func TestAskRoundFinalMessageBecomesFindings(t *testing.T) {
 // relevo-consult-* scope drawn from the same template as a round, with the
 // template's CPUQuota -- never its GateCPUQuota.
 func TestAskScopesBothConsultPaths(t *testing.T) {
+	t.Parallel()
+
 	template := func() *ScopeSpec {
 		return &ScopeSpec{CPUWeight: 100, CPUQuota: "150%", GateCPUQuota: "300%", AllowedCPUs: "0-3"}
 	}
@@ -1275,6 +1339,8 @@ func TestAskScopesBothConsultPaths(t *testing.T) {
 //
 // Mutation: set LogPath back to a separate path and this fails.
 func TestConsultStderrSharesTheStream(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -1305,6 +1371,8 @@ func TestConsultStderrSharesTheStream(t *testing.T) {
 // Mutation check (run and report): `<` for `<=` fails on the exact-size case;
 // an unconditional true fails the over-the-limit case.
 func TestInlinePrompt(t *testing.T) {
+	t.Parallel()
+
 	render := func(ref string) string { return fmt.Sprintf(consultHeadlessPrompt, ref) }
 	const question = "Why did round 1 change the schema?"
 
@@ -1352,6 +1420,8 @@ func TestInlinePrompt(t *testing.T) {
 // Mutation check (run and report): always os.WriteFile fails on the on-disk
 // check; keeping the Read: prompt fails on the argv.
 func TestAskInlinesASmallQuestion(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -1407,6 +1477,8 @@ func TestAskInlinesASmallQuestion(t *testing.T) {
 // Mutation check (run and report): an inlinePrompt that always returns true
 // fails on the Read: assertion and the on-disk read.
 func TestAskFallsBackToAFileOverTheLimit(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
@@ -1444,6 +1516,8 @@ func TestAskFallsBackToAFileOverTheLimit(t *testing.T) {
 // Mutation check (run and report): asking for the file form regardless of
 // inline fails the argv.
 func TestAskRoundInlinesTheQuestion(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr

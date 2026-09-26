@@ -15,6 +15,8 @@ import (
 )
 
 func TestGateLineForms(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		rec  store.GateRecord
@@ -54,6 +56,8 @@ func TestGateLineForms(t *testing.T) {
 }
 
 func TestTailLines(t *testing.T) {
+	t.Parallel()
+
 	t.Run("last n non-empty lines", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "gate.log")
@@ -127,6 +131,8 @@ func TestTailLines(t *testing.T) {
 // relevo-gate-* scope, using the template's GateCPUQuota as its CPUQuota, and
 // with no scope at all when the runtime has no template.
 func TestGateStepScopesTheGate(t *testing.T) {
+	t.Parallel()
+
 	runGate := func(t *testing.T, rt Runtime, b store.Binding) {
 		t.Helper()
 		if err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -219,6 +225,8 @@ func TestGateStepScopesTheGate(t *testing.T) {
 // Mutation check: drop the `Attempt == 0` guard (or the lostToRestart call)
 // and this fails on Result "error" with no second Start.
 func TestGateStepRestartsAGateLostToRestart(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -289,6 +297,8 @@ func TestGateStepRestartsAGateLostToRestart(t *testing.T) {
 // gate already at Attempt 1 that is lost again is reported as an error, not
 // restarted a second time.
 func TestGateStepSecondLossIsReportedNotRerun(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -335,6 +345,8 @@ func TestGateStepSecondLossIsReportedNotRerun(t *testing.T) {
 // Mutation check: drop the Seen clause from lostToRestart and this fails with
 // a second Start.
 func TestGateStepSeenAliveThenNoTrailerIsAnError(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := sentBinding(t)
 	rt.Runner = fr
@@ -383,6 +395,8 @@ func TestGateStepSeenAliveThenNoTrailerIsAnError(t *testing.T) {
 }
 
 func TestGateTimeoutFor(t *testing.T) {
+	t.Parallel()
+
 	t.Run("binding override wins", func(t *testing.T) {
 		b := store.Binding{GateTimeoutMS: 5000}
 		pol := policy.Policy{}

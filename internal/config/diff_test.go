@@ -10,6 +10,8 @@ import (
 func rm(s string) json.RawMessage { return json.RawMessage(s) }
 
 func TestDiffDocsSections(t *testing.T) {
+	t.Parallel()
+
 	a := Doc{
 		Candidates: rm(`[{"harness":"claude"}]`),
 		Roles:      rm(`{}`),
@@ -41,6 +43,8 @@ func TestDiffDocsSections(t *testing.T) {
 }
 
 func TestDiffDocsNested(t *testing.T) {
+	t.Parallel()
+
 	a := Doc{Policy: rm(`{"max_switches":2,"order":{"builder":["x","y"]},` +
 		`"nested":{"keep":1,"drop":2,"dotted.key":1,"change":"a"},"arr":[1,2,3],"kind":1}`)}
 	b := Doc{Policy: rm(`{"max_switches":3,"order":{"builder":["x","z","w"]},` +
@@ -65,6 +69,8 @@ func TestDiffDocsNested(t *testing.T) {
 }
 
 func TestDiffDocsEqualIsEmpty(t *testing.T) {
+	t.Parallel()
+
 	doc := Doc{
 		Candidates: rm(`[{"a":1}]`),
 		Policy:     rm(`{"b":{"c":[1,2,{"d":"e"}]}}`),
@@ -79,6 +85,8 @@ func TestDiffDocsEqualIsEmpty(t *testing.T) {
 }
 
 func TestDescribe(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		change Change
 		want   string

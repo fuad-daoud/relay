@@ -64,6 +64,8 @@ func (f *fakeFinderExec) Run(ctx context.Context, bin string, args ...string) ([
 }
 
 func TestOpencodeSessionFinder(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now()
 
 	t.Run("JSON array with time_updated in ms and null parent_id/time_archived -> right id", func(t *testing.T) {
@@ -131,6 +133,8 @@ func TestOpencodeSessionFinder(t *testing.T) {
 // sessions live in session_v2 and their activity time is the latest
 // session_message row, not time_updated.
 func TestOpencodeSessionFinderV2(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now()
 	recent := now.Add(-1 * time.Minute)
 	legacyActive := now.Add(-5 * time.Minute)

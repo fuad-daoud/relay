@@ -7,6 +7,8 @@ import (
 )
 
 func TestParseReportTail(t *testing.T) {
+	t.Parallel()
+
 	t.Run("complete block with every key", func(t *testing.T) {
 		input := `Some report prose here.
 

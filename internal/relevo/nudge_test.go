@@ -15,6 +15,8 @@ import (
 // builder is driven purely through the script.
 
 func TestExitZeroWithoutReportResumesSessionOnce(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedClaudeHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
@@ -76,6 +78,8 @@ func TestExitZeroWithoutReportResumesSessionOnce(t *testing.T) {
 }
 
 func TestSecondExitAfterNudgeSwitchesAsBefore(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedClaudeHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
@@ -127,6 +131,8 @@ func TestSecondExitAfterNudgeSwitchesAsBefore(t *testing.T) {
 }
 
 func TestNonZeroExitIsNotNudged(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedClaudeHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
@@ -155,6 +161,8 @@ func TestNonZeroExitIsNotNudged(t *testing.T) {
 }
 
 func TestExitWithoutSessionIsNotNudged(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedClaudeHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
@@ -178,6 +186,8 @@ func TestExitWithoutSessionIsNotNudged(t *testing.T) {
 }
 
 func TestCodexExitIsNotNudged(t *testing.T) {
+	t.Parallel()
+
 	const codexCandidatesJSON = `[
 	  {"harness":"codex","provider":"openai","model":"gpt-5.6-terra","roles":["builder"]}
 	]`
@@ -222,6 +232,8 @@ func TestCodexExitIsNotNudged(t *testing.T) {
 }
 
 func TestResendAllowsAnotherNudge(t *testing.T) {
+	t.Parallel()
+
 	fr := newFakeRunner()
 	rt, b := seedClaudeHeadless(t, fr)
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
@@ -279,6 +291,8 @@ func TestResendAllowsAnotherNudge(t *testing.T) {
 }
 
 func TestLimitExitIsGatedNotNudged(t *testing.T) {
+	t.Parallel()
+
 	const otherRef = "agy/other/m"
 	fr := newFakeRunner()
 	rt := newRuntime(t)

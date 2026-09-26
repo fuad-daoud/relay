@@ -72,6 +72,8 @@ func aliveAlways(int) bool { return true }
 func aliveNever(int) bool  { return false }
 
 func TestOpencodeDeliverHappyPath(t *testing.T) {
+	t.Parallel()
+
 	var gotPath, gotAuth, gotContentType string
 	var gotBody []byte
 	requests := 0
@@ -141,6 +143,8 @@ func TestOpencodeDeliverHappyPath(t *testing.T) {
 // (§3.4): a 2xx from the wrong server process must never be treated as
 // delivery. The fake Exec always answers 0, so the origin is never seen.
 func TestOpencodeDeliverSilentTwoHundred(t *testing.T) {
+	t.Parallel()
+
 	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -178,6 +182,8 @@ func TestOpencodeDeliverSilentTwoHundred(t *testing.T) {
 // when the origin is already in the db, Deliver confirms without touching
 // the network at all.
 func TestOpencodeDeliverIdempotentSkipsPost(t *testing.T) {
+	t.Parallel()
+
 	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -209,6 +215,8 @@ func TestOpencodeDeliverIdempotentSkipsPost(t *testing.T) {
 }
 
 func TestOpencodeDeliverNotMineCases(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	stateFile := writeOpencodeServiceFile(t, dir, "http://127.0.0.1:1", "pw", 1)
 
@@ -246,6 +254,8 @@ func TestOpencodeDeliverNotMineCases(t *testing.T) {
 }
 
 func TestOpencodeDeliverUnavailableCases(t *testing.T) {
+	t.Parallel()
+
 	goodDir := t.TempDir()
 	deadPidFile := writeOpencodeServiceFile(t, t.TempDir(), "http://127.0.0.1:49999", "pw", 999999)
 	nonLoopbackFile := writeOpencodeServiceFile(t, goodDir, "http://example.com:8080", "pw", 1)
@@ -293,6 +303,8 @@ func TestOpencodeDeliverUnavailableCases(t *testing.T) {
 // condition becomes OutcomeNotMine once FallbackAfter has passed, so the pane path
 // takes over rather than retrying forever.
 func TestOpencodeDeliverFallsBackAfterFallbackAfter(t *testing.T) {
+	t.Parallel()
+
 	stateFile := writeOpencodeServiceFile(t, t.TempDir(), "http://127.0.0.1:1", "pw", 1)
 	queuedAt := time.Unix(1000, 0)
 	now := queuedAt.Add(31 * time.Second) // past the 30s default
@@ -395,6 +407,8 @@ func TestOpencodeDeliverLogsGiveUpOncePerPayload(t *testing.T) {
 // distinctive password and asserts it never appears in a returned reason
 // or error.
 func TestOpencodeDeliverPasswordNeverLeaks(t *testing.T) {
+	t.Parallel()
+
 	const password = "sekrit-do-not-log-me"
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -425,6 +439,8 @@ func TestOpencodeDeliverPasswordNeverLeaks(t *testing.T) {
 }
 
 func TestOpencodeDeliverStateFilesPreference(t *testing.T) {
+	t.Parallel()
+
 	var stateRequests, configRequests int
 	stateSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		stateRequests++
@@ -524,6 +540,8 @@ func basicAuth(user, pass string) string {
 // (#393): OpenCode 2.0.14's session_message row, and the pre-2.0 part/message
 // pair. Only a user turn counts, and either table alone confirms.
 func TestOpencodeConfirmSeen(t *testing.T) {
+	t.Parallel()
+
 	const origin = "relevo: round 1 to builder"
 
 	tables := []string{
@@ -592,6 +610,8 @@ func TestOpencodeConfirmSeen(t *testing.T) {
 }
 
 func TestOpencodeDeliverPostsOnce(t *testing.T) {
+	t.Parallel()
+
 	var mu sync.Mutex
 	posts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

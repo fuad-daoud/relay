@@ -65,6 +65,8 @@ func queueDrainEntry(t *testing.T, s *store.Store, name string, round int, kind 
 }
 
 func TestDrainRequiresPlanner(t *testing.T) {
+	t.Parallel()
+
 	rt := Runtime{Store: store.New(t.TempDir())}
 	if _, err := Drain(context.Background(), rt, &DrainState{}, &fakePusher{}); err == nil {
 		t.Fatal("Drain with an empty Planner must error")
@@ -75,6 +77,8 @@ func TestDrainRequiresPlanner(t *testing.T) {
 // pushes only the bindings whose PlannerID is the one it drains. The two
 // bindings here share a pane, so only the planner id can tell them apart.
 func TestDrainFiltersByPlannerID(t *testing.T) {
+	t.Parallel()
+
 	s := store.New(t.TempDir())
 	rt := Runtime{Store: s}
 	mine := saveDrainBinding(t, s, "mine", "w2:p3", store.StateActive)
@@ -111,6 +115,8 @@ func TestDrainFiltersByPlannerID(t *testing.T) {
 }
 
 func TestDrainPushesThenConfirms(t *testing.T) {
+	t.Parallel()
+
 	s := store.New(t.TempDir())
 	rt := Runtime{Store: s}
 	pane := "w2:p3"
@@ -149,6 +155,8 @@ func TestDrainPushesThenConfirms(t *testing.T) {
 // not just the pointer payload (#297): a report entry naming a readable
 // path is expanded through PushText before it reaches the Pusher.
 func TestDrainPushesExpandedReportText(t *testing.T) {
+	t.Parallel()
+
 	s := store.New(t.TempDir())
 	rt := Runtime{Store: s}
 	pane := "w2:p3"
@@ -178,6 +186,8 @@ func TestDrainPushesExpandedReportText(t *testing.T) {
 }
 
 func TestDrainOmitsShowMetaWhenEntryHasNone(t *testing.T) {
+	t.Parallel()
+
 	s := store.New(t.TempDir())
 	rt := Runtime{Store: s}
 	pane := "w2:p3"
@@ -195,6 +205,8 @@ func TestDrainOmitsShowMetaWhenEntryHasNone(t *testing.T) {
 }
 
 func TestDrainPushFailureLeavesPendingThenRetries(t *testing.T) {
+	t.Parallel()
+
 	s := store.New(t.TempDir())
 	rt := Runtime{Store: s}
 	pane := "w2:p3"
@@ -228,6 +240,8 @@ func TestDrainPushFailureLeavesPendingThenRetries(t *testing.T) {
 }
 
 func TestDrainSkipsOtherPlannersAndOwnedBindings(t *testing.T) {
+	t.Parallel()
+
 	s := store.New(t.TempDir())
 	rt := Runtime{Store: s}
 	pane := "w2:p3"
@@ -275,6 +289,8 @@ func TestDrainSkipsOtherPlannersAndOwnedBindings(t *testing.T) {
 // transition into needs_you/broken/orphaned pushes once, staying in one
 // pushes nothing more, and leaving one pushes nothing.
 func TestDrainStateEdges(t *testing.T) {
+	t.Parallel()
+
 	s := store.New(t.TempDir())
 	rt := Runtime{Store: s}
 	pane := "w2:p3"
@@ -345,6 +361,8 @@ func TestDrainStateEdges(t *testing.T) {
 }
 
 func TestDrainDropsGoneBindingsFromMemory(t *testing.T) {
+	t.Parallel()
+
 	s := store.New(t.TempDir())
 	rt := Runtime{Store: s}
 	pane := "w2:p3"

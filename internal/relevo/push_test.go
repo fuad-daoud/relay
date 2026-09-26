@@ -21,6 +21,8 @@ func mapReader(files map[string][]byte) func(string) ([]byte, error) {
 }
 
 func TestPushTextExpandsReportWithReadablePath(t *testing.T) {
+	t.Parallel()
+
 	origin := `relevo: round 1 · to planner · about builder "w" (not the human)`
 	e := store.LogEntry{
 		Kind:    store.KindReport,
@@ -40,6 +42,8 @@ func TestPushTextExpandsReportWithReadablePath(t *testing.T) {
 }
 
 func TestPushTextDoesNotExpandDiff(t *testing.T) {
+	t.Parallel()
+
 	e := store.LogEntry{Kind: store.KindDiff, Path: "/x/001.patch", Payload: "diff payload"}
 	read := mapReader(map[string][]byte{"/x/001.patch": []byte("patch body")})
 
@@ -50,6 +54,8 @@ func TestPushTextDoesNotExpandDiff(t *testing.T) {
 }
 
 func TestPushTextDoesNotExpandWithNoPath(t *testing.T) {
+	t.Parallel()
+
 	e := store.LogEntry{Kind: store.KindReport, Payload: "no path here"}
 	read := mapReader(nil)
 
@@ -60,6 +66,8 @@ func TestPushTextDoesNotExpandWithNoPath(t *testing.T) {
 }
 
 func TestPushTextReadErrorReturnsPayload(t *testing.T) {
+	t.Parallel()
+
 	e := store.LogEntry{Kind: store.KindReport, Path: "/missing", Payload: "payload stands alone"}
 	read := mapReader(nil)
 
@@ -70,6 +78,8 @@ func TestPushTextReadErrorReturnsPayload(t *testing.T) {
 }
 
 func TestPushTextTruncatesAtNewlineWithinBudget(t *testing.T) {
+	t.Parallel()
+
 	var b strings.Builder
 	for b.Len() < MaxPushBytes+1000 {
 		b.WriteString("0123456789\n")
@@ -103,6 +113,8 @@ func TestPushTextTruncatesAtNewlineWithinBudget(t *testing.T) {
 }
 
 func TestPushTextTruncatesAtBudgetWhenNoNewline(t *testing.T) {
+	t.Parallel()
+
 	body := strings.Repeat("x", MaxPushBytes+1000) // no newline anywhere
 	e := store.LogEntry{Kind: store.KindReport, Round: 1, Path: "/x/huge.md", Payload: "relevo: round 1 · to planner · about builder \"w\" (not the human)"}
 	read := mapReader(map[string][]byte{"/x/huge.md": []byte(body)})
@@ -123,6 +135,8 @@ func TestPushTextTruncatesAtBudgetWhenNoNewline(t *testing.T) {
 }
 
 func TestPushTextOriginLineIsAlwaysFirst(t *testing.T) {
+	t.Parallel()
+
 	origin := `relevo: round 1 · to planner · about builder "w" (not the human)`
 
 	cases := []struct {

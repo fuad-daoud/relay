@@ -20,6 +20,8 @@ func stF64(v float64) *float64 { return &v }
 // TestScorecardRates pins DonePct and HaltPct against Closed (an open round is
 // not closed) and the median for both an even and an odd count.
 func TestScorecardRates(t *testing.T) {
+	t.Parallel()
+
 	rows := []db.RoundRow{
 		{BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, DurationMS: stI64(600_000)},
 		{BuilderCandidate: stStr("a"), Outcome: db.OutcomeOpen},
@@ -59,6 +61,8 @@ func TestScorecardRates(t *testing.T) {
 // scorecard row but counts in Totals.Unrecorded, that Candidates counts the
 // distinct non-nil tokens, and that Keep drops a row.
 func TestScorecardUnrecordedAndKeep(t *testing.T) {
+	t.Parallel()
+
 	rows := []db.RoundRow{
 		{BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported},
 		{BuilderCandidate: nil, Outcome: db.OutcomeReported},
@@ -91,6 +95,8 @@ func TestScorecardUnrecordedAndKeep(t *testing.T) {
 // unknown basis and a missing cost are excluded from the mean, that a nil
 // basis counts as known, and that Few is set under five rounds.
 func TestScorecardPlanAndCost(t *testing.T) {
+	t.Parallel()
+
 	rows := []db.RoundRow{
 		{BuilderCandidate: stStr("plan/x"), Outcome: db.OutcomeReported, CostUSD: stF64(9), CostBasis: stStr("measured")},
 		{BuilderCandidate: stStr("paid/y"), Outcome: db.OutcomeReported, CostUSD: stF64(1), CostBasis: stStr("measured")},
@@ -136,6 +142,8 @@ func TestScorecardPlanAndCost(t *testing.T) {
 // distinct binding IDs among the candidate's rows, the rows whose report
 // outcome is "halted", and the sum of their switches.
 func TestScorecardBindingsHaltsSwitches(t *testing.T) {
+	t.Parallel()
+
 	rows := []db.RoundRow{
 		{BindingID: "b1", BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 0},
 		{BindingID: "b2", BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 2, ReportOutcome: stStr("halted")},
@@ -163,6 +171,8 @@ func TestScorecardBindingsHaltsSwitches(t *testing.T) {
 // provider split sums to its USD, and that the week windows are exact at their
 // boundaries.
 func TestSpendDaysAndWeeks(t *testing.T) {
+	t.Parallel()
+
 	at := func(y int, mo time.Month, d, h, mi int) time.Time {
 		return time.Date(y, mo, d, h, mi, 0, 0, time.UTC)
 	}
@@ -223,6 +233,8 @@ func TestSpendDaysAndWeeks(t *testing.T) {
 // kind, its tokens per candidate and its tokens per provider, with Tokens still
 // equal to the day's kinds' total.
 func TestSpendDayBreakdowns(t *testing.T) {
+	t.Parallel()
+
 	at := func(d, h int) time.Time {
 		return time.Date(2026, time.September, d, h, 0, 0, 0, time.UTC)
 	}
@@ -268,6 +280,8 @@ func TestSpendDayBreakdowns(t *testing.T) {
 // excluded, that the by-hour buckets use Loc, and that the active gates pass
 // through.
 func TestReliabilityWindowAndHours(t *testing.T) {
+	t.Parallel()
+
 	loc := time.FixedZone("X", 2*3600)
 	rows := []db.RoundRow{
 		{BuilderCandidate: stStr("a"), Outcome: db.OutcomeReported, Switches: 2},
@@ -326,6 +340,8 @@ func TestReliabilityWindowAndHours(t *testing.T) {
 // TestReposFeaturesLanded pins RoundsPerLand, and that a group with no landed
 // binding reports 0.
 func TestReposFeaturesLanded(t *testing.T) {
+	t.Parallel()
+
 	rows := []db.RoundRow{
 		{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Outcome: db.OutcomeReported},
 		{BindingID: "b2", Repo: stStr("A"), Feature: stStr("f1"), Outcome: db.OutcomeReported},
@@ -367,6 +383,8 @@ func TestReposFeaturesLanded(t *testing.T) {
 // TestNoFeatureGroup pins §2.3: NoFeature buckets the feature-less rows into
 // one "(none)" group, and it does not touch Features.
 func TestNoFeatureGroup(t *testing.T) {
+	t.Parallel()
+
 	rows := []db.RoundRow{
 		{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), Outcome: db.OutcomeReported},
 		{BindingID: "b2", Repo: stStr("A"), Outcome: db.OutcomeReported},
@@ -387,6 +405,8 @@ func TestNoFeatureGroup(t *testing.T) {
 // halted, the sum of the recorded commits, and the round count per candidate,
 // which skips a nil one.
 func TestGroupRowsBreakdowns(t *testing.T) {
+	t.Parallel()
+
 	rows := []db.RoundRow{
 		{BindingID: "b1", Repo: stStr("A"), ReportOutcome: stStr("done"), Commits: stInt(2), BuilderCandidate: stStr("A")},
 		{BindingID: "b2", Repo: stStr("A"), ReportOutcome: stStr("done"), BuilderCandidate: stStr("A")},
@@ -419,6 +439,8 @@ func TestGroupRowsBreakdowns(t *testing.T) {
 // TestOutcomes pins that the unstructured report outcome is counted as
 // "no outcome".
 func TestOutcomes(t *testing.T) {
+	t.Parallel()
+
 	rows := []db.RoundRow{
 		{Outcome: db.OutcomeReported, ReportOutcome: stStr("done")},
 		{Outcome: db.OutcomeReported, ReportOutcome: stStr("unstructured")},
@@ -443,6 +465,8 @@ func TestOutcomes(t *testing.T) {
 
 // TestBuildEmpty pins that no rows builds a zero report without a panic.
 func TestBuildEmpty(t *testing.T) {
+	t.Parallel()
+
 	rep := Build(Inputs{Until: stNow, Loc: time.UTC})
 
 	if rep.Totals.Rounds != 0 || rep.Totals.CostUSD != 0 || len(rep.Scorecard) != 0 {
@@ -460,6 +484,8 @@ func TestBuildEmpty(t *testing.T) {
 // over every row, Measured counts only the rows with a token field, Tokens
 // stays equal to Total, and CachePct is cache over input.
 func TestTokenKindsSumAndCache(t *testing.T) {
+	t.Parallel()
+
 	rows := []db.RoundRow{
 		{InTokens: stI64(100), CacheTokens: stI64(900), WriteTokens: stI64(50), OutTokens: stI64(10)},
 		{InTokens: stI64(100), CacheTokens: stI64(900)},
@@ -501,6 +527,8 @@ func TestTokenKindsSumAndCache(t *testing.T) {
 // TestScoreRowTokens pins that a ScoreRow's TokenKinds sums that candidate's
 // rows only, and leaves the unrecorded bucket out.
 func TestScoreRowTokens(t *testing.T) {
+	t.Parallel()
+
 	rows := []db.RoundRow{
 		{BuilderCandidate: stStr("a"), InTokens: stI64(100), CacheTokens: stI64(900), OutTokens: stI64(10)},
 		{BuilderCandidate: stStr("a"), OutTokens: stI64(90)},
@@ -529,6 +557,8 @@ func TestScoreRowTokens(t *testing.T) {
 // TestDayTokensBucketByLocalDay pins that a day's Tokens are bucketed by the
 // same local day as its USD, and that a plan or unrecorded row still counts.
 func TestDayTokensBucketByLocalDay(t *testing.T) {
+	t.Parallel()
+
 	loc := time.FixedZone("X", 2*3600)
 	rows := []db.RoundRow{
 		// 23:30 UTC on the 23rd is 01:30 local on the 24th.
@@ -559,6 +589,8 @@ func TestDayTokensBucketByLocalDay(t *testing.T) {
 // TestRepoTokens pins that a GroupRow's Tokens sums the group's rows, for
 // repos and for features.
 func TestRepoTokens(t *testing.T) {
+	t.Parallel()
+
 	rows := []db.RoundRow{
 		{BindingID: "b1", Repo: stStr("A"), Feature: stStr("f1"), InTokens: stI64(10), OutTokens: stI64(5)},
 		{BindingID: "b2", Repo: stStr("A"), Feature: stStr("f1"), CacheTokens: stI64(100)},

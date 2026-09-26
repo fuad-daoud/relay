@@ -68,6 +68,8 @@ func seedConfigDir(t *testing.T, dir string) {
 }
 
 func TestImportAllFiles(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	dir := filepath.Join(t.TempDir(), "relevo")
 	seedConfigDir(t, dir)
@@ -139,6 +141,8 @@ func TestImportAllFiles(t *testing.T) {
 }
 
 func TestImportInvalidPolicyWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	dir := filepath.Join(t.TempDir(), "relevo")
 	writeFile(t, filepath.Join(dir, "candidates.json"),
@@ -172,6 +176,8 @@ func TestImportInvalidPolicyWritesNothing(t *testing.T) {
 }
 
 func TestImportEmptyDirIsNoOp(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	dir := filepath.Join(t.TempDir(), "relevo")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -191,6 +197,8 @@ func TestImportEmptyDirIsNoOp(t *testing.T) {
 }
 
 func TestImportLeavesBakFilesAlone(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	dir := filepath.Join(t.TempDir(), "relevo")
 	writeFile(t, filepath.Join(dir, "candidates.json"),
@@ -210,6 +218,8 @@ func TestImportLeavesBakFilesAlone(t *testing.T) {
 }
 
 func TestLoadFilesEqualsLoadAfterImport(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	dir := filepath.Join(t.TempDir(), "relevo")
 	seedConfigDir(t, dir)
@@ -261,6 +271,8 @@ func TestLoadFilesEqualsLoadAfterImport(t *testing.T) {
 // BEGIN IMMEDIATE cannot take the write lock. Moving the file removal before
 // the transaction makes this test fail.
 func TestImportTxFailureKeepsFiles(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	dir := filepath.Join(t.TempDir(), "relevo")
 	writeFile(t, filepath.Join(dir, "candidates.json"),
@@ -287,6 +299,8 @@ func TestImportTxFailureKeepsFiles(t *testing.T) {
 }
 
 func TestStoreDeleteRemovesAndBumpsVersion(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	if _, err := s.Put(Candidates, []byte(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`)); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -328,6 +342,8 @@ func TestStoreDeleteRemovesAndBumpsVersion(t *testing.T) {
 }
 
 func TestPutDocWritesEverySectionAndWarnings(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	doc := map[Section]json.RawMessage{
 		Candidates: json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
@@ -353,6 +369,8 @@ func TestPutDocWritesEverySectionAndWarnings(t *testing.T) {
 }
 
 func TestPutDocLeavesUnmentionedSectionsAlone(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	if _, err := s.Put(Servers, []byte(`{"zen":{"url":"https://zen:7777","insecure":true}}`)); err != nil {
 		t.Fatalf("Put(servers): %v", err)
@@ -374,6 +392,8 @@ func TestPutDocLeavesUnmentionedSectionsAlone(t *testing.T) {
 }
 
 func TestPutDocUnknownSectionWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	_, err := s.PutDoc(map[Section]json.RawMessage{
 		Candidates:          json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
@@ -394,6 +414,8 @@ func TestPutDocUnknownSectionWritesNothing(t *testing.T) {
 }
 
 func TestPutDocInvalidSectionWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	_, err := s.PutDoc(map[Section]json.RawMessage{
 		Candidates: json.RawMessage(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`),
@@ -411,6 +433,8 @@ func TestPutDocInvalidSectionWritesNothing(t *testing.T) {
 }
 
 func TestSecretDeleteAndNames(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	if err := s.PutSecret(SecretTypesafe, []byte("ts-key")); err != nil {
 		t.Fatalf("PutSecret: %v", err)

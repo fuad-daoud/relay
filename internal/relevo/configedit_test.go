@@ -131,6 +131,8 @@ func findCandidate(cands []candidate.Candidate, name string) (candidate.Candidat
 }
 
 func TestConfigEditCandidateValidation(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name  string
 		in    CandidateInput
@@ -154,6 +156,8 @@ func TestConfigEditCandidateValidation(t *testing.T) {
 }
 
 func TestConfigEditAddCandidate(t *testing.T) {
+	t.Parallel()
+
 	doc := configeditDoc(t)
 	edit, err := AddCandidate(doc, CandidateInput{
 		Harness: "opencode", Provider: "cline-pass", Model: "cline-pass/deepseek-v4.2-flash#high",
@@ -182,6 +186,8 @@ func TestConfigEditAddCandidate(t *testing.T) {
 }
 
 func TestConfigEditEditCandidateRenames(t *testing.T) {
+	t.Parallel()
+
 	doc := configeditDoc(t)
 	edit, err := EditCandidate(doc, "deepseek-v4.1-flash", CandidateInput{
 		Harness: "opencode", Provider: "cline-pass", Model: "cline-pass/deepseek-v4.2-flash#high",
@@ -212,6 +218,8 @@ func TestConfigEditEditCandidateRenames(t *testing.T) {
 }
 
 func TestConfigEditEditCandidateKeepsFields(t *testing.T) {
+	t.Parallel()
+
 	doc := configeditDoc(t)
 	doc.Candidates[2].Tier = "edit"
 	doc.Candidates[2].LimitPatterns = []string{`(?i)mine`}
@@ -233,6 +241,8 @@ func TestConfigEditEditCandidateKeepsFields(t *testing.T) {
 }
 
 func TestConfigEditEditCandidateUnchanged(t *testing.T) {
+	t.Parallel()
+
 	_, err := EditCandidate(configeditDoc(t), "sonnet", CandidateInput{Harness: "claude", Provider: "anthropic", Model: "sonnet"})
 	if !errors.Is(err, ErrNoChange) {
 		t.Fatalf("err = %v, want ErrNoChange", err)
@@ -242,6 +252,8 @@ func TestConfigEditEditCandidateUnchanged(t *testing.T) {
 // TestPreviewCandidateName pins the preview the candidate form shows: the
 // name an edit would take, and "" for an add with no model yet.
 func TestPreviewCandidateName(t *testing.T) {
+	t.Parallel()
+
 	doc := configeditDoc(t)
 
 	got := PreviewCandidateName(doc, "deepseek-v4.1-flash", CandidateInput{
@@ -268,6 +280,8 @@ func TestPreviewCandidateName(t *testing.T) {
 }
 
 func TestConfigEditEditCandidateOffEntryKeepsOff(t *testing.T) {
+	t.Parallel()
+
 	doc := configeditDoc(t)
 	b := doc.Actors["builder"]
 	b.Candidates[2].Off = true
@@ -294,11 +308,15 @@ func TestConfigEditEditCandidateOffEntryKeepsOff(t *testing.T) {
 }
 
 func TestConfigEditDeleteCandidateRefusesLast(t *testing.T) {
+	t.Parallel()
+
 	_, err := DeleteCandidate(configeditDoc(t), "haiku")
 	wantFieldError(t, err, "", "researcher has no other candidate; add one in :actors first")
 }
 
 func TestConfigEditDeleteCandidateRemovesFromActors(t *testing.T) {
+	t.Parallel()
+
 	edit, err := DeleteCandidate(configeditDoc(t), "gpt-5.6-terra")
 	if err != nil {
 		t.Fatalf("DeleteCandidate: %v", err)
@@ -323,6 +341,8 @@ func TestConfigEditDeleteCandidateRemovesFromActors(t *testing.T) {
 }
 
 func TestCandidateSlots(t *testing.T) {
+	t.Parallel()
+
 	got := CandidateSlots(configeditDoc(t), "gpt-5.6-terra")
 	want := []ActorSlot{{Actor: "builder", Position: 4}, {Actor: "reviewer", Position: 2}}
 	if !reflect.DeepEqual(got, want) {
@@ -331,6 +351,8 @@ func TestCandidateSlots(t *testing.T) {
 }
 
 func TestConfigEditSetActorEntries(t *testing.T) {
+	t.Parallel()
+
 	t.Run("rejects an unknown name", func(t *testing.T) {
 		_, err := SetActorEntries(configeditDoc(t), "builder", []actors.Entry{{Candidate: "nope"}})
 		wantFieldError(t, err, "", "no candidate named nope")
@@ -364,6 +386,8 @@ func TestConfigEditSetActorEntries(t *testing.T) {
 }
 
 func TestConfigEditEditActor(t *testing.T) {
+	t.Parallel()
+
 	t.Run("a builtin actor keeps its shape", func(t *testing.T) {
 		_, err := EditActor(configeditDoc(t), "builder", "reviewer", "yolo", true)
 		var fe *FieldError
@@ -387,6 +411,8 @@ func TestConfigEditEditActor(t *testing.T) {
 }
 
 func TestConfigEditAddAndDeleteActor(t *testing.T) {
+	t.Parallel()
+
 	doc := configeditDoc(t)
 	add, err := AddActor(doc, "custom", "reviewer")
 	if err != nil {
@@ -418,6 +444,8 @@ func TestConfigEditAddAndDeleteActor(t *testing.T) {
 }
 
 func TestConfigEditDeleteAgent(t *testing.T) {
+	t.Parallel()
+
 	_, err := DeleteAgent(configeditDoc(t), "reviewer")
 	wantFieldError(t, err, "", "reviewer ships with relevo; it can't be deleted")
 
@@ -451,6 +479,8 @@ func TestConfigEditDeleteAgent(t *testing.T) {
 }
 
 func TestConfigEditWriteAndLoadRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
@@ -493,6 +523,8 @@ func TestConfigEditWriteAndLoadRoundTrip(t *testing.T) {
 }
 
 func TestReloadConfig(t *testing.T) {
+	t.Parallel()
+
 	t.Run("no store is an error", func(t *testing.T) {
 		if _, err := ReloadConfig(Runtime{}); err == nil || err.Error() != "no config store" {
 			t.Fatalf("err = %v, want no config store", err)

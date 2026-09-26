@@ -32,6 +32,8 @@ const servedNoTierCandidateJSON = `[
 ]`
 
 func TestResolveServedTier(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, servedTierCandidatesJSON)
 	token := "claude/test/m"
 
@@ -91,6 +93,8 @@ func TestResolveServedTier(t *testing.T) {
 }
 
 func TestServedBuilderTier(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, servedNoTierCandidateJSON)
 
 	// Policy tier set -> that tier (candidate token resolved via PickServedCandidate("") has no tier of its own).
@@ -137,6 +141,8 @@ func runGit(t *testing.T, dir string, args ...string) string {
 }
 
 func TestRoundStateOf(t *testing.T) {
+	t.Parallel()
+
 	// Arm 1: StateNeedsYou
 	b1 := store.Binding{
 		State: store.StateNeedsYou,
@@ -197,6 +203,8 @@ func TestRoundStateOf(t *testing.T) {
 // Mutation check: drop the `!b.QueuedAt.IsZero()` arm from RoundStateOf and
 // this fails on the first case.
 func TestRoundStateOfQueued(t *testing.T) {
+	t.Parallel()
+
 	entries := []store.LogEntry{
 		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan},
 	}
@@ -229,6 +237,8 @@ func TestRoundStateOfQueued(t *testing.T) {
 }
 
 func TestServedViewReportOutcome(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{
 		Name:             "api",
 		State:            store.StateActive,
@@ -272,6 +282,8 @@ func TestServedViewReportOutcome(t *testing.T) {
 }
 
 func TestServedViewDiffFacts(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{
 		Name:             "api",
 		State:            store.StateActive,
@@ -310,6 +322,8 @@ func TestServedViewDiffFacts(t *testing.T) {
 // stopped, read from the KindStop entry closeStopped writes for that round,
 // and leaves the field empty when the only stop entry names an earlier round.
 func TestServedViewStopped(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{
 		Name:  "api",
 		State: store.StateActive,
@@ -340,6 +354,8 @@ func TestServedViewStopped(t *testing.T) {
 // closed round's usage the way it ships ReportOutcome (#216): from the
 // newest KindReport entry for Serve.ClosedRound, and only from it.
 func TestServedViewCarriesClosedRoundUsage(t *testing.T) {
+	t.Parallel()
+
 	closed := usage.Usage{
 		Harness: "opencode",
 		Model:   "haiku",
@@ -394,6 +410,8 @@ func TestServedViewCarriesClosedRoundUsage(t *testing.T) {
 // the wire, the same way TestServedViewCarriesClosedRoundUsage pins Usage
 // (#244, #216).
 func TestServedViewCarriesRusage(t *testing.T) {
+	t.Parallel()
+
 	closed := store.Rusage{CPUMS: 12300, PeakMemBytes: 850 << 20}
 	b := store.Binding{
 		Name:             "api",
@@ -430,6 +448,8 @@ func TestServedViewCarriesRusage(t *testing.T) {
 // TestServedViewCarriesStalledSince pins #252's wire field: a stalled binding
 // ships its stamp to the client, and an unstalled one ships the zero time.
 func TestServedViewCarriesStalledSince(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{
 		Name:  "api",
 		State: store.StateActive,
@@ -451,6 +471,8 @@ func TestServedViewCarriesStalledSince(t *testing.T) {
 }
 
 func TestCloseServedRoundClean(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
 
@@ -508,6 +530,8 @@ func TestCloseServedRoundClean(t *testing.T) {
 }
 
 func TestCloseServedRoundDirty(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
 
@@ -579,6 +603,8 @@ func TestCloseServedRoundDirty(t *testing.T) {
 }
 
 func TestCloseServedRoundGitFailureKeepsFacts(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	fGit := &fakeGit{
 		refSHA: map[string]string{
@@ -616,6 +642,8 @@ func TestCloseServedRoundGitFailureKeepsFacts(t *testing.T) {
 }
 
 func TestDeliverAndSettleOwnedLeavesQueued(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	b := store.Binding{
@@ -664,6 +692,8 @@ func TestDeliverAndSettleOwnedLeavesQueued(t *testing.T) {
 }
 
 func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(t.TempDir())
 	fr := newFakeRunner()
@@ -798,6 +828,8 @@ func reconcileOwned(t *testing.T, rt Runtime, b store.Binding) store.Binding {
 // sees the round as idle and never fetches it (the flaky
 // TestRemoteRoundCollectedAfterClientWasAway hit exactly this).
 func TestReconcileHeadlessOwnedUnmarkedCloseRecordsFacts(t *testing.T) {
+	t.Parallel()
+
 	rt, b, _, sha := ownedExitFixture(t)
 	if err := os.WriteFile(rt.Store.ReportPath("api", 1), []byte("report\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -818,6 +850,8 @@ func TestReconcileHeadlessOwnedUnmarkedCloseRecordsFacts(t *testing.T) {
 // that exits while a stop is requested closes through closeStopped, and the
 // served round's facts are recorded there too.
 func TestReconcileHeadlessOwnedStopRequestedExitRecordsFacts(t *testing.T) {
+	t.Parallel()
+
 	rt, b, _, _ := ownedExitFixture(t)
 	b.StopRequestedAt = time.Now().Add(-time.Second)
 	if err := rt.Store.Save(b); err != nil {
@@ -830,6 +864,8 @@ func TestReconcileHeadlessOwnedStopRequestedExitRecordsFacts(t *testing.T) {
 }
 
 func TestLiveViewOf(t *testing.T) {
+	t.Parallel()
+
 	at := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	started := at.Add(-10 * time.Minute)
 	lastProg := at.Add(-2 * time.Minute)
@@ -927,6 +963,8 @@ func TestLiveViewOf(t *testing.T) {
 }
 
 func TestServedViewPriorTokens(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{
 		Name:             "api",
 		State:            store.StateActive,

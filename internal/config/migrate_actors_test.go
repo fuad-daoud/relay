@@ -79,6 +79,8 @@ func rankedTokens(ranked []roles.Ranked) []string {
 // fixtures: the registry Load builds after migrating the candidates and policy
 // they describe is the one it built before.
 func TestMigrateLegacyEquivalent(t *testing.T) {
+	t.Parallel()
+
 	candBody := readFixture(t, "legacy-candidates.json")
 	polBody := readFixture(t, "legacy-policy.json")
 
@@ -120,6 +122,8 @@ func TestMigrateLegacyEquivalent(t *testing.T) {
 // custom writer on a custom claude definition becomes a native agent, and a
 // reader stays the shipped one.
 func TestMigrateFileModeEquivalent(t *testing.T) {
+	t.Parallel()
+
 	candBody := `[
 	  {"harness":"claude","provider":"test","model":"a"},
 	  {"harness":"claude","provider":"test","model":"b"},
@@ -186,6 +190,8 @@ func TestMigrateFileModeEquivalent(t *testing.T) {
 // becomes its candidate's short name, and one that does not resolve is kept as
 // written, with a note on the migration revision.
 func TestMigrateNamesCandidates(t *testing.T) {
+	t.Parallel()
+
 	candBody := `[{"harness":"claude","provider":"anthropic","model":"sonnet"}]`
 	rolesBody := `{"builder":{"candidates":["claude/anthropic/sonnet","claude/anthropic/ghost"]}}`
 
@@ -222,6 +228,8 @@ func TestMigrateNamesCandidates(t *testing.T) {
 // gone, and so are each candidate's roles and tier, while every other key and
 // its value survive.
 func TestMigrateStripsLegacyKeys(t *testing.T) {
+	t.Parallel()
+
 	candBody := `[{"harness":"claude","provider":"p","model":"m","roles":["builder"],"tier":"yolo","extra":"keep-me"}]`
 	polBody := `{"order":{"builder":["claude/p/m"]},"tier":{"builder":"yolo"},"max_switches":2,"max_tier":"yolo","extra_key":"keep"}`
 
@@ -264,6 +272,8 @@ func TestMigrateStripsLegacyKeys(t *testing.T) {
 // TestMigrateOneRevision pins the write: the migration adds exactly one
 // revision, its source is "migration", and the roles section is deleted.
 func TestMigrateOneRevision(t *testing.T) {
+	t.Parallel()
+
 	candBody := `[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`
 	rolesBody := `{"builder":{"candidates":["claude/p/m"]}}`
 
@@ -300,6 +310,8 @@ func TestMigrateOneRevision(t *testing.T) {
 // TestMigrateIdempotent pins the second call: with actors stored, there is
 // nothing left to do.
 func TestMigrateIdempotent(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	seedSections(t, s, map[Section]string{
 		Candidates: `[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`,
@@ -320,6 +332,8 @@ func TestMigrateIdempotent(t *testing.T) {
 // TestMigrateNothingToDo pins the fresh store: nothing to migrate, nothing
 // written.
 func TestMigrateNothingToDo(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 
 	migrated, err := s.MigrateToActors()
@@ -338,6 +352,8 @@ func TestMigrateNothingToDo(t *testing.T) {
 // pre-migration revision restores the old keys and removes actors, and the
 // next MigrateToActors writes them again as a new revision.
 func TestRollbackThenRemigrate(t *testing.T) {
+	t.Parallel()
+
 	s := openStore(t)
 	seedSections(t, s, map[Section]string{
 		Candidates: `[{"harness":"claude","provider":"p","model":"m","roles":["builder"],"tier":"yolo"}]`,

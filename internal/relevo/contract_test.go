@@ -50,6 +50,8 @@ func assertGolden(t *testing.T, name string, got []byte) {
 // fake that returns a fixed, deterministic body naming the path it was asked
 // for, so the golden needs no real file on disk and no normalization.
 func TestContractPushText(t *testing.T) {
+	t.Parallel()
+
 	read := func(path string) ([]byte, error) {
 		return []byte(fmt.Sprintf("file body for %s\n", path)), nil
 	}

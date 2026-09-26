@@ -28,6 +28,8 @@ func auditStore(t *testing.T) *config.Store {
 // TestDescribeChange pins the subject, field and value rules against their own
 // examples and one case per remaining rule.
 func TestDescribeChange(t *testing.T) {
+	t.Parallel()
+
 	candsBefore := config.Doc{config.Candidates: json.RawMessage(`[
 		{"name": "gemini-3.8-flash-high", "harness": "agy", "provider": "google", "model": "gemini-3.8-flash-high"},
 		{"name": "claude-sonnet-4-6", "harness": "agy", "provider": "antigravity", "model": "claude-sonnet-4-6"}
@@ -186,6 +188,8 @@ func TestDescribeChange(t *testing.T) {
 
 // A value longer than 60 runes is cut with the ellipsis, as cutValue cuts it.
 func TestDescribeChangeCutsValue(t *testing.T) {
+	t.Parallel()
+
 	long := strings.Repeat("x", 70)
 	c := config.Change{Path: "policy.reason", Op: "add", After: json.RawMessage(`"` + long + `"`)}
 
@@ -201,6 +205,8 @@ func TestDescribeChangeCutsValue(t *testing.T) {
 // RevisionChanges describes a real revision against the one before it: the
 // provider change is the change, and the candidate is named.
 func TestRevisionChanges(t *testing.T) {
+	t.Parallel()
+
 	s := auditStore(t)
 
 	bodyA := []byte(`[{"harness":"agy","provider":"google","model":"gemini-3.8-flash-high"},` +
@@ -229,6 +235,8 @@ func TestRevisionChanges(t *testing.T) {
 // A revision whose document the provider lock refuses cannot be rolled back to:
 // the refusal names the reason, and the message names the revision.
 func TestRollbackPreviewRefused(t *testing.T) {
+	t.Parallel()
+
 	s := auditStore(t)
 
 	// The raw write bypasses the form, exactly as an older config would.
@@ -260,6 +268,8 @@ func TestRollbackPreviewRefused(t *testing.T) {
 // Rolling back to the newest revision changes nothing, and says so through
 // config.ErrNoChange.
 func TestRollbackPreviewNoChange(t *testing.T) {
+	t.Parallel()
+
 	s := auditStore(t)
 
 	body := []byte(`[{"harness":"claude","provider":"anthropic","model":"sonnet"}]`)
@@ -275,6 +285,8 @@ func TestRollbackPreviewNoChange(t *testing.T) {
 // CheckDoc accepts a document the form would accept and refuses one the form
 // would refuse.
 func TestCheckDoc(t *testing.T) {
+	t.Parallel()
+
 	valid := config.Doc{
 		config.Candidates: json.RawMessage(`[{"name":"sonnet","harness":"claude","provider":"anthropic","model":"sonnet"}]`),
 		config.Actors:     json.RawMessage(`{"builder":{"agent":"plan-executor","candidates":[{"candidate":"sonnet"}]}}`),

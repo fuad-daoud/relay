@@ -593,6 +593,8 @@ func (f *fakeGit) RemoteBranchExists(ctx context.Context, dir, remote, branch st
 }
 
 func TestFakeSatisfiesGit(t *testing.T) {
+	t.Parallel()
+
 	var _ Git = (*fakeGit)(nil)
 	var _ Git = (*git.Client)(nil)
 }

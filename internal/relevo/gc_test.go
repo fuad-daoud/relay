@@ -44,6 +44,8 @@ func seedDoneFor(t *testing.T, rt Runtime, name, cwd, plannerID string) {
 // only clears bindings whose PlannerID matches, leaving another planner's
 // bindings and a legacy (PlannerID-less) binding untouched.
 func TestGCClearsOnlyThisPlannersBindings(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	seedDoneFor(t, rt, "a1", "/repo-a1", "pl_aaa")
 	seedDoneFor(t, rt, "b1", "/repo-b1", "pl_bbb")
@@ -73,6 +75,8 @@ func TestGCClearsOnlyThisPlannersBindings(t *testing.T) {
 // TestGCAllPlannersClearsEveryDoneBinding pins #482: AllPlanners clears every
 // DONE binding regardless of planner, including a legacy PlannerID-less one.
 func TestGCAllPlannersClearsEveryDoneBinding(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	seedDoneFor(t, rt, "a1", "/repo-a1", "pl_aaa")
 	seedDoneFor(t, rt, "b1", "/repo-b1", "pl_bbb")
@@ -97,6 +101,8 @@ func TestGCAllPlannersClearsEveryDoneBinding(t *testing.T) {
 // PlannerID nor AllPlanners, and refuses when both are set, so no caller can
 // get "everything" by leaving the scope empty.
 func TestGCRefusesWithoutScope(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	seedDoneFor(t, rt, "a1", "/repo-a1", "pl_aaa")
 	seedDoneFor(t, rt, "b1", "/repo-b1", "pl_bbb")
@@ -121,6 +127,8 @@ func TestGCRefusesWithoutScope(t *testing.T) {
 // TestGCPlannerDryRunListsOnlyThisPlanner pins #482: a planner-scoped dry run
 // lists only that planner's bindings and changes nothing.
 func TestGCPlannerDryRunListsOnlyThisPlanner(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	seedDoneFor(t, rt, "a1", "/repo-a1", "pl_aaa")
 	seedDoneFor(t, rt, "b1", "/repo-b1", "pl_bbb")
@@ -144,6 +152,8 @@ func TestGCPlannerDryRunListsOnlyThisPlanner(t *testing.T) {
 }
 
 func TestGCClearsOnlyDoneBindings(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	seedDone(t, rt, "finished", "/repo-done")
 
@@ -186,6 +196,8 @@ func TestGCClearsOnlyDoneBindings(t *testing.T) {
 }
 
 func TestGCDryRunChangesNothing(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	seedDone(t, rt, "finished", "/repo-done")
 
@@ -202,6 +214,8 @@ func TestGCDryRunChangesNothing(t *testing.T) {
 }
 
 func TestGCArchivesByDefault(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	seedDone(t, rt, "finished", "/repo-done")
 	if err := rt.Store.AppendLog("finished", store.LogEntry{
@@ -231,6 +245,8 @@ func TestGCArchivesByDefault(t *testing.T) {
 }
 
 func TestGCWorktreeTeardown(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{}
 	rt := newRuntime(t)
 	rt.Git = fg
@@ -292,6 +308,8 @@ func TestGCWorktreeTeardown(t *testing.T) {
 }
 
 func TestGCAfterDoneReportsGone(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{dirtyResult: false}
 	rt := newRuntime(t)
 	rt.Git = fg
@@ -360,6 +378,8 @@ func rootNames(t *testing.T, root string) []string {
 }
 
 func TestGCWorktreeDryRun(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{}
 	rt := newRuntime(t)
 	rt.Git = fg
@@ -408,6 +428,8 @@ func TestGCWorktreeDryRun(t *testing.T) {
 }
 
 func TestGCWorktreeDirtyCheckError(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{dirtyErr: errors.New("git lock busy\ndetails")}
 	rt := newRuntime(t)
 	rt.Git = fg
@@ -457,6 +479,8 @@ func TestGCWorktreeDirtyCheckError(t *testing.T) {
 }
 
 func TestGCDeleteRemovesTheDirectory(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	seedDone(t, rt, "finished", "/repo-done")
 
@@ -484,6 +508,8 @@ func TestGCDeleteRemovesTheDirectory(t *testing.T) {
 }
 
 func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
+	t.Parallel()
+
 	fg := &fakeGit{}
 	rt := newRuntime(t)
 	rt.Git = fg
@@ -527,6 +553,8 @@ func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
 // TestGCIgnoresPaused: gc sweeps only DONE, so a paused binding -- worktree
 // released but the binding very much alive -- survives it untouched.
 func TestGCIgnoresPaused(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	b := store.Binding{

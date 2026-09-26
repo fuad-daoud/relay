@@ -13,6 +13,8 @@ import (
 )
 
 func TestResolveSendBuilderUnknownToken(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	_, err := ResolveSendBuilder(rt, testAgyRef, "agy/test/nope")
@@ -34,6 +36,8 @@ func TestResolveSendBuilderUnknownToken(t *testing.T) {
 // through ResolveSendBuilder: roles_missing is the one gate that refuses an
 // explicit --builder pick, and the refusal is wrapped as ErrBadBuilder.
 func TestResolveSendBuilderRolesMissingRefused(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Roles = fakeRoleChecker{"opencode": {".config/opencode/agents/researcher.md"}}
 
@@ -53,6 +57,8 @@ func TestResolveSendBuilderRolesMissingRefused(t *testing.T) {
 // rate-limited candidate still resolves, and the live gate is recorded on the
 // Resolution so the pick line can name the bypass.
 func TestResolveSendBuilderGatedResolves(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	if _, err := Unavailable(rt, testAgyRef, time.Time{}, "quota"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
@@ -84,6 +90,8 @@ func TestResolveSendBuilderGatedResolves(t *testing.T) {
 // differently-spelled token can resolve to the same candidate. The
 // canonical-equal case is therefore the only one constructible.
 func TestResolveSendBuilderCurrentIsNoop(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 
 	res, err := ResolveSendBuilder(rt, testAgyRef, testAgyRef)
@@ -96,6 +104,8 @@ func TestResolveSendBuilderCurrentIsNoop(t *testing.T) {
 }
 
 func TestApplyBuilderSetsCandidateKindTierAndClearsExcluded(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{
 		BuilderCandidate: testAgyRef,
 		Tier:             "harness",
@@ -131,6 +141,8 @@ func TestApplyBuilderSetsCandidateKindTierAndClearsExcluded(t *testing.T) {
 }
 
 func TestApplyBuilderTierAboveCapRefused(t *testing.T) {
+	t.Parallel()
+
 	b := store.Binding{BuilderCandidate: testAgyRef, Tier: "harness"}
 	res := Resolution{
 		How:       HowExplicit,
@@ -153,6 +165,8 @@ func TestApplyBuilderTierAboveCapRefused(t *testing.T) {
 }
 
 func TestRoundOpenIn(t *testing.T) {
+	t.Parallel()
+
 	plan := store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPlan}
 	report := store.LogEntry{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport}
 

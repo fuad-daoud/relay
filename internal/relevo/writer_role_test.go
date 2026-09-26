@@ -29,6 +29,8 @@ func uiBuilderRow(candidates ...string) roles.Row {
 // runs. An empty stored role and the literal "builder" both mean builder, and
 // normRole is the inverse for the stored form.
 func TestBindingRole(t *testing.T) {
+	t.Parallel()
+
 	if got := bindingRole(store.Binding{}); got != "builder" {
 		t.Errorf("bindingRole(Role \"\") = %q, want builder", got)
 	}
@@ -54,6 +56,8 @@ func TestBindingRole(t *testing.T) {
 // accepted, a reader is refused with ErrNotAWriterRole naming `relevo ask
 // --actor`, and an unknown name is refused with ErrUnknownRole.
 func TestCheckWriterRole(t *testing.T) {
+	t.Parallel()
+
 	set := candidateSet(t, rolesRuntimeCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
 		"builder":    {Candidates: []string{testClaudeRef}},
@@ -87,6 +91,8 @@ func TestCheckWriterRole(t *testing.T) {
 // ErrNoPlannerSession -- the role refusal is only reachable through
 // relevo.Bind, which is what this test drives (the plan's §7 test 3 fallback).
 func TestBindUnknownRoleRefused(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
 		"builder": {Candidates: []string{testClaudeRef}},
@@ -107,6 +113,8 @@ func TestBindUnknownRoleRefused(t *testing.T) {
 // TestBindCustomWriterLaunchesItsDefinition pins #382 §2: a binding's round
 // runs its own role's definition, and the role is persisted.
 func TestBindCustomWriterLaunchesItsDefinition(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	set := rt.Candidates
 	rt.Registry = rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
@@ -146,6 +154,8 @@ func TestBindCustomWriterLaunchesItsDefinition(t *testing.T) {
 // and no --candidate, the pick comes from the role's own candidates list, not
 // the builder's.
 func TestBindCustomWriterPicksFromItsList(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, rolesRuntimeCandidatesJSON)
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
@@ -167,6 +177,8 @@ func TestBindCustomWriterPicksFromItsList(t *testing.T) {
 // TestBindReaderRoleRefused pins #382 §6: a reader role is not a writer role
 // and no binding is stored.
 func TestBindReaderRoleRefused(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	if _, err := Bind(context.Background(), rt, BindOptions{
 		Name: "reader-bind", Role: "reviewer", Candidate: testClaudeRef,
@@ -183,6 +195,8 @@ func TestBindReaderRoleRefused(t *testing.T) {
 // takes no policy default, a writer with no gate key takes it, builder keeps
 // taking it, and an explicit --gate still wins.
 func TestGateFollowsRole(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Policy.Gate = &policy.GatePolicy{Default: "make check"}
 
@@ -235,6 +249,8 @@ func TestGateFollowsRole(t *testing.T) {
 // The candidates sit on distinct providers so the rate limit gates only the
 // one that ran.
 func TestSwitchPicksFromRoleList(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, `[
 	  {"harness":"claude","provider":"p1","model":"b","roles":["builder"]},
@@ -284,6 +300,8 @@ func TestSwitchPicksFromRoleList(t *testing.T) {
 // roles.json no longer defines fails at round start with ErrUnknownRole, and
 // no process is started -- there is no fallback to builder.
 func TestVanishedRoleFailsRoundStart(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	fr := newFakeRunner()
 	rt.Runner = fr
@@ -322,6 +340,8 @@ func TestVanishedRoleFailsRoundStart(t *testing.T) {
 // builder. The client's own registry knows ui-builder, which must not matter:
 // the server's roles never come from here.
 func TestAddCustomRoleOnServerRefused(t *testing.T) {
+	t.Parallel()
+
 	rt := newRuntime(t)
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
 		"builder":    {Candidates: []string{testClaudeRef}},
