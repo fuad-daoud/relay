@@ -149,3 +149,48 @@ and `internal/db/db_test.go`. The round-1 commit no longer applies.
 
 Report: how each conflict was resolved, #530's logic lines confirmed intact
 (`git diff dcf60d9^ dcf60d9 -- internal/db` vs the result), and the numbers.
+
+---
+
+## Round 3
+
+# Cleanup P3 (round 3) -- rebase the `internal/db` cleanup onto #541
+
+Round 3 of `cl-p3-db`. The branch holds the finished cleanup rebased onto #530
+(`6029341b` + `e4671295`). Since then `main` gained #541 (`df619f43`,
+"cap the WAL"), which changed `internal/db/db.go` and `db_test.go`:
+
+- a new constant `journalSizeLimit = 64 << 20` with a three-line *why* comment;
+- `Open`'s DSN gains `&_pragma=journal_size_limit(%d)` with `journalSizeLimit`;
+- `Open`'s doc comment mentions the cap;
+- a new test `TestOpenSetsJournalSizeLimit`.
+
+## Rules
+
+- **Run every command in the foreground and wait for it**; never background a
+  command or end your turn before the report and done marker exist.
+- #541's constant, DSN change and test survive exactly. Its constant comment is a
+  genuine *why* -- keep it (tighten wording only if it stays accurate).
+- Same scope, freezes and targets as rounds 1-2 (only `internal/db/`, the db
+  rule in `.golangci.yml`, db entries in the allow-lists, the plan copy; schema
+  and SQL otherwise untouched; exported API unchanged). Targets measured against
+  `ac743896`: non-test lines no higher, non-test comment lines at most half.
+- golangci-lint v2.14.0 must actually run; use `--allow-parallel-runners` if
+  another run holds its lock.
+- If a step is impossible as written, stop and report.
+
+## Steps
+
+1. `git fetch origin && git rebase origin/main`. Resolve `internal/db`
+   conflicts keeping #541's lines and the cleanup elsewhere; resolve list
+   conflicts by taking `main`'s lists and removing db's entries only.
+2. `golangci-lint run --allow-parallel-runners ./...` 0 issues;
+   `sh scripts/check-comments.sh`, `sh scripts/check-filesize.sh` ok;
+   `go test ./internal/db/... -count=1` passes, including
+   `TestOpenSetsJournalSizeLimit`.
+3. Re-measure against `ac743896`; targets hold. `make check` (foreground) passes.
+4. Append a "Round 3" section with this plan to
+   `docs/plans/2026-09-26-cleanup-p3-db.md`; commit once. Do not push.
+
+Report: conflicts and resolutions, #541's lines confirmed present, the numbers.
+
