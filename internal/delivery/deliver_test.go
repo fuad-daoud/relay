@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"context"
@@ -27,11 +27,11 @@ func (f fakeClaimStore) Remove(planner string, pid int) error {
 	return nil
 }
 
-// routeRuntime is a minimal Runtime for the delivery-route tests: a temp
+// routeRuntime is a minimal Deps for the delivery-route tests: a temp
 // store, a fixed clock and nothing else wired.
-func routeRuntime(t *testing.T) Runtime {
+func routeRuntime(t *testing.T) Deps {
 	t.Helper()
-	return Runtime{
+	return Deps{
 		Store: store.New(t.TempDir()),
 		Now:   func() time.Time { return baseTime },
 	}
@@ -39,7 +39,7 @@ func routeRuntime(t *testing.T) Runtime {
 
 // seedPending saves an active binding and one unconfirmed planner-bound
 // entry, which is exactly what DeliverPending and Pull work on.
-func seedPending(t *testing.T, rt Runtime, name, plannerID, kind string) store.Binding {
+func seedPending(t *testing.T, rt Deps, name, plannerID, kind string) store.Binding {
 	t.Helper()
 	b := store.Binding{
 		Name:      name,
@@ -66,7 +66,7 @@ func seedPending(t *testing.T, rt Runtime, name, plannerID, kind string) store.B
 
 // deliverOnce runs DeliverPending under the state lock, the way the daemon
 // and `relevo wait` do.
-func deliverOnce(t *testing.T, rt Runtime, b store.Binding) (store.Binding, Delivery) {
+func deliverOnce(t *testing.T, rt Deps, b store.Binding) (store.Binding, Delivery) {
 	t.Helper()
 	var (
 		next store.Binding
@@ -82,9 +82,9 @@ func deliverOnce(t *testing.T, rt Runtime, b store.Binding) (store.Binding, Deli
 	return next, got
 }
 
-// notMineDeliverer is #300's OutcomeNotMine: a deliverer that refuses this
+// notMineDeliverer is OutcomeNotMine: a deliverer that refuses this
 // planner. Its payload must stay pending -- there is no pane to fall through
-// to any more (#303 §5.4).
+// to any more.
 type notMineDeliverer struct{}
 
 func (notMineDeliverer) Deliver(context.Context, store.Endpoint, string, string, time.Time) (Outcome, string, error) {
@@ -118,8 +118,8 @@ func TestDeliverPendingNoRouteStaysPendingAsPull(t *testing.T) {
 }
 
 // TestDeliverPendingDelivererNotMineStaysPending is the plan's required
-// case for the deleted pane fallback: #300's OutcomeNotMine used to fall
-// through to typing the payload into a pane. It now leaves the entry pending
+// case for the deleted pane fallback: OutcomeNotMine does not fall
+// through to typing the payload into a pane. It leaves the entry pending
 // with the deliverer's own reason.
 func TestDeliverPendingDelivererNotMineStaysPending(t *testing.T) {
 	t.Parallel()
@@ -168,7 +168,7 @@ func TestDeliverPendingChannelByPlannerID(t *testing.T) {
 	}
 }
 
-// TestDeliverPendingMarksDeliveredByDeliverer keeps #300's port working: a
+// TestDeliverPendingMarksDeliveredByDeliverer keeps the deliverer port working: a
 // deliverer that reports OutcomeDelivered confirms the entry with
 // route=deliverer:<kind>.
 func TestDeliverPendingMarksDeliveredByDeliverer(t *testing.T) {
@@ -231,8 +231,7 @@ func (s *stubDeliverer) Deliver(_ context.Context, _ store.Endpoint, _, _ string
 // TestDeliverConsultsDelivererForMatchingKind proves DeliverPending routes a
 // matching planner's payload through rt.Deliverers exactly once: the stub
 // reports OutcomeDelivered, the entry is confirmed, and nothing else is
-// consulted. Before #303 this test also proved the payload never reached a
-// pane; there is no pane now, so the assertion is the deliverer's own call
+// consulted. There is no pane, so the assertion is the deliverer's own call
 // count plus the confirmed entry.
 func TestDeliverConsultsDelivererForMatchingKind(t *testing.T) {
 	t.Parallel()

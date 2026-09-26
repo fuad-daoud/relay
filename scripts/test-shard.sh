@@ -7,12 +7,14 @@
 #   OUTDIR   default .shard; created if missing, and existing files in it are
 #            overwritten
 # Env: SPLIT_PKGS  space-separated import-path patterns whose tests are split
-#                  across shards (default ./internal/relevo). Every package not
-#                  matched by a pattern is assigned whole, in go list order.
+#                  across shards (default ./internal/relevo ./internal/delivery).
+#                  Every package not matched by a pattern is assigned whole, in
+#                  go list order.
 # Exit: 0 when every go test it ran passed, 1 when any failed, 2 on bad usage.
 #
 # CI runs three shards of one leg in parallel, which is how internal/relevo's
-# ~1,000 tests are split without splitting the package itself: whole package i
+# and internal/delivery's ~1,000 tests are split without splitting either
+# package: whole package i
 # goes to shard i mod TOTAL, and test j of a split package goes to shard
 # j mod TOTAL, both over LC_ALL=C sorted lists. The assignment is
 # deterministic, so the shards are always disjoint and cover everything.
@@ -67,7 +69,7 @@ if [ "$total" -lt 1 ] || [ "$index" -ge "$total" ]; then
 	exit 2
 fi
 
-split_pkgs=${SPLIT_PKGS:-./internal/relevo}
+split_pkgs=${SPLIT_PKGS:-./internal/relevo ./internal/delivery}
 
 work=$(mktemp -d)
 # The cleanup must not decide the verdict: in dash a failing EXIT trap's status

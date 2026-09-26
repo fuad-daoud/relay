@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ import (
 const (
 	// AgyMaxContent bounds the content passed to `agy agentapi send-message`.
 	// Linux's per-argument limit is 131072 bytes; this stays under it so an
-	// argument carrying the whole report is always legal (#349).
+	// argument carrying the whole report is always legal.
 	AgyMaxContent = 100_000
 	// AgyConfirmWindow is how long Deliver polls the conversation's inbox for
 	// the read mark before giving up on this attempt. The message is already
@@ -42,7 +42,7 @@ type EnvExec interface {
 	Run(ctx context.Context, extraEnv []string, bin string, args ...string) ([]byte, error)
 }
 
-// AgyDeliverer is the PlannerDeliverer for agy planners (#349): it wakes an
+// AgyDeliverer is the PlannerDeliverer for agy planners: it wakes an
 // idle agy session by dropping the payload in that conversation's agentapi
 // inbox, and it confirms the receipt by finding the message read back out of
 // agy's own state directory.
@@ -57,7 +57,7 @@ type AgyDeliverer struct {
 	FallbackAfter time.Duration // zero -> DefaultFallbackAfter
 	ConfirmWindow time.Duration // zero -> AgyConfirmWindow
 	ConfirmPoll   time.Duration // zero -> AgyConfirmPoll
-	// gaveUp rate-limits the give-up log line (#459).
+	// gaveUp rate-limits the give-up log line.
 	gaveUp giveUpLog
 }
 
@@ -120,8 +120,7 @@ func (d *AgyDeliverer) home() (string, error) {
 	return filepath.Join(dir, ".gemini", "antigravity-cli"), nil
 }
 
-// Deliver implements PlannerDeliverer for agy planners. See §5 of the #349 plan
-// for the ordered condition table this follows.
+// Deliver implements PlannerDeliverer for agy planners.
 //
 // It never sends a payload twice: the inbox is scanned before every send, so a
 // retry after a crash between sending and confirming finds the message and
@@ -140,13 +139,8 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, planner store.Endpoint, payl
 	if !validConversationID(conv) {
 		return OutcomeNotMine, "agy planner session is not a conversation id; run relevo planner init inside agy", nil
 	}
-	if !queuedAt.IsZero() && d.now().Sub(queuedAt) > d.fallbackAfter() {
-		reason := fmt.Sprintf("agy push gave up after %s", d.fallbackAfter())
-		key := conv + "\x00" + strconv.FormatInt(queuedAt.UnixNano(), 10) + "\x00" + firstPayloadLine(payload)
-		if d.gaveUp.shouldLog(key, d.now()) {
-			slog.Info("agy push not confirmed; payload stays pending for the background wait", "conversation", conv, "reason", reason)
-		}
-		return OutcomeNotMine, reason, nil
+	if out, reason, gave := d.pastFallback(conv, payload, queuedAt); gave {
+		return out, reason, nil
 	}
 
 	creds, err := ReadAgyCreds(d.Creds, conv)
@@ -188,8 +182,28 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, planner store.Endpoint, payl
 		return OutcomeUnavailable, redactAgy("send-message: "+msg, creds.CSRFToken), nil
 	}
 
-	// Accepted is not read (§3): confirm by finding the message in the inbox
+	// Accepted is not read: confirm by finding the message in the inbox
 	// and the mark in read.json, polling briefly because agy writes both.
+	return d.confirm(ctx, conv, origin, queuedAt)
+}
+
+// pastFallback reports whether the payload has waited past the fallback
+// window, logging once per payload when it has.
+func (d *AgyDeliverer) pastFallback(conv, payload string, queuedAt time.Time) (Outcome, string, bool) {
+	if queuedAt.IsZero() || d.now().Sub(queuedAt) <= d.fallbackAfter() {
+		return OutcomeNotMine, "", false
+	}
+	reason := fmt.Sprintf("agy push gave up after %s", d.fallbackAfter())
+	key := conv + "\x00" + strconv.FormatInt(queuedAt.UnixNano(), 10) + "\x00" + firstPayloadLine(payload)
+	if d.gaveUp.shouldLog(key, d.now()) {
+		slog.Info("agy push not confirmed; payload stays pending for the background wait", "conversation", conv, "reason", reason)
+	}
+	return OutcomeNotMine, reason, true
+}
+
+// confirm polls the conversation's inbox until the message is marked read,
+// the confirm window closes, or the context ends.
+func (d *AgyDeliverer) confirm(ctx context.Context, conv, origin string, queuedAt time.Time) (Outcome, string, error) {
 	deadline := d.now().Add(d.confirmWindow())
 	for {
 		state := d.inbox(conv, origin, queuedAt)
@@ -315,7 +329,7 @@ func agyTitle(origin string) string {
 // the origin line, how big the report was, and where to read it. It keeps the
 // planner's wake-up meaningful -- the title and the first line still identify
 // the round -- without an argv the kernel would refuse. ref is the
-// `relevo show …` command that prints the full text (P4a round 2 §4.2), or ""
+// `relevo show …` command that prints the full text, or ""
 // when the entry names no show section.
 func agyOversizeContent(origin string, n int, ref string) string {
 	if ref == "" {

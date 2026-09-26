@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
-// OpencodeSessionFinder finds the active OpenCode session id matching a working directory (§4).
+// OpencodeSessionFinder finds the active OpenCode session id matching a working directory.
 type OpencodeSessionFinder struct {
 	Exec    usage.Exec
 	DBPath  string
@@ -32,13 +32,13 @@ func (f OpencodeSessionFinder) Find(cwd string, now time.Time) (string, error) {
 
 	sessions, err := f.sessions(ctx)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", planner.ErrNoOpencodeSession, err)
+		return "", fmt.Errorf("%w: %s", planner.ErrNoOpencodeSession, err.Error())
 	}
 
 	return planner.MatchOpencodeSession(cwd, sessions, now)
 }
 
-// sessions reads OpenCode's session records (#393): OpenCode 2.0.14 keeps its
+// sessions reads OpenCode's session records: OpenCode 2.0.14 keeps its
 // own in session_v2, and the legacy session table only holds pre-2.0 rows. The
 // union keeps a legacy row only when session_v2 has no row with the same id, so
 // an id never appears twice. A database with only one of the two tables, or one

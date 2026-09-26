@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"encoding/json"
@@ -17,16 +17,14 @@ import (
 const ClaimTTL = 10 * time.Second
 
 // claimKeyPrefix is the kv prefix every claim's row shares: one claim is one
-// `claim/<planner-id>` row holding exactly the JSON the file held (P3b round 2
-// §3).
+// `claim/<planner-id>` row holding exactly the JSON the file held.
 const claimKeyPrefix = "claim/"
 
 // claimKey is the row a claim's JSON lives under.
 func claimKey(plannerID string) string { return claimKeyPrefix + plannerID }
 
-// Claim is one relevo mcp process's hold on a planner's mailbox (spec
-// docs/specs/2026-09-21-planner-channel-design.md §3.2, re-keyed by planner id
-// in #303 §3.3).
+// Claim is one relevo mcp process's hold on a planner's mailbox, keyed by
+// planner id.
 type Claim struct {
 	Planner       string    `json:"planner"`         // required; the relevo planner id, e.g. "pl_abc…"
 	PID           int       `json:"pid"`             // required; > 0
@@ -60,7 +58,7 @@ type ClaimStore interface {
 }
 
 // KVClaims is the ClaimStore over the store root database's kv rows: one
-// `claim/<planner-id>` row per planner (P3b round 2 §4.2).
+// `claim/<planner-id>` row per planner.
 type KVClaims struct {
 	// KV is the kv handle the claims live in: the store root's database.
 	KV db.DBTxKV
@@ -89,7 +87,7 @@ func (c *KVClaims) alive(pid int) bool {
 
 // ensureImported adopts the pre-database claim files once per store: every
 // <Root>/*.json present is put to claim/<name> and removed, then the directory
-// itself goes when it is left empty (§4.2). It is a no-op with no Root.
+// itself goes when it is left empty. It is a no-op with no Root.
 func (c *KVClaims) ensureImported() error {
 	if c.Root == "" {
 		return nil
@@ -131,7 +129,7 @@ func (c *KVClaims) Live(plannerID string, now time.Time) (*Claim, error) {
 		return nil, errors.New("empty planner")
 	}
 	if planner.ValidID(plannerID) != nil {
-		// Not a planner id: a pre-#303 pane-keyed claim. This version did
+		// Not a planner id: a pane-keyed claim from before this version. It did
 		// not write it and must not rewrite it; the old row is ignored and
 		// left alone.
 		return nil, nil
@@ -174,8 +172,8 @@ func (c *KVClaims) liveFrom(kv db.KVTx, plannerID string, now time.Time) (*Claim
 //
 // Its check-then-write runs inside one DBTxKV.Tx, so the check and the write
 // are atomic: two relevo mcp processes starting together cannot both read "no
-// live claim" and both write, which a read followed by a separate write could
-// (P3b round 2 §4.2). The second writer sees the first's row and gets
+// live claim" and both write, which a read followed by a separate write could.
+// The second writer sees the first's row and gets
 // ErrClaimHeld.
 func (c *KVClaims) Write(claim Claim, now time.Time) error {
 	if claim.Planner == "" {
@@ -241,7 +239,7 @@ func (c *KVClaims) Remove(plannerID string, pid int) error {
 	return c.KV.KVDelete(claimKey(plannerID))
 }
 
-// paneKeyedClaimDead is the pre-#303 pane-keyed claim rule, pure so it is
+// paneKeyedClaimDead is the pane-keyed claim rule, pure so it is
 // tested directly: a claim document is removed only when it parses and carries
 // a pid that is not alive. Anything else -- unparseable bytes, no pid, a live
 // pid -- is left.
