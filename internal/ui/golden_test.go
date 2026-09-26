@@ -1122,6 +1122,14 @@ func TestGoldenViews(t *testing.T) {
 			},
 		},
 		{
+			name: "candidates-unused-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenCandidatesModel(t, 132, 34,
+					&fakeActions{doc: candFixtureDoc(t)}, candUnusedReport())
+				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnd})
+			},
+		},
+		{
 			name: "candidates-delete-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				m := goldenCandidatesModel(t, 132, 34,

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -233,7 +234,17 @@ func (m Model) keysView(env Env) string {
 		left = layKeys(modalKeys, room, key)
 	} else {
 		avail := room - lipgloss.Width(tailText) - 5 // 5 for the gap before the tail
-		if viewKeys := layKeys(m.top().Keys(), avail, key); viewKeys != "" {
+		viewKey := key
+		if off, ok := m.top().(offKeyer); ok {
+			offKeys := off.OffKeys(env)
+			viewKey = func(k, v string) string {
+				if slices.Contains(offKeys, k) {
+					return chip(offKbdStyle, k) + " " + offStyle.Render(v)
+				}
+				return key(k, v)
+			}
+		}
+		if viewKeys := layKeys(m.top().Keys(), avail, viewKey); viewKeys != "" {
 			left = viewKeys + "     " + tailText
 		}
 	}

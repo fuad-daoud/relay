@@ -26,6 +26,11 @@ type KeyHelp struct{ Key, Help string }
 // key list for the help overlay (§2.2, §4).
 type helpKeyer interface{ HelpKeys() []KeyHelp }
 
+// offKeyer is optionally implemented by a view that can name which of its
+// Keys do not apply right now: the footer draws those greyed out. A view
+// without it has no off keys.
+type offKeyer interface{ OffKeys(env Env) []string }
+
 // Env is what the shell lends a view on every call. Views never keep it.
 type Env struct {
 	Ctx      context.Context

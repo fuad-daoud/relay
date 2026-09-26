@@ -317,6 +317,11 @@ type Report struct {
 	// when nothing is gated, so a consumer that never learned the field
 	// sees the document it always did.
 	Gated []ledger.Gate `json:"gated,omitempty"`
+	// Unused lists the live rate-limit gates on providers no configured
+	// candidate uses, so a renamed provider's live gate stays visible
+	// instead of blocking nothing in silence. Kept out of JSON: the status
+	// document is a pinned contract.
+	Unused []ProviderGate `json:"-"`
 }
 
 // Status builds every row from the store and what relevo can determine
@@ -349,6 +354,7 @@ func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding) (Rep
 
 	rep := Report{Bindings: rows}
 	rep.Gated = Gates(rt)
+	rep.Unused = UnusedProviderGates(rt)
 	return rep, nil
 }
 
@@ -779,6 +785,9 @@ func HideDone(r Report) Report {
 		// hide a rate limit (#61). Found by rendering a hand-written ledger
 		// through the real binary; the renderer tests could not see it.
 		Gated: r.Gated,
+		// Unused is machine-wide too: a gate on a provider no candidate uses
+		// belongs to no binding, so hiding DONE rows must not hide it.
+		Unused: r.Unused,
 	}
 	for _, b := range r.Bindings {
 		if b.State == string(store.StateDone) {

@@ -25,6 +25,10 @@ var (
 	chipAccentStyle = lipgloss.NewStyle().Background(lipgloss.Color("#6ea8fe")).Foreground(lipgloss.Color("#0f1115")).Bold(true)
 	chipDangerStyle = lipgloss.NewStyle().Background(lipgloss.Color("#3a1820")).Foreground(lipgloss.Color("#ff6b81")).Bold(true)
 	kbdStyle        = lipgloss.NewStyle().Background(lipgloss.Color("#1d2129")).Foreground(lipgloss.Color("#e6e8ec"))
+	// offKbdStyle and offStyle draw a footer key that does not apply to the
+	// current row: the same cells, dimmed so the layout never moves.
+	offKbdStyle = lipgloss.NewStyle().Background(lipgloss.Color("#15181e")).Foreground(lipgloss.Color("#3d4350"))
+	offStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#3d4350"))
 
 	// Re-pointed old names so other views survive without code changes (§4).
 	fgStyle    = textStyle

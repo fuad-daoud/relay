@@ -441,10 +441,11 @@ func candDetailLines(doc relevo.ConfigDoc, env Env, r candRow, width int) []stri
 }
 
 // bodyLines is the whole body before it is windowed: a blank line under the
-// context row, the table, two blank lines and the cursor row's detail block
-// (§4).
+// context row, the table, the unused-provider table when there is one, two
+// blank lines and the cursor row's detail block (§4).
 func (v candidatesView) bodyLines(env Env, width int) []string {
 	rows := v.rows(env)
+	unused := env.Report.Unused
 	nameW, cols := candLayout(width)
 	cw := width - 6
 	if cw < 0 {
@@ -452,12 +453,22 @@ func (v candidatesView) bodyLines(env Env, width int) []string {
 	}
 	lines := []string{""}
 	lines = append(lines, candHeaderLine(nameW, cols, cw))
-	cur := candClamp(v.cur, len(rows))
+	cur := candClamp(v.cur, len(rows)+len(unused))
 	for i, r := range rows {
 		lines = append(lines, candDataLine(r, i == cur, nameW, cols, cw, env.Now))
 	}
+	if len(unused) > 0 {
+		reasonW, setByW := unusedCols(width, nameW)
+		lines = append(lines, "", unusedHeaderLine(nameW, reasonW, setByW, cw))
+		for i, g := range unused {
+			lines = append(lines, unusedDataLine(g, len(rows)+i == cur, nameW, reasonW, setByW, cw, env.Now))
+		}
+	}
 	lines = append(lines, "", "")
-	return append(lines, candDetailLines(v.doc, env, rows[cur], width)...)
+	if cur < len(rows) {
+		return append(lines, candDetailLines(v.doc, env, rows[cur], width)...)
+	}
+	return append(lines, unusedDetailLines(unused[cur-len(rows)], env.Now, width)...)
 }
 
 // rows is the table for the newest report, in pick order (§4).
@@ -477,7 +488,8 @@ func candClamp(i, n int) int {
 // follow scrolls the page so the cursor's table row stays visible (§4).
 func (v *candidatesView) follow(env Env) {
 	rows := v.rows(env)
-	if len(rows) == 0 {
+	n := len(rows)
+	if n == 0 && len(env.Report.Unused) == 0 {
 		v.top = 0
 		return
 	}
@@ -488,6 +500,11 @@ func (v *candidatesView) follow(env Env) {
 	}
 	lines := v.bodyLines(env, env.Width)
 	sel := 2 + v.cur // the blank line, the header row, then the rows
+	if v.cur >= n {
+		// Past the candidates come the unused table's blank line and header
+		// before its first row.
+		sel = 2 + n + 2 + (v.cur - n)
+	}
 	if sel < v.top {
 		v.top = sel
 	}
@@ -536,6 +553,19 @@ func (v candidatesView) HelpKeys() []KeyHelp {
 	}
 }
 
+// OffKeys greys the candidate-only keys on an unused-provider row (§4): the
+// cursor row is not a candidate, so editing, deleting, gating and probing it
+// do nothing. Nil everywhere else, including a view with no Actions seam.
+func (v candidatesView) OffKeys(env Env) []string {
+	if !v.actions {
+		return nil
+	}
+	if len(env.Report.Unused) == 0 || v.cur < len(v.rows(env)) {
+		return nil
+	}
+	return []string{"enter", "d", "g", "p"}
+}
+
 // Context is the counts line on the left and the row order on the right (§4).
 func (v candidatesView) Context(env Env) (string, string) {
 	rows := v.rows(env)
@@ -559,6 +589,13 @@ func (v candidatesView) Context(env Env) (string, string) {
 	left += "   " + item(gated, "gated")
 	if off > 0 {
 		left += "   " + item(off, "off")
+	}
+	if m := len(env.Report.Unused); m > 0 {
+		label := "gate on an unused provider"
+		if m > 1 {
+			label = "gates on unused providers"
+		}
+		left += "   " + item(m, label)
 	}
 	right := faintStyle.Render("sort ") + mutedStyle.Render("pick order")
 	return left, right
@@ -600,7 +637,7 @@ func (v candidatesView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 			v.err = nil
 			v.loaded = true
 		}
-		v.cur = candClamp(v.cur, len(v.rows(env)))
+		v.cur = candClamp(v.cur, len(v.rows(env))+len(env.Report.Unused))
 		return v, nil
 
 	case statusMsg:
@@ -617,46 +654,53 @@ func (v candidatesView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	return v, nil
 }
 
-// updateKey is the view's own keys (§4).
+// updateKey is the view's own keys (§4). The cursor ranges over the candidate
+// rows then the unused-provider rows; the candidate-only keys do nothing on an
+// unused row, where `u` clears the provider's gate and `a` still adds one.
 func (v candidatesView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 	rows := v.rows(env)
 	n := len(rows)
+	total := n + len(env.Report.Unused)
+	onUnused := v.cur >= n
 	switch k.String() {
 	case "up":
-		v.cur = candClamp(v.cur-1, n)
+		v.cur = candClamp(v.cur-1, total)
 		v.follow(env)
 	case "down":
-		v.cur = candClamp(v.cur+1, n)
+		v.cur = candClamp(v.cur+1, total)
 		v.follow(env)
 	case "home":
 		v.cur = 0
 		v.follow(env)
 	case "end":
-		v.cur = candClamp(n-1, n)
+		v.cur = candClamp(total-1, total)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-bodyHeight(env), total)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+bodyHeight(env), total)
 		v.follow(env)
 	case "enter":
-		if n == 0 {
+		if n == 0 || onUnused {
 			return v, nil
 		}
 		return v, openOverlay(newCandidateForm(env, v.doc, rows[v.cur].c.Name, servesText(rows[v.cur]), ""))
 	case "a":
+		if onUnused {
+			return v, openOverlay(newCandidateForm(env, v.doc, "", "", ""))
+		}
 		if n == 0 {
 			return v, nil
 		}
 		return v, openOverlay(newCandidateForm(env, v.doc, "", "", rows[v.cur].c.Harness))
 	case "d":
-		if n == 0 {
+		if n == 0 || onUnused {
 			return v, nil
 		}
 		return v, v.deleteCmd(env, rows[v.cur])
 	case "g":
-		if n == 0 {
+		if n == 0 || onUnused {
 			return v, nil
 		}
 		return v, v.gateForm(env, rows[v.cur])
@@ -664,12 +708,18 @@ func (v candidatesView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		if n == 0 {
 			return v, nil
 		}
+		if onUnused {
+			provider := env.Report.Unused[v.cur-n].Provider
+			return v, runAction(env.Ctx, "ungate", provider, func(ctx context.Context) Result {
+				return env.Actions.Ungate(ctx, provider)
+			})
+		}
 		name := rows[v.cur].c.Name
 		return v, runAction(env.Ctx, "ungate", name, func(ctx context.Context) Result {
 			return env.Actions.Ungate(ctx, name)
 		})
 	case "p":
-		if n == 0 {
+		if n == 0 || onUnused {
 			return v, nil
 		}
 		name := rows[v.cur].c.Name

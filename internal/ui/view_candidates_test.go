@@ -3,15 +3,18 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/muesli/termenv"
 )
 
 // candFixtureJSON is this machine's seven candidates, with the names the store
@@ -87,6 +90,21 @@ func candFixtureGates() []ledger.Gate {
 // candGatedReport is the report the goldens and unit tests hang their gates
 // on.
 func candGatedReport() relevo.Report { return relevo.Report{Gated: candFixtureGates()} }
+
+// candUnusedReport is candGatedReport plus one live rate limit on antigravity,
+// a provider no candidate in the fixture uses.
+func candUnusedReport() relevo.Report {
+	rep := candGatedReport()
+	rep.Unused = []relevo.ProviderGate{{
+		Provider: "antigravity",
+		Since:    railNow.Add(-40 * time.Hour),
+		Until:    railNow.Add(3 * time.Hour),
+		Note:     "RESOURCE_EXHAUSTED (code 429): Individual quota reached",
+		Source:   "relevo",
+		Binding:  "oc-tui-a",
+	}}
+	return rep
+}
 
 // candEnv is the Env the view's pure helpers are called with.
 func candEnv(rep relevo.Report) Env {
@@ -397,5 +415,127 @@ func TestCandidatesNeedsActions(t *testing.T) {
 	}
 	if !strings.Contains(msg.text, "need relevo ui") {
 		t.Errorf("notice = %q", msg.text)
+	}
+}
+
+// TestFooterGreysAViewsOffKeys pins the footer's off-aware rendering: a key the
+// top view reports in OffKeys draws in the grey chip and label, and a key it
+// does not keeps the normal chip. Not parallel: it moves the global colour
+// profile so the strings it compares carry escapes.
+func TestFooterGreysAViewsOffKeys(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	defer lipgloss.SetColorProfile(orig)
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	fa := &fakeActions{doc: candFixtureDoc(t)}
+	m := goldenCandidatesModel(t, 132, 34, fa, candUnusedReport())
+	m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnd})
+
+	got := m.keysView(m.env())
+	wantOff := chip(offKbdStyle, "d") + " " + offStyle.Render("delete")
+	if !strings.Contains(got, wantOff) {
+		t.Errorf("footer does not grey d: want %q in %q", wantOff, got)
+	}
+	wantOn := chip(kbdStyle, "u") + " " + mutedStyle.Render("ungate")
+	if !strings.Contains(got, wantOn) {
+		t.Errorf("footer does not keep u normal: want %q in %q", wantOn, got)
+	}
+}
+
+func TestCandidatesCursorReachesTheUnusedRow(t *testing.T) {
+	fa := &fakeActions{doc: candFixtureDoc(t)}
+	rep := candUnusedReport()
+	v := candView(t, fa, rep, 132, 34)
+	env := candActionEnv(fa, rep)
+
+	next, _ := v.Update(tea.KeyMsg{Type: tea.KeyEnd}, env)
+	v = next.(candidatesView)
+	n := len(v.rows(env))
+	if v.cur != n {
+		t.Fatalf("cur = %d, want %d (the first unused row)", v.cur, n)
+	}
+	if got := v.OffKeys(env); !reflect.DeepEqual(got, []string{"enter", "d", "g", "p"}) {
+		t.Errorf("OffKeys on an unused row = %v, want [enter d g p]", got)
+	}
+
+	home, _ := v.Update(tea.KeyMsg{Type: tea.KeyHome}, env)
+	if got := home.(candidatesView).OffKeys(env); got != nil {
+		t.Errorf("OffKeys on a candidate row = %v, want nil", got)
+	}
+}
+
+func TestCandidatesUngateOnAnUnusedRowClearsItsProvider(t *testing.T) {
+	fa := &fakeActions{doc: candFixtureDoc(t)}
+	rep := candUnusedReport()
+	v := candView(t, fa, rep, 132, 34)
+	env := candActionEnv(fa, rep)
+
+	next, _ := v.Update(tea.KeyMsg{Type: tea.KeyEnd}, env)
+	v = next.(candidatesView)
+
+	_, cmd := v.Update(key('u'), env)
+	runCmd(t, cmd)
+	if len(fa.ungates) != 1 || fa.ungates[0] != "antigravity" {
+		t.Errorf("ungates = %v, want [antigravity]", fa.ungates)
+	}
+}
+
+func TestCandidatesCandidateKeysDoNothingOnAnUnusedRow(t *testing.T) {
+	cases := []struct {
+		name string
+		key  tea.KeyMsg
+	}{
+		{"enter", tea.KeyMsg{Type: tea.KeyEnter}},
+		{"d", key('d')},
+		{"g", key('g')},
+		{"p", key('p')},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fa := &fakeActions{doc: candFixtureDoc(t)}
+			rep := candUnusedReport()
+			v := candView(t, fa, rep, 132, 34)
+			env := candActionEnv(fa, rep)
+
+			next, _ := v.Update(tea.KeyMsg{Type: tea.KeyEnd}, env)
+			v = next.(candidatesView)
+			n := len(v.rows(env))
+
+			res, cmd := v.Update(tc.key, env)
+			if cmd != nil {
+				t.Errorf("%s on an unused row returned a command", tc.name)
+			}
+			if got := res.(candidatesView); got.cur != n {
+				t.Errorf("%s moved the cursor to %d, want %d", tc.name, got.cur, n)
+			}
+			if len(fa.gates)+len(fa.ungates)+len(fa.probes)+len(fa.configEdits) != 0 {
+				t.Errorf("%s on an unused row ran an action: gates=%v ungates=%v probes=%v edits=%v",
+					tc.name, fa.gates, fa.ungates, fa.probes, fa.configEdits)
+			}
+		})
+	}
+}
+
+func TestCandidatesContextCountsUnusedProviderGates(t *testing.T) {
+	fa := &fakeActions{doc: candFixtureDoc(t)}
+
+	none := candView(t, fa, candGatedReport(), 132, 34)
+	left, _ := none.Context(candActionEnv(fa, candGatedReport()))
+	if strings.Contains(stripANSI(left), "unused") {
+		t.Errorf("context without unused gates = %q, must not name them", stripANSI(left))
+	}
+
+	one := candView(t, fa, candUnusedReport(), 132, 34)
+	left, _ = one.Context(candActionEnv(fa, candUnusedReport()))
+	if !strings.Contains(stripANSI(left), "1 gate on an unused provider") {
+		t.Errorf("context = %q, want it to count one gate on an unused provider", stripANSI(left))
+	}
+
+	rep := candUnusedReport()
+	rep.Unused = append(rep.Unused, relevo.ProviderGate{Provider: "other", Since: railNow, Source: "planner"})
+	two := candView(t, fa, rep, 132, 34)
+	left, _ = two.Context(candActionEnv(fa, rep))
+	if !strings.Contains(stripANSI(left), "2 gates on unused providers") {
+		t.Errorf("context = %q, want it to count two gates on unused providers", stripANSI(left))
 	}
 }
