@@ -12,7 +12,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
@@ -102,7 +101,7 @@ func opencodeDBPath() string {
 // database it cannot open, and an environment with nothing to capture all
 // end the same way -- nothing written, nothing printed.
 func captureAgyEnv() {
-	if !delivery.AgyEnvPresent(os.Getenv) {
+	if !relevo.AgyEnvPresent(os.Getenv) {
 		return
 	}
 	root, err := store.DefaultRoot()
@@ -117,8 +116,8 @@ func captureAgyEnv() {
 	secrets := db.SecretStore{DB: d}
 	// The credentials were files under planners/.agy before this round: a file
 	// that is present is imported, then removed (§4.3).
-	_ = delivery.ImportAgyCreds(secrets, st.AgyCredsDir())
-	_, _ = delivery.CaptureAgyCreds(os.Getenv, secrets, time.Now().UTC())
+	_ = relevo.ImportAgyCreds(secrets, st.AgyCredsDir())
+	_, _ = relevo.CaptureAgyCreds(os.Getenv, secrets, time.Now().UTC())
 }
 
 // newDeliverers builds Runtime.Deliverers: the agy deliverer always, and an
@@ -128,8 +127,8 @@ func captureAgyEnv() {
 // reports stay pending for the background wait. agy needs no external tool: it reads
 // the captured credential secret from the machine database and runs agy
 // itself, and reports its own failure as OutcomeUnavailable.
-func newDeliverers() map[string]delivery.PlannerDeliverer {
-	deliverers := map[string]delivery.PlannerDeliverer{}
+func newDeliverers() map[string]relevo.PlannerDeliverer {
+	deliverers := map[string]relevo.PlannerDeliverer{}
 	// store.DefaultRoot has already succeeded once in newRuntime; the guard is
 	// only for the shape of the function, and a root relevo cannot resolve means
 	// every verb has failed long before a delivery is attempted.
@@ -138,7 +137,7 @@ func newDeliverers() map[string]delivery.PlannerDeliverer {
 		// --preflight` and `--check` run against one -- must not get a
 		// database conjured into it just because a deliverer was wired.
 		if d, derr := store.New(root).DBIfExists(); derr == nil && d != nil {
-			deliverers["agy"] = &delivery.AgyDeliverer{
+			deliverers["agy"] = &relevo.AgyDeliverer{
 				Exec:  binEnvExec{},
 				Creds: db.SecretStore{DB: d},
 			}
@@ -147,7 +146,7 @@ func newDeliverers() map[string]delivery.PlannerDeliverer {
 	if _, err := exec.LookPath("sqlite3"); err != nil {
 		return deliverers
 	}
-	deliverers["opencode"] = &delivery.OpencodeDeliverer{
+	deliverers["opencode"] = &relevo.OpencodeDeliverer{
 		Exec:       binExec{},
 		StateFiles: opencodeServiceFiles(),
 		DBPath:     opencodeDBPath(),
@@ -312,7 +311,7 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 	var (
 		gates    db.KV
 		gatesDir string
-		claims   delivery.ClaimStore
+		claims   relevo.ClaimStore
 		runLog   hooks.RunLog
 	)
 	if openGates {
@@ -322,7 +321,7 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 		}
 		gates = d
 		gatesDir = root
-		claims = &delivery.KVClaims{KV: db.TxKV{DB: d}, Root: st.ChannelsDir()}
+		claims = &relevo.KVClaims{KV: db.TxKV{DB: d}, Root: st.ChannelsDir()}
 		runLog = hooksRunLog(st)
 	}
 
@@ -339,7 +338,7 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 
 	var opencodeSession func(cwd string, now time.Time) (string, error)
 	if _, err := exec.LookPath("sqlite3"); err == nil {
-		opencodeSession = delivery.OpencodeSessionFinder{
+		opencodeSession = relevo.OpencodeSessionFinder{
 			Exec:   binExec{},
 			DBPath: opencodeDBPath(),
 		}.Find

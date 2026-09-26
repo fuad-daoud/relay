@@ -41,7 +41,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/mcp"
 	"github.com/fuad-daoud/relevo/internal/planner"
@@ -54,7 +53,7 @@ import (
 
 const (
 	// fakeReportText is the sentence the fake harness writes into its report.
-	// A channel push expands the report file (delivery.PushText), so this exact
+	// A channel push expands the report file (relevo.PushText), so this exact
 	// sentence is what arrives as the notification's body.
 	fakeReportText = "fake-harness-report: this round was handled by the fake claude on PATH"
 
@@ -206,7 +205,7 @@ func TestHeadlessE2E(t *testing.T) {
 	// a second `relevo mcp` in a second session is. The channel-mode server for
 	// the first planner stays live, which is what makes 8.4's "nothing was
 	// written to a channel mailbox for that binding" a real check: a channel
-	// drains only its own planner's bindings (delivery.Drain), so the tools-mode
+	// drains only its own planner's bindings (relevo.Drain), so the tools-mode
 	// binding's report can only reach the planner through pull.
 	second, _, err := planner.Init(reg, planner.InitInput{
 		Kind: "claude", SessionID: sessionTools, CWD: repo, Now: rt.Now(),
@@ -442,7 +441,7 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 		Latency:    mdb,
 		Policy:     pol,
 		Now:        time.Now,
-		Channels:   &delivery.KVClaims{KV: db.TxKV{DB: mdb}, Root: st.ChannelsDir()},
+		Channels:   &relevo.KVClaims{KV: db.TxKV{DB: mdb}, Root: st.ChannelsDir()},
 		Planners:   reg,
 		ProcStart:  procStartUnix,
 	}
@@ -579,7 +578,7 @@ func startChannel(t *testing.T, ctx context.Context, rt relevo.Runtime, plannerI
 	c := startMCP(t, ctx, rt, mcp.ModeChannel, plannerID)
 
 	now := rt.Now()
-	claim := delivery.Claim{
+	claim := relevo.Claim{
 		Planner:   plannerID,
 		PID:       os.Getpid(),
 		HostPID:   os.Getpid(),
@@ -591,7 +590,7 @@ func startChannel(t *testing.T, ctx context.Context, rt relevo.Runtime, plannerI
 		t.Fatalf("write channel claim for planner %s: %v", plannerID, err)
 	}
 
-	st := &delivery.DrainState{Planner: plannerID}
+	st := &relevo.DrainState{Planner: plannerID}
 	pollCtx, stopPoll := context.WithCancel(ctx)
 	stopped := make(chan struct{})
 	go func() {
@@ -607,7 +606,7 @@ func startChannel(t *testing.T, ctx context.Context, rt relevo.Runtime, plannerI
 				if err := rt.Channels.Write(claim, claim.SeenAt); err != nil {
 					return
 				}
-				if _, err := delivery.Drain(pollCtx, delivery.Deps{Store: rt.Store, Now: rt.Now, Channels: rt.Channels, Deliverers: rt.Deliverers, Planners: rt.Planners}, st, c.srv); err != nil {
+				if _, err := relevo.Drain(pollCtx, rt, st, c.srv); err != nil {
 					return
 				}
 			}

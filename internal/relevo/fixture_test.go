@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -95,7 +94,7 @@ func queuedBinding(t *testing.T) (Runtime, store.Binding) {
 		Payload: "Builder finished round 1. Report: /x/001-report.md",
 	}
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		return delivery.Queue(context.Background(), deliveryDeps(rt), tx, b.Name, entry)
+		return Queue(context.Background(), rt, tx, b.Name, entry)
 	})
 	if err != nil {
 		t.Fatalf("Queue: %v", err)

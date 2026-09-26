@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -89,13 +88,13 @@ func cmdAsk(args []string) error {
 	if *round > 0 {
 		fmt.Printf("asked round %d's builder (%s session %s) on %s (pid %d)\nfindings: %s\n",
 			*round, res.Consult.Endpoint.Kind, res.Consult.Endpoint.SessionID, res.Binding,
-			res.Consult.Endpoint.PID, delivery.FindingsCommand(res.Binding, res.Consult.Round, res.Consult.ID))
+			res.Consult.Endpoint.PID, relevo.FindingsCommand(res.Binding, res.Consult.Round, res.Consult.ID))
 		return nil
 	}
 
 	fmt.Printf("asked %s consult %s on %s (pid %d)\nfindings: %s\n",
 		res.Consult.Role, res.Consult.ID, res.Binding, res.Consult.Endpoint.PID,
-		delivery.FindingsCommand(res.Binding, res.Consult.Round, res.Consult.ID))
+		relevo.FindingsCommand(res.Binding, res.Consult.Round, res.Consult.ID))
 	if n := relevo.GatedNote(rt, res.Candidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}

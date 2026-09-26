@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/planner"
 )
 
@@ -51,17 +50,17 @@ func testSecretDB(t *testing.T) *db.DB {
 }
 
 // testSecrets returns the machine database's secret store.
-func testSecrets(t *testing.T) delivery.SecretStore { return db.SecretStore{DB: testSecretDB(t)} }
+func testSecrets(t *testing.T) SecretStore { return db.SecretStore{DB: testSecretDB(t)} }
 
 // testClaims returns a KVClaims over a fresh temp database, the database it
 // writes to, and the directory a legacy channels/ tree would live in.
-func testClaims(t *testing.T) (*delivery.KVClaims, *db.DB, string) {
+func testClaims(t *testing.T) (*KVClaims, *db.DB, string) {
 	t.Helper()
 	d := testSecretDB(t)
 	dir := filepath.Join(t.TempDir(), "channels")
 	// alwaysAlive, as the FileClaims fixtures had: a claim's fake pid must not
 	// depend on which pids happen to exist on the machine running the test.
-	return &delivery.KVClaims{KV: db.TxKV{DB: d}, Root: dir, Alive: alwaysAlive}, d, dir
+	return &KVClaims{KV: db.TxKV{DB: d}, Root: dir, Alive: alwaysAlive}, d, dir
 }
 
 // testPlanners returns a planner registry over a fresh temp database.

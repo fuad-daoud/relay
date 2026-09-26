@@ -1,4 +1,4 @@
-package delivery
+package relevo
 
 import (
 	"bytes"
@@ -487,7 +487,7 @@ func assertAgySendArgs(t *testing.T, args []string) {
 	}
 }
 
-// TestAgyDeliverSendErrorIsRedacted pins both error spellings: a Run
+// TestAgyDeliverSendErrorIsRedacted pins both error spellings from §3: a Run
 // error whose text quotes the token, and a JSON {"error": ...} on stdout.
 func TestAgyDeliverSendErrorIsRedacted(t *testing.T) {
 	t.Parallel()
@@ -592,7 +592,7 @@ func TestDeliverPendingAgyDeliversViaDeliverer(t *testing.T) {
 	d, fake, home := newAgyRig(t)
 	playAgyOnSend(t, fake, home, true)
 
-	rt := Deps{
+	rt := Runtime{
 		Store:      store.New(t.TempDir()),
 		Now:        time.Now,
 		Deliverers: map[string]PlannerDeliverer{"agy": d},

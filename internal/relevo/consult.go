@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
@@ -182,7 +181,7 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	if state == store.ConsultDone {
 		entry.Path = c.FindingsPath
-		entry.Payload = fmt.Sprintf("Findings from %s consult %s: %s", c.Role, c.ID, delivery.FindingsCommand(b.Name, c.Round, c.ID))
+		entry.Payload = fmt.Sprintf("Findings from %s consult %s: %s", c.Role, c.ID, FindingsCommand(b.Name, c.Round, c.ID))
 	} else {
 		// No Path: a silent consult wrote no file, and pointing at one that
 		// does not exist would send the planner to read nothing. The note is
@@ -205,7 +204,7 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 			entry.Verdict = verdict
 			entry.Reasons = reasons
 			entry.Payload = fmt.Sprintf("relevo: round %d · verdict %s · %d reasons · %s",
-				c.Round, verdict, len(reasons), delivery.FindingsCommand(b.Name, c.Round, c.ID))
+				c.Round, verdict, len(reasons), FindingsCommand(b.Name, c.Round, c.ID))
 			b.LastVerdict = &store.Verdict{
 				Round:    c.Round,
 				Verdict:  verdict,
@@ -219,7 +218,7 @@ func finishConsult(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		}
 	}
 
-	if err := delivery.Queue(ctx, deliveryDeps(rt), tx, b.Name, entry); err != nil {
+	if err := Queue(ctx, rt, tx, b.Name, entry); err != nil {
 		return b, err
 	}
 

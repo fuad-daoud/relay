@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/mcp"
 	"github.com/fuad-daoud/relevo/internal/planner"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -178,7 +177,7 @@ func mcpModeWord(m mcp.Mode) string {
 // the poll loop. A refused claim (ErrClaimHeld) exits the process: Claude Code
 // shows the server as failed and the planner keeps pane delivery, exactly as if
 // relevo mcp had never started (spec §3.2, §6).
-func startMCPChannel(ctx context.Context, rt relevo.Runtime, rec planner.Record, version string, p delivery.Pusher, interval time.Duration) {
+func startMCPChannel(ctx context.Context, rt relevo.Runtime, rec planner.Record, version string, p relevo.Pusher, interval time.Duration) {
 	if rt.Channels == nil {
 		fmt.Fprintln(os.Stderr, "relevo mcp: no claim store configured; running tools-only")
 		return
@@ -187,7 +186,7 @@ func startMCPChannel(ctx context.Context, rt relevo.Runtime, rec planner.Record,
 	now := rt.Now()
 	cwd, _ := os.Getwd()
 	host := os.Getppid()
-	claim := delivery.Claim{
+	claim := relevo.Claim{
 		Planner:       rec.ID,
 		PID:           os.Getpid(),
 		HostPID:       host,
@@ -199,7 +198,7 @@ func startMCPChannel(ctx context.Context, rt relevo.Runtime, rec planner.Record,
 	}
 	if err := rt.Channels.Write(claim, now); err != nil {
 		fmt.Fprintf(os.Stderr, "relevo mcp: %v\n", err)
-		if errors.Is(err, delivery.ErrClaimHeld) {
+		if errors.Is(err, relevo.ErrClaimHeld) {
 			os.Exit(1)
 		}
 		return
@@ -213,8 +212,8 @@ func startMCPChannel(ctx context.Context, rt relevo.Runtime, rec planner.Record,
 // #303 §4.5). It never exits on a drain error -- only a stolen claim
 // (ErrClaimHeld on refresh) or a forgotten record stops it, leaving the
 // tools still serving.
-func pollMCPChannel(ctx context.Context, rt relevo.Runtime, plannerID string, claim delivery.Claim, p delivery.Pusher, interval time.Duration) {
-	st := &delivery.DrainState{Planner: plannerID}
+func pollMCPChannel(ctx context.Context, rt relevo.Runtime, plannerID string, claim relevo.Claim, p relevo.Pusher, interval time.Duration) {
+	st := &relevo.DrainState{Planner: plannerID}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -235,13 +234,13 @@ func pollMCPChannel(ctx context.Context, rt relevo.Runtime, plannerID string, cl
 			claim.SeenAt = rt.Now()
 			if err := rt.Channels.Write(claim, claim.SeenAt); err != nil {
 				fmt.Fprintf(os.Stderr, "relevo mcp: refresh claim: %v\n", err)
-				if errors.Is(err, delivery.ErrClaimHeld) {
+				if errors.Is(err, relevo.ErrClaimHeld) {
 					return
 				}
 				continue
 			}
 
-			res, err := delivery.Drain(ctx, delivery.Deps{Store: rt.Store, Now: rt.Now, Channels: rt.Channels, Deliverers: rt.Deliverers, Planners: rt.Planners}, st, p)
+			res, err := relevo.Drain(ctx, rt, st, p)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "relevo mcp: drain: %v\n", err)
 				continue

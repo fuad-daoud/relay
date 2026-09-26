@@ -1,4 +1,4 @@
-package delivery
+package relevo
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// OriginLine produces the one fixed first line for a typed payload.
+// OriginLine produces the one fixed first line for a typed payload (#139).
 // Pure; no trailing newline.
 func OriginLine(name string, round int, dir store.Direction, kind store.Kind) string {
 	if dir == store.DirToBuilder {

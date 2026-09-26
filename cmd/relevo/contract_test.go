@@ -611,7 +611,7 @@ func TestContractConfigExport(t *testing.T) {
 // ---------------------------------------------------------------------
 // C12: every `relevo <verb> ...` command line in internal/harness/agents/*.md,
 // claude-plugin/commands/*.md, internal/mcp/instructions.go and
-// internal/delivery/push.go.
+// internal/relevo/push.go.
 // ---------------------------------------------------------------------
 
 // relevoCommandLinePattern is the plan's own extraction regexp.
@@ -661,7 +661,7 @@ func c12Sources(t *testing.T) []string {
 	}
 	files = append(files,
 		filepath.Join("..", "..", "internal", "mcp", "instructions.go"),
-		filepath.Join("..", "..", "internal", "delivery", "push.go"),
+		filepath.Join("..", "..", "internal", "relevo", "push.go"),
 	)
 	return files
 }

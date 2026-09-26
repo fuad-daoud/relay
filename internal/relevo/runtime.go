@@ -14,7 +14,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
@@ -55,6 +54,10 @@ type Git interface {
 	// AddDetachedWorktree is AddWorktree without a branch: a throwaway tree
 	// at commit with a detached HEAD (#144).
 	AddDetachedWorktree(ctx context.Context, dir, path, commit string) error
+	// MaterializeTree writes tree into dir's files without committing, the
+	// step that fills a reader round's scratch worktree with the binding's
+	// whole working state (2026-09-24-cockpit-design.md §3.4).
+	MaterializeTree(ctx context.Context, dir, tree string) error
 	// CheckoutWorktree is the existing-branch form of git worktree add; AddWorktree creates the branch, this one checks it out.
 	CheckoutWorktree(ctx context.Context, dir, path, branch string) error
 	RemoveWorktree(ctx context.Context, dir, path string, force bool) error
@@ -245,8 +248,9 @@ type Runtime struct {
 	// Channels arbitrates a planner's mailbox between the daemon and a live
 	// `relevo mcp` channel (docs/specs/2026-09-21-planner-channel-design.md).
 	// Nil means no claims exist, so DeliverPending leaves the entry pending
-	// for `relevo wait`; cmd/relevo wires delivery.KVClaims.
-	Channels delivery.ClaimStore
+	// for `relevo wait`; cmd/relevo wires
+	// relevo.FileClaims{Root: st.ChannelsDir()}.
+	Channels ClaimStore
 
 	// Planners is the planner registry (#303 step 1a). bind, add, fork and
 	// ask resolve their planner through it, and the daemon back-fills a
@@ -267,7 +271,7 @@ type Runtime struct {
 	// Deliverers routes a planner-bound payload to that planner kind's own
 	// push path (docs/specs/2026-09-22-opencode-delivery-design.md). A kind
 	// with no entry, and a nil map, leave the entry pending for `relevo wait`.
-	Deliverers map[string]delivery.PlannerDeliverer
+	Deliverers map[string]PlannerDeliverer
 }
 
 // legacyRegistry is the registry derived from candidates.json and
@@ -308,19 +312,6 @@ func IngestDeps(rt Runtime) ingest.Deps {
 // nil interfaces at the assignment.
 func captureDeps(rt Runtime) capture.Deps {
 	return capture.Deps{Git: rt.Git, Store: rt.Store}
-}
-
-// deliveryDeps builds internal/delivery's Deps from rt. The Channels interface
-// carries through nil-safe: a nil rt.Channels stays a nil delivery.ClaimStore,
-// since the assignment is between identical interface types.
-func deliveryDeps(rt Runtime) delivery.Deps {
-	return delivery.Deps{
-		Store:      rt.Store,
-		Now:        rt.Now,
-		Channels:   rt.Channels,
-		Deliverers: rt.Deliverers,
-		Planners:   rt.Planners,
-	}
 }
 
 // ErrRemoteUnavailable is returned when a remote operation is attempted without a configured remote client.
