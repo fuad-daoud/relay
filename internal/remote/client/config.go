@@ -18,18 +18,16 @@ var (
 )
 
 type ServerEntry struct {
-	URL         string `json:"url"`                   // https://zen:7777 (or http:// only with Insecure)
-	Fingerprint string `json:"fingerprint,omitempty"` // sha256:<hex>; required unless CA == "system"
+	URL         string `json:"url"`
+	Fingerprint string `json:"fingerprint,omitempty"` // sha256:<hex>
 	CA          string `json:"ca,omitempty"`          // "" (pin) | "system"
-	Insecure    bool   `json:"insecure,omitempty"`    // plain http allowed
+	Insecure    bool   `json:"insecure,omitempty"`
 }
 
 type Servers map[string]ServerEntry // key: the server's short name
 
-// ParseServers decodes a servers map from data and validates every entry with
-// ValidateEntry. Entries are checked in name order, so the first error is
-// deterministic. A missing body is the caller's concern; this returns exactly
-// the map the JSON holds, never nil.
+// ParseServers validates every entry, checking names in order so the first
+// error is deterministic. It returns the map the JSON holds, never nil.
 func ParseServers(data []byte) (Servers, error) {
 	var s Servers
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -52,8 +50,6 @@ func ParseServers(data []byte) (Servers, error) {
 	return s, nil
 }
 
-// EncodeServers renders s as the indented JSON bodies the servers section
-// stores, with a trailing newline. It is the inverse of ParseServers.
 func EncodeServers(s Servers) ([]byte, error) {
 	if s == nil {
 		s = make(Servers)
@@ -65,7 +61,6 @@ func EncodeServers(s Servers) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
-// ValidateEntry checks that URL parses, is https unless Insecure, and has fingerprint or CA unless Insecure.
 func ValidateEntry(e ServerEntry) error {
 	u, err := url.Parse(e.URL)
 	if err != nil || u.Scheme == "" || u.Host == "" {
@@ -89,9 +84,6 @@ func ValidateEntry(e ServerEntry) error {
 	return nil
 }
 
-// PublicComment is the "user@host" comment an enrolment line carries, the
-// rule InitKey used before the key moved into the database. It is "" when the
-// username cannot be read.
 func PublicComment() string {
 	u, err := user.Current()
 	if err != nil || u.Username == "" {
@@ -103,9 +95,6 @@ func PublicComment() string {
 	return u.Username + "@localhost"
 }
 
-// EnrollLine renders kp's public key as the enrolment line a server admin runs
-// `relevo serve enroll --key "<line>"` with, with the default comment. Callers
-// derive it from the key secret instead of reading a client.pub file.
 func EnrollLine(kp remote.Keypair) string {
 	return remote.MarshalPublic(kp.Public, PublicComment())
 }

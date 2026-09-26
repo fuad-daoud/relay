@@ -6,7 +6,6 @@ internal/relevo/reconcile.go
 internal/relevo/remote.go
 internal/relevo/send.go
 internal/relevo/status.go
-internal/remote/client/client.go
 internal/stats/stats.go
 internal/ui/confirm.go
 internal/ui/dash/render.go
