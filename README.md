@@ -1205,7 +1205,7 @@ An actor is relevo's name for a job; its agent is the harness definition `relevo
 
 For `codex` the candidate's `model` is `<id>[:<effort>]`: `gpt-5.6-terra:high` runs `-m gpt-5.6-terra -c model_reasoning_effort=high`, and the suffix stays in the token so two efforts are two candidates.
 
-An effort rides in the candidate's `model`: `codex` uses `model:<effort>`; `claude` uses `model:<low|medium|high|xhigh|max>`, which sets `--effort`, while any other suffix stays part of the model id; `opencode` uses `model#<variant>`, passed to `opencode run -m`, where variants are per model and opencode refuses an unknown one.
+For `claude` the `model` may end in `:low|medium|high|xhigh|max`: `opus:medium` runs `--model opus --effort medium`, and any other suffix stays part of the model id, so a Bedrock id such as `...-v1:0` passes through whole. For `opencode` the effort is a variant, `model#<variant>`, passed as is to `opencode run -m`: variants are per model, and opencode refuses an unknown one.
 
 Under `workspace-write`, codex also cannot write to Go's default build cache (`~/.cache/go-build`), so a Go plan fails at `go build` unless the plan sets `GOCACHE` inside the worktree or `/tmp`, or your `~/.codex/config.toml` lists it under `sandbox_workspace_write.writable_roots`. relevo adds only its own state directory.
 
