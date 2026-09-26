@@ -163,7 +163,7 @@ cat "$outdir/whole.txt"
 k=0
 while [ "$k" -lt "$n" ]; do
 	k=$((k + 1))
-	cat "$outdir/split-$(cat "$work/s$k.pkg" | sed 's#.*/##').txt"
+	cat "$outdir/split-$(sed 's#.*/##' "$work/s$k.pkg").txt"
 done
 
 exit "$failed"
