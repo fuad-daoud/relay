@@ -17,6 +17,10 @@ var ErrNotFound = errors.New("binding not found")
 // tree: two builders in one tree is the one failure that destroys work.
 var ErrCWDTaken = errors.New("working tree already bound")
 
+// ErrAmbiguousCWD reports several reader bindings on one working directory and
+// no writer to prefer; the caller must name the binding it means.
+var ErrAmbiguousCWD = errors.New("ambiguous working directory")
+
 const (
 	// MaxAgentNameLen is the cap ValidName enforces; no name relevo already
 	// wrote becomes invalid.

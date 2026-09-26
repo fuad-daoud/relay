@@ -516,8 +516,19 @@ func resolveRegate(regate *int, pol policy.Policy) int {
 }
 
 func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.Endpoint) (store.Binding, Resolution, error) {
-	if err := checkWriterRole(rt.RoleRegistry(), opts.Role); err != nil {
+	shape, err := actorShape(rt.RoleRegistry(), opts.Role)
+	if err != nil {
 		return store.Binding{}, Resolution{}, err
+	}
+	// A reader round has no check, so the writer-only knobs are refused at
+	// bind, naming the flag (A5 §2).
+	if shape == store.ShapeReader {
+		if opts.Gate != "" {
+			return store.Binding{}, Resolution{}, errors.New("--gate: a reader round has no check")
+		}
+		if opts.Regate != nil {
+			return store.Binding{}, Resolution{}, errors.New("--regate: a reader round has no check")
+		}
 	}
 	name := opts.Name
 	if name == "" {
@@ -548,13 +559,18 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 	// Check the working tree before spawning anything. Save re-checks under the
 	// lock and stays authoritative, but without this a refused bind would leave
 	// a started builder pane stranded with nothing pointing at it.
-	other, found, err := rt.Store.FindByCWD(opts.CWD)
-	if err != nil {
-		return store.Binding{}, Resolution{}, err
-	}
-	if found && other.Name != name && other.State != store.StateDone {
-		return store.Binding{}, Resolution{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
-			opts.CWD, other.Name, other.BuilderCandidate, other.Round, store.ErrCWDTaken)
+	//
+	// Only a writer can be blocked here (A5 §3): a reader may share a writer's
+	// tree, so this refusal applies between two writers only.
+	if shape == store.ShapeWriter {
+		other, found, err := rt.Store.FindByCWD(opts.CWD)
+		if err != nil && !errors.Is(err, store.ErrAmbiguousCWD) {
+			return store.Binding{}, Resolution{}, err
+		}
+		if found && other.Name != name && other.State != store.StateDone && other.Shape == store.ShapeWriter {
+			return store.Binding{}, Resolution{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
+				opts.CWD, other.Name, other.BuilderCandidate, other.Round, store.ErrCWDTaken)
+		}
 	}
 
 	var tier harness.Tier
@@ -585,6 +601,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, plannerEP store.E
 		State:            store.StateActive,
 		Tier:             string(tier),
 		Role:             normRole(opts.Role),
+		Shape:            shape,
 		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName)),
 		Regate:           resolveRegate(opts.Regate, rt.Policy),
 		RepoRef:          captureRepo(ctx, rt, opts.CWD),

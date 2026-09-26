@@ -202,7 +202,7 @@ func policyChecks(warnings []relevo.PolicyWarning) []doctor.Check {
 func refusalChecks(refusals []relevo.RoleRefusal) []doctor.Check {
 	checks := make([]doctor.Check, 0, len(refusals))
 	for _, r := range refusals {
-		detail := r.Text + " -- ask --actor " + r.Role + " without --candidate would refuse"
+		detail := r.Text + " -- bind --actor " + r.Role + " without --candidate would refuse"
 		if r.Role == "builder" {
 			detail = r.Text + " -- add/bind without --candidate would refuse"
 		}

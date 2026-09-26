@@ -54,10 +54,10 @@ func TestBindingRole(t *testing.T) {
 	}
 }
 
-// TestCheckWriterRole pins #382 §6: a writer role (or the builder default) is
-// accepted, a reader is refused with ErrNotAWriterRole naming `relevo ask
-// --actor`, and an unknown name is refused with ErrUnknownRole.
-func TestCheckWriterRole(t *testing.T) {
+// TestActorShape pins A5 §2: a writer role (or the builder default) reads as
+// a writer, a reader as a reader, and an unknown name is refused with
+// ErrUnknownRole.
+func TestActorShape(t *testing.T) {
 	t.Parallel()
 
 	set := candidateSet(t, rolesRuntimeCandidatesJSON)
@@ -67,29 +67,33 @@ func TestCheckWriterRole(t *testing.T) {
 	})
 
 	for _, role := range []string{"builder", "", "ui-builder"} {
-		if err := checkWriterRole(reg, role); err != nil {
-			t.Errorf("checkWriterRole(%q) = %v, want nil", role, err)
+		shape, err := actorShape(reg, role)
+		if err != nil {
+			t.Errorf("actorShape(%q) = %v, want nil", role, err)
+			continue
+		}
+		if shape != store.ShapeWriter {
+			t.Errorf("actorShape(%q) = %q, want writer", role, shape)
 		}
 	}
 
-	err := checkWriterRole(reg, "reviewer")
-	if !errors.Is(err, ErrNotAWriterRole) {
-		t.Fatalf("checkWriterRole(reviewer) err = %v, want ErrNotAWriterRole", err)
+	shape, err := actorShape(reg, "reviewer")
+	if err != nil {
+		t.Fatalf("actorShape(reviewer) err = %v, want nil", err)
 	}
-	if !strings.Contains(err.Error(), "relevo ask --actor reviewer") {
-		t.Errorf("err = %q, want it to name relevo ask --actor reviewer", err.Error())
+	if shape != store.ShapeReader {
+		t.Errorf("actorShape(reviewer) = %q, want reader", shape)
 	}
 
-	err = checkWriterRole(reg, "nope")
-	if !errors.Is(err, ErrUnknownRole) {
-		t.Fatalf("checkWriterRole(nope) err = %v, want ErrUnknownRole", err)
+	if _, err := actorShape(reg, "nope"); !errors.Is(err, ErrUnknownRole) {
+		t.Fatalf("actorShape(nope) err = %v, want ErrUnknownRole", err)
 	}
 }
 
 // TestBindUnknownRoleRefused pins #382 §6: an unknown role is refused before
 // any candidate resolution or launch. The plan asked for this through the
 // cmd/relevo CLI, but cmdBind resolves this session's planner (in BindResolved)
-// before create runs checkWriterRole, so a CLI run without a planner stops on
+// before create runs actorShape, so a CLI run without a planner stops on
 // ErrNoPlannerSession -- the role refusal is only reachable through
 // relevo.Bind, which is what this test drives (the plan's §7 test 3 fallback).
 func TestBindUnknownRoleRefused(t *testing.T) {
@@ -176,20 +180,153 @@ func TestBindCustomWriterPicksFromItsList(t *testing.T) {
 	}
 }
 
-// TestBindReaderRoleRefused pins #382 §6: a reader role is not a writer role
-// and no binding is stored.
-func TestBindReaderRoleRefused(t *testing.T) {
+// TestBindAReaderRecordsItsShape pins A5 §1 and §2: a reader actor can be
+// bound locally, and the binding records shape "reader".
+func TestBindAReaderRecordsItsShape(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "reader-bind", Role: "reviewer", Candidate: testClaudeRef,
+		PlannerID: testPlannerName, CWD: "/reader-repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind(--actor reviewer): %v", err)
+	}
+	if b.Shape != store.ShapeReader {
+		t.Errorf("Shape = %q, want reader", b.Shape)
+	}
+	stored, err := rt.Store.Load("reader-bind")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.Shape != store.ShapeReader {
+		t.Errorf("stored Shape = %q, want reader", stored.Shape)
+	}
+}
+
+// TestReaderSharesAWritersTree pins A5 §3: a reader is never blocked by, and
+// never blocks, another binding on the same CWD, while two writers are still
+// refused.
+func TestReaderSharesAWritersTree(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "writer", Candidate: testClaudeRef, PlannerID: testPlannerName, CWD: "/shared-tree",
+	}); err != nil {
+		t.Fatalf("bind writer: %v", err)
+	}
+
+	reader, err := Bind(context.Background(), rt, BindOptions{
+		Name: "reviewer-bind", Role: "reviewer", Candidate: testClaudeRef,
+		PlannerID: testPlannerName, CWD: "/shared-tree",
+	})
+	if err != nil {
+		t.Fatalf("bind a reader on a writer's tree: %v", err)
+	}
+	if reader.CWD != "/shared-tree" {
+		t.Errorf("reader CWD = %q, want the writer's tree", reader.CWD)
+	}
+
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "writer2", Candidate: testClaudeRef, PlannerID: testPlannerName, CWD: "/shared-tree",
+	}); !errors.Is(err, store.ErrCWDTaken) {
+		t.Fatalf("second writer err = %v, want ErrCWDTaken", err)
+	}
+}
+
+// TestReaderRefusesGateRegateAndVerify pins A5 §2: the writer-only knobs are
+// refused for a reader, each error naming its flag, and the policy defaults
+// gate.default and verify.default do not reach a reader binding.
+func TestReaderRefusesGateRegateAndVerify(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Policy.Gate = &policy.GatePolicy{Default: "make check"}
+	rt.Policy.Verify = &policy.VerifyPolicy{Default: true}
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "rev-gate", Role: "reviewer", Candidate: testClaudeRef,
+		PlannerID: testPlannerName, CWD: "/rev-gate", Gate: "make check",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--gate") || !strings.Contains(err.Error(), "a reader round has no check") {
+		t.Fatalf("Bind(--gate on a reader) = %v, want the --gate refusal", err)
+	}
+
+	_, err = Bind(context.Background(), rt, BindOptions{
+		Name: "rev-regate", Role: "reviewer", Candidate: testClaudeRef,
+		PlannerID: testPlannerName, CWD: "/rev-regate", Regate: ptr(3),
+	})
+	if err == nil || !strings.Contains(err.Error(), "--regate") || !strings.Contains(err.Error(), "a reader round has no check") {
+		t.Fatalf("Bind(--regate on a reader) = %v, want the --regate refusal", err)
+	}
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "rev-plain", Role: "reviewer", Candidate: testClaudeRef,
+		PlannerID: testPlannerName, CWD: "/rev-plain",
+	})
+	if err != nil {
+		t.Fatalf("Bind(a plain reader): %v", err)
+	}
+	if b.Gate != "" {
+		t.Errorf("reader Gate = %q, want gate.default not to apply", b.Gate)
+	}
+	if b.RoundVerify {
+		t.Error("reader RoundVerify = true, want verify.default not to apply")
+	}
+
+	_, err = Send(context.Background(), rt, "rev-plain", writePlan(t, "do it"), SendOptions{Verify: ptr(true)})
+	if err == nil || !strings.Contains(err.Error(), "--verify") || !strings.Contains(err.Error(), "a reader round has no check") {
+		t.Fatalf("Send(--verify on a reader) = %v, want the --verify refusal", err)
+	}
+}
+
+// TestSendToAReaderIsNotYetAvailable pins A5 §2: send to a reader binding is
+// refused with ErrReaderRoundsNotYet until R4 adds reader rounds.
+func TestSendToAReaderIsNotYetAvailable(t *testing.T) {
 	t.Parallel()
 
 	rt := newRuntime(t)
 	if _, err := Bind(context.Background(), rt, BindOptions{
 		Name: "reader-bind", Role: "reviewer", Candidate: testClaudeRef,
 		PlannerID: testPlannerName, CWD: "/reader-repo",
-	}); !errors.Is(err, ErrNotAWriterRole) {
-		t.Fatalf("Bind(--role reviewer) err = %v, want ErrNotAWriterRole", err)
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
 	}
-	if _, err := rt.Store.Load("reader-bind"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("a refused bind stored a binding: err = %v, want ErrNotFound", err)
+
+	_, err := Send(context.Background(), rt, "reader-bind", writePlan(t, "do it"), SendOptions{})
+	if !errors.Is(err, ErrReaderRoundsNotYet) {
+		t.Fatalf("Send to a reader err = %v, want ErrReaderRoundsNotYet", err)
+	}
+	want := "reader rounds are not available yet: reader-bind is bound to reader actor reviewer"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("err = %q, want %q", err.Error(), want)
+	}
+}
+
+// TestRemoteReaderIsRefusedLocally pins A5 §2's local-only rule: a remote add
+// of a reader is refused before any server contact.
+func TestRemoteReaderIsRefusedLocally(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Git = &fakeGit{
+		headCommitID:  "1111111111111111111111111111111111111111",
+		rootCommitSHA: "2222222222222222222222222222222222222222",
+	}
+	fr := &fakeRemote{}
+	rt.Remote = fr
+
+	_, err := Add(context.Background(), rt, AddOptions{
+		Name: "remote-reader", Role: "reviewer", Server: "s",
+		PlannerID: testPlannerName, Repo: "/repo",
+	})
+	if err == nil || !strings.Contains(err.Error(), "reader actors run locally only; bind without --server") {
+		t.Fatalf("Add(--server --actor reviewer) = %v, want the local-only refusal", err)
+	}
+	if len(fr.calls) != 0 {
+		t.Errorf("calls = %v, want no server contact", fr.calls)
 	}
 }
 

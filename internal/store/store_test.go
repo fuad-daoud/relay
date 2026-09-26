@@ -615,6 +615,67 @@ func TestFindByCWDSkipsRemote(t *testing.T) {
 	}
 }
 
+// TestFindByCWDPrefersTheWriter pins that a working tree shared by a writer
+// and readers resolves to the writer, whatever order the bindings were saved
+// in. The reader names sort first, so a first-match implementation would
+// return one of them.
+func TestFindByCWDPrefersTheWriter(t *testing.T) {
+	s := New(t.TempDir())
+
+	reader := newBinding("a-reader", "/repo")
+	reader.Shape = ShapeReader
+	if err := s.Save(reader); err != nil {
+		t.Fatalf("Save reader: %v", err)
+	}
+	writer := newBinding("z-writer", "/repo")
+	writer.Shape = ShapeWriter
+	if err := s.Save(writer); err != nil {
+		t.Fatalf("Save writer: %v", err)
+	}
+	other := newBinding("b-reader", "/repo")
+	other.Shape = ShapeReader
+	if err := s.Save(other); err != nil {
+		t.Fatalf("Save second reader: %v", err)
+	}
+
+	got, found, err := s.FindByCWD("/repo")
+	if err != nil {
+		t.Fatalf("FindByCWD: %v", err)
+	}
+	if !found || got.Name != "z-writer" {
+		t.Fatalf("FindByCWD = (%q, %v), want the writer z-writer", got.Name, found)
+	}
+}
+
+// TestFindByCWDAmbiguousReaders pins that with no writer one reader resolves;
+// several readers are an error naming the flag that fixes it.
+func TestFindByCWDAmbiguousReaders(t *testing.T) {
+	s := New(t.TempDir())
+
+	only := newBinding("only-reader", "/repo")
+	only.Shape = ShapeReader
+	if err := s.Save(only); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, found, err := s.FindByCWD("/repo")
+	if err != nil || !found || got.Name != "only-reader" {
+		t.Fatalf("FindByCWD = (%q, %v, %v), want the only reader", got.Name, found, err)
+	}
+
+	second := newBinding("second-reader", "/repo")
+	second.Shape = ShapeReader
+	if err := s.Save(second); err != nil {
+		t.Fatalf("Save second: %v", err)
+	}
+	_, found, err = s.FindByCWD("/repo")
+	if !errors.Is(err, ErrAmbiguousCWD) {
+		t.Fatalf("FindByCWD with two readers = (found %v, err %v), want ErrAmbiguousCWD", found, err)
+	}
+	if !strings.Contains(err.Error(), "several readers are bound to /repo: pass --name") {
+		t.Errorf("err = %q, want it to name the readers and --name", err.Error())
+	}
+}
+
 func TestListSkipsTheArchiveDirectory(t *testing.T) {
 	s := New(t.TempDir())
 	if err := s.Save(newBinding("webshop", "/repo")); err != nil {

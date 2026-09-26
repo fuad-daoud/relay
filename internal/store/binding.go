@@ -5,6 +5,15 @@ import (
 	"time"
 )
 
+// Binding shapes name what a binding's actor does to its working tree:
+// ShapeWriter changes the tree, ShapeReader only leaves artifacts. Every
+// record names one; a record written before A5 (format 8 and earlier) has no
+// shape key and reads as a writer, because a reader could not be bound then.
+const (
+	ShapeWriter = "writer"
+	ShapeReader = "reader"
+)
+
 // RepoRef identifies the git repository a binding works in; nil means it could
 // not be determined and never fails the caller.
 type RepoRef struct {
@@ -100,6 +109,10 @@ type Binding struct {
 	// Role names the actor the runner plays. It is always written; the empty
 	// value means builder and is stored as the literal "builder".
 	Role string `json:"actor"`
+	// Shape is what the runner's actor does to the tree: ShapeWriter changes
+	// it, ShapeReader only leaves artifacts. It is always written; a record
+	// with no shape key (format 8 and earlier) decodes as a writer.
+	Shape string `json:"shape"`
 	// Tier "" means harness.
 	Tier      string `json:"tier,omitempty"`
 	RoundTier string `json:"round_tier,omitempty"`
@@ -316,6 +329,10 @@ func (b *Binding) UnmarshalJSON(raw []byte) error {
 	}
 	if out.Role == "" {
 		out.Role = "builder"
+	}
+	// A record with no shape predates A5, when only writers could be bound.
+	if out.Shape == "" {
+		out.Shape = ShapeWriter
 	}
 	*b = out
 	return nil

@@ -106,6 +106,11 @@ func TestBindingFieldGroupsRoundTrip(t *testing.T) {
 				// trip starts from the canonical value.
 				in.Role = "builder"
 			}
+			if in.Shape == "" {
+				// A binding with no shape decodes as a writer; the round trip
+				// starts from the canonical value.
+				in.Shape = ShapeWriter
+			}
 			raw, err := json.Marshal(in)
 			if err != nil {
 				t.Fatalf("Marshal: %v", err)

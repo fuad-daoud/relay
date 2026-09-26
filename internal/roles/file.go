@@ -49,7 +49,7 @@ type Row struct {
 	// Shape is "writer" or "reader". A built-in row may give it only to
 	// repeat the built-in shape; a new role must give it. A new writer runs
 	// as a binding's role (`relevo bind --worktree --actor` / `relevo bind --actor`); a
-	// new reader runs through `relevo ask --actor`.
+	// new reader is bound with `relevo bind --actor`.
 	Shape *string `json:"shape"`
 
 	// Check marks a writer role whose round closes on a check. true is

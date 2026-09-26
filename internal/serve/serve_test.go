@@ -741,7 +741,7 @@ func TestCreateBindingRole(t *testing.T) {
 	}{
 		{"server role", "ui-builder", http.StatusCreated, "", "claude/anthropic/haiku", false},
 		{"unknown role", "nope", http.StatusBadRequest, `unknown actor "nope"`, "", true},
-		{"reader role", "reviewer", http.StatusBadRequest, "a reader actor runs through relevo ask", "", false},
+		{"reader role", "reviewer", http.StatusBadRequest, "reader actors run locally only; bind without --server", "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

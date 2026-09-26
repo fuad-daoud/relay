@@ -112,13 +112,31 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		return AddResult{}, err
 	}
 	if opts.Server != "" {
+		// A reader is local-only in A5 §2: a reader's tree is the caller's own
+		// (it may share a writer's), so a server has nothing to run. Refuse
+		// here, before any server contact. A role this client's registry does
+		// not know is left to the server's own check.
+		if shape, rerr := actorShape(rt.RoleRegistry(), opts.Role); rerr == nil && shape == store.ShapeReader {
+			return AddResult{}, errors.New("reader actors run locally only; bind without --server")
+		}
 		return addRemote(ctx, rt, opts, rec, haveRec)
 	}
-	// A binding runs one writer role (#382 §2). Refuse a bad one here, on the
-	// local path only: a remote binding's role is resolved against the
-	// server's own roles.json, never this client's (§5.3).
-	if err := checkWriterRole(rt.RoleRegistry(), opts.Role); err != nil {
+	// A binding runs one actor, writer or reader (A5 §2). Refuse an unknown
+	// one here, on the local path only: a remote binding's actor is resolved
+	// against the server's own roles.json, never this client's (§5.3).
+	shape, err := actorShape(rt.RoleRegistry(), opts.Role)
+	if err != nil {
 		return AddResult{}, err
+	}
+	// A reader round has no check, so the writer-only knobs are refused at
+	// add, naming the flag.
+	if shape == store.ShapeReader {
+		if opts.Gate != "" {
+			return AddResult{}, errors.New("--gate: a reader round has no check")
+		}
+		if opts.Regate != nil {
+			return AddResult{}, errors.New("--regate: a reader round has no check")
+		}
 	}
 	if err := store.ValidName(opts.Name); err != nil {
 		return AddResult{}, err
@@ -277,11 +295,13 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 
 	other, found, err := rt.Store.FindByCWD(cwd)
-	if err != nil {
+	if err != nil && !errors.Is(err, store.ErrAmbiguousCWD) {
 		rollback()
 		return AddResult{}, err
 	}
-	if found && other.Name != opts.Name && other.State != store.StateDone {
+	// Only a writer is refused here: a reader may share a writer's tree
+	// (A5 §3), so the refusal applies between two writers only.
+	if shape == store.ShapeWriter && found && other.Name != opts.Name && other.State != store.StateDone && other.Shape == store.ShapeWriter {
 		rollback()
 		return AddResult{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
 			cwd, other.Name, other.BuilderCandidate, other.Round, store.ErrCWDTaken)
@@ -328,6 +348,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Repo:             opts.Repo,
 		Tier:             string(tier),
 		Role:             normRole(opts.Role),
+		Shape:            shape,
 		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName)),
 		Regate:           resolveRegate(opts.Regate, rt.Policy),
 		// captureRepo runs against opts.Repo, not cwd: opts.Repo is the
