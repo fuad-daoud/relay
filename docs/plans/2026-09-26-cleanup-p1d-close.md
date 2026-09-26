@@ -150,3 +150,84 @@ cover: make check (writes .coverage.txt)                      # on the post-D10 
 Report: the functions deleted per deadcode pass (file:function), anything kept
 under the exceptions, the baseline's package count and its lowest five
 packages, the three runs' maximum per-package difference, and the mutation check.
+
+## Round 2
+
+# Cleanup P1d (round 2) -- tie the coverage baseline to the environment it was measured in
+
+Round 2 of `cl-p1-close`. Round 1 (commits `f63ae93`, `e1953b7`, PR #522) added
+`scripts/check-coverage.sh` and `testdata/coverage-baseline.txt`. CI failed:
+
+- `check (ubuntu-latest, go 1.25)`: 16 packages 1-5 points below the baseline
+  (for example `internal/serve` 74.6 vs 78.9, `internal/hooks` 83.4 vs 88.4).
+  Go 1.25 counts statements differently from the Go 1.27 that measured the
+  baseline; percentages are not comparable across toolchain minor versions.
+- `check (macos-latest, go stable)`: `internal/proc` 83.6 vs 86.6 -- its
+  Linux-only paths (cgroups, scopes) do not run on darwin.
+- `check (ubuntu-latest, go stable)`: passed -- the same environment as the baseline.
+
+### 0. Rules
+
+- **Run every command in the foreground and wait for it.** Never a background
+  task, `&`, a scheduled wakeup, or "I'll wait for the notification": you are a
+  headless process, and when you end your turn the process exits and the round
+  is lost. Do not end your turn until the report and the done marker exist.
+- If a step is impossible as written, or the code contradicts this plan, stop
+  and report -- do not improvise.
+- Only these files may change: `scripts/check-coverage.sh`,
+  `scripts/check-coverage_test.sh`, `scripts/testdata/check-coverage/*`,
+  `testdata/coverage-baseline.txt`, `.github/workflows/ci.yml`, `CLAUDE.md`
+  (the coverage bullet only), and the plan copy.
+- Never loosen the 1.0-point tolerance; never lower a baseline value.
+- Comments: *why* only; no issue numbers, no `§`, no history.
+
+### 1. Contract changes
+
+**Baseline header.** `testdata/coverage-baseline.txt` gets a first line
+`# measured with go<major>.<minor> <GOOS>/<GOARCH>` (for example
+`# measured with go1.27 linux/amd64`), taken from `go env GOVERSION` (trimmed to
+major.minor, ignoring any `-X...` suffix and patch) and `go env GOOS GOARCH`.
+`--write` writes it. The package lines are unchanged.
+
+**`scripts/check-coverage.sh` (without `--write`):**
+- Read the header. Compute the same string for the running toolchain.
+- If they match: compare as today.
+- If they differ and `RELEVO_REQUIRE_COVERAGE=1`: print
+  `check-coverage: baseline was measured with <header>, this is <current>; regenerate it with --write on <header's env or the CI leg>`
+  and exit 1.
+- If they differ otherwise: print
+  `check-coverage: skipped (baseline measured with <header>, this is <current>)`
+  and exit 0.
+- A baseline with no header is an error (exit 1) with a message saying to
+  regenerate it.
+
+**CI** (`.github/workflows/ci.yml`, job `check`): set
+`RELEVO_REQUIRE_COVERAGE: '1'` on the ubuntu-latest / go stable leg only, using
+the same expression style as the existing `RELEVO_REQUIRE_LINT`.
+
+**CLAUDE.md**: extend the existing coverage bullet by one sentence: the baseline
+is tied to the Go minor version and platform in its header, is enforced on CI's
+ubuntu/stable leg, and is skipped elsewhere; a Go upgrade on that leg means
+regenerating it.
+
+### 2. Steps
+
+1. Script changes; extend `check-coverage_test.sh` with: header matches (passes),
+   header differs without the env (skip, exit 0), header differs with
+   `RELEVO_REQUIRE_COVERAGE=1` (exit 1), no header (exit 1). Fixtures updated.
+   `sh scripts/check-coverage_test.sh` and `shellcheck scripts/check-coverage*.sh` pass.
+2. Regenerate the baseline on this machine with `make check` then
+   `sh scripts/check-coverage.sh --write`. Confirm the header reads
+   `go1.27 linux/amd64` (the CI stable leg's environment). If this machine's Go
+   is not 1.27, stop and report its version instead of writing a baseline CI
+   cannot match.
+3. CI env and CLAUDE.md sentence.
+4. `make check` passes; `RELEVO_REQUIRE_COVERAGE=1 sh scripts/check-coverage.sh`
+   passes; simulate a mismatch by editing the header in a scratch copy of the
+   baseline and running the script against it with and without the env (do not
+   commit the scratch copy).
+5. `git diff --stat HEAD~2` shows only §0's files plus round 1's. Commit.
+6. Append a "Round 2" section containing this plan to
+   `docs/plans/2026-09-26-cleanup-p1d-close.md` and commit.
+
+Report: the header written, the four test-script cases, the step-4 results.
