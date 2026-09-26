@@ -80,13 +80,13 @@ type WhoAmI struct {
 	// pre-tier server omits them, so a client can tell the two apart before
 	// creating anything.
 	Features    []string `json:"features,omitempty"`     // ["tier"] on a server with this change
-	BuilderTier string   `json:"builder_tier,omitempty"` // ServedBuilderTier(rt): the tier a headless builder
+	BuilderTier string   `json:"default_tier,omitempty"` // ServedBuilderTier(rt): the tier a headless builder
 	// launches at when the client sends none
 	MaxTier string `json:"max_tier,omitempty"` // policy.MaxTierOrDefault()
 
 	// Builders is the server's builder census (#285); nil from a pre-queue
 	// server.
-	Builders *BuildersView `json:"builders,omitempty"`
+	Builders *BuildersView `json:"runners,omitempty"`
 }
 
 // GitIdentity is a client's git identity (#335): the name and email its own
@@ -106,8 +106,8 @@ type CreateBindingRequest struct {
 	Candidate      string `json:"candidate,omitempty"`
 	RoundCap       int    `json:"round_cap,omitempty"`
 	RoundTimeoutMS int    `json:"round_timeout_ms,omitempty"`
-	Tier           string `json:"tier,omitempty"` // "" = server's choice; else harness|read|edit|yolo
-	Role           string `json:"role,omitempty"` // "" = builder; resolved against the server's own roles.json
+	Tier           string `json:"tier,omitempty"`  // "" = server's choice; else harness|read|edit|yolo
+	Role           string `json:"actor,omitempty"` // the actor the runner plays; resolved against the server's own actors
 
 	// Author is the client's git identity; the server runs this binding's
 	// builders as it (#335). nil means an old client that sent none.
@@ -249,7 +249,7 @@ type CandidateView struct {
 	Name  string `json:"name,omitempty"` // the candidate's short name, when the server knows one
 	Kind  string `json:"kind"`           // harness kind: agy | claude | opencode
 	Gated bool   `json:"gated"`          // a live limit gate on the ledger
-	Pick  bool   `json:"pick"`           // what the policy order would pick right now for the builder role
+	Pick  bool   `json:"pick"`           // what the policy order would pick right now for the builder actor
 }
 
 type CandidatesResponse struct {
@@ -297,15 +297,15 @@ const FeatureStop = "stop"
 
 // FeatureBuilder is the WhoAmI.Features token a server that accepts the
 // "candidate" multipart form value on POST /v1/bindings/{name}/rounds
-// advertises (#318). The field is a canonical candidate token that persists as
-// the binding's builder from that round on; absent or "" means keep the
-// binding's builder.
-const FeatureBuilder = "builder"
+// advertises. The field is a canonical candidate token that persists as the
+// binding's candidate from that round on; absent or "" keeps the binding's
+// candidate.
+const FeatureBuilder = "candidate"
 
 // FeatureRoles is the WhoAmI.Features token a server that honours
-// CreateBindingRequest.Role advertises (#382); a server without it would
-// ignore the field and run the builder.
-const FeatureRoles = "roles"
+// CreateBindingRequest.Role advertises; a server without it ignores the field
+// and runs the default actor.
+const FeatureRoles = "actors"
 
 // FeatureIdempotentSend is the WhoAmI.Features token a server that answers a
 // repeated identical start-round request for the open round with 200 and the

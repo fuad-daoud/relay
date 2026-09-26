@@ -159,8 +159,8 @@ func serverChecks(probes []relevo.ServerProbe) []doctor.Check {
 	return checks
 }
 
-// buildersText is a queue-aware, enrolled probe's builder census, the same
-// words RenderServers appends to its row (#285): "builders %d/%d, %d
+// buildersText is a queue-aware, enrolled probe's runner census, the same
+// words RenderServers appends to its row (#285): "runners %d/%d, %d
 // queued, scopes %s".
 func buildersText(p relevo.ServerProbe) string {
 	scopes := "off"
@@ -174,7 +174,7 @@ func buildersText(p relevo.ServerProbe) string {
 	case p.Builders.Scopes:
 		scopes = "on"
 	}
-	return fmt.Sprintf("builders %d/%d, %d queued, scopes %s",
+	return fmt.Sprintf("runners %d/%d, %d queued, scopes %s",
 		p.Builders.Running, p.Builders.Cap, p.Builders.Queued, scopes)
 }
 

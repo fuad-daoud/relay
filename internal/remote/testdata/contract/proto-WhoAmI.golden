@@ -10,9 +10,9 @@
     "queue",
     "stop"
   ],
-  "builder_tier": "edit",
+  "default_tier": "edit",
   "max_tier": "yolo",
-  "builders": {
+  "runners": {
     "running": 2,
     "queued": 1,
     "cap": 4,

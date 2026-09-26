@@ -361,6 +361,7 @@ func TestCreateAfterPruneRecreatesTheRepo(t *testing.T) {
 		Name:       "recreated",
 		RepoID:     env.repoID,
 		BaseCommit: env.headSHA,
+		Role:       "builder",
 	})
 	if err != nil {
 		t.Fatalf("marshal create body: %v", err)

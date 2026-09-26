@@ -282,7 +282,7 @@ func TestServerChecksScopesWarning(t *testing.T) {
 		}
 	}
 
-	if zenOK == nil || !strings.Contains(zenOK.Detail, "builders 2/3, 1 queued, scopes off") {
+	if zenOK == nil || !strings.Contains(zenOK.Detail, "runners 2/3, 1 queued, scopes off") {
 		t.Fatalf("zen ok check = %+v, want it naming the builders census", zenOK)
 	}
 	if zenWarn == nil || zenWarn.Severity != doctor.SevWarn ||
@@ -290,24 +290,24 @@ func TestServerChecksScopesWarning(t *testing.T) {
 		t.Fatalf("zen scopes warning = %+v, want the exact message", zenWarn)
 	}
 
-	if contaboOK == nil || !strings.Contains(contaboOK.Detail, "builders 2/3, 1 queued, scopes on (relevo.slice, 200%)") {
+	if contaboOK == nil || !strings.Contains(contaboOK.Detail, "runners 2/3, 1 queued, scopes on (relevo.slice, 200%)") {
 		t.Fatalf("contabo ok check = %+v, want it naming the builders census and quota", contaboOK)
 	}
 	if contaboWarn != nil {
 		t.Fatalf("contabo scopes warning = %+v, want none (Scopes is true)", contaboWarn)
 	}
 
-	if quotaOK == nil || !strings.Contains(quotaOK.Detail, "builders 1/3, 0 queued, scopes on (150%)") {
+	if quotaOK == nil || !strings.Contains(quotaOK.Detail, "runners 1/3, 0 queued, scopes on (150%)") {
 		t.Fatalf("quotaonly ok check = %+v, want it naming the quota alone", quotaOK)
 	}
-	if sliceOK == nil || !strings.Contains(sliceOK.Detail, "builders 1/3, 0 queued, scopes on (relevo.slice)") {
+	if sliceOK == nil || !strings.Contains(sliceOK.Detail, "runners 1/3, 0 queued, scopes on (relevo.slice)") {
 		t.Fatalf("sliceonly ok check = %+v, want it naming the slice alone", sliceOK)
 	}
-	if plainOK == nil || !strings.HasSuffix(plainOK.Detail, "builders 1/3, 0 queued, scopes on") {
+	if plainOK == nil || !strings.HasSuffix(plainOK.Detail, "runners 1/3, 0 queued, scopes on") {
 		t.Fatalf("plain ok check = %+v, want it naming scopes on", plainOK)
 	}
 
-	if oldOK == nil || strings.Contains(oldOK.Detail, "builders ") {
+	if oldOK == nil || strings.Contains(oldOK.Detail, "runners ") {
 		t.Fatalf("old (pre-queue) ok check = %+v, want no builders text", oldOK)
 	}
 }
