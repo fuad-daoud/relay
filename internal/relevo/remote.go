@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/planner"
@@ -1369,10 +1370,10 @@ func catchUpPayload(b store.Binding, view remote.BindingView, haveReport bool) (
 	} else {
 		payload = fmt.Sprintf("Builder finished round %d on %s. Report: %s", n, server, showCommand(name, n, "report"))
 	}
-	if line := DiffLineFromNote(view.DiffNote, view.DiffCommits, view.DiffTree, b.Branch); line != "" {
+	if line := capture.DiffLineFromNote(view.DiffNote, view.DiffCommits, view.DiffTree, b.Branch); line != "" {
 		payload = payload + "\n" + line
 	}
-	if line := PathsLineFromNote(view.DiffNote); line != "" {
+	if line := capture.PathsLineFromNote(view.DiffNote); line != "" {
 		payload = payload + "\n" + line
 	}
 	if view.DirtyCommit != "" {

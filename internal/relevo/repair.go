@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -117,7 +118,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: repair round %d could not stage its plan: %v", b.Name, b.Round, err))
 	}
 
-	baseline, head := CaptureBaseline(ctx, rt, b)
+	baseline, head := capture.Baseline(ctx, captureDeps(rt), b)
 	prompt := composePrompt(b, planPath, rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
 
 	// A repair round must not be handed to a candidate the configured set no

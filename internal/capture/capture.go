@@ -1,4 +1,7 @@
-package relevo
+// Package capture records what a round changed: the snapshot a round starts
+// from, the diff it closes with, the drift between a report and the next send,
+// and the commit facts that describe its tree.
+package capture
 
 import (
 	"context"
@@ -12,6 +15,23 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
+
+// Git is the slice of the git CLI capture needs. *git.Client satisfies it.
+type Git interface {
+	SnapshotTree(ctx context.Context, dir string) (string, error)
+	HeadCommit(ctx context.Context, dir string) (string, error)
+	DiffTrees(ctx context.Context, dir, from, to string) (git.Diff, error)
+	RevListCount(ctx context.Context, dir, from, to string) (int, error)
+	Dirty(ctx context.Context, dir string) (bool, error)
+}
+
+// Deps is what capture needs from the runtime it runs in: git for the
+// comparisons and the store for binding records and patches. A nil Git means
+// capture reports the artifact unavailable and makes no git call.
+type Deps struct {
+	Git   Git
+	Store *store.Store
+}
 
 // DiffResult is what one round-end capture attempt produced. A zero value means
 // "nothing to say about this round's diff", which is a normal outcome.
@@ -36,6 +56,8 @@ func formatFiles(n int) string {
 	return fmt.Sprintf("%d files", n)
 }
 
+// brief reduces an error to one line, for a reason or note field where a
+// multi-line git message would break the line's shape.
 func brief(err error) string {
 	if err == nil {
 		return ""
@@ -109,46 +131,46 @@ func DiffSummary(res DiffResult, facts CommitResult) string {
 	return base
 }
 
-// CaptureBaseline returns the tree a round starts from, or "" when no snapshot
-// is possible. It NEVER returns an error: a handoff must not fail because a
+// Baseline returns the tree a round starts from, or "" when no snapshot is
+// possible. It NEVER returns an error: a handoff must not fail because a
 // snapshot did.
 //
 // Preconditions:  none.
-// Postconditions: "" whenever rt.Git is nil, b.CWD is not a repository, or git
+// Postconditions: "" whenever d.Git is nil, b.CWD is not a repository, or git
 //
 //	failed for any reason; a tree id otherwise. head is HEAD's commit id when
 //	the snapshot succeeded and HeadCommit did; "" otherwise. A tree without a
 //	head is normal (unborn HEAD) and the round then reports commits unknown
 //	(no baseline).
-func CaptureBaseline(ctx context.Context, rt Runtime, b store.Binding) (tree, head string) {
-	if rt.Git == nil || b.CWD == "" {
+func Baseline(ctx context.Context, d Deps, b store.Binding) (tree, head string) {
+	if d.Git == nil || b.CWD == "" {
 		return "", ""
 	}
-	tree, err := rt.Git.SnapshotTree(ctx, b.CWD)
+	tree, err := d.Git.SnapshotTree(ctx, b.CWD)
 	if err != nil {
 		return "", ""
 	}
-	head, err = rt.Git.HeadCommit(ctx, b.CWD)
+	head, err = d.Git.HeadCommit(ctx, b.CWD)
 	if err != nil {
 		return tree, ""
 	}
 	return tree, head
 }
 
-// CaptureRoundDiff closes out the diff for b's current round: it snapshots the
-// tree again and compares it against b.RoundBaselineTree, storing the patch as
-// a round_file row at rt.Store.DiffPath(b.Name, b.Round) when there is a body
+// RoundDiff closes out the diff for b's current round: it snapshots the tree
+// again and compares it against b.RoundBaselineTree, storing the patch as a
+// round_file row at d.Store.DiffPath(b.Name, b.Round) when there is a body
 // worth keeping.
 //
-// When no baseline is available, CaptureRoundDiff performs no git calls at
-// all. The check is ordered ahead of the snapshot because the snapshot is the
-// expensive half and this function runs with the state lock held.
+// When no baseline is available, RoundDiff performs no git calls at all. The
+// check is ordered ahead of the snapshot because the snapshot is the expensive
+// half and this function runs with the state lock held.
 //
 // It NEVER returns an error, for the same reason: a round advance must not be
 // blocked by a failed diff. Every failure lands in DiffResult.Reason.
 //
 // Preconditions:  none.
-// Postconditions: Available is false with a Reason when rt.Git is nil, the
+// Postconditions: Available is false with a Reason when d.Git is nil, the
 //
 //	baseline is empty, or git failed. When Available is true,
 //	Stat is exact and Path resolves through Store.ReadFile (a round_file
@@ -156,15 +178,15 @@ func CaptureBaseline(ctx context.Context, rt Runtime, b store.Binding) (tree, he
 //
 //	EndTree is the snapshotted tree whenever the snapshot succeeded, and empty
 //	otherwise. It is set independently of Available.
-func CaptureRoundDiff(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) DiffResult {
-	if rt.Git == nil {
+func RoundDiff(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) DiffResult {
+	if d.Git == nil {
 		return DiffResult{Available: false}
 	}
 	if b.RoundBaselineTree == "" {
 		return DiffResult{Available: false, Reason: "no baseline"}
 	}
 
-	end, err := rt.Git.SnapshotTree(ctx, b.CWD)
+	end, err := d.Git.SnapshotTree(ctx, b.CWD)
 	if errors.Is(err, git.ErrNotRepo) {
 		return DiffResult{Available: false}
 	}
@@ -172,7 +194,7 @@ func CaptureRoundDiff(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 		return DiffResult{Available: false, Reason: brief(err)}
 	}
 
-	diff, err := rt.Git.DiffTrees(ctx, b.CWD, b.RoundBaselineTree, end)
+	diff, err := d.Git.DiffTrees(ctx, b.CWD, b.RoundBaselineTree, end)
 	if errors.Is(err, git.ErrNotRepo) {
 		return DiffResult{Available: false, EndTree: end}
 	}
@@ -188,7 +210,7 @@ func CaptureRoundDiff(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 		return DiffResult{Available: true, Stat: diff.Stat, Truncated: true, EndTree: end}
 	}
 
-	patchPath := rt.Store.DiffPath(b.Name, b.Round)
+	patchPath := d.Store.DiffPath(b.Name, b.Round)
 	if err := tx.PutRoundFile(b.Name, b.Round, patchPath, diff.Patch); err != nil {
 		return DiffResult{Available: false, Reason: brief(err), EndTree: end}
 	}
@@ -196,10 +218,10 @@ func CaptureRoundDiff(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 	return DiffResult{Available: true, Path: patchPath, Stat: diff.Stat, EndTree: end}
 }
 
-// CommitResult is what one round-end commit-facts capture produced (#130).
-// Known is all-or-nothing: either both facts were captured or neither was,
-// and Reason names the step that failed ("" for a non-repository, which is
-// not worth a sentence).
+// CommitResult is what one round-end commit-facts capture produced. Known is
+// all-or-nothing: either both facts were captured or neither was, and Reason
+// names the step that failed ("" for a non-repository, which is not worth a
+// sentence).
 type CommitResult struct {
 	Known   bool   // both facts were captured
 	Commits int    // rev-list --count RoundBaselineHead..HEAD; 0 when Known is false
@@ -210,37 +232,37 @@ type CommitResult struct {
 // CommitFacts captures how many commits b's current round added and whether
 // its tree is dirty, for the round that is closing. It NEVER returns an
 // error: the facts are informational and a round advance must not be blocked
-// by them. Runs under the state lock, like CaptureRoundDiff.
+// by them. Runs under the state lock, like RoundDiff.
 //
 // Preconditions:  none.
-// Postconditions: Known is false with an empty Reason when rt.Git is nil or
+// Postconditions: Known is false with an empty Reason when d.Git is nil or
 //
 //	the tree is not a repository; false with a Reason naming the
 //	step when RoundBaselineHead is empty or a git call failed; true
 //	with both facts otherwise. The sequence HeadCommit, RevListCount,
 //	Dirty stops at the first failure.
-func CommitFacts(ctx context.Context, rt Runtime, b store.Binding) CommitResult {
-	if rt.Git == nil {
+func CommitFacts(ctx context.Context, d Deps, b store.Binding) CommitResult {
+	if d.Git == nil {
 		return CommitResult{}
 	}
 	if b.RoundBaselineHead == "" {
 		return CommitResult{Reason: "no baseline"}
 	}
-	head, err := rt.Git.HeadCommit(ctx, b.CWD)
+	head, err := d.Git.HeadCommit(ctx, b.CWD)
 	if errors.Is(err, git.ErrNotRepo) {
 		return CommitResult{}
 	}
 	if err != nil {
 		return CommitResult{Reason: "head: " + brief(err)}
 	}
-	n, err := rt.Git.RevListCount(ctx, b.CWD, b.RoundBaselineHead, head)
+	n, err := d.Git.RevListCount(ctx, b.CWD, b.RoundBaselineHead, head)
 	if errors.Is(err, git.ErrNotRepo) {
 		return CommitResult{}
 	}
 	if err != nil {
 		return CommitResult{Reason: "rev-list: " + brief(err)}
 	}
-	dirty, err := rt.Git.Dirty(ctx, b.CWD)
+	dirty, err := d.Git.Dirty(ctx, b.CWD)
 	if errors.Is(err, git.ErrNotRepo) {
 		return CommitResult{}
 	}
@@ -250,15 +272,18 @@ func CommitFacts(ctx context.Context, rt Runtime, b store.Binding) CommitResult 
 	return CommitResult{Known: true, Commits: n, Dirty: dirty}
 }
 
-// DiffLine renders the report-payload line for a result, or "" when the result
-// says nothing worth telling the planner (rt.Git off, or not a repository).
-// The commit facts follow " -- " unless the diff is empty; branch names the
-// binding's branch in the clause, or is "" for a tree relevo did not create.
-// DiffLine renders the report-payload Diff: line from a fresh diff result.
-// name and round are named so the line can point the planner at
-// `relevo show <name> --round <round> --diff` instead of the patch's path
-// (P4a round 2 §4.2). branch names the binding's branch in the clause, or is
-// "" for a tree relevo did not create.
+// showCommand renders the planner-facing command that prints one round's
+// artifact, so a line names the durable command instead of the patch's path:
+// a closed round's files may be sealed into the database.
+func showCommand(name string, round int, section string) string {
+	return fmt.Sprintf("relevo show %s --round %d --%s", name, round, section)
+}
+
+// DiffLine renders the report-payload Diff: line from a fresh diff result, or
+// "" when the result says nothing worth telling the planner (no git, or not a
+// repository). The commit facts follow " -- " unless the diff is empty. branch
+// names the binding's branch in the clause, or is "" for a tree relevo did not
+// create.
 func DiffLine(res DiffResult, facts CommitResult, branch, name string, round int) string {
 	var base string
 	switch {
@@ -321,15 +346,15 @@ func DiffLineFromNote(note string, commits int, tree, branch string) string {
 	return line
 }
 
-// pathsClauseRe matches the KindDiff note's changed_paths mismatch clause,
-// "paths: report N, diff M" (#216). The clause can sit anywhere in the note,
-// because joinNotes appends it after the commit clause.
+// pathsClauseRe matches the changed_paths mismatch clause a diff note carries,
+// "paths: report N, diff M". The clause can sit anywhere in the note, so it is
+// found by search rather than anchored.
 var pathsClauseRe = regexp.MustCompile(`paths: report (\d+), diff (\d+)`)
 
-// PathsLine renders the report-payload line for a changed_paths mismatch
-// (#216), so the planner reading the payload sees the same counts the
-// KindDiff note's clause carries. report is the number of paths the report
-// listed, diff the number of files the diff touched. Pure.
+// PathsLine renders the report-payload line for a changed_paths mismatch, so
+// the planner reading the payload sees the same counts the KindDiff note's
+// clause carries. report is the number of paths the report listed, diff the
+// number of files the diff touched. Pure.
 func PathsLine(report, diff int) string {
 	return fmt.Sprintf("Paths: the report's changed_paths lists %d, the diff has %s -- check the diff, not the list",
 		report, formatFiles(diff))
@@ -338,8 +363,8 @@ func PathsLine(report, diff int) string {
 // PathsLineFromNote renders PathsLine from a KindDiff note -- the shape a
 // remote binding's catchUp holds, since the wire carries the server's note
 // and never a patch -- or "" when the note carries no "paths: report N, diff
-// M" clause. It searches the whole note, so the clause is found wherever
-// joinNotes placed it. Pure.
+// M" clause. It searches the whole note, so the clause is found wherever the
+// note places it. Pure.
 func PathsLineFromNote(note string) string {
 	m := pathsClauseRe.FindStringSubmatch(note)
 	if m == nil {
@@ -354,13 +379,13 @@ func PathsLineFromNote(note string) string {
 // It is the read path behind `relevo show --diff`.
 //
 // Errors: store.ErrNotFound for an unknown binding; a wrapped read error.
-func ReadDiff(rt Runtime, name string, round int) ([]byte, bool, error) {
-	if _, err := rt.Store.Load(name); err != nil {
+func ReadDiff(s *store.Store, name string, round int) ([]byte, bool, error) {
+	if _, err := s.Load(name); err != nil {
 		return nil, false, err
 	}
 
-	path := rt.Store.DiffPath(name, round)
-	data, err := rt.Store.ReadFile(path)
+	path := s.DiffPath(name, round)
+	data, err := s.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}

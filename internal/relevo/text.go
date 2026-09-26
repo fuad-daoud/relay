@@ -10,6 +10,19 @@ import (
 // terminal does. Each returns the exact bytes cmd/relevo printed before #15,
 // without a trailing newline; the caller adds one.
 
+// brief reduces an error to one line, for a reason or note field where a
+// multi-line git message would break the line's shape.
+func brief(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := strings.TrimSpace(err.Error())
+	if idx := strings.Index(s, "\n"); idx != -1 {
+		s = strings.TrimSpace(s[:idx])
+	}
+	return s
+}
+
 // DoneText is what `relevo done` says on success: one line for the binding,
 // then at most one for its worktree.
 func DoneText(name string, r DoneResult) string {

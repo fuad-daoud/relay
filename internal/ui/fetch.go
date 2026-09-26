@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -93,7 +94,7 @@ func fetchStatus(ctx context.Context, src Source) tea.Cmd {
 }
 
 // fetchPlan reads round's plan file. It is small enough not to need
-// relevo.ReadDiff's stored-patch indirection: the file is either there or it
+// capture.ReadDiff's stored-patch indirection: the file is either there or it
 // is not.
 func fetchPlan(ctx context.Context, src Source, key string, round int) tea.Cmd {
 	return func() tea.Msg {
@@ -503,7 +504,7 @@ func fetchDiff(ctx context.Context, src Source, key string, round int) tea.Cmd {
 				},
 			}
 		}
-		patch, ok, err := relevo.ReadDiff(rt, name, round)
+		patch, ok, err := capture.ReadDiff(rt.Store, name, round)
 		if err != nil {
 			return tabMsg{
 				name:  key,

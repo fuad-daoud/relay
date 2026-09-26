@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/planner"
@@ -4340,7 +4341,7 @@ func TestCatchUpWritesDiffEntryFromView(t *testing.T) {
 		}
 	}
 	if !strings.Contains(reportEntry.Payload, "Diff:") {
-		t.Fatalf("report payload = %q, want a Diff: line from DiffLineFromNote", reportEntry.Payload)
+		t.Fatalf("report payload = %q, want a Diff: line from capture.DiffLineFromNote", reportEntry.Payload)
 	}
 }
 
@@ -4358,7 +4359,7 @@ func TestCatchUpAppendsPathsLineFromView(t *testing.T) {
 		diffNote string
 		wantLine string
 	}{
-		{"note carries the clause", joinedNote, PathsLine(0, 24)},
+		{"note carries the clause", joinedNote, capture.PathsLine(0, 24)},
 		{"note without the clause", "1 file, +1 -0; 1 commit, clean", ""},
 	}
 	for _, tc := range cases {
