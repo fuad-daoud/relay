@@ -100,8 +100,9 @@ opencode plugin reads `actor` only.
 
 ### 3.6 Text that planners and builders read
 
-- The `relevo wait` line "never sent to %s's builder" and the delivery origin headers
-  ("to builder", "about builder") say "runner".
+- The `relevo wait` line "never sent to %s's builder" becomes "never sent to %s's
+  runner". The delivery origin headers "to builder" and "about builder" become
+  "to runner" and "about runner".
 - The stop and remote payload texts, the MCP instructions and tool descriptions, and
   `plugin.json`'s description all move to the new words.
 - The architect "Handing off" section in all four copies, plus `internal/planner/handoff.md`
