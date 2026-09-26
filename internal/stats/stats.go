@@ -215,9 +215,8 @@ func Build(in Inputs) Report {
 		Until: in.Until,
 	}
 	if rep.Since.IsZero() {
-		if len(rows) > 0 {
-			rep.Since = oldest(rows)
-		} else {
+		rep.Since = oldest(rows)
+		if rep.Since.IsZero() {
 			rep.Since = in.Until
 		}
 	}
@@ -683,11 +682,13 @@ func addTokens(c *TokenCounts, r db.RoundRow) {
 	}
 }
 
-// oldest is the earliest row's StartedAt.
+// oldest is the earliest StartedAt, zero when no row has one. An undated row
+// is skipped: counting it would pull Since back to year 1 and make buildSpend
+// allocate one day per day since then.
 func oldest(rows []db.RoundRow) time.Time {
-	t := rows[0].StartedAt
-	for _, r := range rows[1:] {
-		if r.StartedAt.Before(t) {
+	var t time.Time
+	for _, r := range rows {
+		if !r.StartedAt.IsZero() && (t.IsZero() || r.StartedAt.Before(t)) {
 			t = r.StartedAt
 		}
 	}
