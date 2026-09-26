@@ -90,7 +90,7 @@ func cmdStatus(args []string) error {
 		return err
 	}
 	if rt.Remote != nil {
-		if _, serr := relevo.SyncRemote(context.Background(), rt); serr != nil {
+		if _, _, serr := relevo.SyncRemoteUnlessDaemon(context.Background(), rt); serr != nil {
 			fmt.Fprintf(os.Stderr, "relevo: sync remote bindings: %v\n", serr)
 		}
 	}

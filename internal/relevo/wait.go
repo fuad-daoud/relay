@@ -192,7 +192,7 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 		// otherwise see the round's state go stale. Advisory: a sync error
 		// does not stop the poll, since the loop below re-reads the store
 		// either way.
-		_, _ = SyncRemote(ctx, rt)
+		_, _, _ = SyncRemoteUnlessDaemon(ctx, rt)
 
 		for _, n := range opts.Names {
 			b, err := rt.Store.Load(n)

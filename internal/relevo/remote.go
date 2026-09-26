@@ -727,6 +727,12 @@ func mirrorLog(ctx context.Context, rt Runtime, tx *store.Tx, server, name strin
 		if !ok {
 			return
 		}
+		// The range starts at the byte the local copy already holds, so an
+		// empty body means the log did not grow. Rewriting the row with the
+		// same bytes would put the whole blob back for no change.
+		if len(body) == 0 {
+			return
+		}
 		full := append(cur, body...)
 		if int64(len(full)) > maxMirrorBytes {
 			slog.Warn("mirror builder log over cap; not stored", "server", server, "name", name, "round", round)
@@ -1046,7 +1052,9 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 	synced := 0
 	var errs []error
 	for _, b := range bindings {
-		if !b.Builder.Remote() || b.State == store.StateDone {
+		// A paused binding is not being relayed, and the daemon's Reconcile
+		// skips it too, so this pass has nothing to collect for it.
+		if !b.Builder.Remote() || b.State == store.StateDone || b.State == store.StatePaused {
 			continue
 		}
 		name := b.Name
@@ -1074,6 +1082,26 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 	}
 
 	return synced, errors.Join(errs...)
+}
+
+// SyncRemoteUnlessDaemon is SyncRemote for the read verbs (`relevo status`,
+// `relevo wait`), which must not duplicate the daemon's own sync: when a
+// daemon holds the lock, that daemon is already syncing every binding this
+// pass would, so nothing is run -- no network call, no state lock taken.
+//
+// A probe that fails is not proof of a daemon, so that case syncs: a missed
+// skip only costs contention, while a missed sync could leave wait blind with
+// no daemon running. skipped reports whether SyncRemote was left unrun.
+func SyncRemoteUnlessDaemon(ctx context.Context, rt Runtime) (synced int, skipped bool, err error) {
+	if rt.Remote == nil {
+		return 0, false, nil
+	}
+	running, perr := rt.Store.DaemonRunning()
+	if perr == nil && running {
+		return 0, true, nil
+	}
+	synced, err = SyncRemote(ctx, rt)
+	return synced, false, err
 }
 
 // ServerProbe is one configured server's reachability and enrollment, as
