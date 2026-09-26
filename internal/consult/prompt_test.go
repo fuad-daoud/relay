@@ -1,7 +1,6 @@
 package consult
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -15,7 +14,7 @@ import (
 func TestInlinePrompt(t *testing.T) {
 	t.Parallel()
 
-	render := func(ref string) string { return fmt.Sprintf(headlessPrompt, ref) }
+	render := headlessRender("")
 	const question = "Why did round 1 change the schema?"
 
 	prompt, ok := inlinePrompt(render, []byte(question))
@@ -52,5 +51,25 @@ func TestInlinePrompt(t *testing.T) {
 	}
 	if got := askInlineBlock([]byte("hi\n\n")); !strings.HasSuffix(got, "\n\n-----END QUESTION-----") {
 		t.Errorf("askInlineBlock(hi\\n\\n) = %q, want the extra newline kept", got)
+	}
+}
+
+// TestHeadlessRenderNamesOutput pins that the headless prompt asks for the
+// output label it is given, and for the default label when given none.
+func TestHeadlessRenderNamesOutput(t *testing.T) {
+	t.Parallel()
+
+	plan := headlessRender("plan")("Q")
+	for _, want := range []string{"your plan, complete", "Do not write a plan file"} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("headlessRender(%q)(%q) does not contain %q:\n%s", "plan", "Q", want, plan)
+		}
+	}
+	if strings.Contains(plan, "findings") {
+		t.Errorf("headlessRender(%q)(%q) names findings:\n%s", "plan", "Q", plan)
+	}
+
+	if got := headlessRender("")("Q"); !strings.Contains(got, "your findings, complete") {
+		t.Errorf("headlessRender(%q)(%q) = %q, want the default findings wording", "", "Q", got)
 	}
 }

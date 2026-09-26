@@ -152,6 +152,11 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 	if err != nil {
 		return AskResult{}, fmt.Errorf("%q on %s: %v: %w", opts.Role, c.Ref().String(), err, ErrRoleNotServed)
 	}
+	// The prompt asks for what the actor's agent actually produces -- a plan
+	// for a planner, notes for a researcher, findings for a reviewer -- rather
+	// than always asking for findings. The label only words the prompt, so a
+	// config load failure falls back to the default instead of failing.
+	output := consultOutput(rt, opts.Role, role.Definition)
 	h, _ := harness.Lookup(c.Harness)
 	tier := resolveRoleTier("", c, reg, opts.Role)
 	if err := checkTierCap(tier, rt.Policy, false); err != nil {
@@ -184,6 +189,7 @@ func Ask(ctx context.Context, rt Runtime, opts AskOptions) (AskResult, error) {
 		Role:      role.Name,
 		Endpoint:  store.Endpoint{AgentName: agentName, Kind: l.Kind},
 		Body:      body,
+		Output:    output,
 		Candidate: c,
 		Spec:      role,
 		Tier:      tier,

@@ -56,6 +56,12 @@ type Request struct {
 	Spec      harness.RoleSpec
 	Tier      harness.Tier
 
+	// Output is the output label the headless prompt asks for -- "plan",
+	// "findings", "notes", or a custom agent's own. Empty means
+	// DefaultOutput. It is used only when Round == 0: a round consult has
+	// its own prompt (roundAskPrompt), which is unchanged.
+	Output string
+
 	// Pick builds the candidate-pick log entry for a running headless consult;
 	// nil when the consult writes none.
 	Pick func(round int) *store.LogEntry
@@ -75,7 +81,7 @@ func Spawn(ctx context.Context, d Deps, req Request) (store.Consult, error) {
 	if req.Round > 0 {
 		inline = req.Inline
 	} else {
-		render = func(ref string) string { return fmt.Sprintf(headlessPrompt, ref) }
+		render = headlessRender(req.Output)
 		prompt, inline = inlinePrompt(render, req.Body)
 	}
 

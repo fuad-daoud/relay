@@ -5,12 +5,29 @@ import (
 	"strings"
 )
 
-// headlessPrompt is the whole prompt a headless consult runs with. Its single
-// %s is the question reference: the question itself, delimited and inline when
-// it fits InlineAskMax, and "Read: <ask path>" when it does not. The findings
-// are the final message rather than a file, because a read-tier process may
-// not be able to write one; relevo extracts that message at exit.
-const headlessPrompt = "%s\n\nAnswer as your final message: your findings, complete, in markdown. Do not modify any file in this repository. Do not write a findings file; relevo records your final message."
+// DefaultOutput is the output label a consult asks for when the actor's agent
+// has none relevo knows: the reviewer's own.
+const DefaultOutput = "findings"
+
+// headlessPrompt is the whole prompt a headless consult runs with. Its first
+// argument is the question reference: the question itself, delimited and inline
+// when it fits InlineAskMax, and "Read: <ask path>" when it does not. Its
+// second is the output label of the agent the actor plays -- "plan",
+// "findings", "notes" or a custom agent's own -- so the prompt asks for what
+// that agent actually produces. The output is the final message rather than a
+// file, because a read-tier process may not be able to write one; relevo
+// extracts that message at exit.
+const headlessPrompt = "%[1]s\n\nAnswer as your final message: your %[2]s, complete, in markdown. Do not modify any file in this repository. Do not write a %[2]s file; relevo records your final message."
+
+// headlessRender returns the render function the inline path takes, with the
+// consult's output label bound as headlessPrompt's second argument. An empty
+// output means DefaultOutput.
+func headlessRender(output string) func(ref string) string {
+	if output == "" {
+		output = DefaultOutput
+	}
+	return func(ref string) string { return fmt.Sprintf(headlessPrompt, ref, output) }
+}
 
 // RoundRole is the record label for a consult that asks a closed round's own
 // builder. It is a label, not a role table entry: the resumed session already
