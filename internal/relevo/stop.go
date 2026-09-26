@@ -146,6 +146,7 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 				return err
 			}
 			b.Builder = clearProcess(b.Builder)
+			b = abandonSession(b)
 			how = "killed"
 		case stopDequeue:
 			// Nothing to kill: the server's queue is derived from QueuedAt, so
@@ -167,6 +168,11 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 		out.Action = how
 		return tx.Save(b)
 	})
+	if err == nil && out.Action == "killed" {
+		// The delete runs outside the lock, and its failure only logs: it
+		// never changes what Stop did.
+		reapAbandoned(ctx, rt, name)
+	}
 	return out, err
 }
 

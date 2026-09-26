@@ -126,6 +126,16 @@ type BuilderSession struct {
 	ID   string `json:"id"`
 }
 
+// AbandonedSession is a harness session relevo stopped using while its round
+// was still open. The harness would otherwise resume it on its own, so the
+// daemon deletes it. Attempts counts failed delete attempts, so a delete that
+// keeps failing is dropped rather than retried forever.
+type AbandonedSession struct {
+	Kind     string `json:"kind"`
+	ID       string `json:"id"`
+	Attempts int    `json:"attempts,omitempty"`
+}
+
 type ClassifyRecord struct {
 	Provider    string  `json:"provider"`
 	Model       string  `json:"model,omitempty"`

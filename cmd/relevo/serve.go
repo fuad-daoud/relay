@@ -228,12 +228,13 @@ func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, reg *roles.R
 		gates = db.PrefixKV{KV: d, Prefix: "serve."}
 	}
 	return relevo.Runtime{
-		Candidates: candidates,
-		Policy:     pol,
-		Registry:   reg,
-		Gates:      gates,
-		GatesDir:   root,
-		Now:        time.Now,
+		Candidates:    candidates,
+		Policy:        pol,
+		Registry:      reg,
+		Gates:         gates,
+		GatesDir:      root,
+		Now:           time.Now,
+		SessionReaper: relevo.NewSessionReaper(binExec{}),
 	}
 }
 
@@ -497,6 +498,7 @@ func cmdServeRun(args []string) error {
 		MaxBuilders:    sf.maxBuilders,
 		Hooks:          dispatcher,
 		Scope:          scope,
+		SessionReaper:  relevo.NewSessionReaper(binExec{}),
 	}
 
 	srv, err := serve.New(cfg)

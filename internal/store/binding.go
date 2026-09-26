@@ -140,6 +140,12 @@ type Binding struct {
 	// that just proved it cannot finish the round.
 	RoundExcluded []string `json:"round_excluded,omitempty"`
 
+	// AbandonedSessions are harness sessions relevo stopped using while their
+	// round was still open. The harness would resume them on its own -- a
+	// rebooted opencode service restarts every session left marked running --
+	// so the daemon deletes them. Empty in every other case.
+	AbandonedSessions []AbandonedSession `json:"abandoned_sessions,omitempty"`
+
 	// BuilderMissingSince is stamped on the first miss and cleared on any hit,
 	// so a detection flicker never accumulates toward a switch.
 	BuilderMissingSince time.Time `json:"builder_missing_since,omitempty"`

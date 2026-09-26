@@ -371,6 +371,7 @@ func buildRuntime(root string, L config.Loaded, openGates bool) (relevo.Runtime,
 		ProcStart:       procStartUnix,
 		OpencodeSession: opencodeSession,
 		Deliverers:      newDeliverers(),
+		SessionReaper:   relevo.NewSessionReaper(binExec{}),
 	}
 	// The registry needs the runtime's own store and clock, so it is wired
 	// here rather than in the literal above. A runtime with no database open

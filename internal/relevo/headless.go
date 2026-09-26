@@ -600,6 +600,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 					slog.Warn("stray headless process not killed", "binding", b.Name, "pid", b.Builder.PID, "err", err)
 				} else {
 					slog.Warn("killed stray headless process", "binding", b.Name, "pid", b.Builder.PID)
+					b = abandonSession(b)
 				}
 			}
 			b.Builder = clearProcess(b.Builder)
@@ -818,6 +819,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			// below.
 			b.QueuedAt = b.RoundStartedAt
 			b.RoundStartedAt = time.Time{}
+			b = abandonSession(b)
 			b.Builder = clearProcess(b.Builder)
 			if err := tx.AppendLog(b.Name, store.LogEntry{
 				TS: now, Round: b.Round, Direction: store.DirToPlanner, Kind: store.KindQueue, Confirmed: true,
@@ -846,6 +848,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// the fresh relaunch calls -- clears StreamSessionID, because a new
 		// process begins a new session.
 		sess := b.Builder.StreamSessionID
+		oldKind := b.Builder.Kind
 		prior := peekUsage(ctx, rt, b, now)
 		var (
 			next store.Binding
@@ -875,9 +878,13 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			next, err = startRound(ctx, rt, tx, b, text)
 		}
 		if err != nil {
+			b = abandonSessionID(b, oldKind, sess)
 			return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder lost to a daemon restart and could not be relaunched: %v", b.Name, err))
 		}
 		b = next
+		// The new process has StreamSessionID "": reapable waits until it
+		// announces its own session, because the fork reads the old one.
+		b = abandonSessionID(b, oldKind, sess)
 		// The round's budget clock survives the restart (#370, spec §4.3):
 		// the interruption is relevo's, so it must not buy the round more
 		// time than it had.

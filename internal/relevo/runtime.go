@@ -269,6 +269,12 @@ type Runtime struct {
 	// push path (docs/specs/2026-09-22-opencode-delivery-design.md). A kind
 	// with no entry, and a nil map, leave the entry pending for `relevo wait`.
 	Deliverers map[string]delivery.PlannerDeliverer
+
+	// SessionReaper deletes harness sessions relevo abandoned, so a harness
+	// that resumes its own sessions cannot restart a round relevo wrote off.
+	// Nil means deletes are skipped and the abandoned entries stay on the
+	// binding; cmd/relevo wires the real one.
+	SessionReaper SessionDeleter
 }
 
 // legacyRegistry is the registry derived from candidates.json and

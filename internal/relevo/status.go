@@ -1055,6 +1055,9 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		pid, stopErr := stopProcess(ctx, rt, b.Builder, "done")
 		if stopErr == nil {
 			b.Builder = clearProcess(b.Builder)
+			if pid != 0 {
+				b = abandonSession(b)
+			}
 		}
 
 		if err := tx.Save(b); err != nil {
@@ -1108,5 +1111,10 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		}
 		return nil
 	})
+	if err == nil {
+		// Outside the lock, and logged only: a delete never changes Done's
+		// result.
+		reapAbandoned(ctx, rt, name)
+	}
 	return out, err
 }

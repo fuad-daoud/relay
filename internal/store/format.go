@@ -11,12 +11,15 @@ import (
 // number is written.
 //
 // Later fields (builder.remote_live, builder.stream_start,
-// builder.stream_segments) are poll caches recordFormat never stamps: an older
-// relevo that drops one loses nothing, while stamping it would lock that older
-// relevo out of loading the binding. Bump BindingFormat whenever Binding's
-// JSON shape changes; an older relevo that meets a newer format refuses to
-// save, because its rewrite would erase fields it does not know.
-const BindingFormat = 5
+// builder.stream_segments, abandoned_sessions) are fields recordFormat never
+// stamps: an older relevo that drops builder.remote_live, builder.stream_start
+// or builder.stream_segments loses nothing, while one that drops
+// abandoned_sessions loses only pending session deletes. Stamping a field
+// would lock that older relevo out of loading the binding. Bump BindingFormat
+// whenever Binding's JSON shape changes; an older relevo that meets a newer
+// format refuses to save, because its rewrite would erase fields it does not
+// know.
+const BindingFormat = 6
 
 // recordFormat is the format to write b at: the lowest format that holds the
 // record. A binding whose Role is empty is format 1; any other role is format

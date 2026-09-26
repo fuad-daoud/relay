@@ -11,6 +11,11 @@ import (
 // verified resume form for. The error names the kind.
 var ErrResumeUnsupported = errors.New("resume is not supported for this harness")
 
+// ErrSessionDeleteUnsupported reports a delete request for a harness whose
+// sessions end with their process, so there is nothing left to delete. The
+// error names the kind.
+var ErrSessionDeleteUnsupported = errors.New("sessions of this harness end with their process")
+
 // checkResumeSessionID validates a session id exactly as both resume forms
 // must: it becomes one argv element, so it must be non-empty, free of
 // whitespace, and not start with '-' -- a leading '-' would be read as a flag.
@@ -79,4 +84,22 @@ func (h Harness) ResumeBuild(sessionID string, l Launch, prompt string, budget t
 	}
 
 	return append(l.PrintArgs(prompt, budget, dir, state), selector...), nil
+}
+
+// DeleteSession renders the argv that deletes an existing harness session. The
+// returned slice is the argv after the binary, as for Resume. opencode's
+// --standalone matters: going through the background service could start that
+// service, and on startup it resumes every session marked running. A kind
+// whose sessions end with their process has nothing to delete.
+func (h Harness) DeleteSession(sessionID string) ([]string, error) {
+	if err := checkResumeSessionID(sessionID); err != nil {
+		return nil, err
+	}
+
+	switch h.Kind {
+	case "opencode":
+		return []string{"session", "delete", "--standalone", sessionID}, nil
+	default:
+		return nil, fmt.Errorf("%w: harness %q", ErrSessionDeleteUnsupported, h.Kind)
+	}
 }
