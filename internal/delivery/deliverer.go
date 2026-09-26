@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"context"
@@ -32,8 +32,8 @@ const (
 // twice.
 //
 // ref is how the planner reads the full text when the payload is too big to
-// push: today the `relevo show …` command that prints the entry (P4a round 2
-// §4.2), never a state-dir path.
+// push: the `relevo show …` command that prints the entry, never a state-dir
+// path.
 //
 // The returned string is a short reason for the log and Delivery.Reason,
 // and must never contain a credential. The error is for a bug in relevo

@@ -6,8 +6,7 @@ import (
 )
 
 // opencodeSessionID matches an opencode session id; duplicated from
-// internal/relevo/deliver_opencode.go to avoid an import cycle (that package
-// imports chatlabel).
+// internal/delivery/deliver_opencode.go, which names the same rule.
 var opencodeSessionID = regexp.MustCompile(`^ses_[A-Za-z0-9]+$`)
 
 // OpencodeQuery reads a title from OpenCode 2.0.14's session_v2, falling back

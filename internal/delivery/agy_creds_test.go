@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"encoding/json"
@@ -291,7 +291,7 @@ func TestReadAgyCredsMissingSecretIsNotExist(t *testing.T) {
 	}
 }
 
-// TestAgyCredsImportAdoptsFiles is §4.3's import: a present
+// TestAgyCredsImportAdoptsFiles is the pre-database import: a present
 // planners/.agy/<conversation>.json is put to the secret agy/<conversation>
 // and removed, and the emptied .agy directory goes with it.
 func TestAgyCredsImportAdoptsFiles(t *testing.T) {

@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"encoding/json"
@@ -19,7 +19,7 @@ const testClaimPlanner = "pl_aaaaaaaabbbb"
 // claim is not this one's" cases.
 const otherClaimPlanner = "pl_ccccccccdddd"
 
-// paneClaimID is a pre-#303 claim's key: the pane id with ":" as "_", which is
+// paneClaimID is a pane-keyed claim's key: the pane id with ":" as "_", which is
 // what the old pane-keyed claim file name held.
 const paneClaimID = "wG_pQ"
 
@@ -69,7 +69,7 @@ func TestClaimLiveAbsent(t *testing.T) {
 	}
 }
 
-// TestClaimKeyedByPlannerID is the plan's required case (§3.3): a claim is
+// TestClaimKeyedByPlannerID is the required case: a claim is
 // written to the claim/<planner-id> row, is found by that id, and is not
 // found by another planner's id.
 func TestClaimKeyedByPlannerID(t *testing.T) {
@@ -108,7 +108,7 @@ func TestClaimKeyedByPlannerID(t *testing.T) {
 	}
 }
 
-// TestClaimLiveIgnoresPaneKeyedRow: a pre-#303 pane-keyed claim is not a claim
+// TestClaimLiveIgnoresPaneKeyedRow: a pane-keyed claim is not a claim
 // this version wrote. Live must ignore it (it would otherwise have to answer a
 // question about a pane it no longer has) and leave the row where it is:
 // nothing in this version rewrites or removes a pane-keyed row.
@@ -368,7 +368,7 @@ func TestClaimRemoveAbsentIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestClaimsImportAdoptsChannelFiles is §4.2's import: a present
+// TestClaimsImportAdoptsChannelFiles is the pre-database import: a present
 // channels/<name>.json is put to claim/<name> and removed, and the emptied
 // directory goes with it.
 func TestClaimsImportAdoptsChannelFiles(t *testing.T) {

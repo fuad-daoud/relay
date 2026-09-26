@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"bytes"
@@ -43,7 +43,7 @@ type OpencodeDeliverer struct {
 
 	postedMu sync.Mutex
 	posted   map[opencodeKey]time.Time
-	// gaveUp rate-limits the give-up log line (#459).
+	// gaveUp rate-limits the give-up log line.
 	gaveUp giveUpLog
 }
 
@@ -114,8 +114,7 @@ func (d *OpencodeDeliverer) fallbackAfter() time.Duration {
 	return DefaultFallbackAfter
 }
 
-// Deliver implements PlannerDeliverer for opencode planners. See §4.1 of
-// the design doc for the exact, ordered condition table this follows.
+// Deliver implements PlannerDeliverer for opencode planners.
 func (d *OpencodeDeliverer) Deliver(ctx context.Context, planner store.Endpoint, payload, path string, queuedAt time.Time) (Outcome, string, error) {
 	if planner.Kind != "opencode" {
 		return OutcomeNotMine, "", nil
@@ -126,13 +125,8 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, planner store.Endpoint,
 	if !validSessionID(planner.SessionID) {
 		return OutcomeNotMine, "no opencode session id", nil
 	}
-	if !queuedAt.IsZero() && d.now().Sub(queuedAt) > d.fallbackAfter() {
-		reason := fmt.Sprintf("opencode push gave up after %s", d.fallbackAfter())
-		key := planner.SessionID + "\x00" + strconv.FormatInt(queuedAt.UnixNano(), 10) + "\x00" + firstPayloadLine(payload)
-		if d.gaveUp.shouldLog(key, d.now()) {
-			slog.Info("opencode push not confirmed; payload stays pending for the background wait", "session", planner.SessionID, "reason", reason)
-		}
-		return OutcomeNotMine, reason, nil
+	if out, reason, gave := d.pastFallback(planner.SessionID, payload, queuedAt); gave {
+		return out, reason, nil
 	}
 
 	var (
@@ -187,17 +181,37 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, planner store.Endpoint,
 
 	d.recordPosted(planner.SessionID, origin, d.now())
 
-	// 200 means admitted, not delivered (§3.4): confirm by reading the
+	// 200 means admitted, not delivered: confirm by reading the
 	// session back, polling briefly since the owning process's event bus
 	// takes a moment to record the turn.
+	return d.confirm(ctx, planner.SessionID, origin)
+}
+
+// pastFallback reports whether the payload has waited past the fallback
+// window, logging once per payload when it has.
+func (d *OpencodeDeliverer) pastFallback(sessionID, payload string, queuedAt time.Time) (Outcome, string, bool) {
+	if queuedAt.IsZero() || d.now().Sub(queuedAt) <= d.fallbackAfter() {
+		return OutcomeNotMine, "", false
+	}
+	reason := fmt.Sprintf("opencode push gave up after %s", d.fallbackAfter())
+	key := sessionID + "\x00" + strconv.FormatInt(queuedAt.UnixNano(), 10) + "\x00" + firstPayloadLine(payload)
+	if d.gaveUp.shouldLog(key, d.now()) {
+		slog.Info("opencode push not confirmed; payload stays pending for the background wait", "session", sessionID, "reason", reason)
+	}
+	return OutcomeNotMine, reason, true
+}
+
+// confirm polls the session until the origin is seen in it, the confirm
+// window closes, or the context ends.
+func (d *OpencodeDeliverer) confirm(ctx context.Context, sessionID, origin string) (Outcome, string, error) {
 	deadline := time.Now().Add(OpencodeConfirmWindow)
 	for {
-		seen, err := d.seen(ctx, planner.SessionID, origin)
+		seen, err := d.seen(ctx, sessionID, origin)
 		if err != nil {
 			return OutcomeUnavailable, "sqlite3: " + firstErrorLine(err), nil
 		}
 		if seen {
-			slog.Info("opencode push delivered", "session", planner.SessionID)
+			slog.Info("opencode push delivered", "session", sessionID)
 			return OutcomeDelivered, "", nil
 		}
 		if !time.Now().Before(deadline) {
@@ -237,7 +251,7 @@ func loopbackOpencodeURL(raw string) bool {
 	return host == "127.0.0.1" || host == "localhost"
 }
 
-// buildRequest builds the POST described in §3.3 of the design doc.
+// buildRequest builds the POST that queues the prompt.
 func (d *OpencodeDeliverer) buildRequest(ctx context.Context, svc opencodeService, sessionID, payload string) (*http.Request, error) {
 	body, err := json.Marshal(struct {
 		Text     string `json:"text"`
@@ -302,7 +316,7 @@ func (d *OpencodeDeliverer) tableSet(ctx context.Context) (map[string]bool, erro
 }
 
 // seen reports whether origin already appears in sessionID's messages as a
-// user turn (§3.4) or queued in session_inbox: the inbox table holds admitted
+// user turn or queued in session_inbox: the inbox table holds admitted
 // work and is consumed, so a user turn or a queued message is what proves the
 // session received it. OpenCode 2.0.14 keeps user turns in session_message,
 // while the part/message tables only hold pre-2.0 turns; any of them counts.
@@ -326,7 +340,7 @@ func (d *OpencodeDeliverer) seen(ctx context.Context, sessionID, origin string) 
 }
 
 // opencodeConfirmQuery is the read-back that proves a session actually took
-// the turn (§3.4): a user text part in the pre-2.0 part/message tables, a
+// the turn: a user text part in the pre-2.0 part/message tables, a
 // user row in OpenCode 2.0's session_message, or a queued message in
 // session_inbox. The counts are summed, so any matching row confirms.
 // ' is doubled in all interpolated values, the SQL string-literal escape.
