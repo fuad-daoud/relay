@@ -20,7 +20,7 @@ func configServer(args []string) error {
 	const usage = `usage: relevo config server add <name> <url> (--fingerprint sha256:<hex> | --ca system | --insecure)
        relevo config server rm <name>
        relevo config server list
-       relevo config server key`
+       relevo config server key [--enroll-line]`
 
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
@@ -51,10 +51,16 @@ func configServer(args []string) error {
 func configServerKey(args []string) error {
 	fs := flag.NewFlagSet("relevo config server key", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	// The provider parses this line; its format is remote.MarshalPublic's.
+	enrollOnly := fs.Bool("enroll-line", false, "print only the enrolment line (ed25519 <pubkey> <comment>)")
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, errHelpShown) {
 			return err
 		}
+		return exitCodeErr{code: 2}
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintln(os.Stderr, "usage: relevo config server key [--enroll-line]")
 		return exitCodeErr{code: 2}
 	}
 
@@ -66,7 +72,7 @@ func configServerKey(args []string) error {
 	if err != nil {
 		return err
 	}
-	return printClientKey(pem)
+	return printClientKey(pem, *enrollOnly)
 }
 
 // configSecret is the secrets half of `relevo config` (§4.1). A list prints
@@ -227,11 +233,16 @@ func ensureClientKey(rt relevo.Runtime) (pem []byte, generated bool, err error) 
 }
 
 // printClientKey prints the client id and the enrolment line a server admin
-// runs `relevo serve enroll --key "<line>"` with.
-func printClientKey(pem []byte) error {
+// runs `relevo serve enroll --key "<line>"` with. With enrollOnly it prints the
+// enrolment line alone.
+func printClientKey(pem []byte, enrollOnly bool) error {
 	kp, err := remote.ParsePrivate(pem)
 	if err != nil {
 		return err
+	}
+	if enrollOnly {
+		fmt.Println(client.EnrollLine(kp))
+		return nil
 	}
 	fmt.Printf("client id %s\n", remote.IDOf(kp.Public))
 	fmt.Println(client.EnrollLine(kp))
