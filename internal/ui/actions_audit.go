@@ -13,27 +13,27 @@ import (
 // ConfigLog is every stored revision, newest first. The rows carry no
 // snapshot: the list is a header list.
 func (a *plannerActions) ConfigLog() ([]db.RevisionRow, error) {
-	if a.rt.Config == nil {
+	if a.runtime().Config == nil {
 		return nil, errors.New("no config store")
 	}
-	return a.rt.Config.Log(0)
+	return a.runtime().Config.Log(0)
 }
 
 // ConfigChanges is one revision's changes in human words.
 func (a *plannerActions) ConfigChanges(rev int64) ([]relevo.ChangeLine, error) {
-	if a.rt.Config == nil {
+	if a.runtime().Config == nil {
 		return nil, errors.New("no config store")
 	}
-	return relevo.RevisionChanges(a.rt.Config, rev)
+	return relevo.RevisionChanges(a.runtime().Config, rev)
 }
 
 // RollbackPreview is what rolling back to rev would change, and a refusal when
 // the result would not pass the cockpit's own checks.
 func (a *plannerActions) RollbackPreview(rev int64) ([]relevo.ChangeLine, error) {
-	if a.rt.Config == nil {
+	if a.runtime().Config == nil {
 		return nil, errors.New("no config store")
 	}
-	return relevo.RollbackPreview(a.rt.Config, rev)
+	return relevo.RollbackPreview(a.runtime().Config, rev)
 }
 
 // Rollback writes the config back to rev's snapshot and reloads this adapter's
@@ -42,20 +42,18 @@ func (a *plannerActions) RollbackPreview(rev int64) ([]relevo.ChangeLine, error)
 // because the write already happened, so the text says so. ErrNoChange is not
 // an error to show red: it is the answer "already equals".
 func (a *plannerActions) Rollback(ctx context.Context, rev int64) Result {
-	if a.rt.Config == nil {
+	if a.runtime().Config == nil {
 		return Result{Err: errors.New("no config store")}
 	}
-	row, err := a.rt.Config.As("rollback", "").Rollback(rev)
+	row, err := a.runtime().Config.As("rollback", "").Rollback(rev)
 	if err != nil {
 		if errors.Is(err, config.ErrNoChange) {
 			return Result{Text: fmt.Sprintf("config already equals #%d", rev)}
 		}
 		return Result{Err: err, Refresh: true}
 	}
-	rt, err := relevo.ReloadConfig(a.rt)
-	if err != nil {
+	if err := a.live.Refresh(); err != nil {
 		return Result{Text: "saved; reload failed: " + err.Error(), Refresh: true}
 	}
-	a.rt = rt
 	return Result{Text: fmt.Sprintf("rolled back to #%d as #%d", rev, row.Rev), Refresh: true}
 }

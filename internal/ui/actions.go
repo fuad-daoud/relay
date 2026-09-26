@@ -78,17 +78,23 @@ type Result struct {
 // repo is os.Getwd() at start, or "" when not inside a git repo (round 2's
 // bind refuses then); you is the human planner's id, from ensureYou.
 type plannerActions struct {
-	rt    relevo.Runtime
+	live  *liveRuntime
 	repo  string
 	you   string
 	probe relevo.LineExec
+}
+
+// runtime is the shared holder's current snapshot, so a write and a render
+// never disagree about the configured candidates, actors or policy.
+func (a *plannerActions) runtime() relevo.Runtime {
+	return a.live.Get()
 }
 
 // resolve maps a row key to the runtime that owns it and the bare binding
 // name inside that runtime's store. `relevo ui` is welded to one planner
 // runtime, so every key resolves to it under its own name (§4.2).
 func (a *plannerActions) resolve(key string) (relevo.Runtime, string, bool) {
-	return a.rt, key, true
+	return a.runtime(), key, true
 }
 
 // Stop ends the binding's open round (§4.2). Nothing to stop is an answer,
@@ -294,11 +300,11 @@ func (a *plannerActions) Bind(ctx context.Context, in BindInput) Result {
 	if a.repo == "" {
 		return Result{Err: errors.New("start relevo ui inside a git repository to bind")}
 	}
-	you, err := ensureYou(a.rt)
+	you, err := ensureYou(a.runtime())
 	if err != nil {
 		return Result{Err: err, Refresh: true}
 	}
-	res, err := relevo.Add(ctx, a.rt, relevo.AddOptions{
+	res, err := relevo.Add(ctx, a.runtime(), relevo.AddOptions{
 		Name:      in.Name,
 		Candidate: in.Candidate,
 		PlannerID: you,
@@ -314,11 +320,11 @@ func (a *plannerActions) Bind(ctx context.Context, in BindInput) Result {
 		tree = res.Binding.CWD
 	}
 	lines := []string{fmt.Sprintf("added %s: builder %s on %s",
-		res.Binding.Name, a.rt.Candidates.NameOf(res.Binding.BuilderCandidate), tree)}
-	if n := relevo.GatedNote(a.rt, res.Binding.BuilderCandidate); n != "" {
+		res.Binding.Name, a.runtime().Candidates.NameOf(res.Binding.BuilderCandidate), tree)}
+	if n := relevo.GatedNote(a.runtime(), res.Binding.BuilderCandidate); n != "" {
 		lines = append(lines, n)
 	}
-	if n := bindPickNote(a.rt, res.Resolution); n != "" {
+	if n := bindPickNote(a.runtime(), res.Resolution); n != "" {
 		lines = append(lines, n)
 	}
 	return Result{Text: strings.Join(lines, "\n"), Refresh: true}
@@ -430,13 +436,13 @@ func (a *plannerActions) Pull(ctx context.Context, key string) (string, bool, er
 // bind and retry prompts cycle through. A role the registry does not know has
 // none.
 func (a *plannerActions) Candidates(role string) []string {
-	r, ok := a.rt.RoleRegistry().Role(role)
+	r, ok := a.runtime().RoleRegistry().Role(role)
 	if !ok {
 		return nil
 	}
 	out := make([]string, 0, len(r.Ranked))
 	for _, ranked := range r.Ranked {
-		out = append(out, a.rt.Candidates.NameOf(ranked.Token))
+		out = append(out, a.runtime().Candidates.NameOf(ranked.Token))
 	}
 	return out
 }
@@ -444,10 +450,10 @@ func (a *plannerActions) Candidates(role string) []string {
 // ConfigDoc is the stored config, freshly read through the store (§4.2). A
 // runtime with no config store cannot answer.
 func (a *plannerActions) ConfigDoc() (relevo.ConfigDoc, error) {
-	if a.rt.Config == nil {
+	if a.runtime().Config == nil {
 		return relevo.ConfigDoc{}, errors.New("no config store")
 	}
-	return relevo.LoadConfigDoc(a.rt.Config)
+	return relevo.LoadConfigDoc(a.runtime().Config)
 }
 
 // ApplyConfig writes one validated edit and reloads this adapter's runtime from
@@ -455,17 +461,15 @@ func (a *plannerActions) ConfigDoc() (relevo.ConfigDoc, error) {
 // from the write is a failure; a failed reload after a successful write is not,
 // because the write already happened, so the text says so.
 func (a *plannerActions) ApplyConfig(ctx context.Context, e relevo.ConfigEdit) Result {
-	if a.rt.Config == nil {
+	if a.runtime().Config == nil {
 		return Result{Err: errors.New("no config store")}
 	}
-	if err := relevo.WriteConfigEdit(a.rt.Config, e); err != nil {
+	if err := relevo.WriteConfigEdit(a.runtime().Config, e); err != nil {
 		return Result{Err: err, Refresh: true}
 	}
-	rt, err := relevo.ReloadConfig(a.rt)
-	if err != nil {
+	if err := a.live.Refresh(); err != nil {
 		return Result{Text: "saved; reload failed: " + err.Error(), Refresh: true}
 	}
-	a.rt = rt
 	return Result{Text: e.Message, Refresh: true}
 }
 
@@ -477,7 +481,7 @@ func (a *plannerActions) Probe(ctx context.Context, name string) Result {
 		return Result{Err: errors.New("probing needs relevo ui")}
 	}
 	host, _ := os.Hostname()
-	rs, err := relevo.Probe(ctx, a.rt, a.probe, []string{name}, host, nil)
+	rs, err := relevo.Probe(ctx, a.runtime(), a.probe, []string{name}, host, nil)
 	if err != nil {
 		return Result{Err: err}
 	}
