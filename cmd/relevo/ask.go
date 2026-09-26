@@ -30,7 +30,7 @@ func askFlagSet(fs *flag.FlagSet) *askFlagValues {
 	v.actor = fs.String("actor", "", "the reader actor to consult: reviewer, researcher, or a reader actor in config actors")
 	v.cand = fs.String("candidate", "", "candidate name or harness/provider/model token; omit to take the first ungated in config policy order[<role>]")
 	v.file = fs.String("file", "", "file containing the question")
-	v.question = fs.String("question", "", "the question itself; with --round, exactly one of --file and -q")
+	v.question = fs.String("question", "", "the question itself; exactly one of --file and -q")
 	fs.StringVar(v.question, "q", "", "the question itself (shorthand for --question)")
 	v.round = fs.Int("round", 0, "ask the builder that built this closed round: resumes its session, headless and read-only")
 	v.nameFlag = fs.String("name", "", "binding name")
@@ -46,22 +46,13 @@ func cmdAsk(args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if *round > 0 {
+	if *round > 0 && *role != "" {
 		// The round's recorded session fixes the actor and the candidate, so
 		// neither is required; --actor is only worth a note.
-		if *role != "" {
-			fmt.Fprintln(os.Stderr, "note: relevo ask --round ignores --actor; the resumed session fixes the actor")
-		}
-		if (*file != "") == (*question != "") {
-			return fmt.Errorf("relevo ask --round needs --file or -q")
-		}
-	} else {
-		if *role == "" {
-			return fmt.Errorf("relevo ask needs --actor ACTOR")
-		}
-		if *file == "" {
-			return fmt.Errorf("relevo ask needs --file PATH")
-		}
+		fmt.Fprintln(os.Stderr, "note: relevo ask --round ignores --actor; the resumed session fixes the actor")
+	}
+	if err := relevo.CheckAskInput(*role, *file, *question, *round); err != nil {
+		return err
 	}
 
 	rt, err := newRuntime()

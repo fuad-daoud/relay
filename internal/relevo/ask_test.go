@@ -1519,3 +1519,67 @@ func TestAskRoundInlinesTheQuestion(t *testing.T) {
 		t.Errorf("staged question file: %v", err)
 	}
 }
+
+// TestCheckAskInput pins ask's flag rule in one place: exactly one of --file
+// and -q, with or without --round, and --actor required only without --round.
+func TestCheckAskInput(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		actor    string
+		file     string
+		question string
+		round    int
+		wantErr  string
+	}{
+		{name: "no actor without round", question: "q", wantErr: "relevo ask needs --actor ACTOR"},
+		{name: "actor with neither file nor question", actor: "reviewer", wantErr: "relevo ask needs --file PATH or -q QUESTION"},
+		{name: "actor with both", actor: "reviewer", file: "q.md", question: "q", wantErr: "relevo ask needs --file PATH or -q QUESTION"},
+		{name: "actor with only a question", actor: "reviewer", question: "q"},
+		{name: "actor with only a file", actor: "reviewer", file: "q.md"},
+		{name: "round with neither", round: 2, wantErr: "relevo ask --round needs --file or -q"},
+		{name: "round with a question and no actor", question: "q", round: 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := CheckAskInput(tc.actor, tc.file, tc.question, tc.round)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("CheckAskInput(%q, %q, %q, %d) = %v, want nil", tc.actor, tc.file, tc.question, tc.round, err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tc.wantErr {
+				t.Errorf("CheckAskInput(%q, %q, %q, %d) = %v, want %q", tc.actor, tc.file, tc.question, tc.round, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestAskBody pins the body both Ask paths record: the inline question's own
+// bytes, or the file's bytes when one is given.
+func TestAskBody(t *testing.T) {
+	t.Parallel()
+
+	body, err := askBody("", "the inline question")
+	if err != nil {
+		t.Fatalf("askBody(inline): %v", err)
+	}
+	if string(body) != "the inline question" {
+		t.Errorf("askBody(inline) = %q, want %q", body, "the inline question")
+	}
+
+	path := filepath.Join(t.TempDir(), "q.md")
+	if err := os.WriteFile(path, []byte("the question file"), 0o644); err != nil {
+		t.Fatalf("write question: %v", err)
+	}
+	body, err = askBody(path, "")
+	if err != nil {
+		t.Fatalf("askBody(file): %v", err)
+	}
+	if string(body) != "the question file" {
+		t.Errorf("askBody(file) = %q, want %q", body, "the question file")
+	}
+}
