@@ -429,9 +429,10 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
 - `relevo gate --serve [--state DIR]` — list the gates on the server's own ledger.
 - `relevo gate --serve --clear <provider|token> [--state DIR]` — clear a recorded rate limit on the server's ledger.
 - `relevo gate --serve <token> [--for D] [--reason S] [--state DIR]` — record a provider rate limit on the server's ledger.
-- `relevo config server key` — generate this machine's remote-builder identity (an
+- `relevo config server key [--enroll-line]` — generate this machine's remote-builder identity (an
   ed25519 keypair); prints the enrollment line a server admin runs
-  `relevo serve enroll --key "<line>"` with.
+  `relevo serve enroll --key "<line>"` with. With `--enroll-line`, it prints
+  only the `ed25519 ...` line, for scripts.
 - `relevo config server add NAME URL (--fingerprint sha256:HEX | --ca system | --insecure)` —
   record a remote server; with `--fingerprint`, checks enrollment once.
   Generates and prints this machine's key when it has none yet.

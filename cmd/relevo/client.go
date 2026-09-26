@@ -70,7 +70,7 @@ func cmdClientAddServer(args []string) error {
 		return err
 	}
 	if generated {
-		if err := printClientKey(pem); err != nil {
+		if err := printClientKey(pem, false); err != nil {
 			return err
 		}
 	}
