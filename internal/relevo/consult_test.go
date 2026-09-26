@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -56,20 +57,20 @@ func tickConsults(t *testing.T, rt Runtime) store.Binding {
 		if err != nil {
 			return err
 		}
-		out, err = reconcileConsults(context.Background(), rt, tx, b)
+		out, err = consult.Reconcile(context.Background(), consultDeps(rt), tx, b)
 		if err != nil {
 			return err
 		}
 		return tx.Save(out)
 	})
 	if err != nil {
-		t.Fatalf("reconcileConsults: %v", err)
+		t.Fatalf("consult.Reconcile: %v", err)
 	}
 	return out
 }
 
 // This is the mutation-test target named in the spec: delete the
-// `State != ConsultRunning` guard at the top of reconcileConsults and this
+// `State != ConsultRunning` guard at the top of consult.Reconcile and this
 // fails. Without the guard every tick re-queues findings already delivered.
 func TestTerminalConsultsAreNeverRevisited(t *testing.T) {
 	t.Parallel()
@@ -168,7 +169,7 @@ func TestReconcileExpiresAStaleReservation(t *testing.T) {
 	t.Parallel()
 
 	rt, clock := seedSpawning(t)
-	clock.Advance(consultSpawnTimeout + time.Second)
+	clock.Advance(consult.SpawnTimeout + time.Second)
 
 	b := tickConsults(t, rt)
 	if b.Consults[0].State != store.ConsultSilent {
@@ -299,10 +300,10 @@ func TestHeadlessConsultExitWithoutTextIsSilent(t *testing.T) {
 	}
 }
 
-// TestHeadlessConsultTimesOut: a process still alive past consultTimeout is
+// TestHeadlessConsultTimesOut: a process still alive past consult.Timeout is
 // killed and reported silent.
 
-// TestHeadlessConsultTimesOut: a process still alive past consultTimeout is
+// TestHeadlessConsultTimesOut: a process still alive past consult.Timeout is
 // killed and reported silent.
 func TestHeadlessConsultTimesOut(t *testing.T) {
 	t.Parallel()
@@ -312,7 +313,7 @@ func TestHeadlessConsultTimesOut(t *testing.T) {
 	clock := &fakeClock{now: baseTime}
 	rt = withClock(rt, clock)
 
-	clock.Advance(consultTimeout + time.Second)
+	clock.Advance(consult.Timeout + time.Second)
 	b := tickConsults(t, rt)
 
 	if len(fr.kills) != 1 {

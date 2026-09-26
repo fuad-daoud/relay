@@ -1,4 +1,4 @@
-package relevo
+package reporttail
 
 import (
 	"reflect"
@@ -20,11 +20,11 @@ commands_run: ["go test ./...", "make check"]
 not_done: ["cleanup tmp", "docs"]
 ` + "```" + `
 `
-		tail, ok := ParseReportTail([]byte(input))
+		tail, ok := Parse([]byte(input))
 		if !ok {
 			t.Fatalf("expected ok=true, got false")
 		}
-		expected := ReportTail{
+		expected := Tail{
 			Status:          OutcomeHalted,
 			HaltedAt:        "Task 2 step 3",
 			ChangedPathsSet: true,
@@ -39,11 +39,11 @@ not_done: ["cleanup tmp", "docs"]
 
 	t.Run("block with only status done", func(t *testing.T) {
 		input := "```relevo\nstatus: done\n```\n"
-		tail, ok := ParseReportTail([]byte(input))
+		tail, ok := Parse([]byte(input))
 		if !ok {
 			t.Fatalf("expected ok=true, got false")
 		}
-		expected := ReportTail{
+		expected := Tail{
 			Status: OutcomeDone,
 		}
 		if !reflect.DeepEqual(tail, expected) {
@@ -55,7 +55,7 @@ not_done: ["cleanup tmp", "docs"]
 		statuses := []string{OutcomeDone, OutcomeHalted, OutcomeBlocked, OutcomeDeferred}
 		for _, s := range statuses {
 			input := "```relevo\nstatus: " + s + "\n```"
-			tail, ok := ParseReportTail([]byte(input))
+			tail, ok := Parse([]byte(input))
 			if !ok || tail.Status != s {
 				t.Fatalf("expected status %s and ok=true, got %s and %v", s, tail.Status, ok)
 			}
@@ -66,11 +66,15 @@ not_done: ["cleanup tmp", "docs"]
 		badStatuses := []string{"unstructured", "DONE", "running", "failed", "pending"}
 		for _, s := range badStatuses {
 			input := "```relevo\nstatus: " + s + "\n```"
-			if _, ok := ParseReportTail([]byte(input)); ok {
+			if _, ok := Parse([]byte(input)); ok {
 				t.Fatalf("expected ok=false for status %q, got true", s)
 			}
 		}
 	})
+}
+
+func TestParseReportTailMissingBlock(t *testing.T) {
+	t.Parallel()
 
 	t.Run("missing block -> false", func(t *testing.T) {
 		inputs := [][]byte{
@@ -79,7 +83,7 @@ not_done: ["cleanup tmp", "docs"]
 			[]byte("Just some report with no relevo block\n"),
 		}
 		for _, inp := range inputs {
-			if _, ok := ParseReportTail(inp); ok {
+			if _, ok := Parse(inp); ok {
 				t.Fatalf("expected ok=false for missing block, got true")
 			}
 		}
@@ -87,10 +91,45 @@ not_done: ["cleanup tmp", "docs"]
 
 	t.Run("block not at the end (prose after the closing fence) -> false", func(t *testing.T) {
 		input := "```relevo\nstatus: done\n```\nSome prose after the closing fence.\n"
-		if _, ok := ParseReportTail([]byte(input)); ok {
+		if _, ok := Parse([]byte(input)); ok {
 			t.Fatalf("expected ok=false for prose after closing fence, got true")
 		}
 	})
+
+	t.Run("unclosed fence -> false", func(t *testing.T) {
+		input := "```relevo\nstatus: done\n"
+		if _, ok := Parse([]byte(input)); ok {
+			t.Fatalf("expected ok=false for unclosed fence, got true")
+		}
+	})
+
+	t.Run("a report whose prose contains a ```go fence before the relevo block still parses", func(t *testing.T) {
+		input := `Here is some Go code:
+
+` + "```go" + `
+func main() {
+    println("hello")
+}
+` + "```" + `
+
+And here is the tail:
+
+` + "```relevo" + `
+status: done
+` + "```" + `
+`
+		tail, ok := Parse([]byte(input))
+		if !ok {
+			t.Fatalf("expected ok=true, got false")
+		}
+		if tail.Status != OutcomeDone {
+			t.Fatalf("expected status: done, got %s", tail.Status)
+		}
+	})
+}
+
+func TestParseReportTailLastBlockWins(t *testing.T) {
+	t.Parallel()
 
 	t.Run("an earlier ```relevo block followed by a later one -> the later one wins", func(t *testing.T) {
 		input := `
@@ -105,30 +144,12 @@ Some prose in between.
 status: done
 ` + "```" + `
 `
-		tail, ok := ParseReportTail([]byte(input))
+		tail, ok := Parse([]byte(input))
 		if !ok {
 			t.Fatalf("expected ok=true, got false")
 		}
 		if tail.Status != OutcomeDone || tail.HaltedAt != "" {
 			t.Fatalf("expected later block to win (status: done, halted_at: empty), got %+v", tail)
-		}
-	})
-
-	t.Run("unclosed fence -> false", func(t *testing.T) {
-		input := "```relevo\nstatus: done\n"
-		if _, ok := ParseReportTail([]byte(input)); ok {
-			t.Fatalf("expected ok=false for unclosed fence, got true")
-		}
-	})
-
-	t.Run("unknown key ignored", func(t *testing.T) {
-		input := "```relevo\nstatus: done\ncustom_field: some_val\nanother_key: 123\n```\n"
-		tail, ok := ParseReportTail([]byte(input))
-		if !ok {
-			t.Fatalf("expected ok=true, got false")
-		}
-		if tail.Status != OutcomeDone {
-			t.Fatalf("expected status: done, got %s", tail.Status)
 		}
 	})
 
@@ -143,7 +164,7 @@ changed_paths: ["foo.go"]
 changed_paths: []
 ` + "```" + `
 `
-		tail, ok := ParseReportTail([]byte(input))
+		tail, ok := Parse([]byte(input))
 		if !ok {
 			t.Fatalf("expected ok=true, got false")
 		}
@@ -158,6 +179,21 @@ changed_paths: []
 		}
 	})
 
+	t.Run("unknown key ignored", func(t *testing.T) {
+		input := "```relevo\nstatus: done\ncustom_field: some_val\nanother_key: 123\n```\n"
+		tail, ok := Parse([]byte(input))
+		if !ok {
+			t.Fatalf("expected ok=true, got false")
+		}
+		if tail.Status != OutcomeDone {
+			t.Fatalf("expected status: done, got %s", tail.Status)
+		}
+	})
+}
+
+func TestParseReportTailComments(t *testing.T) {
+	t.Parallel()
+
 	t.Run("# comments outside and inside quotes", func(t *testing.T) {
 		input := `
 ` + "```relevo" + `
@@ -167,7 +203,7 @@ changed_paths: ["path/with#hash", "path2"] # comment after list
 commands_run: [cmd #not_comment]
 ` + "```" + `
 `
-		tail, ok := ParseReportTail([]byte(input))
+		tail, ok := Parse([]byte(input))
 		if !ok {
 			t.Fatalf("expected ok=true, got false")
 		}
@@ -186,6 +222,10 @@ commands_run: [cmd #not_comment]
 			t.Fatalf("expected cmds %+v, got %+v", expectedCmds, tail.CommandsRun)
 		}
 	})
+}
+
+func TestParseReportTailScalars(t *testing.T) {
+	t.Parallel()
 
 	t.Run("[] -> nil", func(t *testing.T) {
 		input := `
@@ -196,7 +236,7 @@ commands_run: [  ]
 not_done: []
 ` + "```" + `
 `
-		tail, ok := ParseReportTail([]byte(input))
+		tail, ok := Parse([]byte(input))
 		if !ok {
 			t.Fatalf("expected ok=true, got false")
 		}
@@ -220,7 +260,7 @@ commands_run: make test
 not_done: 'leave for later'
 ` + "```" + `
 `
-		tail, ok := ParseReportTail([]byte(input))
+		tail, ok := Parse([]byte(input))
 		if !ok {
 			t.Fatalf("expected ok=true, got false")
 		}
@@ -237,10 +277,14 @@ not_done: 'leave for later'
 
 	t.Run("a line without : -> false", func(t *testing.T) {
 		input := "```relevo\nstatus: done\njust a random line without colon\n```\n"
-		if _, ok := ParseReportTail([]byte(input)); ok {
+		if _, ok := Parse([]byte(input)); ok {
 			t.Fatalf("expected ok=false for line without colon, got true")
 		}
 	})
+}
+
+func TestParseReportTailLists(t *testing.T) {
+	t.Parallel()
 
 	t.Run("block list of three", func(t *testing.T) {
 		input := `
@@ -257,7 +301,7 @@ not_done:
   - docs
 ` + "```" + `
 `
-		tail, ok := ParseReportTail([]byte(input))
+		tail, ok := Parse([]byte(input))
 		if !ok {
 			t.Fatalf("expected ok=true, got false")
 		}
@@ -275,6 +319,10 @@ not_done:
 			t.Fatalf("not_done: got %+v", tail.NotDone)
 		}
 	})
+}
+
+func TestParseReportTailListOverrides(t *testing.T) {
+	t.Parallel()
 
 	t.Run("block list after a flow list on another key", func(t *testing.T) {
 		input := `
@@ -286,7 +334,7 @@ changed_paths:
   - scripts/check-plugin-version_test.sh
 ` + "```" + `
 `
-		tail, ok := ParseReportTail([]byte(input))
+		tail, ok := Parse([]byte(input))
 		if !ok {
 			t.Fatalf("expected ok=true, got false")
 		}
@@ -296,17 +344,6 @@ changed_paths:
 		wantPaths := []string{"Makefile", "scripts/check-plugin-version_test.sh"}
 		if !reflect.DeepEqual(tail.ChangedPaths, wantPaths) {
 			t.Fatalf("changed_paths: got %+v, want %+v", tail.ChangedPaths, wantPaths)
-		}
-	})
-
-	t.Run("dash with no open list key -> false", func(t *testing.T) {
-		input := "```relevo\nstatus: done\n- Makefile\n```\n"
-		if _, ok := ParseReportTail([]byte(input)); ok {
-			t.Fatalf("expected ok=false for list item with no open list key, got true")
-		}
-		_, _, reason := parseReportTail([]byte(input))
-		if !strings.Contains(reason, "has no ':'") {
-			t.Fatalf("reason = %q, want tail: line N has no ':'", reason)
 		}
 	})
 
@@ -320,7 +357,7 @@ changed_paths:
   - scripts/check-plugin-version_test.sh
 ` + "```" + `
 `
-		tail, ok := ParseReportTail([]byte(input))
+		tail, ok := Parse([]byte(input))
 		if !ok {
 			t.Fatalf("expected ok=true, got false")
 		}
@@ -329,113 +366,14 @@ changed_paths:
 			t.Fatalf("changed_paths: got %+v, want %+v", tail.ChangedPaths, want)
 		}
 	})
-
-	t.Run("rejected block reports why", func(t *testing.T) {
-		input := "```relevo\nstatus: done\njust a random line without colon\n```\n"
-		_, ok, reason := parseReportTail([]byte(input))
-		if ok {
-			t.Fatalf("expected ok=false")
-		}
-		if reason != "tail: line 3 has no ':'" {
-			t.Fatalf("reason = %q, want tail: line 3 has no ':'", reason)
-		}
-	})
-
-	t.Run("missing block has empty reason", func(t *testing.T) {
-		_, ok, reason := parseReportTail([]byte("plain prose\n"))
-		if ok {
-			t.Fatalf("expected ok=false")
-		}
-		if reason != "" {
-			t.Fatalf("reason = %q, want empty", reason)
-		}
-	})
-
-	// TestParseReportTailChangedPathsSet pins ChangedPathsSet (#216): the
-	// changed_paths key counts as present whether its list is inline or a
-	// block, whether empty or not. Only a tail with no such key at all is
-	// never compared against the diff.
-	t.Run("changed_paths presence", func(t *testing.T) {
-		cases := []struct {
-			name    string
-			body    string
-			wantSet bool
-			want    []string
-		}{
-			{
-				name:    "inline empty list",
-				body:    "```relevo\nstatus: done\nchanged_paths: []\n```\n",
-				wantSet: true,
-				want:    nil,
-			},
-			{
-				name:    "inline two elements",
-				body:    "```relevo\nstatus: done\nchanged_paths: [a, b]\n```\n",
-				wantSet: true,
-				want:    []string{"a", "b"},
-			},
-			{
-				name:    "block form with no items",
-				body:    "```relevo\nstatus: done\nchanged_paths:\n```\n",
-				wantSet: true,
-				want:    nil,
-			},
-			{
-				name:    "block form with two items",
-				body:    "```relevo\nstatus: done\nchanged_paths:\n  - a.go\n  - b.go\n```\n",
-				wantSet: true,
-				want:    []string{"a.go", "b.go"},
-			},
-			{
-				name:    "key absent",
-				body:    "```relevo\nstatus: done\n```\n",
-				wantSet: false,
-				want:    nil,
-			},
-		}
-		for _, tc := range cases {
-			t.Run(tc.name, func(t *testing.T) {
-				tail, ok := ParseReportTail([]byte(tc.body))
-				if !ok {
-					t.Fatalf("ParseReportTail(%q) not ok", tc.body)
-				}
-				if tail.ChangedPathsSet != tc.wantSet {
-					t.Errorf("ChangedPathsSet = %v, want %v", tail.ChangedPathsSet, tc.wantSet)
-				}
-				if !reflect.DeepEqual(tail.ChangedPaths, tc.want) {
-					t.Errorf("ChangedPaths = %+v, want %+v", tail.ChangedPaths, tc.want)
-				}
-			})
-		}
-	})
-
-	t.Run("a report whose prose contains a ```go fence before the relevo block still parses", func(t *testing.T) {
-		input := `Here is some Go code:
-
-` + "```go" + `
-func main() {
-    println("hello")
 }
-` + "```" + `
 
-And here is the tail:
-
-` + "```relevo" + `
-status: done
-` + "```" + `
-`
-		tail, ok := ParseReportTail([]byte(input))
-		if !ok {
-			t.Fatalf("expected ok=true, got false")
-		}
-		if tail.Status != OutcomeDone {
-			t.Fatalf("expected status: done, got %s", tail.Status)
-		}
-	})
+func TestParseReportTailFlowLists(t *testing.T) {
+	t.Parallel()
 
 	t.Run("flow list over several lines", func(t *testing.T) {
 		input := "```relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: [\n  \"cmd/relevo/client.go\",\n  \"internal/relevo/send.go\"\n]\ncommands_run: [\"make check\"]\n```\n"
-		tail, ok := ParseReportTail([]byte(input))
+		tail, ok := Parse([]byte(input))
 		if !ok {
 			t.Fatalf("expected ok=true, got false")
 		}
@@ -457,7 +395,7 @@ status: done
 
 	t.Run("flow list over several lines with a trailing comma and the first item on the key line", func(t *testing.T) {
 		input := "```relevo\nstatus: done\nnot_done: [\"a\",\n\"b\",\n]\n```\n"
-		tail, ok := ParseReportTail([]byte(input))
+		tail, ok := Parse([]byte(input))
 		if !ok {
 			t.Fatalf("expected ok=true, got false")
 		}
@@ -469,7 +407,7 @@ status: done
 
 	t.Run("flow list whose items contain brackets inside quotes", func(t *testing.T) {
 		input := "```relevo\nstatus: done\nchanged_paths: [\n  \"odd]name.go\",\n  \"x[.go\",\n  \"y.go\"\n]\n```\n"
-		tail, ok := ParseReportTail([]byte(input))
+		tail, ok := Parse([]byte(input))
 		if !ok {
 			t.Fatalf("expected ok=true, got false")
 		}
@@ -478,10 +416,46 @@ status: done
 			t.Errorf("changed_paths = %+v, want %+v", tail.ChangedPaths, wantPaths)
 		}
 	})
+}
+
+func TestParseReportTailReasons(t *testing.T) {
+	t.Parallel()
+
+	t.Run("dash with no open list key -> false", func(t *testing.T) {
+		input := "```relevo\nstatus: done\n- Makefile\n```\n"
+		if _, ok := Parse([]byte(input)); ok {
+			t.Fatalf("expected ok=false for list item with no open list key, got true")
+		}
+		_, _, reason := ParseWithReason([]byte(input))
+		if !strings.Contains(reason, "has no ':'") {
+			t.Fatalf("reason = %q, want tail: line N has no ':'", reason)
+		}
+	})
+
+	t.Run("rejected block reports why", func(t *testing.T) {
+		input := "```relevo\nstatus: done\njust a random line without colon\n```\n"
+		_, ok, reason := ParseWithReason([]byte(input))
+		if ok {
+			t.Fatalf("expected ok=false")
+		}
+		if reason != "tail: line 3 has no ':'" {
+			t.Fatalf("reason = %q, want tail: line 3 has no ':'", reason)
+		}
+	})
+
+	t.Run("missing block has empty reason", func(t *testing.T) {
+		_, ok, reason := ParseWithReason([]byte("plain prose\n"))
+		if ok {
+			t.Fatalf("expected ok=false")
+		}
+		if reason != "" {
+			t.Fatalf("reason = %q, want empty", reason)
+		}
+	})
 
 	t.Run("unclosed flow list", func(t *testing.T) {
 		input := "```relevo\nstatus: done\nchanged_paths: [\n\"a.go\",\n```\n"
-		_, ok, reason := parseReportTail([]byte(input))
+		_, ok, reason := ParseWithReason([]byte(input))
 		if ok {
 			t.Fatalf("expected ok=false")
 		}
@@ -490,4 +464,63 @@ status: done
 			t.Fatalf("reason = %q, want %q", reason, wantReason)
 		}
 	})
+}
+
+// TestParseReportTailChangedPathsSet pins ChangedPathsSet: the changed_paths
+// key counts as present whether its list is inline or a block, whether empty or
+// not. Only a tail with no such key at all is never compared against the diff.
+func TestParseReportTailChangedPathsSet(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		body    string
+		wantSet bool
+		want    []string
+	}{
+		{
+			name:    "inline empty list",
+			body:    "```relevo\nstatus: done\nchanged_paths: []\n```\n",
+			wantSet: true,
+			want:    nil,
+		},
+		{
+			name:    "inline two elements",
+			body:    "```relevo\nstatus: done\nchanged_paths: [a, b]\n```\n",
+			wantSet: true,
+			want:    []string{"a", "b"},
+		},
+		{
+			name:    "block form with no items",
+			body:    "```relevo\nstatus: done\nchanged_paths:\n```\n",
+			wantSet: true,
+			want:    nil,
+		},
+		{
+			name:    "block form with two items",
+			body:    "```relevo\nstatus: done\nchanged_paths:\n  - a.go\n  - b.go\n```\n",
+			wantSet: true,
+			want:    []string{"a.go", "b.go"},
+		},
+		{
+			name:    "key absent",
+			body:    "```relevo\nstatus: done\n```\n",
+			wantSet: false,
+			want:    nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tail, ok := Parse([]byte(tc.body))
+			if !ok {
+				t.Fatalf("Parse(%q) not ok", tc.body)
+			}
+			if tail.ChangedPathsSet != tc.wantSet {
+				t.Errorf("ChangedPathsSet = %v, want %v", tail.ChangedPathsSet, tc.wantSet)
+			}
+			if !reflect.DeepEqual(tail.ChangedPaths, tc.want) {
+				t.Errorf("ChangedPaths = %+v, want %+v", tail.ChangedPaths, tc.want)
+			}
+		})
+	}
 }

@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
+	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -172,7 +174,7 @@ func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	// findings wait on disk and the background wait's delivery retrieves them
 	// -- the same behaviour the halt comment below describes for a halted
 	// binding.
-	b, err = reconcileConsults(ctx, rt, tx, b)
+	b, err = consult.Reconcile(ctx, consultDeps(rt), tx, b)
 	if err != nil {
 		return b, err
 	}
@@ -358,16 +360,16 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 	body, _ := os.ReadFile(path)
 	var (
-		tail   ReportTail
+		tail   reporttail.Tail
 		ok     bool
 		reject string
 	)
-	outcome := OutcomeUnstructured
+	outcome := reporttail.OutcomeUnstructured
 	if note != noteScraped {
 		// A scraped body is a terminal capture, which holds the prompt's own
 		// ```relevo skeleton, truncated by the capture. The tail contract is
 		// for the file the builder writes.
-		tail, ok, reject = parseReportTail(body)
+		tail, ok, reject = reporttail.ParseWithReason(body)
 	}
 	if ok {
 		outcome = tail.Status
@@ -386,7 +388,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		pRest = "\n" + pLines[1]
 	}
 
-	if outcome != OutcomeDone && outcome != OutcomeUnstructured {
+	if outcome != reporttail.OutcomeDone && outcome != reporttail.OutcomeUnstructured {
 		prefix := fmt.Sprintf("Builder finished round %d", b.Round)
 		if strings.HasPrefix(pFirst, prefix) {
 			replacement := prefix + " -- " + outcome

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -94,7 +95,7 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 		code := WaitClosed
 		// a marked round that halted is 5, not 0; an unmarked round that halted is
 		// also 5 -- the planner has to read why either way.
-		if e.Outcome == OutcomeHalted || e.Outcome == OutcomeBlocked {
+		if e.Outcome == reporttail.OutcomeHalted || e.Outcome == reporttail.OutcomeBlocked {
 			code = WaitHalted
 		} else if e.Note != "" {
 			code = WaitUnmarked

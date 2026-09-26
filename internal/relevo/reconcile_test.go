@@ -10,10 +10,12 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/classify"
+	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -725,8 +727,8 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				report = e
 			}
 		}
-		if report.Outcome != OutcomeHalted {
-			t.Errorf("Outcome = %q, want %q", report.Outcome, OutcomeHalted)
+		if report.Outcome != reporttail.OutcomeHalted {
+			t.Errorf("Outcome = %q, want %q", report.Outcome, reporttail.OutcomeHalted)
 		}
 		if report.HaltedAt != "Task 2 step 3" {
 			t.Errorf("HaltedAt = %q, want %q", report.HaltedAt, "Task 2 step 3")
@@ -756,8 +758,8 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				report = e
 			}
 		}
-		if report.Outcome != OutcomeDone {
-			t.Errorf("Outcome = %q, want %q", report.Outcome, OutcomeDone)
+		if report.Outcome != reporttail.OutcomeDone {
+			t.Errorf("Outcome = %q, want %q", report.Outcome, reporttail.OutcomeDone)
 		}
 		wantOrigin := delivery.OriginLine("webshop", 1, store.DirToPlanner, store.KindReport)
 		lines := strings.Split(report.Payload, "\n")
@@ -796,8 +798,8 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				report = e
 			}
 		}
-		if report.Outcome != OutcomeUnstructured {
-			t.Errorf("Outcome = %q, want %q", report.Outcome, OutcomeUnstructured)
+		if report.Outcome != reporttail.OutcomeUnstructured {
+			t.Errorf("Outcome = %q, want %q", report.Outcome, reporttail.OutcomeUnstructured)
 		}
 		if !strings.Contains(report.Note, "tail: line 3 has no ':'") {
 			t.Errorf("Note = %q, want tail: line 3 has no ':'", report.Note)
@@ -824,8 +826,8 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				report = e
 			}
 		}
-		if report.Outcome != OutcomeUnstructured {
-			t.Errorf("Outcome = %q, want %q", report.Outcome, OutcomeUnstructured)
+		if report.Outcome != reporttail.OutcomeUnstructured {
+			t.Errorf("Outcome = %q, want %q", report.Outcome, reporttail.OutcomeUnstructured)
 		}
 		if report.HaltedAt != "" {
 			t.Errorf("HaltedAt = %q, want empty", report.HaltedAt)
@@ -2136,20 +2138,20 @@ func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
 		}
 	}
 
-	var consult *store.Consult
+	var vc *store.Consult
 	for i := range got.Consults {
-		if got.Consults[i].Role == verifyRole {
-			consult = &got.Consults[i]
+		if got.Consults[i].Role == consult.VerifyRole {
+			vc = &got.Consults[i]
 		}
 	}
-	if consult == nil {
-		t.Fatalf("no %q consult on the binding: %+v", verifyRole, got.Consults)
+	if vc == nil {
+		t.Fatalf("no %q consult on the binding: %+v", consult.VerifyRole, got.Consults)
 	}
-	if consult.Round != 1 {
-		t.Errorf("consult round = %d, want 1", consult.Round)
+	if vc.Round != 1 {
+		t.Errorf("consult round = %d, want 1", vc.Round)
 	}
-	if consult.State != store.ConsultRunning {
-		t.Errorf("consult state = %q, want running", consult.State)
+	if vc.State != store.ConsultRunning {
+		t.Errorf("consult state = %q, want running", vc.State)
 	}
 
 	// The report was queued for the planner: with no live claim it waits for

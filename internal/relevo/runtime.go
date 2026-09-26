@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
@@ -336,6 +337,50 @@ func AvailabilityDeps(rt Runtime) availability.Deps {
 // nil interfaces at the assignment.
 func captureDeps(rt Runtime) capture.Deps {
 	return capture.Deps{Git: rt.Git, Store: rt.Store}
+}
+
+// consultDeps builds internal/consult's Deps from rt. Git carries through
+// nil-safe (both are true nil interfaces at the assignment); Seen and
+// LostToRestart close over the daemon's watch set, so a runtime with none reads
+// as "never seen" exactly as lostToRestart's nil rule does.
+func consultDeps(rt Runtime) consult.Deps {
+	now := rt.Now
+	if now == nil {
+		now = time.Now
+	}
+	return consult.Deps{
+		Store:  rt.Store,
+		Runner: rt.Runner,
+		Git:    rt.Git,
+		Now:    now,
+		NewID:  rt.NewID,
+		Seen: func(pid int, startedAt int64) {
+			rt.Watched.Mark(pid, startedAt)
+		},
+		LostToRestart: func(pid int, startedAt int64) bool {
+			return lostToRestart(rt, pid, startedAt)
+		},
+		Scope: func(kind, owner, name string, round int, id string) *spawn.ScopeSpec {
+			k := scopeKind(kind)
+			return scopeFor(rt, k, scopeUnitNameFor(k, owner, name, round, id), "")
+		},
+		Usage: func(ctx context.Context, b store.Binding, c store.Consult, end time.Time) *usage.Usage {
+			return recordUsage(ctx, rt, consultSource(rt, b, c, end))
+		},
+		Delivery: deliveryDeps(rt),
+		ResolveReviewer: func() (candidate.Candidate, harness.RoleSpec, harness.Tier, error) {
+			res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), "", "reviewer")
+			if err != nil {
+				return candidate.Candidate{}, harness.RoleSpec{}, "", err
+			}
+			c := res.Candidate
+			role, err := rt.RoleRegistry().Spec("reviewer", c.Harness)
+			if err != nil {
+				return candidate.Candidate{}, harness.RoleSpec{}, "", err
+			}
+			return c, role, verifyTier(rt, c), nil
+		},
+	}
 }
 
 // deliveryDeps builds internal/delivery's Deps from rt. The Channels interface

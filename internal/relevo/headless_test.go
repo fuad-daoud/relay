@@ -13,6 +13,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -1052,20 +1053,20 @@ func TestVerifyRoundStartsOnHeadlessClose(t *testing.T) {
 		t.Errorf("AddDetachedWorktree = %+v, want {%s %s head1}", call, b.CWD, wantWT)
 	}
 
-	var consult *store.Consult
+	var vc *store.Consult
 	for i := range got.Consults {
-		if got.Consults[i].Role == verifyRole {
-			consult = &got.Consults[i]
+		if got.Consults[i].Role == consult.VerifyRole {
+			vc = &got.Consults[i]
 		}
 	}
-	if consult == nil {
-		t.Fatalf("no %q consult on the binding: %+v", verifyRole, got.Consults)
+	if vc == nil {
+		t.Fatalf("no %q consult on the binding: %+v", consult.VerifyRole, got.Consults)
 	}
-	if consult.Round != 1 {
-		t.Errorf("consult round = %d, want 1", consult.Round)
+	if vc.Round != 1 {
+		t.Errorf("consult round = %d, want 1", vc.Round)
 	}
-	if consult.State != store.ConsultRunning {
-		t.Errorf("consult state = %q, want running", consult.State)
+	if vc.State != store.ConsultRunning {
+		t.Errorf("consult state = %q, want running", vc.State)
 	}
 }
 
@@ -1109,21 +1110,21 @@ func TestVerifyInlinesItsQuestion(t *testing.T) {
 		t.Errorf("verify argv does not carry the question:\n%s", argv)
 	}
 
-	var consult *store.Consult
+	var vc *store.Consult
 	for i := range got.Consults {
-		if got.Consults[i].Role == verifyRole {
-			consult = &got.Consults[i]
+		if got.Consults[i].Role == consult.VerifyRole {
+			vc = &got.Consults[i]
 		}
 	}
-	if consult == nil {
-		t.Fatalf("no %q consult on the binding: %+v", verifyRole, got.Consults)
+	if vc == nil {
+		t.Fatalf("no %q consult on the binding: %+v", consult.VerifyRole, got.Consults)
 	}
-	if _, err := os.Stat(consult.AskPath); !os.IsNotExist(err) {
-		t.Errorf("ask file exists on disk at %s (err %v), want no file", consult.AskPath, err)
+	if _, err := os.Stat(vc.AskPath); !os.IsNotExist(err) {
+		t.Errorf("ask file exists on disk at %s (err %v), want no file", vc.AskPath, err)
 	}
-	question, err := rt.Store.ReadFile(consult.AskPath)
+	question, err := rt.Store.ReadFile(vc.AskPath)
 	if err != nil {
-		t.Fatalf("ReadFile(%s): %v", consult.AskPath, err)
+		t.Fatalf("ReadFile(%s): %v", vc.AskPath, err)
 	}
 	if !strings.Contains(string(question), "Verify round 1 of binding") {
 		t.Errorf("recorded question does not contain the verify prompt:\n%s", question)
@@ -1166,17 +1167,17 @@ func TestVerifyRoundHandsTheReviewerAGitDiff(t *testing.T) {
 		t.Fatalf("round = %d, want 2: the round closed", got.Round)
 	}
 
-	var consult *store.Consult
+	var vc *store.Consult
 	for i := range got.Consults {
-		if got.Consults[i].Role == verifyRole {
-			consult = &got.Consults[i]
+		if got.Consults[i].Role == consult.VerifyRole {
+			vc = &got.Consults[i]
 		}
 	}
-	if consult == nil {
-		t.Fatalf("no %q consult on the binding: %+v", verifyRole, got.Consults)
+	if vc == nil {
+		t.Fatalf("no %q consult on the binding: %+v", consult.VerifyRole, got.Consults)
 	}
 
-	q, err := rt.Store.ReadFile(consult.AskPath)
+	q, err := rt.Store.ReadFile(vc.AskPath)
 	if err != nil {
 		t.Fatalf("read ask: %v", err)
 	}

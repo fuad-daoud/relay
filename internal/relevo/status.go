@@ -9,9 +9,11 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/chatlabel"
+	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -415,7 +417,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (BindingStatus,
 		Role:             b.Role,
 		ForkedFrom:       b.ForkedFrom,
 		ForkedAtRound:    b.ForkedAtRound,
-		Consults:         runningConsults(b),
+		Consults:         consult.Running(b),
 		Switches:         b.RoundSwitches,
 		Branch:           b.Branch,
 		PlannerKind:      b.Planner.Kind,
@@ -958,7 +960,7 @@ func RenderStatus(r Report) string {
 			if b.Last.Note != "" {
 				fmt.Fprintf(&sb, " (%s)", b.Last.Note)
 			}
-			if b.Last.Outcome != "" && b.Last.Outcome != OutcomeDone {
+			if b.Last.Outcome != "" && b.Last.Outcome != reporttail.OutcomeDone {
 				fmt.Fprintf(&sb, " %s", b.Last.Outcome)
 			}
 			fmt.Fprint(&sb, "\n")
