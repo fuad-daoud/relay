@@ -347,9 +347,20 @@ func loadServeConfig() (config.Loaded, *db.DB, string, error) {
 	return L, d, root, nil
 }
 
-// serveAdminConfigWithPolicy is serveAdminConfig plus the machine's policy and
-// roles registry, which the census needs: `serve status` reports the builder
-// cap the server enforces, and that cap comes from serve.max_builders.
+// serveAdminConfigFrom is serveAdminConfig plus the loaded policy and roles
+// registry, which the census needs: `serve status` reports the builder cap the
+// server enforces, and that cap comes from serve.max_builders. It takes an
+// already-loaded config so a caller that also needs the candidates loads once:
+// loading is not a pure read.
+func serveAdminConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
+	cfg := serveAdminConfig(root, d)
+	cfg.Policy = L.Policy
+	cfg.Registry = L.Registry
+	return cfg
+}
+
+// serveAdminConfigWithPolicy is serveAdminConfigFrom with the config loaded
+// here.
 //
 // Unlike serveAdminConfigWithCandidates, an empty candidates set is not an
 // error: the census is meaningful with no candidates.
@@ -358,26 +369,19 @@ func serveAdminConfigWithPolicy(root string, d *db.DB) (serve.Config, error) {
 	if err != nil {
 		return serve.Config{}, err
 	}
-	cfg := serveAdminConfig(root, d)
-	cfg.Policy = L.Policy
-	cfg.Registry = L.Registry
-	return cfg, nil
+	return serveAdminConfigFrom(root, d, L), nil
 }
 
-// serveAdminConfigWithCandidates is serveAdminConfigWithPolicy plus the
-// configured candidates, which the gate verbs need: `relevo serve gates`
-// projects the ledger onto the candidate set, and the two edit verbs refuse a
-// token no candidate names (#251).
+// serveAdminConfigWithCandidates is serveAdminConfigFrom plus the configured
+// candidates, which the gate verbs need: `relevo serve gates` projects the
+// ledger onto the candidate set, and the two edit verbs refuse a token no
+// candidate names.
 //
 // Unlike cmdServeRun, an empty candidates set is an error here: with no
 // candidate set to project onto, a ledger full of gates would render as
 // "no gates", which reads as "nothing is gated" -- the same false negative
 // this round exists to remove.
 func serveAdminConfigWithCandidates(root string, d *db.DB) (serve.Config, error) {
-	cfg, err := serveAdminConfigWithPolicy(root, d)
-	if err != nil {
-		return serve.Config{}, err
-	}
 	L, err := loadConfig(d)
 	if err != nil {
 		return serve.Config{}, err
@@ -385,6 +389,7 @@ func serveAdminConfigWithCandidates(root string, d *db.DB) (serve.Config, error)
 	if L.Candidates.Len() == 0 {
 		return serve.Config{}, errors.New("no candidates configured")
 	}
+	cfg := serveAdminConfigFrom(root, d, L)
 	cfg.Candidates = L.Candidates
 	return cfg, nil
 }
