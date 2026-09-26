@@ -856,7 +856,7 @@ func TestAddRemoteRolePreRolesServerRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("Add(--role on a pre-roles server) = nil, want a refusal")
 	}
-	want := `server zen does not run custom roles (role "ui-builder"); upgrade it`
+	want := `server zen does not run custom actors (actor "ui-builder"); upgrade it`
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %q, want %q", err.Error(), want)
 	}

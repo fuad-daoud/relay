@@ -332,7 +332,7 @@ func cmdDaemon(args []string) error {
 	return err
 }
 
-// refreshRoles lands relevo's shipped role definitions and the custom agents
+// refreshRoles lands relevo's shipped agent definitions and the custom agents
 // the config renders, once per image start
 // (#371 §4.10). The kinds are the ones `relevo config agents` picks by default
 // -- harness.Install's own "every harness whose binary is on PATH" selection --
@@ -345,29 +345,29 @@ func cmdDaemon(args []string) error {
 func refreshRoles(cfg *config.Store) {
 	env, err := agentInstallEnv()
 	if err != nil {
-		slog.Warn("role definitions not refreshed", "err", err)
+		slog.Warn("agent definitions not refreshed", "err", err)
 		return
 	}
 
 	results, err := harness.Install(env, harness.InstallOptions{})
 	if err != nil {
-		slog.Warn("role definitions not refreshed", "err", err)
+		slog.Warn("agent definitions not refreshed", "err", err)
 	}
 
 	custom, cerr := relevo.InstallCustomAgents(cfg, env, harness.InstallOptions{})
 	if cerr != nil {
-		slog.Warn("role definitions not refreshed", "err", cerr)
+		slog.Warn("agent definitions not refreshed", "err", cerr)
 	}
 	results = append(results, custom...)
 
 	for _, r := range results {
 		switch r.Outcome {
 		case harness.OutcomeWrote, harness.OutcomeUpdated:
-			slog.Info("role definition refreshed", "kind", r.Kind, "role", r.Role, "path", r.Path)
+			slog.Info("agent definition refreshed", "kind", r.Kind, "role", r.Role, "path", r.Path)
 		case harness.OutcomeKeptDiffers:
 			slog.Info(fmt.Sprintf("%s was edited; relevo config agents --force replaces it", r.Path))
 		case harness.OutcomeError:
-			slog.Warn("role definition not refreshed", "kind", r.Kind, "role", r.Role, "path", r.Path, "err", r.Err)
+			slog.Warn("agent definition not refreshed", "kind", r.Kind, "role", r.Role, "path", r.Path, "err", r.Err)
 		}
 	}
 }

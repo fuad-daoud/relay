@@ -24,7 +24,7 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 		return Check{
 			Group: kind, Name: r.Name, Severity: SevWarn,
 			Detail: fmt.Sprintf("missing: %s", homeRel),
-			Fix:    fmt.Sprintf("relevo config agents --kind %s --role %s", kind, r.Name),
+			Fix:    fmt.Sprintf("relevo config agents --kind %s --agent %s", kind, r.Name),
 		}
 	}
 
@@ -45,7 +45,7 @@ func roleCheck(env Env, kind string, r harness.Role) Check {
 				return Check{
 					Group: kind, Name: r.Name, Severity: SevWarn,
 					Detail: fmt.Sprintf("%s -- differs from the definition this relevo ships", detail),
-					Fix:    fmt.Sprintf("relevo config agents --kind %s --role %s --force", kind, r.Name),
+					Fix:    fmt.Sprintf("relevo config agents --kind %s --agent %s --force", kind, r.Name),
 				}
 			}
 		}
@@ -64,7 +64,7 @@ func pinMismatchCheck(kind string, r harness.Role, model, detail string) (Check,
 		return Check{
 			Group: kind, Name: r.Name, Severity: SevWarn,
 			Detail: fmt.Sprintf("%s -- pins %s; relevo ships %s", detail, model, r.ExpectModel),
-			Fix:    fmt.Sprintf("relevo config agents --kind %s --role %s --force", kind, r.Name),
+			Fix:    fmt.Sprintf("relevo config agents --kind %s --agent %s --force", kind, r.Name),
 		}, true
 	}
 	return Check{

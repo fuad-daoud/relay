@@ -178,7 +178,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 			return preflight{}, err
 		}
 		if roundOpenIn(entries, b.Round) {
-			return preflight{}, fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --builder", name, b.Round, name)
+			return preflight{}, fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --candidate", name, b.Round, name)
 		}
 		if b.Builder.Remote() {
 			// A remote binding's candidates decide on the server, so a
@@ -428,7 +428,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 					return err
 				}
 				if roundOpenIn(entries, b.Round) {
-					return fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --builder", name, b.Round, name)
+					return fmt.Errorf("binding %q has round %d open; relevo stop %s ends it, then send again with --candidate", name, b.Round, name)
 				}
 			}
 			b, err = applyBuilder(b, *pf.pick, rt.RoleRegistry(), rt.Policy, opts.AllowYolo)

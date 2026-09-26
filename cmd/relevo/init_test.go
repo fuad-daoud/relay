@@ -227,7 +227,7 @@ func TestInitNoBinariesExits1(t *testing.T) {
 	}
 }
 
-func TestInitNoRolesSkipsInstall(t *testing.T) {
+func TestInitNoAgentsSkipsInstall(t *testing.T) {
 	home, _ := initRoot(t)
 
 	bin := t.TempDir()
@@ -235,12 +235,12 @@ func TestInitNoRolesSkipsInstall(t *testing.T) {
 	t.Setenv("PATH", bin)
 
 	if _, stderr, err := captureOutput(t, func() error {
-		return run([]string{"config", "init", "--no-roles"})
+		return run([]string{"config", "init", "--no-agents"})
 	}); err != nil {
-		t.Fatalf("init --no-roles: %v (stderr: %s)", err, stderr)
+		t.Fatalf("init --no-agents: %v (stderr: %s)", err, stderr)
 	}
 
 	if _, err := os.Stat(filepath.Join(home, ".claude", "agents", "plan-executor.md")); err == nil {
-		t.Fatal("plan-executor.md written despite --no-roles")
+		t.Fatal("plan-executor.md written despite --no-agents")
 	}
 }

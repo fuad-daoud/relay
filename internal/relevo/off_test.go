@@ -152,14 +152,14 @@ func TestFormatPolicyShowsOff(t *testing.T) {
 
 	got := FormatPolicyFor(reg, set, policy.Policy{}, nil, availability.History{}, baseTime, time.UTC)
 
-	want := "builder  (config roles)\n" +
+	want := "builder  (config actors)\n" +
 		"  1  a  order     <- would pick\n" +
 		"  2  b  off\n" +
 		"  3  c  order\n" +
-		"reviewer  (config roles)\n" +
-		"  no candidate listed in config roles reviewer.candidates\n" +
-		"researcher  (config roles)\n" +
-		"  no candidate listed in config roles researcher.candidates\n"
+		"reviewer  (config actors)\n" +
+		"  no candidate listed in config actors reviewer.candidates\n" +
+		"researcher  (config actors)\n" +
+		"  no candidate listed in config actors researcher.candidates\n"
 	if got != want {
 		t.Errorf("FormatPolicyFor =\n%q\nwant:\n%q", got, want)
 	}
@@ -171,9 +171,10 @@ func TestFormatPolicyShowsOff(t *testing.T) {
 	}
 }
 
-// TestFormatPolicyHeaderSaysActors pins A2 round 3 S2.3: the pick block's
-// header names the section the registry came from -- "config actors" for the
-// actors section, "config roles" for a roles file.
+// TestFormatPolicyHeaderSaysActors pins A2 round 3 S2.3, updated by A4-1a: the
+// pick block's header names the section the registry came from, which is
+// "config actors" for both the actors section and a legacy roles file -- the
+// roles file is only ever the input of the A2 migration now.
 func TestFormatPolicyHeaderSaysActors(t *testing.T) {
 	t.Parallel()
 
@@ -188,7 +189,7 @@ func TestFormatPolicyHeaderSaysActors(t *testing.T) {
 
 	fileMode := rolesFileRegistry(t, set, policy.Policy{}, rows)
 	got = FormatPolicyFor(fileMode, set, policy.Policy{}, nil, availability.History{}, baseTime, time.UTC)
-	if !strings.Contains(got, "builder  (config roles)") {
+	if !strings.Contains(got, "builder  (config actors)") {
 		t.Errorf("roles registry header:\n%s", got)
 	}
 }

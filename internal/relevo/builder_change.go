@@ -14,7 +14,7 @@ import (
 // an unknown candidate, a bad ref, a role it does not serve, roles_missing,
 // or a tier above the cap. It exists so the server can map these to 422
 // rather than 500 (#318).
-var ErrBadBuilder = errors.New("send --builder")
+var ErrBadBuilder = errors.New("send --candidate")
 
 // ResolveSendBuilder is ResolveSendBuilderFor with the built-in builder's
 // role, so the callers and tests that predate roles stay unchanged.

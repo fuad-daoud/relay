@@ -203,7 +203,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec planner.Rec
 		// the field and run its builder, so it is refused here -- before any
 		// branch, worktree or create call.
 		if wireRole != "" && !slices.Contains(who.Features, remote.FeatureRoles) {
-			return AddResult{}, fmt.Errorf("server %s does not run custom roles (role %q); upgrade it", opts.Server, opts.Role)
+			return AddResult{}, fmt.Errorf("server %s does not run custom actors (actor %q); upgrade it", opts.Server, opts.Role)
 		}
 	}
 

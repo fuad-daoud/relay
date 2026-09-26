@@ -32,17 +32,17 @@ func TestFormatRolesFileMode(t *testing.T) {
 
 	got := FormatRoles(reg)
 
-	if !strings.Contains(got, "builder  writer  gate  tier yolo  (roles.json)") {
-		t.Errorf("first line must carry writer, gate, tier yolo and the source:\n%s", got)
+	if !strings.Contains(got, "builder  writer  check  tier yolo  (roles.json)") {
+		t.Errorf("first line must carry writer, check, tier yolo and the source:\n%s", got)
 	}
 	if !strings.Contains(got, "  claude  my-executor + my-scout  (custom)") {
 		t.Errorf("kind line must join the requires with + and mark a custom definition:\n%s", got)
 	}
 	if !strings.Contains(got, "reviewer  reader  tier -  (roles.json)") {
-		t.Errorf("a reader role must say reader and carry no gate:\n%s", got)
+		t.Errorf("a reader role must say reader and carry no check:\n%s", got)
 	}
-	if strings.Contains(got, "reader  gate") {
-		t.Errorf("a reader role has no gate:\n%s", got)
+	if strings.Contains(got, "reader  check") {
+		t.Errorf("a reader role has no check:\n%s", got)
 	}
 }
 
@@ -62,8 +62,8 @@ func TestFormatRolesLegacy(t *testing.T) {
 
 	got := FormatRoles(legacy)
 
-	if !strings.Contains(got, "builder  writer  gate  tier -  (legacy)") {
-		t.Errorf("legacy builder line must carry writer, gate and (legacy):\n%s", got)
+	if !strings.Contains(got, "builder  writer  check  tier -  (legacy)") {
+		t.Errorf("legacy builder line must carry writer, check and (legacy):\n%s", got)
 	}
 	if !strings.Contains(got, "  candidates  m") {
 		t.Errorf("legacy candidates line must be the role's order:\n%s", got)

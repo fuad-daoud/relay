@@ -49,8 +49,8 @@ func TestResolveSendBuilderRolesMissingRefused(t *testing.T) {
 	if !errors.Is(err, ErrBadBuilder) {
 		t.Errorf("err = %v, want it to wrap ErrBadBuilder", err)
 	}
-	if !strings.Contains(err.Error(), "roles missing") {
-		t.Errorf("err = %q, want it to say roles missing", err.Error())
+	if !strings.Contains(err.Error(), "agent definitions missing") {
+		t.Errorf("err = %q, want it to say agent definitions missing", err.Error())
 	}
 }
 

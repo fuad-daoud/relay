@@ -41,7 +41,7 @@ func sendRemote(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 		return SendResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, server)
 	}
 	if builder != "" && !slices.Contains(who.Features, remote.FeatureBuilder) {
-		return SendResult{}, fmt.Errorf("server %s cannot change a binding's builder (no %q feature); upgrade it, or send without --builder", server, remote.FeatureBuilder)
+		return SendResult{}, fmt.Errorf("server %s cannot change a binding's builder (no %q feature); upgrade it, or send without --candidate", server, remote.FeatureBuilder)
 	}
 
 	name := b.Name

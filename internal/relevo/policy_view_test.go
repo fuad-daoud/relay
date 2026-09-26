@@ -47,10 +47,10 @@ func TestPolicyWarningsMatrix(t *testing.T) {
 
 	want := []PolicyWarning{
 		{Role: "builder", Index: 1, Token: "claude/test/nope", Text: `order.builder[1] "claude/test/nope" is not a configured candidate`},
-		{Role: "builder", Index: -1, Token: testClaudeRef, Text: `builder: claude-m serves the role but is not in order.builder`},
-		{Role: "builder", Index: -1, Token: testOpencodeRef, Text: `builder: m serves the role but is not in order.builder`},
+		{Role: "builder", Index: -1, Token: testClaudeRef, Text: `builder: claude-m serves the actor but is not in order.builder`},
+		{Role: "builder", Index: -1, Token: testOpencodeRef, Text: `builder: m serves the actor but is not in order.builder`},
 		{Role: "reviewer", Index: 0, Token: testAgyRef, Text: `order.reviewer[0] "agy-m" does not serve reviewer (its roles: [builder])`},
-		{Role: "reviewer", Index: -1, Token: testClaudeRef, Text: `reviewer: claude-m serves the role but is not in order.reviewer`},
+		{Role: "reviewer", Index: -1, Token: testClaudeRef, Text: `reviewer: claude-m serves the actor but is not in order.reviewer`},
 	}
 
 	got := PolicyWarnings(set, pol)
@@ -82,10 +82,10 @@ func TestFormatPolicyOrderWithGatedFirst(t *testing.T) {
 		"reviewer  (no order set)",
 		"  1  claude-m  sole      <- would pick",
 		"researcher  (no order set)",
-		"  no candidate serves this role",
+		"  no candidate serves this actor",
 		"",
 		"warnings",
-		"  builder: m serves the role but is not in order.builder",
+		"  builder: m serves the actor but is not in order.builder",
 	}, "\n") + "\n"
 
 	if got != want {
@@ -109,7 +109,7 @@ func TestFormatPolicyNoOrderTwoServeRefuses(t *testing.T) {
 		"reviewer  (no order set)",
 		"  1  claude-m  sole      <- would pick",
 		"researcher  (no order set)",
-		"  no candidate serves this role",
+		"  no candidate serves this actor",
 		`no policy configured; set one with relevo config set policy (see README "Policy")`,
 	}, "\n") + "\n"
 
@@ -137,7 +137,7 @@ func TestFormatPolicyAllGated(t *testing.T) {
 		"  1  claude-m  sole      rate-limited until cleared",
 		"  would refuse: every candidate serving reviewer is gated",
 		"researcher  (no order set)",
-		"  no candidate serves this role",
+		"  no candidate serves this actor",
 	}, "\n") + "\n"
 
 	if got != want {
@@ -178,7 +178,7 @@ func TestFormatPolicySoleWithOrder(t *testing.T) {
 		"reviewer  (order set in config policy)",
 		"  1  m  sole      <- would pick",
 		"researcher  (no order set)",
-		"  no candidate serves this role",
+		"  no candidate serves this actor",
 	}, "\n") + "\n"
 
 	if got != want {
@@ -241,10 +241,10 @@ func TestFormatPolicyPeakColumn(t *testing.T) {
 		"reviewer  (no order set)",
 		"  1  claude-m  sole      limited 3x around 21:00 (30d)  <- would pick",
 		"researcher  (no order set)",
-		"  no candidate serves this role",
+		"  no candidate serves this actor",
 		"",
 		"warnings",
-		"  builder: m serves the role but is not in order.builder",
+		"  builder: m serves the actor but is not in order.builder",
 		"",
 		"history (30d, local hours)",
 		wantHourRuler(),

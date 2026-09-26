@@ -56,8 +56,8 @@ type Role struct {
 	// Shape is harness.ShapeBuilder for a writer, harness.ShapeConsult for a
 	// reader.
 	Shape harness.RoleShape
-	// Gate marks a writer role whose round closes on a gate.
-	Gate bool
+	// Check marks a writer role whose round closes on a check.
+	Check bool
 	// Builtin is true for a role relevo's own table defines.
 	Builtin bool
 	// Candidates is the role's tokens as written: order[R] in legacy mode
@@ -192,15 +192,15 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 			base = Role{
 				Name:        name,
 				Shape:       shape,
-				Gate:        shape == harness.ShapeBuilder,
+				Check:       shape == harness.ShapeBuilder,
 				Builtin:     false,
 				Definitions: make(map[string]Definition),
 			}
 			newNames = append(newNames, name)
 		}
 
-		if row.Gate != nil {
-			base.Gate = *row.Gate
+		if row.Check != nil {
+			base.Check = *row.Check
 		}
 		for kind, d := range row.Definitions {
 			base.Definitions[kind] = Definition{

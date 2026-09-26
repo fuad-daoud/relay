@@ -15,12 +15,30 @@ import (
 )
 
 // cmdInit seeds the candidates, policy and actors sections from the harness
-// binaries on PATH, then installs the role definitions for those harnesses.
+// binaries on PATH, then installs the agent definitions for those harnesses.
+//
+// initFlagValues holds the pointers init's flags parse into. initFlagSet
+// defines them on fs; cmdInit and TestRemovedFlagsAreUnknown read the same
+// surface (A4-1a).
+type initFlagValues struct {
+	force    *bool
+	noAgents *bool
+}
+
+// initFlagSet defines init's flags on fs and returns the values they parse
+// into, so a test can inspect the flag surface without writing any config.
+func initFlagSet(fs *flag.FlagSet) *initFlagValues {
+	v := &initFlagValues{}
+	v.force = fs.Bool("force", false, "overwrite the existing candidates / policy sections")
+	v.noAgents = fs.Bool("no-agents", false, "do not install agent definitions")
+	return v
+}
+
 func cmdInit(args []string) error {
 	fs := flag.NewFlagSet("relevo config init", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	force := fs.Bool("force", false, "overwrite the existing candidates / policy sections")
-	noRoles := fs.Bool("no-roles", false, "do not install role definitions")
+	v := initFlagSet(fs)
+	force, noAgents := v.force, v.noAgents
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, errHelpShown) {
 			return err
@@ -83,7 +101,7 @@ func cmdInit(args []string) error {
 		fmt.Println(`note: no builder candidate (claude only plans); add one: relevo config set actors.builder.candidates '["<name>"]'`)
 	}
 
-	if !*noRoles {
+	if !*noAgents {
 		failed := false
 		for _, kind := range files.Kinds {
 			results, err := harness.Install(env, harness.InstallOptions{Kind: kind})

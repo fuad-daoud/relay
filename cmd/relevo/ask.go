@@ -28,7 +28,7 @@ type askFlagValues struct {
 func askFlagSet(fs *flag.FlagSet) *askFlagValues {
 	v := &askFlagValues{}
 	v.actor = fs.String("actor", "", "the reader actor to consult: reviewer, researcher, or a reader actor in config actors")
-	v.cand = fs.String("candidate", "", "candidate name or harness/provider/model token; omit to take the first ungated in config policy order[<role>]")
+	v.cand = fs.String("candidate", "", "candidate name or harness/provider/model token; omit to take the first ungated in config policy order[<actor>]")
 	v.file = fs.String("file", "", "file containing the question")
 	v.question = fs.String("question", "", "the question itself; with --round, exactly one of --file and -q")
 	fs.StringVar(v.question, "q", "", "the question itself (shorthand for --question)")

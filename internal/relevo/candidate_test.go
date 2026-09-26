@@ -207,7 +207,7 @@ func TestResolveCandidate(t *testing.T) {
 			messageContains: []string{
 				`every candidate serving "builder" is gated`,
 				"agy/test/m (rate-limited until cleared)",
-				"--builder",
+				"--candidate",
 				"relevo gate --clear",
 			},
 		},
@@ -610,8 +610,8 @@ func TestRolesMissingRefusesExplicit(t *testing.T) {
 	if err == nil {
 		t.Fatal("resolveCandidate succeeded, want a refusal")
 	}
-	if !strings.Contains(err.Error(), "roles missing") || !strings.Contains(err.Error(), "relevo config agents --kind") {
-		t.Errorf("err = %q, want it to contain %q and %q", err.Error(), "roles missing", "relevo config agents --kind")
+	if !strings.Contains(err.Error(), "agent definitions missing") || !strings.Contains(err.Error(), "relevo config agents --kind") {
+		t.Errorf("err = %q, want it to contain %q and %q", err.Error(), "agent definitions missing", "relevo config agents --kind")
 	}
 }
 

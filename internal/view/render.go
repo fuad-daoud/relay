@@ -147,7 +147,7 @@ func writeBuilderLine(sb *strings.Builder, b BindingStatus) {
 			"remote", b.BuilderKind, b.BuilderStatus, builderLabel)
 	}
 	if b.Role != "" {
-		fmt.Fprintf(sb, "   role %s", b.Role)
+		fmt.Fprintf(sb, "   actor %s", b.Role)
 	}
 	if b.Switches > 0 {
 		fmt.Fprintf(sb, "   switched %dx", b.Switches)

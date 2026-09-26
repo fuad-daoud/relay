@@ -51,7 +51,7 @@ func rolesViewsSection(t *testing.T, got, start, end string) string {
 // legacy "no policy configured" line is never printed.
 //
 // Mutation check: make FormatPolicyFor print FormatPolicy's "  (no order set)"
-// header instead of "  (config roles)" and this test fails on its first line.
+// header instead of "  (config actors)" and this test fails on its first line.
 func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 	t.Parallel()
 
@@ -63,18 +63,18 @@ func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 
 	got := FormatPolicyFor(reg, set, policy.Policy{}, nil, availability.History{}, baseTime, time.UTC)
 
-	want := "builder  (config roles)\n" +
+	want := "builder  (config actors)\n" +
 		"  1  b  order     <- would pick\n" +
 		"  2  a  order\n" +
-		"reviewer  (config roles)\n" +
-		"  no candidate listed in config roles reviewer.candidates\n" +
-		"researcher  (config roles)\n" +
-		"  no candidate listed in config roles researcher.candidates\n"
+		"reviewer  (config actors)\n" +
+		"  no candidate listed in config actors reviewer.candidates\n" +
+		"researcher  (config actors)\n" +
+		"  no candidate listed in config actors researcher.candidates\n"
 	if got != want {
 		t.Errorf("FormatPolicyFor =\n%q\nwant:\n%q", got, want)
 	}
 
-	if !strings.Contains(got, "builder  (config roles)") {
+	if !strings.Contains(got, "builder  (config actors)") {
 		t.Errorf("output must carry the file-mode header, got:\n%s", got)
 	}
 	pick := strings.Index(got, "1  b  order     <- would pick")
@@ -82,7 +82,7 @@ func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 	if pick < 0 || second < 0 || pick > second {
 		t.Errorf("the row's first candidate must be row 1 with the pick, then the second:\n%s", got)
 	}
-	if !strings.Contains(got, "no candidate listed in config roles reviewer.candidates") {
+	if !strings.Contains(got, "no candidate listed in config actors reviewer.candidates") {
 		t.Errorf("a role with nothing listed must say so, got:\n%s", got)
 	}
 	if strings.Contains(got, "no policy configured") {
@@ -152,11 +152,11 @@ func TestRolesViewsPolicyWarningsForFileMode(t *testing.T) {
 	want := []PolicyWarning{
 		{
 			Role: "scout", Index: 0, Token: "claude/test/m",
-			Text: `config roles scout.candidates[0] "m": scout has no definition for claude`,
+			Text: `config actors scout.candidates[0] "m": scout has no definition for claude`,
 		},
 		{
 			Role: "scout", Index: 1, Token: "claude/test/ghost",
-			Text: `config roles scout.candidates[1] "claude/test/ghost" is not a configured candidate`,
+			Text: `config actors scout.candidates[1] "claude/test/ghost" is not a configured candidate`,
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -324,10 +324,10 @@ func TestRolesViewsResolveRoleFileModeNothingServes(t *testing.T) {
 
 	_, err := resolveRole(reg, set, nil, "", "builder")
 	if err == nil {
-		t.Fatal("resolveRole with an empty config roles builder.candidates = nil, want an error")
+		t.Fatal("resolveRole with an empty config actors builder.candidates = nil, want an error")
 	}
-	if !strings.Contains(err.Error(), "config roles builder.candidates") {
-		t.Errorf("err = %q, want it to name config roles builder.candidates", err)
+	if !strings.Contains(err.Error(), "config actors builder.candidates") {
+		t.Errorf("err = %q, want it to name config actors builder.candidates", err)
 	}
 	if !errors.Is(err, ErrRoleNotServed) {
 		t.Errorf("err = %q, want errors.Is(err, ErrRoleNotServed)", err)

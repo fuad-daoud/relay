@@ -222,15 +222,15 @@ func renderReport(w io.Writer, rep doctor.Report) {
 func roleSourceChecks(reg *roles.Registry, set *candidate.Set, pol policy.Policy) []doctor.Check {
 	detail := "legacy: candidates.json roles, policy.json order and tier"
 	if reg.FileMode() {
-		detail = "roles.json"
+		detail = "config actors"
 	}
-	out := []doctor.Check{{Name: "role source", Severity: doctor.SevOK, Detail: detail}}
+	out := []doctor.Check{{Name: "actor source", Severity: doctor.SevOK, Detail: detail}}
 	for _, w := range relevo.LegacyRoleFieldWarnings(reg, set, pol) {
 		out = append(out, doctor.Check{
-			Name:     "role source",
+			Name:     "actor source",
 			Severity: doctor.SevWarn,
 			Detail:   w,
-			Fix:      "delete it; roles.json is the source",
+			Fix:      "delete it; config actors is the source",
 		})
 	}
 	return out
