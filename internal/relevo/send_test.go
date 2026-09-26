@@ -872,7 +872,7 @@ func TestRenderDryRunShape(t *testing.T) {
 		DonePath:      "/home/p/.local/state/relevo/api-auth/005-done",
 		Tier:          "yolo",
 		PromptHead: []string{
-			`relevo: round 5 · to builder "api-auth" · from the planner (not the human)`,
+			`relevo: round 5 · to runner "api-auth" · from the planner (not the human)`,
 			"Your working tree is: /home/p/.worktrees/api-auth",
 		},
 	}
@@ -883,7 +883,7 @@ func TestRenderDryRunShape(t *testing.T) {
   plan      /home/p/.local/state/relevo/api-auth/005-plan.md  (staged from ./plan.md, 4.1 KiB)
   report    /home/p/.local/state/relevo/api-auth/005-report.md
   marker    /home/p/.local/state/relevo/api-auth/005-done
-  prompt    relevo: round 5 · to builder "api-auth" · from the planner (not the human)
+  prompt    relevo: round 5 · to runner "api-auth" · from the planner (not the human)
             Your working tree is: /home/p/.worktrees/api-auth
 `
 	got := RenderDryRun(d)

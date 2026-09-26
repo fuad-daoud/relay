@@ -26,8 +26,8 @@ const (
 // agyTestOrigin and agyTestPayload are shaped like what Queue writes and
 // Deliver reads: the origin line, a blank line, the report.
 const (
-	agyTestOrigin  = `relevo: round 1 · to planner · about builder "w" (not the human)`
-	agyTestPayload = agyTestOrigin + "\n\nBuilder finished round 1. Report: /x/001-report.md"
+	agyTestOrigin  = `relevo: round 1 · to planner · about runner "w" (not the human)`
+	agyTestPayload = agyTestOrigin + "\n\nThe runner finished round 1. Report: /x/001-report.md"
 )
 
 // fakeEnvExec is the fake EnvExec the deliverer tests control: it records every

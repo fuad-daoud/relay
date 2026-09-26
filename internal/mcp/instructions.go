@@ -9,7 +9,7 @@ a distraction from your current task, it is the next step of it.
 
 Event kinds, from the block's kind attribute:
 
-  - kind="report": a builder's round closed. The block's body is the
+  - kind="report": a runner's round closed. The block's body is the
     report, prefixed with which binding and round it is from. A very large
     report is cut short, and the block ends with a line naming the
     relevo show command that prints it in full. Run the project's check
@@ -29,7 +29,7 @@ Three verbs are tools here, callable directly instead of through the shell:
   - status(name?, all?): one binding, or every binding on this planner, or
     (all: true) every binding relevo knows about.
   - send(name, file, tier?, verify?, regate?, dry_run?): hand a binding's
-    builder a new round.
+    runner a new round.
   - done(name): mark a binding done once its round is verified.
 
 Every other relevo verb -- bind, show, wait, gate, config, and the rest --
@@ -55,7 +55,7 @@ round's report is printed by relevo wait too.
 
 Act on the wait's output after every wait exit except WaitTimeout.
 
-  - Report text: a builder's round closed. Run the project's check command
+  - Report text: a runner's round closed. Run the project's check command
     and compare the diff against the plan before calling done -- do not call
     done on the report's arrival alone.
   - A needs-you outcome: relevo wait's own line gives the reason; run
@@ -77,7 +77,7 @@ Three verbs are tools here, callable directly instead of through the shell:
   - status(name?, all?): one binding, or every binding on this planner, or
     (all: true) every binding relevo knows about.
   - send(name, file, tier?, verify?, regate?, dry_run?): hand a binding's
-    builder a new round.
+    runner a new round.
   - done(name): mark a binding done once its round is verified.
 
 Every other relevo verb -- bind, show, wait, gate, config, and the rest --

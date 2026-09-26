@@ -92,7 +92,7 @@ func queuedBinding(t *testing.T) (Runtime, store.Binding) {
 	entry := store.LogEntry{
 		Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport,
 		Path:    "/x/001-report.md",
-		Payload: "Builder finished round 1. Report: /x/001-report.md",
+		Payload: "The runner finished round 1. Report: /x/001-report.md",
 	}
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		return delivery.Queue(context.Background(), deliveryDeps(rt), tx, b.Name, entry)

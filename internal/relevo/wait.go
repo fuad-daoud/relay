@@ -122,7 +122,7 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 	if !HasEntry(entries, round, store.DirToBuilder, store.KindPlan) {
 		return WaitResult{
 			Code: WaitNotStarted,
-			Line: fmt.Sprintf("round %d was never sent to %s's builder", round, b.Name),
+			Line: fmt.Sprintf("round %d was never sent to %s's runner", round, b.Name),
 			Done: true,
 		}
 	}

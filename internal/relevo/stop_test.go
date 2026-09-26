@@ -75,25 +75,25 @@ func TestStopPayload(t *testing.T) {
 		{
 			name: "report on disk", how: "killed", round: 2,
 			reportPath: "/s/reports/002.md", haveReport: true,
-			wantPayload: "Builder was stopped (killed) for round 2. Report: relevo show webshop --round 2 --report",
+			wantPayload: "The runner was stopped (killed) for round 2. Report: relevo show webshop --round 2 --report",
 			wantNote:    "stopped",
 		},
 		{
 			name: "no report", how: "killed", round: 2,
 			reportPath: "/s/reports/002.md", haveReport: false,
-			wantPayload: "Builder was stopped (killed) for round 2; no report was written.",
+			wantPayload: "The runner was stopped (killed) for round 2; no report was written.",
 			wantNote:    "noreport stopped",
 		},
 		{
 			name: "remote, report on disk", how: "killed", round: 2, where: " on zen",
 			reportPath: "/s/reports/002.md", haveReport: true,
-			wantPayload: "Builder was stopped (killed) for round 2 on zen. Report: relevo show webshop --round 2 --report",
+			wantPayload: "The runner was stopped (killed) for round 2 on zen. Report: relevo show webshop --round 2 --report",
 			wantNote:    "stopped",
 		},
 		{
 			name: "remote, no report", how: "dequeued", round: 3, where: " on zen",
 			reportPath: "/s/reports/003.md", haveReport: false,
-			wantPayload: "Builder was stopped (dequeued) for round 3 on zen; no report was written.",
+			wantPayload: "The runner was stopped (dequeued) for round 3 on zen; no report was written.",
 			wantNote:    "noreport stopped",
 		},
 	}
@@ -447,7 +447,7 @@ func TestStopRemoteKillsAndCollects(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("report must be pending: found=%v err=%v", found, err)
 	}
-	if !strings.Contains(pending.Payload, "Builder was stopped (killed) for round 1 on zen") {
+	if !strings.Contains(pending.Payload, "The runner was stopped (killed) for round 1 on zen") {
 		t.Errorf("payload = %q, want the stopped text", pending.Payload)
 	}
 	if pending.Confirmed {

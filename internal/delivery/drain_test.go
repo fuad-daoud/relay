@@ -166,7 +166,7 @@ func TestDrainPushesExpandedReportText(t *testing.T) {
 	if err := os.WriteFile(reportPath, []byte("the full report body"), 0o644); err != nil {
 		t.Fatalf("write report file: %v", err)
 	}
-	queueDrainEntry(t, s, "judge", 3, store.KindReport, reportPath, "Builder finished round 3. Report: "+reportPath)
+	queueDrainEntry(t, s, "judge", 3, store.KindReport, reportPath, "The runner finished round 3. Report: "+reportPath)
 
 	st := &DrainState{Planner: testClaimPlanner}
 	pusher := &fakePusher{}
@@ -179,7 +179,7 @@ func TestDrainPushesExpandedReportText(t *testing.T) {
 	}
 
 	got := pusher.pushes[0].content
-	want := "Builder finished round 3. Report: " + reportPath + "\n\nthe full report body"
+	want := "The runner finished round 3. Report: " + reportPath + "\n\nthe full report body"
 	if got != want {
 		t.Errorf("content = %q, want %q", got, want)
 	}

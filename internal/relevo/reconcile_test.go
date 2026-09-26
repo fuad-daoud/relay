@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -587,7 +588,7 @@ func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
 	if pending.Note != "" {
 		t.Errorf("note = %q, want empty on a marked close", pending.Note)
 	}
-	if !strings.Contains(pending.Payload, "Builder finished round 1. Report: relevo show webshop --round 1 --report") {
+	if !strings.Contains(pending.Payload, "The runner finished round 1. Report: relevo show webshop --round 1 --report") {
 		t.Errorf("payload = %q", pending.Payload)
 	}
 }
@@ -772,9 +773,51 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		if lines[1] != "" {
 			t.Errorf("line 1 = %q, want empty line", lines[1])
 		}
-		wantBodyFirst := "Builder finished round 1. Report: relevo show webshop --round 1 --report"
+		wantBodyFirst := "The runner finished round 1. Report: relevo show webshop --round 1 --report"
 		if lines[2] != wantBodyFirst {
 			t.Errorf("line 2 = %q, want %q", lines[2], wantBodyFirst)
+		}
+	})
+
+	t.Run("legacy finished prefix is annotated in place", func(t *testing.T) {
+		rt, _ := sentBinding(t)
+		reportPath := rt.Store.ReportPath("webshop", 1)
+		reportContent := "Some report content\n\n```relevo\nstatus: halted\nhalted_at: \"Task 2 step 3\"\n```\n"
+		if err := os.WriteFile(reportPath, []byte(reportContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var payload string
+		err := rt.Store.WithLock(func(tx *store.Tx) error {
+			cur, err := tx.Load("webshop")
+			if err != nil {
+				return err
+			}
+			entries, err := tx.ReadLog("webshop")
+			if err != nil {
+				return err
+			}
+			legacy := fmt.Sprintf("Builder finished round %d. Report: relevo show webshop --round %d --report", cur.Round, cur.Round)
+			next, err := queueReport(context.Background(), rt, tx, cur, entries, reportPath, legacy, "", nil, nil, nil, nil)
+			if err != nil {
+				return err
+			}
+			entries, err = tx.ReadLog("webshop")
+			if err != nil {
+				return err
+			}
+			for _, e := range entries {
+				if e.Round == cur.Round && e.Kind == store.KindReport {
+					payload = e.Payload
+				}
+			}
+			return tx.Save(next)
+		})
+		if err != nil {
+			t.Fatalf("queueReport: %v", err)
+		}
+		want := `Builder finished round 1 -- halted at "Task 2 step 3"`
+		if !strings.Contains(payload, want) {
+			t.Errorf("payload = %q, want it to contain %q", payload, want)
 		}
 	})
 
@@ -1305,7 +1348,7 @@ func TestGateNotConfiguredIsUnchanged(t *testing.T) {
 	if pending.Note != "" {
 		t.Errorf("note = %q, want empty", pending.Note)
 	}
-	want := "Builder finished round 1. Report: relevo show webshop --round 1 --report"
+	want := "The runner finished round 1. Report: relevo show webshop --round 1 --report"
 	if !strings.HasSuffix(pending.Payload, want) {
 		t.Errorf("payload = %q, want it to end with %q (unchanged by the gate)", pending.Payload, want)
 	}

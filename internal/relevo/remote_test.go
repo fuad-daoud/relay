@@ -3799,7 +3799,7 @@ func TestCatchUpStoppedNoReport(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("report must be pending: found=%v err=%v", found, err)
 	}
-	wantText := "Builder was stopped (killed) for round 1 on zen; no report was written."
+	wantText := "The runner was stopped (killed) for round 1 on zen; no report was written."
 	if !strings.Contains(pending.Payload, wantText) {
 		t.Errorf("payload = %q, want it to carry %q", pending.Payload, wantText)
 	}
