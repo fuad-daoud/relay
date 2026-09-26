@@ -63,10 +63,10 @@ func formatCases() []formatCase {
 	}
 }
 
-// TestSaveWritesFormat8AndAlwaysNamesTheActor pins the A4 format rule: every
-// record is format 8 (so an older relevo refuses it) and every record names
+// TestSaveWritesFormat9AndAlwaysNamesTheActor pins the A5 format rule: every
+// record is format 9 (so an older relevo refuses it) and every record names
 // its actor, the empty (builder) one as "builder".
-func TestSaveWritesFormat8AndAlwaysNamesTheActor(t *testing.T) {
+func TestSaveWritesFormat9AndAlwaysNamesTheActor(t *testing.T) {
 	for _, tc := range formatCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			s := New(t.TempDir())
@@ -76,7 +76,7 @@ func TestSaveWritesFormat8AndAlwaysNamesTheActor(t *testing.T) {
 				t.Fatalf("Save: %v", err)
 			}
 			raw := bindingRecordJSON(t, s, b.Name)
-			checkBindingKey(t, raw, "format", `"format":8`)
+			checkBindingKey(t, raw, "format", `"format":9`)
 			checkBindingKey(t, raw, "actor", tc.wantActor)
 
 			got, err := s.Load(b.Name)

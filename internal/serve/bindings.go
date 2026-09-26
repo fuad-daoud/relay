@@ -157,8 +157,14 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 	}
 	role := relevo.NormRole(req.Role)
 	if role != "" {
-		if err := relevo.CheckWriterRole(rt, role); err != nil {
+		shape, err := relevo.ActorShape(rt, role)
+		if err != nil {
 			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
+			return store.Binding{}, false
+		}
+		// Readers are local-only in A5: the server never runs one.
+		if shape == store.ShapeReader {
+			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "reader actors run locally only; bind without --server")
 			return store.Binding{}, false
 		}
 	}

@@ -5,10 +5,11 @@ import (
 	"fmt"
 )
 
-// BindingFormat is the format of the Binding JSON this binary writes. It is 8
-// because every record now carries the runner, candidate and actor keys: any
-// binary that predates them must refuse it rather than saving one back with
-// those fields erased. That refusal is the intended clean break.
+// BindingFormat is the format of the Binding JSON this binary writes. It is 9
+// because every record now carries the shape key: the shape decides which tree
+// a round runs in, so any binary that predates it must refuse the record
+// rather than saving one back with the shape erased. That refusal is the
+// intended clean break.
 //
 // Later fields (abandoned_sessions, oom_requeue, round_oom_kills) are fields
 // recordFormat never stamps: an older relevo that drops abandoned_sessions
@@ -16,12 +17,12 @@ import (
 // round_oom_kills loses only oom-kill tracking for in-flight rounds. Stamping
 // a field would lock that older relevo out of loading the binding. Bump
 // BindingFormat whenever Binding's JSON shape changes.
-const BindingFormat = 8
+const BindingFormat = 9
 
-// recordFormat is the format to write b at. Every record now carries the A4
-// keys, so every record is format 8.
+// recordFormat is the format to write b at. Every record now carries the
+// shape key, so every record is format 9.
 func recordFormat(b Binding) int {
-	return 8
+	return 9
 }
 
 // storedFormat is the number written for a known format: 1 becomes 0 so the

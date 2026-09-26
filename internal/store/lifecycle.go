@@ -61,9 +61,13 @@ func (s *Store) Delete(name string) error {
 //
 // A remote binding is never returned: its CWD is the repo the branch is cut
 // from and results are fetched into, not a working tree it drives.
+//
+// A writer is preferred: a reader may share a writer's tree, and a verb run
+// there means the writer's binding. With no writer, exactly one reader
+// resolves to that reader; several readers are ambiguous, because there is no
+// binding to prefer, and the caller must name one.
 func (s *Store) FindByCWD(cwd string) (Binding, bool, error) {
-	var found bool
-	var b Binding
+	var writers, readers []Binding
 	err := s.readAll(func(tx *Tx) error {
 		bindings, err := tx.List()
 		if err != nil {
@@ -75,15 +79,31 @@ func (s *Store) FindByCWD(cwd string) (Binding, bool, error) {
 			}
 			// A done binding no longer drives its tree: resolving `relevo
 			// send` onto one would hand a plan to a finished session.
-			if binding.CWD == cwd && binding.State != StateDone {
-				b = binding
-				found = true
-				return nil
+			if binding.CWD != cwd || binding.State == StateDone {
+				continue
+			}
+			if isWriter(binding) {
+				writers = append(writers, binding)
+			} else {
+				readers = append(readers, binding)
 			}
 		}
 		return nil
 	})
-	return b, found, err
+	if err != nil {
+		return Binding{}, false, err
+	}
+	if len(writers) > 0 {
+		return writers[0], true, nil
+	}
+	switch len(readers) {
+	case 0:
+		return Binding{}, false, nil
+	case 1:
+		return readers[0], true, nil
+	default:
+		return Binding{}, false, fmt.Errorf("several readers are bound to %s: pass --name: %w", cwd, ErrAmbiguousCWD)
+	}
 }
 
 // read runs fn on a Tx under the state lock only when name has a legacy file to
@@ -166,6 +186,11 @@ func (s *Store) prepareSave(b Binding) (Binding, db.Record, error) {
 	// record always names the actor its runner plays.
 	if b.Role == "" {
 		b.Role = "builder"
+	}
+	// The empty shape is a writer: a reader is always named when it is bound.
+	// Every record therefore carries a shape, at every format.
+	if b.Shape == "" {
+		b.Shape = ShapeWriter
 	}
 
 	if err := ValidName(b.Name); err != nil {
@@ -257,12 +282,17 @@ func (s *Store) saveWithLog(b Binding, entries []LogEntry) error {
 	return s.importPresent(b.Name)
 }
 
-// assertCWDFree refuses a second active binding on the same working tree.
+// assertCWDFree refuses a second active writer on the same working tree.
 //
 // A remote binding is exempt on both sides: its CWD is never a working tree a
 // builder writes in, so it may share a CWD with any number of remote bindings.
+// Readers are exempt too: a reader leaves artifacts and never changes the
+// tree, so it never blocks a writer and is never blocked by one.
 func (s *Store) assertCWDFree(b Binding) error {
 	if b.Builder.Remote() {
+		return nil
+	}
+	if !isWriter(b) {
 		return nil
 	}
 	bindings, err := s.list()
@@ -273,12 +303,21 @@ func (s *Store) assertCWDFree(b Binding) error {
 		if other.Builder.Remote() {
 			continue
 		}
+		if !isWriter(other) {
+			continue
+		}
 		if other.CWD == b.CWD && other.Name != b.Name && other.State != StateDone {
 			return fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
 				b.CWD, other.Name, other.BuilderCandidate, other.Round, ErrCWDTaken)
 		}
 	}
 	return nil
+}
+
+// isWriter reports whether b's actor changes its tree. An empty shape is a
+// writer: every record written before A5 had no shape key.
+func isWriter(b Binding) bool {
+	return b.Shape != ShapeReader
 }
 
 func (s *Store) load(name string) (Binding, error) {

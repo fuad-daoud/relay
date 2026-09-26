@@ -115,7 +115,7 @@ func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
 	v.noGate = fs.Bool("no-gate", false, "opt this binding out of config policy's gate.default")
 	v.regate = fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
 	v.feature = fs.String("feature", "", "label grouping this binding with others")
-	v.actor = fs.String("actor", "", "the writer actor this binding runs (default builder)")
+	v.actor = fs.String("actor", "", "the actor this binding runs (default builder); a reader actor leaves artifacts and never changes the tree")
 	v.worktree = fs.Bool("worktree", false, "attach an additional runner to this planner, on its own worktree")
 	v.cwd = fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")
 	v.branch = fs.String("branch", "", "existing local or origin/ branch to check out instead of cutting relevo/<name>")

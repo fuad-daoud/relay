@@ -335,7 +335,7 @@ func TestRefusalChecks(t *testing.T) {
 	if want := `relevo config set policy '{"order":{"builder":["agy/test/m","claude/test/m","opencode/test/m"]}}'`; checks[0].Fix != want {
 		t.Errorf("builder Fix = %q, want %q", checks[0].Fix, want)
 	}
-	if want := "every candidate serving reviewer is gated -- ask --actor reviewer without --candidate would refuse"; checks[1].Detail != want {
+	if want := "every candidate serving reviewer is gated -- bind --actor reviewer without --candidate would refuse"; checks[1].Detail != want {
 		t.Errorf("reviewer Detail = %q, want %q", checks[1].Detail, want)
 	}
 	if want := "relevo gate --clear test"; checks[1].Fix != want {

@@ -19,6 +19,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
+// ErrReaderRoundsNotYet reports a send to a binding bound to a reader actor.
+// Readers can be bound in A5 but do not run rounds yet; R4 adds reader rounds
+// and deletes this refusal.
+var ErrReaderRoundsNotYet = errors.New("reader rounds are not available yet")
+
 // builderPrompt is the fixed handoff template. It names both paths explicitly
 // because alternate-screen output is unrecoverable, so the report must be a
 // file rather than something relevo reads off the terminal. The marker is the
@@ -158,6 +163,15 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	}
 	if b.State == store.StatePaused {
 		return preflight{}, fmt.Errorf("binding %q is paused; relevo bind --resume --name %s first", name, name)
+	}
+	// A reader binding runs no round yet (A5 §2): a plain send is refused, and
+	// --verify, which only a writer's gate round has, names its flag. Both
+	// refusals stand before any spawn.
+	if b.Shape == store.ShapeReader {
+		if opts.Verify != nil {
+			return preflight{}, errors.New("--verify: a reader round has no check")
+		}
+		return preflight{}, fmt.Errorf("%w: %s is bound to reader actor %s", ErrReaderRoundsNotYet, name, bindingRole(b))
 	}
 
 	// --candidate resolves the new candidate read-only and substitutes it in
