@@ -98,6 +98,9 @@ func switchEntry(now time.Time, round int, reason string, res Resolution, u *usa
 func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reason string, closeOld, counted bool) (store.Binding, error) {
 	limit := rt.Policy.SwitchLimit()
 	if b.RoundSwitches >= limit {
+		if b.Builder.PID == 0 {
+			b = abandonSession(b)
+		}
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
 			"%s: builder %s (%s); already switched %d time(s) this round (max_switches %d)",
 			b.Name, reason, b.BuilderCandidate, b.RoundSwitches, limit))
@@ -105,6 +108,9 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, append(availability.Gates(AvailabilityDeps(rt)), roundExclusionGates(b)...), "", bindingRole(b))
 	if err != nil {
+		if b.Builder.PID == 0 {
+			b = abandonSession(b)
+		}
 		return haltBinding(ctx, rt, b, fmt.Sprintf(
 			"%s: builder %s (%s); cannot switch: %v",
 			b.Name, reason, b.BuilderCandidate, err))
@@ -123,6 +129,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		}
 	}
 
+	b = abandonSession(b)
 	old := b.BuilderCandidate
 	now := rt.Now().UTC()
 	prior := peekUsage(ctx, rt, b, now)

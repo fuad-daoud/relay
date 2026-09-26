@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -787,6 +788,22 @@ func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindR
 		res.ProcessErr = fmt.Sprintf("pid %d: %v", pid, err)
 	} else if pid != 0 {
 		res.ProcessStopped = pid
+	}
+
+	// The record is about to be removed or archived, so the builder's session
+	// and everything already abandoned are deleted directly here, and nothing
+	// is saved: a failed delete only warns. Deletion is safe only once the
+	// process is really stopped -- a live one still holds its session.
+	if res.ProcessStopped != 0 && res.ProcessErr == "" {
+		b = abandonSession(b)
+	}
+	for _, s := range b.AbandonedSessions {
+		if rt.SessionReaper == nil {
+			break
+		}
+		if err := rt.SessionReaper.DeleteSession(ctx, s); err != nil {
+			slog.Warn("abandoned harness session not deleted", "binding", name, "kind", s.Kind, "id", s.ID, "err", err)
+		}
 	}
 
 	outcome := worktreeTeardown(ctx, rt, b, false)

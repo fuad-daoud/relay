@@ -105,6 +105,61 @@ func TestResumeRefusesWhitespace(t *testing.T) {
 	}
 }
 
+// TestDeleteSessionPerKind pins the delete argv for the one kind relevo can
+// delete sessions for: opencode's own delete, with --standalone so the delete
+// never starts the background service that would resume the session.
+func TestDeleteSessionPerKind(t *testing.T) {
+	t.Parallel()
+
+	h, ok := Lookup("opencode")
+	if !ok {
+		t.Fatal("Lookup(\"opencode\") not found")
+	}
+	got, err := h.DeleteSession("ses-1")
+	if err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	want := []string{"session", "delete", "--standalone", "ses-1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("DeleteSession() = %v, want %v", got, want)
+	}
+}
+
+// TestDeleteSessionUnsupportedNamesTheKind pins the refusal for every kind
+// whose sessions end with their process: claude and agy continue a session in
+// place, codex has no verified delete.
+func TestDeleteSessionUnsupportedNamesTheKind(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []string{"claude", "agy", "codex"} {
+		h, ok := Lookup(kind)
+		if !ok {
+			t.Fatalf("Lookup(%q) not found", kind)
+		}
+		argv, err := h.DeleteSession("sess-1")
+		if !errors.Is(err, ErrSessionDeleteUnsupported) {
+			t.Errorf("DeleteSession(%q) error = %v, want ErrSessionDeleteUnsupported", kind, err)
+		}
+		if err == nil || !strings.Contains(err.Error(), kind) {
+			t.Errorf("DeleteSession(%q) error = %q, want it to name the kind", kind, err)
+		}
+		if argv != nil {
+			t.Errorf("DeleteSession(%q) = %v, want nil alongside the refusal", kind, argv)
+		}
+	}
+}
+
+func TestDeleteSessionRefusesAnEmptyOrFlagShapedID(t *testing.T) {
+	t.Parallel()
+
+	h, _ := Lookup("opencode")
+	for _, id := range []string{"", "-x"} {
+		if argv, err := h.DeleteSession(id); err == nil {
+			t.Errorf("DeleteSession(%q) = %v, want a refusal", id, argv)
+		}
+	}
+}
+
 type resumeBuildCase struct {
 	name    string
 	kind    string

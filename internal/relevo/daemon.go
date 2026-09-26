@@ -172,6 +172,11 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		return nil
 	}
 
+	// Abandoned harness sessions are deleted here, before ingest: the delete
+	// runs outside the state lock, so a harness that would resume the session
+	// on its own is stopped with the tick's own liveness read already in hand.
+	d.safely("reap sessions", func() { reapAll(ctx, d.rt, fresh) })
+
 	// Each of Tick's non-binding phases runs through safely, so a panic in
 	// one cannot take the whole daemon down (#370, spec §4.6): it is logged
 	// with a stack and the next tick tries again.

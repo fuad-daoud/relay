@@ -54,6 +54,9 @@ type Config struct {
 	Hooks hooks.Dispatcher
 	// Scope is the systemd scope template served rounds launch under; nil means none.
 	Scope *spawn.ScopeSpec
+	// SessionReaper deletes harness sessions a served round abandoned; nil
+	// means the deletes are skipped and the entries stay on the binding.
+	SessionReaper relevo.SessionDeleter
 }
 
 type Server struct {
@@ -228,6 +231,9 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		Hooks:      s.cfg.Hooks,
 		Scope:      s.cfg.Scope,
 		HeldCPUs:   func(tx *store.Tx, self string) ([]int, error) { return s.heldCPUs(root, tx, self) },
+		// The reaper is server-wide: deleting an owner's abandoned session
+		// runs the harness binary, which is the same for every owner.
+		SessionReaper: s.cfg.SessionReaper,
 	}
 }
 
