@@ -7,8 +7,8 @@ package e2e
 //
 // The fake `claude` on PATH branches on the reader prompt: when it names an
 // artifact directory it writes index.html and style.css there, edits a file in
-// its throwaway tree, prints a final result ending in a relevo block, and
-// creates the marker. No network, no real harness.
+// its throwaway tree, creates the marker, then prints a final result ending in
+// a relevo block and exits. No network, no real harness.
 
 import (
 	"context"
@@ -131,8 +131,8 @@ func TestHeadlessE2EReaderRound(t *testing.T) {
 			t.Fatalf("%s does not exist after the reader round closed: %v", path, err)
 		}
 	}
-	if got := readFile(t, summary); !strings.Contains(got, "```relevo") {
-		t.Fatalf("summary.md does not carry the final message's relevo block:\n%s", got)
+	if got := readFile(t, summary); got != fakeReaderFinal {
+		t.Fatalf("summary.md does not equal the final message:\ngot:\n%q\nwant:\n%q", got, fakeReaderFinal)
 	}
 	if entry.Path != summary {
 		t.Fatalf("report entry Path = %q, want the summary path %s", entry.Path, summary)

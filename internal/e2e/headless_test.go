@@ -367,15 +367,17 @@ if [ ! -s "$plan" ]; then
 	exit 2
 fi
 
-# A reader round: fill the artifact directory, edit the throwaway tree, print
-# the final message the summary is taken from, then create the marker last.
+# A reader round: fill the artifact directory, edit the throwaway tree, create
+# the marker, then -- after the marker, as a real runner does -- print the final
+# message the summary is taken from and exit.
 if [ -n "$artifact" ]; then
 	mkdir -p "$artifact"
 	printf '<!doctype html><title>reader</title>\n' > "$artifact/index.html"
 	printf 'body { color: #000; }\n' > "$artifact/style.css"
 	printf 'the reader edited this\n' > "$worktree/reader-edit.txt"
-	printf '%s\n' '__READER_LINE__'
 	: > "$marker"
+	sleep 0.2
+	printf '%s\n' '__READER_LINE__'
 	exit 0
 fi
 

@@ -77,7 +77,8 @@ changed_paths: []       # files you wrote into the artifact directory
 commands_run: []        # commands you ran
 not_done: []            # what you deliberately left
 ` + "```" + `
-Then, as the very last thing you do, create this empty file: %s`
+Then create this empty file: %s
+Your final message comes after it: relevo saves it once you finish.`
 
 // SendResult is what one successful Send produced.
 type SendResult struct {
