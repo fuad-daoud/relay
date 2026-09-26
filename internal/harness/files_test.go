@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// TestShippedFileBytes pins §7 step 1: every file in the opencode table's
-// Files reads the bytes of the file the binary embeds, an unknown name and a
-// non-opencode kind are errors, and the read goes through the table's Embed
-// field, never the caller's name.
 func TestShippedFileBytes(t *testing.T) {
 	for _, name := range []string{
 		"opencode-plugin/package.json",

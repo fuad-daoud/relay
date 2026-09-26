@@ -29,7 +29,6 @@ func TestHarnessRules(t *testing.T) {
 			t.Errorf("Lookup(%q) returned ok=false", h.Kind)
 			continue
 		}
-		// Harness carries a Roles slice, so it is not comparable with != .
 		if !reflect.DeepEqual(got, h) {
 			t.Errorf("Lookup(%q) = %+v, want %+v", h.Kind, got, h)
 		}
@@ -132,8 +131,6 @@ func TestRoleDefinitionsIncludeDispatchTargets(t *testing.T) {
 	}
 }
 
-// The builder needs researcher installed because its own definition
-// dispatches to it. Pin the reason, not just the table.
 func TestPlanExecutorDispatchesResearcherOnEveryKind(t *testing.T) {
 	for _, h := range All() {
 		doc, err := AgentDoc("plan-executor", h.Kind)
@@ -141,11 +138,10 @@ func TestPlanExecutorDispatchesResearcherOnEveryKind(t *testing.T) {
 			t.Fatalf("AgentDoc(plan-executor, %s): %v", h.Kind, err)
 		}
 		if h.Kind == "agy" {
-			// #191: agy's plan-executor never dispatches a sub-agent of any
-			// kind -- an idle root agent there is an exit relevo treats as a
-			// failed builder -- so it names no researcher to dispatch to.
+			// An idle root agent on agy is an exit relevo treats as a failed
+			// builder, so agy's plan-executor names no researcher.
 			if strings.Contains(string(doc), "researcher") {
-				t.Errorf("agy plan-executor must not mention researcher (#191)")
+				t.Errorf("agy plan-executor must not mention researcher")
 			}
 			continue
 		}
@@ -155,9 +151,6 @@ func TestPlanExecutorDispatchesResearcherOnEveryKind(t *testing.T) {
 	}
 }
 
-// Every kind's builder definition must ask its builder to report any git
-// surgery it did to its own branch (#216): a rebase or reset the plan did not
-// call for is invisible otherwise.
 func TestPlanExecutorReportsGitSurgeryOnEveryKind(t *testing.T) {
 	for _, h := range All() {
 		doc, err := AgentDoc("plan-executor", h.Kind)
@@ -165,14 +158,11 @@ func TestPlanExecutorReportsGitSurgeryOnEveryKind(t *testing.T) {
 			t.Fatalf("AgentDoc(plan-executor, %s): %v", h.Kind, err)
 		}
 		if !strings.Contains(string(doc), "Git surgery on your branch:") {
-			t.Errorf("%s plan-executor does not require the report to name git surgery on the branch (#216)", h.Kind)
+			t.Errorf("%s plan-executor does not require the report to name git surgery on the branch", h.Kind)
 		}
 	}
 }
 
-// The architect is the planner's definition: relevo ships it so the
-// planner session can be started with --agent architect on any kind, but
-// relevo never launches it, so it is a Role row and not a roleTable entry.
 func TestArchitectShipsOnEveryKindAndIsNotARole(t *testing.T) {
 	for _, h := range All() {
 		doc, err := AgentDoc("architect", h.Kind)
@@ -180,9 +170,6 @@ func TestArchitectShipsOnEveryKindAndIsNotARole(t *testing.T) {
 			t.Fatalf("AgentDoc(architect, %s): %v", h.Kind, err)
 		}
 		if h.DocExt == "toml" {
-			// A profile has no frontmatter: its identity is the file relevo
-			// installs it at (architect.config.toml, selected with -p
-			// architect) and the literal that carries the role text.
 			if !strings.Contains(string(doc), "developer_instructions = '''") {
 				t.Errorf("%s architect definition lacks the developer_instructions literal", h.Kind)
 			}
@@ -201,10 +188,6 @@ func TestArchitectShipsOnEveryKindAndIsNotARole(t *testing.T) {
 	}
 }
 
-// The architect body -- everything after the frontmatter -- is one text
-// shipped three times. #188 added the Handing off section that makes the
-// planner reach for relevo; this pins both the section and the identity, so
-// an edit to one kind cannot drift from the others.
 func TestArchitectHandoffIsSharedAcrossKinds(t *testing.T) {
 	bodies := map[string]string{}
 	for _, h := range All() {
@@ -233,8 +216,6 @@ func TestArchitectHandoffIsSharedAcrossKinds(t *testing.T) {
 	}
 }
 
-// #323. The measured levers (scripted mechanical work, fenced deletions,
-// locations not searches) are part of the shipped planner on every kind.
 func TestArchitectCarriesLatencyGuidance(t *testing.T) {
 	for _, h := range All() {
 		doc, err := AgentDoc("architect", h.Kind)
@@ -259,9 +240,6 @@ func TestArchitectCarriesLatencyGuidance(t *testing.T) {
 	}
 }
 
-// definitionBody returns the text after the closing --- of the frontmatter,
-// or, for a kind whose definitions are TOML (DocExt "toml"), the text of the
-// developer_instructions multi-line literal.
 func definitionBody(t *testing.T, kind, doc string) string {
 	t.Helper()
 	if h, ok := Lookup(kind); ok && h.DocExt == "toml" {
@@ -306,39 +284,76 @@ func TestCanServeRequiresEveryDefinition(t *testing.T) {
 	}
 }
 
-// TestSubAgentsSetOnEveryKind pins the rule that "" is not a visibility
-// state: an unknown kind yields "" downstream, and a known kind never may.
-func TestLimitPatternsSetOnEveryKind(t *testing.T) {
+func TestPatternsSetAndCompile(t *testing.T) {
 	for _, h := range All() {
 		if len(h.LimitPatterns) < 1 {
 			t.Errorf("harness %q: len(LimitPatterns) = %d, want >= 1", h.Kind, len(h.LimitPatterns))
 		}
-		for _, pat := range h.LimitPatterns {
+		if len(h.DenialPatterns) < 1 {
+			t.Errorf("harness %q: len(DenialPatterns) = %d, want >= 1", h.Kind, len(h.DenialPatterns))
+		}
+		patterns := append(append([]string(nil), h.LimitPatterns...), h.DenialPatterns...)
+		for _, pat := range patterns {
 			if _, err := regexp.Compile(pat); err != nil {
 				t.Errorf("harness %q: pattern %q failed to compile: %v", h.Kind, pat, err)
 			}
 		}
 	}
+}
 
+func TestAgyLimitPatternsMatchFixture(t *testing.T) {
 	agy, ok := Lookup("agy")
 	if !ok {
 		t.Fatal("Lookup(\"agy\") not found")
 	}
 	fixture := "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h48m52s."
-	matched := false
 	for _, pat := range agy.LimitPatterns {
-		re, err := regexp.Compile(pat)
-		if err != nil {
-			continue
-		}
-		if re.MatchString(fixture) {
-			matched = true
-			break
+		if re, err := regexp.Compile(pat); err == nil && re.MatchString(fixture) {
+			return
 		}
 	}
-	if !matched {
-		t.Errorf("agy LimitPatterns did not match fixture %q", fixture)
-	}
+	t.Errorf("agy LimitPatterns did not match fixture %q", fixture)
+}
+
+var launchPrintCases = []struct {
+	kind       string
+	extra      []string
+	wantPrint  []string
+	wantPrompt int
+}{
+	{
+		kind: "agy",
+		wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
+			"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder, "--add-dir", DirPlaceholder},
+		wantPrompt: 1,
+	},
+	{
+		kind: "agy", extra: []string{"--dangerously-skip-permissions"},
+		wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
+			"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder, "--add-dir", DirPlaceholder, "--dangerously-skip-permissions"},
+		wantPrompt: 1,
+	},
+	{
+		kind:       "claude",
+		wantPrint:  []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"},
+		wantPrompt: 1,
+	},
+	{
+		kind:       "opencode",
+		wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json", "--thinking", "--standalone"},
+		wantPrompt: 1,
+	},
+	{
+		kind: "opencode", extra: []string{"--auto"},
+		wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json", "--thinking", "--standalone", "--auto"},
+		wantPrompt: 1,
+	},
+	{
+		kind: "codex",
+		wantPrint: []string{"exec", PromptPlaceholder, "-p", "plan-executor", "-m", "m/x", "-c", "model_provider=prov",
+			"--json", "-C", DirPlaceholder},
+		wantPrompt: 1,
+	},
 }
 
 func TestLaunchPrintPerKind(t *testing.T) {
@@ -346,47 +361,7 @@ func TestLaunchPrintPerKind(t *testing.T) {
 	if !ok {
 		t.Fatal("RoleByName(\"builder\") not found")
 	}
-	tests := []struct {
-		kind       string
-		extra      []string
-		wantPrint  []string
-		wantPrompt int
-	}{
-		{
-			kind: "agy",
-			wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
-				"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder, "--add-dir", DirPlaceholder},
-			wantPrompt: 1,
-		},
-		{
-			kind: "agy", extra: []string{"--dangerously-skip-permissions"},
-			wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
-				"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder, "--add-dir", DirPlaceholder, "--dangerously-skip-permissions"},
-			wantPrompt: 1,
-		},
-		{
-			kind:       "claude",
-			wantPrint:  []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"},
-			wantPrompt: 1,
-		},
-		{
-			kind:       "opencode",
-			wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json", "--thinking", "--standalone"},
-			wantPrompt: 1,
-		},
-		{
-			kind: "opencode", extra: []string{"--auto"},
-			wantPrint:  []string{"run", PromptPlaceholder, "-m", "prov/m/x", "--agent", "plan-executor", "--format", "json", "--thinking", "--standalone", "--auto"},
-			wantPrompt: 1,
-		},
-		{
-			kind: "codex",
-			wantPrint: []string{"exec", PromptPlaceholder, "-p", "plan-executor", "-m", "m/x", "-c", "model_provider=prov",
-				"--json", "-C", DirPlaceholder},
-			wantPrompt: 1,
-		},
-	}
-	for _, tt := range tests {
+	for _, tt := range launchPrintCases {
 		t.Run(tt.kind+" "+strings.Join(tt.extra, " "), func(t *testing.T) {
 			h, ok := Lookup(tt.kind)
 			if !ok {
@@ -407,10 +382,13 @@ func TestLaunchPrintPerKind(t *testing.T) {
 			}
 		})
 	}
+	checkLaunchExtras(t, builder)
+}
 
-	// claude refuses stream-json in print mode without --verbose (verified
-	// 2026-09-16: "Error: When using --print, --output-format=stream-json
-	// requires --verbose"); no candidate's extra_args should have to know.
+func checkLaunchExtras(t *testing.T, builder RoleSpec) {
+	t.Helper()
+	// claude refuses stream-json in print mode without --verbose; no
+	// candidate's extra_args should have to know.
 	c, _ := Lookup("claude")
 	claudeLaunch, _ := c.Launch("prov", "m/x", nil, builder, TierHarness)
 	if p := claudeLaunch.Print; !containsAdjacent(p, "--output-format", "stream-json") || !contains(p, "--verbose") {
@@ -420,12 +398,12 @@ func TestLaunchPrintPerKind(t *testing.T) {
 		h, _ := Lookup(kind)
 		l, _ := h.Launch("prov", "m/x", nil, builder, TierHarness)
 		if p := l.Print; contains(p, "--include-partial-messages") {
-			t.Errorf("%s: partial messages are out of scope (spec §1): %v", kind, p)
+			t.Errorf("%s: partial messages are out of scope: %v", kind, p)
 		}
 	}
 
-	// agy pins its workspace to the round's tree (#192); claude and opencode
-	// carry no such flag.
+	// agy pins its workspace to the round's tree; claude and opencode carry
+	// no such flag.
 	a, _ := Lookup("agy")
 	agyLaunch, _ := a.Launch("prov", "m/x", nil, builder, TierHarness)
 	if p := agyLaunch.Print; !containsAdjacent(p, "--add-dir", DirPlaceholder) {
@@ -560,7 +538,6 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 		}
 	}
 
-	// Unknown kind: empty in, empty out, no panic.
 	if got := (Launch{Kind: "unknown", PromptAt: -1}).PrintArgs("x", time.Minute, "/w", "/state"); len(got) != 0 {
 		t.Errorf("unknown kind PrintArgs = %v, want empty", got)
 	}
@@ -600,7 +577,6 @@ func TestPrintArgsFillsState(t *testing.T) {
 		t.Errorf("element after -c following workspace-write not found or != %s; got %v", wantRoot, got)
 	}
 
-	// a claude launch ignores state (identical to before)
 	claude, _ := Lookup("claude")
 	cl, err := claude.Launch("prov", "m/x", nil, builder, TierEdit)
 	if err != nil {
@@ -663,123 +639,105 @@ func TestSplitEffort(t *testing.T) {
 	}
 }
 
-func contains(argv []string, s string) bool {
-	for _, a := range argv {
-		if a == s {
-			return true
-		}
-	}
-	return false
-}
-
-func containsAdjacent(argv []string, flag, value string) bool {
-	for i := 0; i+1 < len(argv); i++ {
-		if argv[i] == flag && argv[i+1] == value {
-			return true
-		}
-	}
-	return false
+var harnessTableExpected = map[string]Harness{
+	"agy": {
+		Kind:       "agy",
+		Binary:     "agy",
+		MinVersion: "1.1.6",
+		LimitPatterns: []string{
+			`(?i)individual quota reached`,
+			`(?i)RESOURCE_EXHAUSTED`,
+			`(?i)quota exceeded`,
+		},
+		DenialPatterns: []string{
+			`(?i)permission (request )?(denied|rejected)`,
+			`(?i)tool (call|use) (was )?rejected`,
+			`(?i)not permitted in (plan|accept-edits) mode`,
+		},
+		Providers: []string{"google", "agy-extra"},
+		Roles: []Role{
+			{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
+			{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
+			{Name: "reviewer", Path: ".gemini/config/agents/reviewer.md", Doc: "reviewer.agy", ExpectModel: "inherit"},
+			{Name: "architect", Path: ".gemini/config/agents/architect.md", Doc: "architect.agy", ExpectModel: "inherit"},
+		},
+	},
+	"claude": {
+		Kind:   "claude",
+		Binary: "claude",
+		LimitPatterns: []string{
+			`(?i)you've hit your .*limit`,
+			`(?i)usage limit reached`,
+			`(?i)rate limit reached`,
+			`(?i)limit .*resets`,
+		},
+		DenialPatterns: []string{
+			`(?i)requested permissions to use .* but you haven't granted`,
+			`(?i)permission (to use .* was )?denied`,
+			`(?i)tool use was rejected`,
+		},
+		Providers: []string{"anthropic"},
+		Roles: []Role{
+			{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
+			{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
+			{Name: "reviewer", Path: ".claude/agents/reviewer.md", Doc: "reviewer.claude"},
+			{Name: "architect", Path: ".claude/agents/architect.md", Doc: "architect.claude"},
+		},
+	},
+	"opencode": {
+		Kind:   "opencode",
+		Binary: "opencode",
+		LimitPatterns: []string{
+			`(?i)rate.?limit(ed)? (reached|exceeded)`,
+			`(?i)quota (exceeded|reached)`,
+			`(?i)insufficient (credits|quota)`,
+			`(?i)RESOURCE_EXHAUSTED`,
+		},
+		DenialPatterns: []string{
+			`(?i)permission.*(denied|rejected)`,
+			`(?i)rejected: external_directory`,
+		},
+		Roles: []Role{
+			{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
+			{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
+			{Name: "reviewer", Path: ".config/opencode/agents/reviewer.md", Doc: "reviewer.opencode"},
+			{Name: "architect", Path: ".config/opencode/agents/architect.md", Doc: "architect.opencode"},
+		},
+		Files: []ShippedFile{
+			{Name: "opencode-plugin/package.json", Path: ".config/opencode/plugins/relevo/package.json", Embed: "opencodeplugin/package.json"},
+			{Name: "opencode-plugin/server.ts", Path: ".config/opencode/plugins/relevo/server.ts", Embed: "opencodeplugin/server.ts"},
+			{Name: "opencode-plugin/tui.tsx", Path: ".config/opencode/plugins/relevo/tui.tsx", Embed: "opencodeplugin/tui.tsx"},
+		},
+	},
+	"codex": {
+		Kind:       "codex",
+		Binary:     "codex",
+		MinVersion: "0.155.0",
+		LimitPatterns: []string{
+			`(?i)usage limit`,
+			`(?i)rate limit`,
+			`(?i)quota`,
+			`(?i)"status": 429`,
+			`(?i)too many requests`,
+		},
+		DenialPatterns: []string{
+			`(?i)patch rejected: writing outside of the project`,
+			`(?i)rejected by user approval settings`,
+			`(?i)sandbox.*(denied|blocked|not permitted)`,
+			`(?i)permission denied`,
+		},
+		DocExt: "toml",
+		Roles: []Role{
+			{Name: "plan-executor", Path: ".codex/plan-executor.config.toml", Doc: "plan-executor.codex"},
+			{Name: "researcher", Path: ".codex/researcher.config.toml", Doc: "researcher.codex", ExpectModel: "gpt-5.6-luna"},
+			{Name: "reviewer", Path: ".codex/reviewer.config.toml", Doc: "reviewer.codex"},
+			{Name: "architect", Path: ".codex/architect.config.toml", Doc: "architect.codex"},
+		},
+	},
 }
 
 func TestTableExactValues(t *testing.T) {
-	expected := map[string]Harness{
-		"agy": {
-			Kind:       "agy",
-			Binary:     "agy",
-			MinVersion: "1.1.6",
-			LimitPatterns: []string{
-				`(?i)individual quota reached`,
-				`(?i)RESOURCE_EXHAUSTED`,
-				`(?i)quota exceeded`,
-			},
-			DenialPatterns: []string{
-				`(?i)permission (request )?(denied|rejected)`,
-				`(?i)tool (call|use) (was )?rejected`,
-				`(?i)not permitted in (plan|accept-edits) mode`,
-			},
-			Providers: []string{"google", "agy-extra"},
-			Roles: []Role{
-				{Name: "plan-executor", Path: ".gemini/config/agents/plan-executor.md", Doc: "plan-executor.agy", ExpectModel: "inherit"},
-				{Name: "researcher", Path: ".gemini/config/agents/researcher.md", Doc: "researcher.agy", ExpectModel: "inherit"},
-				{Name: "reviewer", Path: ".gemini/config/agents/reviewer.md", Doc: "reviewer.agy", ExpectModel: "inherit"},
-				{Name: "architect", Path: ".gemini/config/agents/architect.md", Doc: "architect.agy", ExpectModel: "inherit"},
-			},
-		},
-		"claude": {
-			Kind:   "claude",
-			Binary: "claude",
-			LimitPatterns: []string{
-				`(?i)you've hit your .*limit`,
-				`(?i)usage limit reached`,
-				`(?i)rate limit reached`,
-				`(?i)limit .*resets`,
-			},
-			DenialPatterns: []string{
-				`(?i)requested permissions to use .* but you haven't granted`,
-				`(?i)permission (to use .* was )?denied`,
-				`(?i)tool use was rejected`,
-			},
-			Providers: []string{"anthropic"},
-			Roles: []Role{
-				{Name: "plan-executor", Path: ".claude/agents/plan-executor.md", Doc: "plan-executor.claude"},
-				{Name: "researcher", Path: ".claude/agents/researcher.md", Doc: "researcher.claude"},
-				{Name: "reviewer", Path: ".claude/agents/reviewer.md", Doc: "reviewer.claude"},
-				{Name: "architect", Path: ".claude/agents/architect.md", Doc: "architect.claude"},
-			},
-		},
-		"opencode": {
-			Kind:   "opencode",
-			Binary: "opencode",
-			LimitPatterns: []string{
-				`(?i)rate.?limit(ed)? (reached|exceeded)`,
-				`(?i)quota (exceeded|reached)`,
-				`(?i)insufficient (credits|quota)`,
-				`(?i)RESOURCE_EXHAUSTED`,
-			},
-			DenialPatterns: []string{
-				`(?i)permission.*(denied|rejected)`,
-				`(?i)rejected: external_directory`,
-			},
-			Roles: []Role{
-				{Name: "plan-executor", Path: ".config/opencode/agents/plan-executor.md", Doc: "plan-executor.opencode"},
-				{Name: "researcher", Path: ".config/opencode/agents/researcher.md", Doc: "researcher.opencode"},
-				{Name: "reviewer", Path: ".config/opencode/agents/reviewer.md", Doc: "reviewer.opencode"},
-				{Name: "architect", Path: ".config/opencode/agents/architect.md", Doc: "architect.opencode"},
-			},
-			Files: []ShippedFile{
-				{Name: "opencode-plugin/package.json", Path: ".config/opencode/plugins/relevo/package.json", Embed: "opencodeplugin/package.json"},
-				{Name: "opencode-plugin/server.ts", Path: ".config/opencode/plugins/relevo/server.ts", Embed: "opencodeplugin/server.ts"},
-				{Name: "opencode-plugin/tui.tsx", Path: ".config/opencode/plugins/relevo/tui.tsx", Embed: "opencodeplugin/tui.tsx"},
-			},
-		},
-		"codex": {
-			Kind:       "codex",
-			Binary:     "codex",
-			MinVersion: "0.155.0",
-			LimitPatterns: []string{
-				`(?i)usage limit`,
-				`(?i)rate limit`,
-				`(?i)quota`,
-				`(?i)"status": 429`,
-				`(?i)too many requests`,
-			},
-			DenialPatterns: []string{
-				`(?i)patch rejected: writing outside of the project`,
-				`(?i)rejected by user approval settings`,
-				`(?i)sandbox.*(denied|blocked|not permitted)`,
-				`(?i)permission denied`,
-			},
-			DocExt: "toml",
-			Roles: []Role{
-				{Name: "plan-executor", Path: ".codex/plan-executor.config.toml", Doc: "plan-executor.codex"},
-				{Name: "researcher", Path: ".codex/researcher.config.toml", Doc: "researcher.codex", ExpectModel: "gpt-5.6-luna"},
-				{Name: "reviewer", Path: ".codex/reviewer.config.toml", Doc: "reviewer.codex"},
-				{Name: "architect", Path: ".codex/architect.config.toml", Doc: "architect.codex"},
-			},
-		},
-	}
-
-	for kind, want := range expected {
+	for kind, want := range harnessTableExpected {
 		got, ok := Lookup(kind)
 		if !ok {
 			t.Errorf("Lookup(%q) not found", kind)
