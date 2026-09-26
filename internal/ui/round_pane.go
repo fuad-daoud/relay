@@ -32,10 +32,10 @@ type roundPane struct {
 	tabInFlight bool
 
 	// reader is the row's shape: true for a reader round, whose tabs are
-	// plan, artifacts, log and transcript and whose card carries the
-	// artifact count (round 5b). artifactSel is the artifacts tab's cursor,
-	// an index into the fetched list, and baselineHead is the binding's
-	// RoundBaselineHead for the context row's scratch-worktree line.
+	// plan, artifacts, log and transcript (round 5b). artifactSel is the
+	// artifacts tab's cursor, an index into the fetched list, and
+	// baselineHead is the binding's RoundBaselineHead for line 1's scratch
+	// cell.
 	reader       bool
 	artifactSel  int
 	baselineHead string
@@ -67,18 +67,10 @@ func (p roundPane) tabLabel(t tab) string {
 	return tabTitles[t]
 }
 
-// showCard reports whether the round draws its card: a reader round at a
-// height that leaves room for one, exactly as the board draws it. A writer
-// round never draws one.
-func (p roundPane) showCard() bool {
-	return p.reader && p.rows >= 18
-}
-
-// headRows returns the number of furniture rows before the viewport (§2.5).
+// headRows returns the number of furniture rows before the viewport: the
+// tokens line, the tab bar and the source line. Both shapes of round draw
+// the same head (round 5b).
 func (p roundPane) headRows() int {
-	if p.showCard() {
-		return 11
-	}
 	return 6
 }
 
@@ -418,6 +410,11 @@ func (p roundPane) sourceLine() string {
 	if !c.loaded {
 		return faintStyle.Render("loading…")
 	}
+	if p.detail.active == tabArtifacts {
+		// The header carries the count and the total size (round 5b); a
+		// source line here would only repeat them.
+		return ""
+	}
 	var s string
 	switch p.detail.active {
 	case tabPlan:
@@ -471,8 +468,6 @@ func (p roundPane) sourceLine() string {
 	case tabLog:
 		n := strings.Count(strings.TrimRight(c.body, "\n"), "\n") + 1
 		s = fmt.Sprintf("%d entries", n)
-	case tabArtifacts:
-		s = fmt.Sprintf("%s · %s", artifactsWord(artifactCount(c)), relevo.ArtifactSizeText(artifactTotalSize(c)))
 	}
 	if c.err != nil || c.empty != "" {
 		// The viewport carries the prose; the source line says only where
@@ -486,8 +481,6 @@ func (p roundPane) sourceLine() string {
 			s = fmt.Sprintf("round %d", p.detail.round)
 		case tabLog:
 			s = "log"
-		case tabArtifacts:
-			s = "artifacts"
 		}
 	}
 	return faintStyle.Render(s)
@@ -506,14 +499,12 @@ func (p roundPane) hintLine(b *view.BindingStatus) (string, bool) {
 // view draws exactly rows rows at width (§2.5, §5).
 func (p roundPane) view(width int) string {
 	b := row(p.report, p.detail.name)
-	var out []string
-	if p.showCard() {
-		out = append(out, p.readerCard(b)...)
-		out = append(out, "")
-	} else {
-		out = append(out, p.tokensLine(b), "")
+	out := []string{p.tokensLine(b), "", p.tabsRow(), ""}
+	// A reader round's artifacts tab draws no source line: the header
+	// already carries the count and the size (round 5b).
+	if s := p.sourceLine(); s != "" {
+		out = append(out, "     "+s, "")
 	}
-	out = append(out, p.tabsRow(), "", "     "+p.sourceLine(), "")
 
 	budget := p.rows - len(out)
 	if budget < 0 {

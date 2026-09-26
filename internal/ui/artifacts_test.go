@@ -209,3 +209,50 @@ func TestArtifactsTabReadsSealedFiles(t *testing.T) {
 		}
 	}
 }
+
+// writerIdleRoundModel pushes a writer round whose state and time read exactly
+// like the reader golden's: idle, nine minutes after a report. It is the
+// writer half of TestReaderHeaderSharesTheWriterLayout.
+func writerIdleRoundModel(t *testing.T, width, height int) Model {
+	t.Helper()
+	const name = "writer-idle"
+	st := store.New(t.TempDir())
+	if err := st.Save(newTestBinding(name)); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	row := view.BindingStatus{
+		Name: name, Round: 1, PlanRound: 1, Display: "ACTIVE",
+		BuilderStatus: "idle", BuilderName: "gpt-5.6-terra",
+		PlannerName: "architect-5",
+		RoundEnd:    railNow.Add(-9 * time.Minute),
+		LastPayload: &view.LastEvent{
+			TS: railNow.Add(-9 * time.Minute), Round: 1,
+			Direction: store.DirToPlanner, Kind: store.KindReport,
+		},
+	}
+	m := goldenActionModelWithStore(t, width, height, &fakeActions{},
+		view.Report{Bindings: []view.BindingStatus{row}}, st)
+	m = pointer(t, m, name)
+	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	return drain(t, res.(Model), cmd)
+}
+
+// TestReaderHeaderSharesTheWriterLayout: a reader round draws line 1 through
+// the writer path, so its state-and-time cell is the one a writer round with
+// the same state draws (round 5b). A reader rendered through its own header
+// function, or through the round-1 card, fails here.
+func TestReaderHeaderSharesTheWriterLayout(t *testing.T) {
+	reader := roundReaderArtifactsModel(t, 132, 34)
+	writer := writerIdleRoundModel(t, 132, 34)
+
+	readerLine := stripANSI(strings.Split(reader.View(), "\n")[2])
+	writerLine := stripANSI(strings.Split(writer.View(), "\n")[2])
+
+	cell := stripANSI(roundStateCell(readerRoundRow("review-568", "reviewer"), railNow))
+	if !strings.HasPrefix(readerLine, cell) {
+		t.Errorf("reader line 3 does not start with the shared state-and-time cell\ncell: %q\ngot:  %q", cell, readerLine)
+	}
+	if !strings.HasPrefix(writerLine, cell) {
+		t.Errorf("writer line 3 does not start with the state-and-time cell\ncell: %q\ngot:  %q", cell, writerLine)
+	}
+}

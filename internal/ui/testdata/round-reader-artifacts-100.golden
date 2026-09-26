@@ -1,16 +1,9 @@
   ◆ relevo   fleet › review-568 ›  r1                                          v0.13.0-28    14:02  
                                                                                                     
-   reviewer on gpt-5.6-terra  ·  reader  ·  planner architect-5  ·  scratch worktree @ 043cf35 + dir
- ╭─ review-568  round 1 ───────────────────────────────────────────────────────────────── sealed ─╮ 
- │   idle    reported 9m  ·  2 artifacts  ·  12.4k  ·  repository unchanged                       │ 
- │  tokens in 212k · cache 1.9M (90%) · out 18k · $0.42                                           │ 
- │                                                                                                │ 
- │    s  send next       r  retry on…                                                             │ 
- ╰────────────────────────────────────────────────────────────────────────────────────────────────╯ 
+    idle    reported 9m  ·  2 artifacts  ·  12.4k  ·  repository unchanged                          
+   tokens in 212k · cache 1.9M (90%) · out 18k · $0.42                                              
                                                                                                     
    plan     artifacts 2     log     transcript                            round   [   r1 of 1   ]   
-                                                                                                    
-     2 artifacts · 12.4k                                                                            
                                                                                                     
      FILE                          SIZE    WRITTEN   OPENS IN                                       
      summary.md                    1.1k    14:00     pager                                          
@@ -26,5 +19,12 @@
                                                                                                     
      • the worktree is thrown away at close                                                         
      • the repository is left as it was                                                             
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
 
  enter  open file      tab  next tab      :  command      ?  all keys      esc  back                

@@ -7,15 +7,13 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // This file holds the round pane's head -- the tokens line and the tab bar --
-// and the reader round's card, which re-spreads the tokens line inside its
-// border and adds the artifact facts and the reader's keys (round 5b).
+// and the reader round's artifacts cursor and open action, which belong to
+// the artifacts tab (round 5b).
 
 // tokensLine renders the tokens and facts row at the top of the body.
 func (p roundPane) tokensLine(b *view.BindingStatus) string {
@@ -24,8 +22,7 @@ func (p roundPane) tokensLine(b *view.BindingStatus) string {
 }
 
 // tokensParts is the tokens line's two halves, the left indented three
-// spaces as the body's first line is. The reader round's card re-spreads them
-// inside its border.
+// spaces as the body's first line is.
 func (p roundPane) tokensParts(b *view.BindingStatus) (string, string) {
 	if b == nil || !p.detail.live {
 		left := "   " + faintStyle.Render("no live facts for a released binding")
@@ -103,96 +100,6 @@ func (p roundPane) tabsRow() string {
 	right := faintStyle.Render("round  ") + chip(kbdStyle, "[") + textStyle.Bold(true).Render(rightText) + chip(kbdStyle, "]") + "  "
 
 	return spread(left, right, p.width)
-}
-
-// readerCard is the reader round's card (round 5b), the board's box: the
-// state chip and time, the artifacts count and total size, the tokens line and
-// the reader's own keys. A writer round draws no card.
-func (p roundPane) readerCard(b *view.BindingStatus) []string {
-	title := accentStyle.Bold(true).Render(p.detail.name) + "  " +
-		faintStyle.Render(fmt.Sprintf("round %d", p.detail.round))
-	inner := p.width - 4
-	if inner < 20 {
-		inner = 20
-	}
-	left, tokensRight := p.tokensParts(b)
-	left = "  " + strings.TrimPrefix(left, "   ")
-	return renderCard(p.width, title, faintStyle.Render(p.cardWord(b)), []string{
-		p.stateLine(b),
-		spread(left, tokensRight, inner),
-		"",
-		cardKeysRow(p.readerKeys()),
-	})
-}
-
-// readerKeys is the reader card's keys: no g gate; send next and retry on as
-// for a writer. Without Actions a reader has none.
-func (p roundPane) readerKeys() []KeyHelp {
-	if !p.actions {
-		return nil
-	}
-	return []KeyHelp{
-		{"s", "send next"},
-		{"r", "retry on…"},
-	}
-}
-
-// cardWord is the card's top-right word: "live" while the round on screen is
-// the binding's open round, "sealed" once it has closed.
-func (p roundPane) cardWord(b *view.BindingStatus) string {
-	if b == nil || !p.detail.live {
-		return "sealed"
-	}
-	if p.detail.round == b.Round && b.RoundEnd.IsZero() {
-		return "live"
-	}
-	return "sealed"
-}
-
-// stateLine is the card's first row: the round's state chip and age as the
-// context row shows them, then the artifacts count and total size, and
-// "repository unchanged" once the round has closed.
-func (p roundPane) stateLine(b *view.BindingStatus) string {
-	if b == nil || !p.detail.live {
-		return "  " + faintStyle.Render("no live facts for a released binding")
-	}
-	g := groupOf(*b)
-	var pStyle lipgloss.Style
-	var pWord string
-	switch g {
-	case groupNeedsYou:
-		pStyle, pWord = chipWarnStyle.Bold(true), "needs you"
-	case groupWorking:
-		pStyle, pWord = chipGreenStyle.Bold(true), "working"
-	case groupIdle:
-		pStyle, pWord = kbdStyle, "idle"
-	case groupHeld:
-		pStyle, pWord = kbdStyle, "on hold"
-	case groupDone:
-		pStyle, pWord = kbdStyle, "done"
-	default:
-		pStyle, pWord = kbdStyle, strings.ToLower(b.Display)
-	}
-
-	var age string
-	if g == groupWorking {
-		age = ago(b.RoundStart, p.now())
-	} else {
-		age = strings.TrimPrefix(rowNow(*b, p.now()), fmt.Sprintf("r%d · ", b.Round))
-	}
-
-	s := "  " + chip(pStyle, pWord)
-	if age != "" {
-		s += "   " + textStyle.Render(age)
-	}
-	if c := p.detail.cache[tabArtifacts]; artifactCount(c) > 0 {
-		s += faintStyle.Render("  ·  ") + mutedStyle.Render(artifactsWord(artifactCount(c)))
-		s += faintStyle.Render("  ·  ") + mutedStyle.Render(relevo.ArtifactSizeText(artifactTotalSize(c)))
-	}
-	if p.cardWord(b) != "live" {
-		s += faintStyle.Render("  ·  ") + mutedStyle.Render("repository unchanged")
-	}
-	return s
 }
 
 // moveArtifact moves the artifacts cursor by delta and refetches the newly

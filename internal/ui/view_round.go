@@ -125,7 +125,7 @@ func (r roundView) Crumbs() []string {
 	return []string{r.pane.detail.name, fmt.Sprintf("r%d", r.pane.detail.round)}
 }
 
-// Context is the context row (§2.2).
+// Context is the context row.
 func (r roundView) Context(env Env) (string, string) {
 	b := row(env.Report, r.pane.detail.name)
 
@@ -145,48 +145,60 @@ func (r roundView) Context(env Env) (string, string) {
 		return left, right
 	}
 
-	// A reader round's context row names the actor, its shape and its
-	// scratch worktree rather than the state and the branch: the state chip
-	// and the artifact facts live on its card (round 5b).
-	if r.pane.reader {
-		plannerWord := "planner " + plannerCell(*b)
-		if b.OwnerLabel != "" {
-			plannerWord = "client " + b.OwnerLabel
-		}
-		left := "   " + textStyle.Render(actorCell(*b)) + faintStyle.Render(" on ") +
-			textStyle.Render(candidateText(*b)) +
-			faintStyle.Render("  ·  ") + mutedStyle.Render("reader") +
-			faintStyle.Render("  ·  ") + mutedStyle.Render(plannerWord) +
-			faintStyle.Render("  ·  ") + mutedStyle.Render(scratchText(r.pane.baselineHead))
-		if lipgloss.Width(left)+1+lipgloss.Width(right) > env.Width {
-			right = ""
-		}
-		return left, right
-	}
+	left, right := contextLine(roundStateCell(*b, env.Now), r.pane.contextCells(*b), right, env.Width)
+	return left, right
+}
 
-	now := env.Now
-	g := groupOf(*b)
+// contextLine joins line 1 from the state-and-time cell, the round's own
+// cells and the round-of-n cell on the right. The state-and-time cell never
+// drops; the cells after it drop whole, from the right, while the line alone
+// is still too wide -- the writers' own rule, kept for readers (round 5b).
+func contextLine(stateCell string, cells []string, right string, width int) (string, string) {
+	build := func() string {
+		s := stateCell
+		for _, c := range cells {
+			s += c
+		}
+		return s
+	}
+	left := build()
+	if lipgloss.Width(left)+1+lipgloss.Width(right) > width {
+		right = ""
+	}
+	for len(cells) > 0 && lipgloss.Width(left) > width {
+		cells = cells[:len(cells)-1]
+		left = build()
+	}
+	return left, right
+}
+
+// roundStateCell is line 1's first cell: the state chip and the age, drawn
+// the same way for a writer and a reader with the same state.
+// TestReaderHeaderSharesTheWriterLayout pins that sharing.
+func roundStateCell(b view.BindingStatus, now time.Time) string {
+	pill, age := roundState(b, now)
+	return pill + age
+}
+
+// roundState is the state chip and the age behind roundStateCell: the words
+// and styles the fleet's group draws, then the age the row's own rule gives.
+func roundState(b view.BindingStatus, now time.Time) (pill, age string) {
+	g := groupOf(b)
 	var pStyle lipgloss.Style
 	var pWord string
 	switch g {
 	case groupNeedsYou:
-		pStyle = chipWarnStyle.Bold(true)
-		pWord = "needs you"
+		pStyle, pWord = chipWarnStyle.Bold(true), "needs you"
 	case groupWorking:
-		pStyle = chipGreenStyle.Bold(true)
-		pWord = "working"
+		pStyle, pWord = chipGreenStyle.Bold(true), "working"
 	case groupIdle:
-		pStyle = kbdStyle
-		pWord = "idle"
+		pStyle, pWord = kbdStyle, "idle"
 	case groupHeld:
-		pStyle = kbdStyle
-		pWord = "on hold"
+		pStyle, pWord = kbdStyle, "on hold"
 	case groupDone:
-		pStyle = kbdStyle
-		pWord = "done"
+		pStyle, pWord = kbdStyle, "done"
 	default:
-		pStyle = kbdStyle
-		pWord = strings.ToLower(b.Display)
+		pStyle, pWord = kbdStyle, strings.ToLower(b.Display)
 	}
 
 	var ageStr string
@@ -200,81 +212,76 @@ func (r roundView) Context(env Env) (string, string) {
 			ageStr = mutedStyle.Render("quiet " + b.QuietFor)
 		}
 	} else {
-		rn := rowNow(*b, now)
+		rn := rowNow(b, now)
 		if b.Round > 0 {
 			rn = strings.TrimPrefix(rn, fmt.Sprintf("r%d · ", b.Round))
 		}
 		ageStr = textStyle.Render(rn)
 	}
+	return "   " + chip(pStyle, pWord), "   " + ageStr
+}
 
-	// 1. pill; 2. age; 3. candidate; 4. planner; 5. branch; 6. dirty.
-	partPill := "   " + chip(pStyle, pWord)
-	partAge := "   " + ageStr
-	partCandidate := "      " + textStyle.Render(candidateText(*b))
-
-	plannerWord := plannerCell(*b)
-	if b.OwnerLabel != "" {
-		plannerWord = "client " + b.OwnerLabel
+// contextCells is what line 1 draws after its state-and-time cell. A reader
+// round shows its artifacts count and total size, "repository unchanged" once
+// the round has closed, and the actor, its shape, its planner and its scratch
+// worktree; a writer shows its candidate, its planner, its branch and a dirty
+// tree. The cells drop from the right, so a reader loses its scratch worktree
+// first, then its planner, its shape and its actor (round 5b).
+func (p roundPane) contextCells(b view.BindingStatus) []string {
+	if p.reader {
+		return p.readerContextCells(b)
 	}
-	partPlanner := faintStyle.Render("  ·  ") + mutedStyle.Render(plannerWord)
-
+	cells := []string{"      " + textStyle.Render(candidateText(b))}
+	cells = append(cells, faintStyle.Render("  ·  ")+mutedStyle.Render(plannerWordOf(b)))
 	branch := b.Branch
 	if branch == "" {
-		branch = repoCell(*b)
+		branch = repoCell(b)
 	}
-	partBranch := faintStyle.Render("  ·  ") + mutedStyle.Render(branch)
-
-	var partDirty string
+	if branch != "" {
+		cells = append(cells, faintStyle.Render("  ·  ")+mutedStyle.Render(branch))
+	}
 	if b.Dirty {
-		partDirty = faintStyle.Render("  ·  ") + redStyle.Render("dirty")
+		cells = append(cells, faintStyle.Render("  ·  ")+redStyle.Render("dirty"))
 	}
+	return cells
+}
 
-	hasDirty := b.Dirty
-	hasBranch := branch != ""
-	hasPlanner := plannerWord != ""
-	hasCandidate := true
+// readerContextCells is a reader round's cells after the state-and-time: the
+// artifact facts, the closed-round note, then the actor, its shape, its
+// planner and its scratch worktree.
+func (p roundPane) readerContextCells(b view.BindingStatus) []string {
+	var cells []string
+	c := p.detail.cache[tabArtifacts]
+	if artifactCount(c) > 0 {
+		cells = append(cells,
+			faintStyle.Render("  ·  ")+mutedStyle.Render(artifactsWord(artifactCount(c))),
+			faintStyle.Render("  ·  ")+mutedStyle.Render(relevo.ArtifactSizeText(artifactTotalSize(c))))
+	}
+	if !p.roundOpen(b) {
+		cells = append(cells, faintStyle.Render("  ·  ")+mutedStyle.Render("repository unchanged"))
+	}
+	cells = append(cells,
+		"      "+textStyle.Render(actorCell(b))+faintStyle.Render(" on ")+textStyle.Render(candidateText(b)),
+		faintStyle.Render("  ·  ")+mutedStyle.Render("reader"),
+		faintStyle.Render("  ·  ")+mutedStyle.Render(plannerWordOf(b)),
+		faintStyle.Render("  ·  ")+mutedStyle.Render(scratchText(p.baselineHead)))
+	return cells
+}
 
-	buildLeft := func() string {
-		s := partPill + partAge
-		if hasCandidate {
-			s += partCandidate
-		}
-		if hasPlanner {
-			s += partPlanner
-		}
-		if hasBranch {
-			s += partBranch
-		}
-		if hasDirty {
-			s += partDirty
-		}
-		return s
+// plannerWordOf names the planner as the context row does: the client label
+// when the binding has one, the planner cell otherwise.
+func plannerWordOf(b view.BindingStatus) string {
+	if b.OwnerLabel != "" {
+		return "client " + b.OwnerLabel
 	}
+	return plannerCell(b)
+}
 
-	left := buildLeft()
-
-	if lipgloss.Width(left)+1+lipgloss.Width(right) > env.Width {
-		right = ""
-	}
-
-	if hasDirty && lipgloss.Width(left) > env.Width {
-		hasDirty = false
-		left = buildLeft()
-	}
-	if hasBranch && lipgloss.Width(left) > env.Width {
-		hasBranch = false
-		left = buildLeft()
-	}
-	if hasPlanner && lipgloss.Width(left) > env.Width {
-		hasPlanner = false
-		left = buildLeft()
-	}
-	if hasCandidate && lipgloss.Width(left) > env.Width {
-		hasCandidate = false
-		left = buildLeft()
-	}
-
-	return left, right
+// roundOpen reports whether the round on screen is the binding's own open
+// round: the writer's "live" round, and the one a reader's scratch worktree
+// has not yet been reported unchanged against.
+func (p roundPane) roundOpen(b view.BindingStatus) bool {
+	return p.detail.live && p.detail.round == b.Round && b.RoundEnd.IsZero()
 }
 
 // scratchText names a reader round's throwaway worktree: the head its
@@ -283,12 +290,12 @@ func (r roundView) Context(env Env) (string, string) {
 // worktree alone.
 func scratchText(head string) string {
 	if head == "" {
-		return "scratch worktree + dirty diff"
+		return "scratch + dirty diff"
 	}
 	if len(head) > 7 {
 		head = head[:7]
 	}
-	return "scratch worktree @ " + head + " + dirty diff"
+	return "scratch @ " + head + " + dirty diff"
 }
 
 func (r roundView) Keys() []KeyHelp {
