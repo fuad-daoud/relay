@@ -8,19 +8,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// deriveOutcome derives round n's outcome from its events, the binding's
-// present state, and its members (the set of file basenames the source
-// holds), first match wins (docs/specs/2026-09-20-persistence-design.md
-// §5.3):
+// deriveOutcome derives round n's outcome, first match wins:
 //
-//  1. a report entry exists for n                                -> reported
-//  2. members has round n's done marker and no report            -> done_no_report
-//  3. an exit entry exists for n, n is the binding's current      -> exited
-//     round, and the binding's state is not active
-//  4. the binding's state is needs_you on round n, or its Halt    -> halted
-//     names round n
-//  5. a switch entry exists for n                                 -> switched
-//  6. otherwise                                                   -> open
+//	report entry              -> reported
+//	done marker, no report    -> done_no_report
+//	exit on the current round -> exited
+//	needs_you or Halt on n    -> halted
+//	switch entry              -> switched
+//	otherwise                 -> open
 func deriveOutcome(events []store.LogEntry, n int, b store.Binding, members map[string]bool) string {
 	var hasReport, hasExit, hasSwitch bool
 	for _, e := range events {
@@ -37,28 +32,24 @@ func deriveOutcome(events []store.LogEntry, n int, b store.Binding, members map[
 		}
 	}
 
-	if hasReport {
+	switch {
+	case hasReport:
 		return db.OutcomeReported
-	}
-	if members[donePathBase(n)] {
+	case members[donePathBase(n)]:
 		return db.OutcomeDoneNoReport
-	}
-	if hasExit && n == b.Round && b.State != store.StateActive {
+	case hasExit && n == b.Round && b.State != store.StateActive:
 		return db.OutcomeExited
-	}
-	if (b.State == store.StateNeedsYou && n == b.Round) || (b.Halt != "" && n == b.Round) {
+	case (b.State == store.StateNeedsYou && n == b.Round) || (b.Halt != "" && n == b.Round):
 		return db.OutcomeHalted
-	}
-	if hasSwitch {
+	case hasSwitch:
 		return db.OutcomeSwitched
+	default:
+		return db.OutcomeOpen
 	}
-	return db.OutcomeOpen
 }
 
-// switchesForRound counts switch entries for round n, regardless of outcome.
-// A relaunch replaces a lost process with the same candidate, so it is not a
-// switch: entries whose note starts with "relaunched " or "resumed session "
-// are skipped.
+// switchesForRound counts switch entries for round n. A relaunch replaces a lost
+// process with the same candidate, so its note prefix is skipped.
 func switchesForRound(events []store.LogEntry, n int) int {
 	count := 0
 	for _, e := range events {
@@ -70,15 +61,10 @@ func switchesForRound(events []store.LogEntry, n int) int {
 	return count
 }
 
-// builderForRound resolves round n's builder: the token parsed from the
-// last pick or switch entry's note for the round, falling back to
-// b.BuilderCandidate. A consult's pick is not the builder: a pick whose note
-// names a role other than "builder" (isRolePick) is skipped, so a consult
-// asked after the builder pick cannot overwrite the round's builder.
-// candidateTok is the token verbatim (with any effort suffix kept); ref is
-// parsed from it with a trailing "#..." suffix stripped (a ":effort" suffix
-// belongs to the model and stays). ok is false when no token was found at
-// all -- from a note or from the binding.
+// builderForRound resolves round n's builder: the token from the last pick or
+// switch entry's note, falling back to b.BuilderCandidate. A consult's pick names
+// a role other than "builder" and is skipped. candidateTok is verbatim; ref has a
+// trailing "#..." stripped, since a ":effort" suffix belongs to the model.
 func builderForRound(events []store.LogEntry, n int, b store.Binding) (candidateTok string, ref candidate.Ref, ok bool) {
 	var lastKind store.Kind
 	var lastNote string
@@ -113,10 +99,7 @@ func builderForRound(events []store.LogEntry, n int, b store.Binding) (candidate
 }
 
 // isRolePick reports whether note is the pick `ask` writes for a consult:
-// "picked <tok> for <role>: ..." with a role other than "builder". It
-// recognises that consult pick and deliberately nothing else, so a builder
-// pick, a remote " on <server>:" pick, and any older or unrecognised shape
-// all return false.
+// "picked <tok> for <role>: ..." with a role other than "builder".
 func isRolePick(note string) bool {
 	const prefix = "picked "
 	if !strings.HasPrefix(note, prefix) {
@@ -137,14 +120,9 @@ func isRolePick(note string) bool {
 		return false
 	}
 	role := rolePart[:ci]
-	if role == "" || role == "builder" || strings.IndexByte(role, ' ') >= 0 {
-		return false
-	}
-	return true
+	return role != "" && role != "builder" && strings.IndexByte(role, ' ') < 0
 }
 
-// parseBuilderNote extracts the candidate token from a pick or switch log
-// entry's note.
 func parseBuilderNote(kind store.Kind, note string) string {
 	switch kind {
 	case store.KindPick:
@@ -155,10 +133,8 @@ func parseBuilderNote(kind store.Kind, note string) string {
 	return ""
 }
 
-// parsePickNote parses "picked <token> ...": a candidate token never
-// contains a space, so the token is the first space-delimited word after
-// "picked ", with one trailing ":" stripped. This keeps " for builder"
-// (the local pick note) and a model's ":effort" suffix out of the cut.
+// parsePickNote parses the first space-delimited word after "picked ", with one
+// trailing ":" stripped.
 func parsePickNote(note string) string {
 	const prefix = "picked "
 	if !strings.HasPrefix(note, prefix) {
@@ -172,11 +148,8 @@ func parsePickNote(note string) string {
 	return strings.TrimSuffix(tok, ":")
 }
 
-// parseSwitchNote parses the token from a switch entry's note. When the
-// note carries the "picked <tok> ..." clause relevo actually writes
-// ("switched builder (<reason>): picked <tok> for builder: ...") the pick
-// rule applies; otherwise it is the token after the last "->", trimmed of
-// a trailing ")" and whitespace.
+// parseSwitchNote parses the pick clause when present, otherwise the token after
+// the last "->", trimmed of a trailing ")" and whitespace.
 func parseSwitchNote(note string) string {
 	if i := strings.LastIndex(note, "picked "); i >= 0 {
 		return parsePickNote(note[i:])
@@ -190,8 +163,8 @@ func parseSwitchNote(note string) string {
 	return strings.TrimSpace(tok)
 }
 
-// stripEffortHash removes a trailing "#..." suffix from a candidate token.
-// A ":effort" suffix is not touched -- it belongs to the model part.
+// stripEffortHash removes a trailing "#..." suffix; a ":effort" suffix belongs to
+// the model part and is left alone.
 func stripEffortHash(tok string) string {
 	if i := strings.IndexByte(tok, '#'); i >= 0 {
 		return tok[:i]

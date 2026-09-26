@@ -13,60 +13,34 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// DedupeStats summarises one DedupeMirrorOnce run. It is also the JSON
-// document the run leaves under the kv key `mirror-dedupe.v2`, which is what
-// keeps the removal a one-time event.
+// DedupeStats summarises one DedupeMirrorOnce run; it is also the JSON document
+// the run leaves under the kv key, which keeps the removal a one-time event.
 type DedupeStats struct {
-	// DoneAt is when the run finished.
-	DoneAt time.Time `json:"done_at"`
-	// MirrorBindings is how many mirror bindings were examined.
-	MirrorBindings int `json:"mirror_bindings"`
-	// Unmapped is how many of them had no unique record, so every row of
-	// theirs was kept.
-	Unmapped int `json:"unmapped"`
-	// ArtifactsDeleted is how many artifact rows were removed.
-	ArtifactsDeleted int `json:"artifacts_deleted"`
-	// ArtifactsKept is how many examined artifact rows were not proven
-	// duplicate, an answer included.
-	ArtifactsKept int `json:"artifacts_kept"`
-	// TranscriptRoundsDeleted is how many rounds had their transcript rows
-	// removed.
-	TranscriptRoundsDeleted int `json:"transcript_rounds_deleted"`
-	// TranscriptRowsDeleted is how many transcript rows that was.
-	TranscriptRowsDeleted int `json:"transcript_rows_deleted"`
-	// TranscriptRoundsKept is how many rounds had rows that were not proven
-	// duplicate.
-	TranscriptRoundsKept int `json:"transcript_rounds_kept"`
-	// TranscriptRoundsByStreamLines is how many of TranscriptRoundsDeleted
-	// were proven by the sealed-lines rule (stream, or log for rows with no
-	// record JSON) rather than exact re-derivation.
-	TranscriptRoundsByStreamLines int `json:"transcript_rounds_by_stream_lines"`
-	// TranscriptRowsRenamed is how many rows of those rounds matched a stream
-	// line only after the rename rewrite.
-	TranscriptRowsRenamed int `json:"transcript_rows_renamed"`
-	// BackupPath is where the pre-run backup was written; empty when nothing
-	// was deleted, so no backup was taken.
-	BackupPath string `json:"backup_path"`
-	// VacuumErr is empty on success. A VACUUM failure is not fatal: the rows
-	// are gone either way, the file is just not compacted.
-	VacuumErr string `json:"vacuum_err"`
+	DoneAt                        time.Time `json:"done_at"`
+	MirrorBindings                int       `json:"mirror_bindings"`
+	Unmapped                      int       `json:"unmapped"`
+	ArtifactsDeleted              int       `json:"artifacts_deleted"`
+	ArtifactsKept                 int       `json:"artifacts_kept"`
+	TranscriptRoundsDeleted       int       `json:"transcript_rounds_deleted"`
+	TranscriptRowsDeleted         int       `json:"transcript_rows_deleted"`
+	TranscriptRoundsKept          int       `json:"transcript_rounds_kept"`
+	TranscriptRoundsByStreamLines int       `json:"transcript_rounds_by_stream_lines"`
+	TranscriptRowsRenamed         int       `json:"transcript_rows_renamed"`
+	BackupPath                    string    `json:"backup_path"`
+	VacuumErr                     string    `json:"vacuum_err"`
 }
 
-// dedupePlan is what DedupeMirror decides: the rows to remove, plus the
-// counts a DedupeStats reports. It is read-only work -- nothing is deleted
-// until DedupeMirrorOnce applies it, and only after a backup.
+// dedupePlan is what DedupeMirror decides: the rows to remove plus the counts a
+// DedupeStats reports. Nothing is deleted until DedupeMirrorOnce applies it.
 type dedupePlan struct {
-	// artifactIDs are the artifact rows proven duplicate of a round_file.
-	artifactIDs []string
-	// transcriptOwners are the mirror round ids whose transcript rows were
-	// reproduced exactly from the record.
+	artifactIDs      []string
 	transcriptOwners []string
 	stats            DedupeStats
 }
 
-// dedupeArtifactSuffix is the round-file name each artifact kind's content is
-// sealed under, after the round's "%03d-" prefix. answer is deliberately
-// absent: it comes from a log payload, has no round file, and is always kept.
+// dedupeArtifactSuffix is the round-file name each artifact kind is sealed under,
+// after the "%03d-" prefix. answer is deliberately absent: it comes from a log
+// payload and is always kept.
 var dedupeArtifactSuffix = map[string]string{
 	db.ArtifactPlan:     "plan.md",
 	db.ArtifactReport:   "report.md",
@@ -75,11 +49,8 @@ var dedupeArtifactSuffix = map[string]string{
 	db.ArtifactQuestion: "question.md",
 }
 
-// dedupeArtifactKinds is every artifact kind DedupeMirror examines, in the
-// order it examines them: the kinds with a round-file counterpart, plus
-// answer. Other kinds (gate_log, ask, findings) are neither deleted nor
-// counted; ask and findings carry a consult id, which db.Artifact's
-// empty-consult-id filter already excludes.
+// dedupeArtifactKinds is every kind DedupeMirror examines, in order: those with a
+// round-file counterpart, plus answer. gate_log, ask and findings are excluded.
 var dedupeArtifactKinds = []string{
 	db.ArtifactPlan,
 	db.ArtifactReport,
@@ -89,9 +60,8 @@ var dedupeArtifactKinds = []string{
 	db.ArtifactAnswer,
 }
 
-// dedupeRoundFileBase is the round-file basename kind's content is sealed
-// under in a round numbered number -- "003-report.md" -- or "" when the kind
-// has no round file at all.
+// dedupeRoundFileBase is the round-file basename kind is sealed under, or "" when
+// the kind has no round file.
 func dedupeRoundFileBase(kind string, number int) string {
 	suffix, ok := dedupeArtifactSuffix[kind]
 	if !ok {
@@ -101,29 +71,24 @@ func dedupeRoundFileBase(kind string, number int) string {
 }
 
 // DedupeMirror builds the one-time removal plan for d's ingest mirror,
-// read-only: it changes nothing, and it is DedupeMirrorOnce that applies it.
+// read-only: DedupeMirrorOnce applies it.
 //
-// A mirror binding maps to a record when exactly one of the local owner's
-// records -- live or archived -- has the same name and the same created_at.
-// Zero matches and more than one match both leave the binding unmapped, and
-// an unmapped binding keeps every row. A mapped binding's artifact row is a
-// duplicate when the record's round file for it exists, holds the same byte
-// count, and hashes to the artifact's own sha256; its transcript is a
-// duplicate when either re-deriving the transcript from the record's round
-// file reproduces every row exactly, or every row is covered by the record's
-// sealed lines (streamLinesCover): a row with record JSON is a line of the
-// sealed builder stream, after applying renames when the exact line is not
-// found; a row with no record JSON is blank, or its rendered text is a line
-// of the sealed builder log. Planner transcripts are never examined.
+// A mirror binding maps to a record when exactly one of the local owner's records
+// -- live or archived -- has the same name and created_at; zero or more than one
+// match leaves it unmapped, and an unmapped binding keeps every row. A mapped
+// binding's artifact row is a duplicate when the record's round file for it exists,
+// holds the same byte count and hashes to the artifact's own sha256. Its
+// transcript is a duplicate when re-deriving it reproduces every row exactly, or
+// every row is covered by the record's sealed lines (streamLinesCover). Planner
+// transcripts are never examined.
 //
-// renames are the substitutions a cutover applied to the sealed stream files,
-// so a row whose stored path predates the rewrite still matches its rewritten
-// line. nil is allowed.
+// renames are the substitutions a cutover applied to the sealed stream files, so a
+// row whose stored path predates the rewrite still matches its rewritten line.
 func DedupeMirror(d *db.DB, renames []legacy.Prefix) (dedupePlan, error) {
 	var plan dedupePlan
 
-	// Filter{}'s Archived is nil, which queryBindings reads as "no
-	// constraint": this lists every mirror binding, archived ones included.
+	// Filter{}'s Archived is nil, which queryBindings reads as "no constraint",
+	// so this lists every mirror binding, archived ones included.
 	bindings, err := d.Bindings(db.Filter{})
 	if err != nil {
 		return dedupePlan{}, fmt.Errorf("dedupe: bindings: %w", err)
@@ -154,9 +119,8 @@ func DedupeMirror(d *db.DB, renames []legacy.Prefix) (dedupePlan, error) {
 	return plan, nil
 }
 
-// dedupeRecord returns the one record that maps to b, and false when zero
-// records or more than one do. The caller's records already hold the local
-// owner's live and archived rows.
+// dedupeRecord returns the one record that maps to b, false when zero or more than
+// one do.
 func dedupeRecord(b db.BindingRow, records []db.Record) (db.Record, bool) {
 	var match db.Record
 	found := 0
@@ -172,7 +136,6 @@ func dedupeRecord(b db.BindingRow, records []db.Record) (db.Record, bool) {
 	return match, true
 }
 
-// planBinding adds every row of b that is a proven duplicate of record.
 func planBinding(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Record, renames []legacy.Prefix) error {
 	rounds, err := d.Rounds(b.ID)
 	if err != nil {
@@ -189,8 +152,6 @@ func planBinding(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Record, 
 	return nil
 }
 
-// planArtifacts applies the artifact identity rule to every kind DedupeMirror
-// examines of one round.
 func planArtifacts(plan *dedupePlan, d *db.DB, record db.Record, rd db.Round) error {
 	for _, kind := range dedupeArtifactKinds {
 		a, ok, err := d.Artifact(rd.ID, kind)
@@ -220,11 +181,7 @@ func planArtifacts(plan *dedupePlan, d *db.DB, record db.Record, rd db.Round) er
 	return nil
 }
 
-// planTranscript applies the transcript identity rule to one mirror round: if
-// the round has transcript rows at all, it plans their removal when a
-// re-derivation from the record reproduces every row exactly, and otherwise
-// when every row's record JSON is a line of the record's sealed builder
-// stream, with renames applied to a row whose stored path predates a cutover.
+// planTranscript applies the transcript identity rule to one mirror round.
 func planTranscript(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Record, rd db.Round, renames []legacy.Prefix) error {
 	rows, err := d.Transcript(db.OwnerRound, rd.ID, 0, 0)
 	if err != nil {
@@ -240,9 +197,7 @@ func planTranscript(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Recor
 	}
 	for _, derived := range candidates {
 		if transcriptRowsEqual(rows, derived) {
-			plan.transcriptOwners = append(plan.transcriptOwners, rd.ID)
-			plan.stats.TranscriptRoundsDeleted++
-			plan.stats.TranscriptRowsDeleted += len(rows)
+			plan.removeTranscript(rd.ID, len(rows), false, 0)
 			return nil
 		}
 	}
@@ -252,11 +207,7 @@ func planTranscript(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Recor
 		return err
 	}
 	if covered {
-		plan.transcriptOwners = append(plan.transcriptOwners, rd.ID)
-		plan.stats.TranscriptRoundsDeleted++
-		plan.stats.TranscriptRowsDeleted += len(rows)
-		plan.stats.TranscriptRoundsByStreamLines++
-		plan.stats.TranscriptRowsRenamed += renamed
+		plan.removeTranscript(rd.ID, len(rows), true, renamed)
 		return nil
 	}
 
@@ -264,29 +215,24 @@ func planTranscript(plan *dedupePlan, d *db.DB, b db.BindingRow, record db.Recor
 	return nil
 }
 
+func (p *dedupePlan) removeTranscript(ownerID string, rows int, byStreamLines bool, renamed int) {
+	p.transcriptOwners = append(p.transcriptOwners, ownerID)
+	p.stats.TranscriptRoundsDeleted++
+	p.stats.TranscriptRowsDeleted += rows
+	if byStreamLines {
+		p.stats.TranscriptRoundsByStreamLines++
+		p.stats.TranscriptRowsRenamed += renamed
+	}
+}
+
 // streamLinesCover reports whether every row is proven by the record's sealed
-// round files, and how many rows matched only after the rename rewrite. It is
-// the looser second proof planTranscript falls back to when no exact
-// re-derivation fits. It applies three cases to each row, in order:
-//
-//  1. RecordJSON != "": the row is covered when its record JSON is a line of
-//     the sealed builder stream (NNN-builder.jsonl), directly, or -- when
-//     renames are given -- after the rewrite. rendered and ts are derived from
-//     the record JSON, and seq from the line's order, so such a row holds
-//     nothing the stream does not. A row with no stream to hold it is not
-//     covered.
-//  2. RecordJSON == "" and Rendered == "": the row is a blank stream line and
-//     holds nothing, so it is covered.
-//  3. RecordJSON == "" and Rendered != "": the row is covered when Rendered is
-//     a line of the sealed builder log (NNN-builder.log) verbatim -- a
-//     log-derived row is already-rendered text with no record behind it, so
-//     the log line it came from is all it holds. No rename rewrite is tried:
-//     relevo migrate never rewrote .log files. A missing log file leaves the
-//     row uncovered.
-//
-// A missing stream no longer returns early: a round whose rows are all case 2
-// or case 3 can be covered without one. The log is read only when a case-3 row
-// is first met. rows must be non-empty.
+// round files, and how many matched only after the rename rewrite. Three cases, in
+// order: a row with record JSON is covered when it is a line of the sealed builder
+// stream, directly or -- with renames -- after the rewrite; a row with neither
+// record JSON nor rendered text is a blank stream line and holds nothing; a row
+// with rendered text but no record JSON is covered when it is a line of the sealed
+// builder log verbatim (relevo migrate never rewrote .log files, so no rename
+// rewrite is tried). A missing stream is not fatal. rows must be non-empty.
 func streamLinesCover(d *db.DB, record db.Record, rd db.Round, rows []db.TranscriptRecord, renames []legacy.Prefix) (covered bool, renamed int, err error) {
 	streamBase := builderStreamPathBase(rd.Number)
 	body, _, found, err := d.RoundFileGet(record.ID, streamBase)
@@ -295,32 +241,23 @@ func streamLinesCover(d *db.DB, record db.Record, rd db.Round, rows []db.Transcr
 	}
 	var stream map[string]bool
 	if found {
-		lines, lerr := roundFileLines(streamBase, body)
-		if lerr != nil {
-			return false, 0, fmt.Errorf("dedupe: split %s/%s: %w", record.Name, streamBase, lerr)
-		}
-		stream = make(map[string]bool, len(lines))
-		for _, line := range lines {
-			stream[string(line)] = true
+		stream, err = lineSet(record, streamBase, body)
+		if err != nil {
+			return false, 0, err
 		}
 	}
 
 	var log map[string]bool
 	logLoaded := false
-
 	for _, row := range rows {
 		if row.RecordJSON != "" {
-			if stream[row.RecordJSON] {
-				continue
-			}
-			if len(renames) == 0 {
+			ok, renamedRow := streamCoversRecord(row.RecordJSON, stream, renames)
+			if !ok {
 				return false, 0, nil
 			}
-			rewritten := string(legacy.RewriteJSON([]byte(row.RecordJSON), renames))
-			if rewritten == row.RecordJSON || !stream[rewritten] {
-				return false, 0, nil
+			if renamedRow {
+				renamed++
 			}
-			renamed++
 			continue
 		}
 		if row.Rendered == "" {
@@ -328,49 +265,69 @@ func streamLinesCover(d *db.DB, record db.Record, rd db.Round, rows []db.Transcr
 		}
 		if !logLoaded {
 			logLoaded = true
-			logBase := builderLogPathBase(rd.Number)
-			logBody, _, logFound, lerr := d.RoundFileGet(record.ID, logBase)
-			if lerr != nil {
-				return false, 0, fmt.Errorf("dedupe: round file %s/%s: %w", record.Name, logBase, lerr)
-			}
-			if logFound {
-				logLines, serr := roundFileLines(logBase, logBody)
-				if serr != nil {
-					return false, 0, fmt.Errorf("dedupe: split %s/%s: %w", record.Name, logBase, serr)
-				}
-				log = make(map[string]bool, len(logLines))
-				for _, line := range logLines {
-					log[string(line)] = true
-				}
+			log, err = sealedLogSet(d, record, rd)
+			if err != nil {
+				return false, 0, err
 			}
 		}
-		if log[row.Rendered] {
-			continue
+		if !log[row.Rendered] {
+			return false, 0, nil
 		}
-		return false, 0, nil
 	}
 	return true, renamed, nil
 }
 
-// Kept here since D3b removed ingest.go's round-file mirror, their former caller.
+// streamCoversRecord reports whether a row's record JSON is a line of the sealed
+// builder stream; renamed is true when only the rewrite matched.
+func streamCoversRecord(jsonLine string, stream map[string]bool, renames []legacy.Prefix) (ok, renamed bool) {
+	if stream[jsonLine] {
+		return true, false
+	}
+	if len(renames) == 0 {
+		return false, false
+	}
+	rewritten := string(legacy.RewriteJSON([]byte(jsonLine), renames))
+	if rewritten == jsonLine || !stream[rewritten] {
+		return false, false
+	}
+	return true, true
+}
+
+func sealedLogSet(d *db.DB, record db.Record, rd db.Round) (map[string]bool, error) {
+	logBase := builderLogPathBase(rd.Number)
+	body, _, found, err := d.RoundFileGet(record.ID, logBase)
+	if err != nil {
+		return nil, fmt.Errorf("dedupe: round file %s/%s: %w", record.Name, logBase, err)
+	}
+	if !found {
+		return nil, nil
+	}
+	return lineSet(record, logBase, body)
+}
+
+func lineSet(record db.Record, name string, body []byte) (map[string]bool, error) {
+	lines, err := roundFileLines(name, body)
+	if err != nil {
+		return nil, fmt.Errorf("dedupe: split %s/%s: %w", record.Name, name, err)
+	}
+	set := make(map[string]bool, len(lines))
+	for _, line := range lines {
+		set[string(line)] = true
+	}
+	return set, nil
+}
+
 func builderLogPathBase(round int) string {
 	return filepath.Base(memberStore.BuilderLogPath("x", round))
 }
+
 func builderStreamPathBase(round int) string {
 	return filepath.Base(memberStore.BuilderStreamPath("x", round))
 }
 
-// deriveTranscripts re-derives a mirror round's transcript rows from the
-// record's own sealed round files, returning every candidate the identity
-// rule allows: the transcript is a duplicate when either source reproduces
-// the rows exactly.
-//
-// The stream (NNN-builder.jsonl) is tried first, split exactly as Ingest
-// splits it and rendered under each candidate kind (transcriptKinds). The log
-// (NNN-builder.log) is tried as well whenever it is present -- already-rendered
-// text with no record behind it -- so a round whose stored rows came from the
-// log is recognised even when the record also holds the stream. Neither file
-// present means no candidate at all.
+// deriveTranscripts re-derives a mirror round's transcript rows from the record's
+// sealed round files, returning every candidate the identity rule allows: the
+// stream rendered under each candidate kind, and the log whenever present.
 func deriveTranscripts(d *db.DB, record db.Record, rd db.Round) ([][]db.TranscriptRecord, error) {
 	var out [][]db.TranscriptRecord
 
@@ -408,13 +365,9 @@ func deriveTranscripts(d *db.DB, record db.Record, rd db.Round) ([][]db.Transcri
 	return out, nil
 }
 
-// transcriptKinds is the harness kind each stream candidate is rendered
-// under, in order: the mirror round's own BuilderHarness when it has one,
-// then the record's decoded store.Binding.Builder.Kind. A repeated kind is
-// dropped, so the same derivation is never tried twice. A record whose JSON
-// does not decode to a Binding contributes no kind of its own -- the harness
-// candidate still stands -- rather than failing a read-only plan for one
-// unreadable record.
+// transcriptKinds is the harness kind each stream candidate is rendered under: the
+// mirror round's own BuilderHarness, then the record's decoded Builder.Kind, each
+// once.
 func transcriptKinds(record db.Record, rd db.Round) []string {
 	kinds := make([]string, 0, 2)
 	seen := make(map[string]bool, 2)
@@ -436,11 +389,9 @@ func transcriptKinds(record db.Record, rd db.Round) []string {
 	return kinds
 }
 
-// roundFileLines splits a sealed round file's body into complete lines exactly
-// as Ingest's readAppendOnly splits a live member: a trailing partial line is
-// left for a next read, and every returned line has no newline. It calls
-// readAppendOnly itself, over an in-memory opener, rather than shipping a
-// second splitter that could drift from the reader it must agree with.
+// roundFileLines splits a sealed round file's body exactly as readAppendOnly
+// splits a live member, reusing that reader rather than a second splitter that
+// could drift from it.
 func roundFileLines(name string, body []byte) ([][]byte, error) {
 	opener := func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
 	lines, _, _, _, err := readAppendOnly(opener, name, db.Cursor{}, false)
@@ -450,9 +401,8 @@ func roundFileLines(name string, body []byte) ([][]byte, error) {
 	return lines, nil
 }
 
-// transcriptRowsEqual reports whether two transcript row lists are the same
-// rows: the same count, and per index the same seq, record JSON, rendered
-// text and timestamp. Ids are ignored -- ingest mints a fresh ULID per row.
+// transcriptRowsEqual compares seq, record JSON, rendered text and timestamp per
+// index. Ids are ignored -- ingest mints a fresh ULID per row.
 func transcriptRowsEqual(want, got []db.TranscriptRecord) bool {
 	if len(want) != len(got) {
 		return false
@@ -468,7 +418,6 @@ func transcriptRowsEqual(want, got []db.TranscriptRecord) bool {
 	return true
 }
 
-// timePtrEqual compares two optional timestamps without dereferencing a nil.
 func timePtrEqual(a, b *time.Time) bool {
 	switch {
 	case a == nil && b == nil:
@@ -481,33 +430,18 @@ func timePtrEqual(a, b *time.Time) bool {
 }
 
 // dedupeKVKey is the kv key a finished removal is recorded under. Its presence
-// is what makes the removal one-time: the key appears only once a run has
-// either deleted everything it planned or found nothing to delete, so a run
-// that fails on the backup leaves no key and the next daemon start retries.
-//
-// v1 was the exact-derivation pass (#422); v2 adds the stream-lines proof
-// (#476). A v1 row is left in kv as history and does not stop v2.
+// makes the removal one-time: a run that fails on the backup leaves no key, so the
+// next daemon start retries.
 const dedupeKVKey = "mirror-dedupe.v2"
 
 // DedupeMirrorOnce removes the mirror rows DedupeMirror proves duplicate of a
-// round_file, once per database and only after a full backup.
-//
-// It is the daemon's start-up call, so it never half-does the work:
-//
-//  1. an existing mirror-dedupe.v2 kv row means an earlier run finished:
-//     nothing happens and ran is false.
-//  2. the plan comes from DedupeMirror, which changes nothing.
-//  3. a plan that deletes nothing writes the stats and returns ran true, with
-//     no backup: there is nothing to be able to undo.
-//  4. otherwise the whole database is backed up under backupDir first. A
-//     backup failure returns the error with no deletes and no kv row.
-//  5. one transaction deletes every planned artifact and every planned
-//     round's transcript rows, then writes the stats. A failure rolls the
-//     transaction back, so the deletes and the kv row go together.
-//  6. VACUUM compacts the file; its failure is recorded in stats.VacuumErr and
-//     is not returned, because the rows are gone either way.
-//
-// renames is passed through to DedupeMirror.
+// round_file, once per database and only after a full backup. It never half-does
+// the work: an existing kv row means an earlier run finished and ran is false; an
+// empty plan writes the stats and returns with no backup; otherwise the database is
+// backed up first (a failure returns the error with no deletes and no kv row), one
+// transaction deletes every planned row and writes the stats, and a VACUUM failure
+// is recorded in stats.VacuumErr rather than returned, since the rows are gone
+// either way.
 func DedupeMirrorOnce(d *db.DB, backupDir string, renames []legacy.Prefix, now time.Time) (stats DedupeStats, ran bool, err error) {
 	if _, ok, kerr := d.KVGet(dedupeKVKey); kerr != nil {
 		return DedupeStats{}, false, fmt.Errorf("dedupe: kv get %s: %w", dedupeKVKey, kerr)
@@ -561,8 +495,6 @@ func DedupeMirrorOnce(d *db.DB, backupDir string, renames []legacy.Prefix, now t
 	return stats, true, nil
 }
 
-// putDedupeStats writes a finished run's document under the kv key, the one
-// write that records the removal as done.
 func putDedupeStats(d *db.DB, stats DedupeStats) error {
 	value, err := json.Marshal(stats)
 	if err != nil {

@@ -80,8 +80,7 @@ func TestStreamClosed(t *testing.T) {
 }
 
 func TestReadHeadlessWaitsForTrailer(t *testing.T) {
-	// Start with everything but the result event and the trailer, append
-	// them 300 ms later, and expect the result-based sample.
+	// Everything but the result event and the trailer, appended 300 ms later.
 	raw, err := os.ReadFile("testdata/claude-stream.jsonl")
 	if err != nil {
 		t.Fatal(err)
@@ -96,8 +95,8 @@ func TestReadHeadlessWaitsForTrailer(t *testing.T) {
 	go func() {
 		time.Sleep(300 * time.Millisecond)
 		f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
-		f.WriteString(tail)
-		f.Close()
+		_, _ = f.WriteString(tail)
+		_ = f.Close()
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -123,11 +122,8 @@ func TestReadHeadlessTimesOutOnOpenStream(t *testing.T) {
 	}
 }
 
-// TestPeekOpenStreamReturnsPartial pins that Peek reads an open stream
-// without polling for the trailer (#234): two assistant events are two
-// samples with the open-stream note, back before one trailerPoll has
-// elapsed. After the trailer and the result event land, Read returns the
-// result sample.
+// TestPeekOpenStreamReturnsPartial pins that Peek reads an open stream without
+// polling for the trailer.
 func TestPeekOpenStreamReturnsPartial(t *testing.T) {
 	_, path := mustTemp(t,
 		`{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-5","usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":0,"output_tokens":5}}}`+"\n"+
@@ -149,8 +145,8 @@ func TestPeekOpenStreamReturnsPartial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Fprintf(f, "{\"type\":\"result\",\"total_cost_usd\":0.5,\"usage\":{\"input_tokens\":12,\"cache_creation_input_tokens\":100,\"cache_read_input_tokens\":100,\"output_tokens\":25}}\n%s0\n", ExitTrailerForTest())
-	f.Close()
+	_, _ = fmt.Fprintf(f, "{\"type\":\"result\",\"total_cost_usd\":0.5,\"usage\":{\"input_tokens\":12,\"cache_creation_input_tokens\":100,\"cache_read_input_tokens\":100,\"output_tokens\":25}}\n%s0\n", ExitTrailerForTest())
+	_ = f.Close()
 	got, note = New().Read(context.Background(), Source{Harness: "claude", Mode: ModeHeadless, Provider: "anthropic", StreamPath: path})
 	if note != "" || len(got) != 1 || !got[0].HasCost {
 		t.Errorf("after the trailer: %d samples, note %q, %+v; want the measured result sample", len(got), note, got)
@@ -164,9 +160,7 @@ func TestPeekMissingStream(t *testing.T) {
 	}
 }
 
-// TestStreamClosedLegacyTrailer pins #292 §1: a stream whose last line is the
-// old relay-exit: marker counts as closed, so a pre-rename round's cost is // name-guard: legacy
-// read with its measured figures instead of "stream still open".
+// TestStreamClosedLegacyTrailer: a last line of the old relay-exit: marker is closed. // name-guard: legacy
 func TestStreamClosedLegacyTrailer(t *testing.T) {
 	dir := t.TempDir()
 	cases := map[string]struct {
@@ -200,7 +194,6 @@ func TestStreamFromSkipsEarlierSegment(t *testing.T) {
 	full := []byte(seg1 + seg2 + trailer)
 	offset2 := int64(len(seg1))
 
-	// On-disk (parseCached) path
 	path := filepath.Join(t.TempDir(), "stream.jsonl")
 	if err := os.WriteFile(path, full, 0o644); err != nil {
 		t.Fatal(err)
@@ -231,7 +224,6 @@ func TestStreamFromSkipsEarlierSegment(t *testing.T) {
 		t.Errorf("StreamFrom=offset2: total tokens = %d, want 2100", samples1[0].Tokens.Total())
 	}
 
-	// Sealed (readSealed) path
 	readFile := func(string) ([]byte, error) {
 		return full, nil
 	}
