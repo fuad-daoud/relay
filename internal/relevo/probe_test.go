@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/latency"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -387,9 +387,9 @@ func TestProbeRecordsHistory(t *testing.T) {
 		t.Errorf("each saw %v, want %v in order", seen, wantOrder)
 	}
 
-	h, err := latency.LoadKV(rt.Latency, "")
+	h, err := availability.LoadLatency(rt.Latency, "")
 	if err != nil {
-		t.Fatalf("latency.LoadKV() error = %v", err)
+		t.Fatalf("latency.LoadLatency() error = %v", err)
 	}
 	if len(h.Samples) != 2 {
 		t.Fatalf("recorded %d samples, want 2", len(h.Samples))
@@ -409,19 +409,19 @@ func TestProbeRecordsHistory(t *testing.T) {
 func TestFormatProbe(t *testing.T) {
 	t.Parallel()
 
-	success := ProbeResult{Sample: latency.Sample{Token: "opencode/test/m", TTFTMS: 640, TotalMS: 1500}, Name: "m"}
+	success := ProbeResult{Sample: availability.Sample{Token: "opencode/test/m", TTFTMS: 640, TotalMS: 1500}, Name: "m"}
 	if got, want := FormatProbe(success, 15), "m"+strings.Repeat(" ", 14)+"  ttft 640ms  total 1.5s"; got != want {
 		t.Errorf("FormatProbe(success) = %q, want %q", got, want)
 	}
 
-	failure := ProbeResult{Sample: latency.Sample{Token: "opencode/test/m", TTFTMS: 200, TotalMS: 900, Err: "exit status 1"}, Name: "m"}
+	failure := ProbeResult{Sample: availability.Sample{Token: "opencode/test/m", TTFTMS: 200, TotalMS: 900, Err: "exit status 1"}, Name: "m"}
 	if got, want := FormatProbe(failure, 15), "m"+strings.Repeat(" ", 14)+"  error: exit status 1  (ttft 200ms)"; got != want {
 		t.Errorf("FormatProbe(failure) = %q, want %q", got, want)
 	}
 
 	// A result with no name -- one read back from a pre-A1 record -- prints
 	// the token.
-	nameless := ProbeResult{Sample: latency.Sample{Token: "opencode/test/m", TTFTMS: 640, TotalMS: 1500}}
+	nameless := ProbeResult{Sample: availability.Sample{Token: "opencode/test/m", TTFTMS: 640, TotalMS: 1500}}
 	if got, want := FormatProbe(nameless, 15), "opencode/test/m  ttft 640ms  total 1.5s"; got != want {
 		t.Errorf("FormatProbe(nameless) = %q, want %q", got, want)
 	}

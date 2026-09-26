@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -51,7 +52,7 @@ func retryBusy(ctx context.Context, delays []time.Duration, sleep func(time.Dura
 // (P4a round 2 §4.1, #303 §5.4): the CLI prints the result to
 // stdout and the planner reads it as tool output.
 //
-// The text is PushText(entry, name, rt.Store.ReadFile): the stored payload
+// The text is delivery.PushText(entry, name, rt.Store.ReadFile): the stored payload
 // (origin line first) plus a blank line plus the report file's text, capped at
 // MaxPushBytes. found is false when nothing is pending.
 //
@@ -90,7 +91,7 @@ func pullPending(ctx context.Context, rt Runtime, name, route string) (text stri
 
 	// The file read happens outside the lock: no file I/O under the state
 	// lock.
-	text, _ = PushText(entry, name, rt.Store.ReadFile)
+	text, _ = delivery.PushText(entry, name, rt.Store.ReadFile)
 	return text, true, nil
 }
 
@@ -135,18 +136,18 @@ func pullPendingThrough(ctx context.Context, rt Runtime, name, route string, rou
 	// The file reads happen outside the lock: no file I/O under the state
 	// lock, as pullPending does.
 	if len(pending) == 1 {
-		text, _ = PushText(pending[0].Entry, name, rt.Store.ReadFile)
+		text, _ = delivery.PushText(pending[0].Entry, name, rt.Store.ReadFile)
 		return text, true, nil
 	}
 
 	var b strings.Builder
 	for _, p := range pending[:len(pending)-1] {
 		fmt.Fprintf(&b, "── round %d: not delivered earlier (%s) ──\n", p.Entry.Round, p.Entry.Path)
-		earlier, _ := PushText(p.Entry, name, rt.Store.ReadFile)
+		earlier, _ := delivery.PushText(p.Entry, name, rt.Store.ReadFile)
 		b.WriteString(earlier)
 		b.WriteString("\n\n")
 	}
-	last, _ := PushText(pending[len(pending)-1].Entry, name, rt.Store.ReadFile)
+	last, _ := delivery.PushText(pending[len(pending)-1].Entry, name, rt.Store.ReadFile)
 	b.WriteString(last)
 	return b.String(), true, nil
 }

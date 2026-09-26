@@ -5,16 +5,15 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/latency"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
 // FormatCandidates renders the configured candidates without latency: the
 // listing FormatCandidatesLatency prints when no probe history is loaded.
-func FormatCandidates(set *candidate.Set, gates []ledger.Gate) string {
+func FormatCandidates(set *candidate.Set, gates []availability.Gate) string {
 	return FormatCandidatesLatency(set, gates, nil)
 }
 
@@ -25,7 +24,7 @@ func FormatCandidates(set *candidate.Set, gates []ledger.Gate) string {
 // to first output, so the planner can see what a candidate costs to start. It
 // is a listing, not a check -- zero candidates prints the same sentence the
 // bind refusal uses, so the planner learns the file name once.
-func FormatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[string]latency.Summary) string {
+func FormatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat map[string]availability.Summary) string {
 	return formatCandidatesLatency(set, gates, lat, func(c candidate.Candidate) string {
 		return strings.Join(c.Roles, ", ")
 	}, true)
@@ -37,7 +36,7 @@ func FormatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[st
 // that serve the candidate -- "(no role)" when none does -- and the tier
 // segment is omitted, because in file mode the tier belongs to the role, not
 // the candidate.
-func FormatCandidatesLatencyFor(reg *roles.Registry, set *candidate.Set, gates []ledger.Gate, lat map[string]latency.Summary) string {
+func FormatCandidatesLatencyFor(reg *roles.Registry, set *candidate.Set, gates []availability.Gate, lat map[string]availability.Summary) string {
 	if !reg.FileMode() {
 		return FormatCandidatesLatency(set, gates, lat)
 	}
@@ -90,12 +89,12 @@ func CandidateRoles(rt Runtime, token string) []string {
 // formatCandidatesLatency is the one line renderer behind both forms: rolesFor
 // renders the roles column, and withTier prints the candidate's own tier
 // segment, which only legacy mode does (#374 §3.2).
-func formatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[string]latency.Summary, rolesFor func(candidate.Candidate) string, withTier bool) string {
+func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat map[string]availability.Summary, rolesFor func(candidate.Candidate) string, withTier bool) string {
 	if set == nil || set.Len() == 0 {
 		return "no candidates configured; set one with relevo config set candidates (see README \"Candidates\")\n"
 	}
 
-	byToken := make(map[string][]ledger.Gate)
+	byToken := make(map[string][]availability.Gate)
 	for _, g := range gates {
 		byToken[g.Token] = append(byToken[g.Token], g)
 	}
@@ -153,7 +152,7 @@ func formatCandidatesLatency(set *candidate.Set, gates []ledger.Gate, lat map[st
 // it covers, sorted and de-duplicated:
 //
 //	roles missing (builder, reviewer) until cleared
-func mergeGateTexts(gates []ledger.Gate) []string {
+func mergeGateTexts(gates []availability.Gate) []string {
 	type group struct {
 		kind     string
 		until    string

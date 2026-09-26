@@ -12,9 +12,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
@@ -39,7 +38,7 @@ type logEntry struct {
 
 type logView struct {
 	events    []db.EventLogRow
-	hist      history.History
+	hist      availability.History
 	revs      []db.RevisionRow
 	loaded    bool
 	err       error
@@ -55,7 +54,7 @@ type logView struct {
 
 type eventLogMsg struct {
 	events []db.EventLogRow
-	hist   history.History
+	hist   availability.History
 	revs   []db.RevisionRow
 	err    error
 	at     time.Time
@@ -94,7 +93,7 @@ func fetchEventLog(ctx context.Context, rt relevo.Runtime, now time.Time) tea.Cm
 		}
 		hist, err := relevo.LoadHistory(rt)
 		if err != nil {
-			hist = history.History{}
+			hist = availability.History{}
 		}
 		return eventLogMsg{
 			events: events,
@@ -129,7 +128,7 @@ func shortDurationText(ms int64) string {
 	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
 }
 
-func buildLogEntries(events []db.EventLogRow, hist history.History, revs []db.RevisionRow, actions []actionEntry, since time.Time, name func(token string) string) []logEntry {
+func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []db.RevisionRow, actions []actionEntry, since time.Time, name func(token string) string) []logEntry {
 	picks := make(map[foldKey]string)
 	drifts := make(map[foldKey]string)
 	diffs := make(map[foldKey]string)
@@ -343,14 +342,14 @@ func buildLogEntries(events []db.EventLogRow, hist history.History, revs []db.Re
 		var detail string
 
 		switch h.Kind {
-		case ledger.RateLimited, ledger.SpawnFailed:
+		case availability.RateLimited, availability.SpawnFailed:
 			word = "gated"
 			style = warnStyle
 			detail = h.Provider
 			if reason := statsGateReasonText(h.Note); reason != "" {
 				detail += " · " + reason
 			}
-		case history.Cleared:
+		case availability.Cleared:
 			word = "cleared"
 			style = greenStyle
 			detail = h.Provider

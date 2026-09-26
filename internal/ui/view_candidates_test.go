@@ -10,7 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
@@ -74,16 +74,16 @@ func candFixtureDoc(t *testing.T) relevo.ConfigDoc {
 
 // candFixtureGates is §8's gate fixture, hung on railNow: gemini until
 // cleared, claude-sonnet-4-6 in 20h, deepseek in 1d and gpt in 24d.
-func candFixtureGates() []ledger.Gate {
-	return []ledger.Gate{
+func candFixtureGates() []availability.Gate {
+	return []availability.Gate{
 		{
-			Token: "agy/google/gemini-3.8-flash-high", Kind: ledger.RateLimited,
+			Token: "agy/google/gemini-3.8-flash-high", Kind: availability.RateLimited,
 			Since: railNow.Add(-45 * time.Minute),
 			Note:  "RESOURCE_EXHAUSTED (code 429): Individual quota reached",
 		},
-		{Token: "agy/agy-extra/claude-sonnet-4-6", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(20 * time.Hour)},
-		{Token: "opencode/cline-pass/cline-pass/deepseek-v4.1-flash#high", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(24 * time.Hour)},
-		{Token: "codex/openai/gpt-5.6-terra:high", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(24 * 24 * time.Hour)},
+		{Token: "agy/agy-extra/claude-sonnet-4-6", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(20 * time.Hour)},
+		{Token: "opencode/cline-pass/cline-pass/deepseek-v4.1-flash#high", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(24 * time.Hour)},
+		{Token: "codex/openai/gpt-5.6-terra:high", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(24 * 24 * time.Hour)},
 	}
 }
 

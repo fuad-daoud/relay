@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
@@ -361,8 +361,8 @@ func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		return b, LimitMatch{}, false, nil
 	}
 
-	entry := ledger.Entry{
-		Kind:    ledger.RateLimited,
+	entry := availability.Entry{
+		Kind:    availability.RateLimited,
 		Subject: providerOf(b.BuilderCandidate),
 		At:      now,
 		Until:   m.Until,

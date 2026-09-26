@@ -9,7 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -240,7 +240,7 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 func TestHeaderGatesAndClock(t *testing.T) {
 	t.Cleanup(relevo.SetGateClock(func() time.Time { return railNow }))
 	m := splitModel(t, 140, 40, threeRows()...)
-	m.report.Gated = []ledger.Gate{{Token: "codex", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)}}
+	m.report.Gated = []availability.Gate{{Token: "codex", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)}}
 	h := stripANSI(m.headerView(m.env()))
 	if strings.Contains(h, "gated") {
 		t.Errorf("header must not contain gates (D2): %q", h)

@@ -13,10 +13,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/stats"
@@ -118,9 +117,9 @@ func histRows() []relevo.HistoryBinding {
 	}
 }
 
-func gatedGates() []ledger.Gate {
-	return []ledger.Gate{
-		{Token: "codex", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)},
+func gatedGates() []availability.Gate {
+	return []availability.Gate{
+		{Token: "codex", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(88 * time.Minute)},
 	}
 }
 
@@ -251,16 +250,16 @@ func realFleetReport() relevo.Report {
 
 	return relevo.Report{
 		Bindings: bindings,
-		Gated: []ledger.Gate{
+		Gated: []availability.Gate{
 			{
 				Token: "agy/antigravity/claude-sonnet-4-6",
-				Kind:  ledger.RateLimited,
+				Kind:  availability.RateLimited,
 				Since: railNow,
 				Until: railNow.Add(42 * time.Hour),
 			},
 			{
 				Token: "codex/openai/gpt-5.6-terra:high",
-				Kind:  ledger.RateLimited,
+				Kind:  availability.RateLimited,
 				Since: railNow,
 				Until: railNow.Add(25 * 24 * time.Hour),
 			},
@@ -490,15 +489,15 @@ func logFixtureEvents() []db.EventLogRow {
 	}
 }
 
-func logFixtureHist() history.History {
+func logFixtureHist() availability.History {
 	at := func(hour, min int) time.Time {
 		return time.Date(railNow.Year(), railNow.Month(), railNow.Day(), hour, min, 0, 0, railNow.Location())
 	}
-	return history.History{
-		Events: []history.Event{
+	return availability.History{
+		Events: []availability.Event{
 			{
 				At:       at(11, 50),
-				Kind:     ledger.RateLimited,
+				Kind:     availability.RateLimited,
 				Provider: "cline-pass",
 				Note:     "weekly Clinepass limit reached, resets in 1d 4h",
 			},
@@ -662,8 +661,8 @@ func overviewRows() []db.RoundRow {
 func statsOverviewReport() stats.Report {
 	return stats.Build(stats.Inputs{
 		Rows: overviewRows(),
-		Gates: []ledger.Gate{{
-			Token: "gemini-3.8-flash-high", Kind: ledger.RateLimited,
+		Gates: []availability.Gate{{
+			Token: "gemini-3.8-flash-high", Kind: availability.RateLimited,
 			Since: railNow, Until: railNow.Add(26 * time.Hour),
 		}},
 		Since: railNow.AddDate(0, 0, -29),
@@ -1246,6 +1245,19 @@ func TestGoldenViews(t *testing.T) {
 				fa := &fakeActions{doc: candFixtureDoc(t), files: files}
 				m := candDown(t, goldenAgentResearcherModel(t, 132, 34, fa), 1) // claude, yours
 				return candKeys(t, m, key('r'))
+			},
+		},
+		{
+			name: "agent-edited-newer-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				files := agentFileFixtures(t)
+				for i := range files["researcher"] {
+					if files["researcher"][i].Kind == "claude" {
+						files["researcher"][i].State = harness.FileEditedNewer
+					}
+				}
+				fa := &fakeActions{doc: candFixtureDoc(t), files: files}
+				return candDown(t, goldenAgentResearcherModel(t, 132, 34, fa), 1) // claude, edit + newer
 			},
 		},
 		{

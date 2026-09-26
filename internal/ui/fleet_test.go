@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -203,8 +203,8 @@ func TestHeaderShowsVersionNotGates(t *testing.T) {
 	m.statusInFlight = false
 	rep := relevo.Report{
 		Bindings: []relevo.BindingStatus{{Name: "web", Display: "ACTIVE"}},
-		Gated: []ledger.Gate{
-			{Token: "agy/antigravity/claude-sonnet-4-6", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(time.Hour)},
+		Gated: []availability.Gate{
+			{Token: "agy/antigravity/claude-sonnet-4-6", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(time.Hour)},
 		},
 	}
 	res, _ = m.Update(statusMsg{report: rep})
@@ -229,9 +229,9 @@ func TestGatedLineOneProviderLatestUntil(t *testing.T) {
 		Now:   railNow,
 		Width: 140,
 		Report: relevo.Report{
-			Gated: []ledger.Gate{
-				{Token: "codex/openai/gpt-4o", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(10 * time.Minute)},
-				{Token: "codex/openai/gpt-5", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(25 * 24 * time.Hour)},
+			Gated: []availability.Gate{
+				{Token: "codex/openai/gpt-4o", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(10 * time.Minute)},
+				{Token: "codex/openai/gpt-5", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(25 * 24 * time.Hour)},
 			},
 		},
 	}
@@ -436,10 +436,10 @@ func TestFleetWorkingRowShowsTheRoundInFlight(t *testing.T) {
 func TestGatedLineEndsInEllipsisWhenCut(t *testing.T) {
 	env := Env{
 		Now: railNow,
-		Report: relevo.Report{Gated: []ledger.Gate{
-			{Token: "agy/antigravity-community-build/claude", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(10 * time.Minute)},
-			{Token: "codex/openrouter-free-tier/gpt-5", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(20 * time.Minute)},
-			{Token: "claude/anthropic-claude-enterprise/sonnet", Kind: ledger.RateLimited, Since: railNow, Until: railNow.Add(30 * time.Minute)},
+		Report: relevo.Report{Gated: []availability.Gate{
+			{Token: "agy/antigravity-community-build/claude", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(10 * time.Minute)},
+			{Token: "codex/openrouter-free-tier/gpt-5", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(20 * time.Minute)},
+			{Token: "claude/anthropic-claude-enterprise/sonnet", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(30 * time.Minute)},
 		}},
 	}
 

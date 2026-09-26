@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/hooks"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -316,7 +316,7 @@ type Report struct {
 	// whether or not a builder is currently running it. Absent from JSON
 	// when nothing is gated, so a consumer that never learned the field
 	// sees the document it always did.
-	Gated []ledger.Gate `json:"gated,omitempty"`
+	Gated []availability.Gate `json:"gated,omitempty"`
 	// Unused lists the live rate-limit gates on providers no configured
 	// candidate uses, so a renamed provider's live gate stays visible
 	// instead of blocking nothing in silence. Kept out of JSON: the status
@@ -804,7 +804,7 @@ func HideDone(r Report) Report {
 // for: one row per live gate, sharing GateKindText/GateUntilText so the
 // wording never drifts between renderers. trailingBlank adds one blank
 // line after the block, only when a footer follows it in the output.
-func writeGatedBlock(sb *strings.Builder, gates []ledger.Gate, trailingBlank bool) {
+func writeGatedBlock(sb *strings.Builder, gates []availability.Gate, trailingBlank bool) {
 	sb.WriteString("candidates\n")
 
 	// A1 §4.4: a gate prints the candidate's short name when it has one, its
@@ -835,7 +835,7 @@ func writeGatedBlock(sb *strings.Builder, gates []ledger.Gate, trailingBlank boo
 
 // gateLabel is what a gate row prints: the candidate's short name when it has
 // one (A1 §4.4), its token otherwise.
-func gateLabel(g ledger.Gate) string {
+func gateLabel(g availability.Gate) string {
 	if g.Name != "" {
 		return g.Name
 	}

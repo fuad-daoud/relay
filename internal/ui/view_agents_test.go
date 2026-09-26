@@ -331,6 +331,36 @@ func TestAgentResetEditedConfirms(t *testing.T) {
 	}
 }
 
+// r on a file whose edit sits on an older shipped copy confirms, and its note
+// says the newer copy is what lands (§4).
+func TestAgentResetOnEditNewerSaysNewerCopy(t *testing.T) {
+	files := agentFileFixtures(t)
+	for i := range files["researcher"] {
+		if files["researcher"][i].Kind == "claude" {
+			files["researcher"][i].State = harness.FileEditedNewer
+		}
+	}
+	fa := &fakeActions{doc: candFixtureDoc(t), files: files, result: Result{Text: "reset claude's researcher", Refresh: true}}
+	v := agentFixtureView(t, fa, "researcher")
+	v.cur = 1 // claude
+
+	_, cmd := v.Update(key('r'), candActionEnv(fa, relevo.Report{}))
+	if cmd == nil {
+		t.Fatal("r must return a command")
+	}
+	open, ok := cmd().(openOverlayMsg)
+	if !ok {
+		t.Fatalf("r gave %T, want an overlay", cmd())
+	}
+	box, ok := open.ov.(confirmBox)
+	if !ok {
+		t.Fatalf("r opened %T, want a confirmBox", open.ov)
+	}
+	if got := strings.Join(box.lines, "\n"); !strings.Contains(got, "with the newer copy this relevo ships; your edit is lost") {
+		t.Errorf("reset confirm must say the newer copy lands:\n%s", got)
+	}
+}
+
 // r on a file relevo has never written confirms a write, then writes exactly
 // that (kind, agent) pair (§3, round 6).
 func TestAgentResetMissingConfirmsWrite(t *testing.T) {

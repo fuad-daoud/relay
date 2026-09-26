@@ -14,8 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -61,7 +60,7 @@ func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 		"reviewer": {},
 	})
 
-	got := FormatPolicyFor(reg, set, policy.Policy{}, nil, history.History{}, baseTime, time.UTC)
+	got := FormatPolicyFor(reg, set, policy.Policy{}, nil, availability.History{}, baseTime, time.UTC)
 
 	want := "builder  (config roles)\n" +
 		"  1  b  order     <- would pick\n" +
@@ -97,11 +96,11 @@ func TestRolesViewsFormatPolicyForLegacyMatches(t *testing.T) {
 
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testClaudeRef, testAgyRef)
-	gates := []ledger.Gate{{Token: testClaudeRef, Kind: ledger.RateLimited, Until: baseTime.Add(time.Hour)}}
+	gates := []availability.Gate{{Token: testClaudeRef, Kind: availability.RateLimited, Until: baseTime.Add(time.Hour)}}
 
 	legacy, _ := roles.Build(nil, set, pol)
-	want := FormatPolicy(set, pol, gates, history.History{}, baseTime, time.UTC)
-	got := FormatPolicyFor(legacy, set, pol, gates, history.History{}, baseTime, time.UTC)
+	want := FormatPolicy(set, pol, gates, availability.History{}, baseTime, time.UTC)
+	got := FormatPolicyFor(legacy, set, pol, gates, availability.History{}, baseTime, time.UTC)
 	if got != want {
 		t.Errorf("FormatPolicyFor(legacy) =\n%q\nwant FormatPolicy's:\n%q", got, want)
 	}
@@ -117,12 +116,12 @@ func TestRolesViewsPerRoleGateFiltering(t *testing.T) {
 	t.Parallel()
 
 	set := candidateSet(t, testCandidatesJSON)
-	gates := []ledger.Gate{{
-		Token: testClaudeRef, Kind: ledger.RolesMissing, Role: "reviewer",
+	gates := []availability.Gate{{
+		Token: testClaudeRef, Kind: availability.RolesMissing, Role: "reviewer",
 		Note: "roles missing for reviewer",
 	}}
 
-	got := FormatPolicy(set, policy.Policy{}, gates, history.History{}, baseTime, time.UTC)
+	got := FormatPolicy(set, policy.Policy{}, gates, availability.History{}, baseTime, time.UTC)
 
 	builder := rolesViewsSection(t, got, "builder  (no order set)", "reviewer  (no order set)")
 	if strings.Contains(builder, "roles missing") {
@@ -175,9 +174,9 @@ func TestRolesViewsRoleRefusalsForFileMode(t *testing.T) {
 		"builder":  {Candidates: []string{testClaudeRef, testOpencodeRef}},
 		"reviewer": {Candidates: []string{testClaudeRef, testOpencodeRef}},
 	})
-	gates := []ledger.Gate{
-		{Token: testClaudeRef, Kind: ledger.RateLimited, Role: "builder", Until: baseTime.Add(time.Hour)},
-		{Token: testOpencodeRef, Kind: ledger.RateLimited, Role: "builder", Until: baseTime.Add(time.Hour)},
+	gates := []availability.Gate{
+		{Token: testClaudeRef, Kind: availability.RateLimited, Role: "builder", Until: baseTime.Add(time.Hour)},
+		{Token: testOpencodeRef, Kind: availability.RateLimited, Role: "builder", Until: baseTime.Add(time.Hour)},
 	}
 
 	got := RoleRefusalsFor(reg, set, policy.Policy{}, gates)
@@ -293,16 +292,16 @@ func TestRolesViewsMergedGateTexts(t *testing.T) {
 
 	set := candidateSet(t, testCandidatesJSON)
 	until := baseTime.Add(time.Hour)
-	gates := []ledger.Gate{
-		{Token: testClaudeRef, Kind: ledger.RolesMissing, Role: "reviewer"},
-		{Token: testClaudeRef, Kind: ledger.RolesMissing, Role: "builder"},
-		{Token: testClaudeRef, Kind: ledger.RateLimited, Until: until},
+	gates := []availability.Gate{
+		{Token: testClaudeRef, Kind: availability.RolesMissing, Role: "reviewer"},
+		{Token: testClaudeRef, Kind: availability.RolesMissing, Role: "builder"},
+		{Token: testClaudeRef, Kind: availability.RateLimited, Until: until},
 	}
 
 	got := FormatCandidates(set, gates)
 
 	want := "   unavailable: roles missing (builder, reviewer) until cleared; " +
-		GateKindText(ledger.RateLimited) + " " + GateUntilText(until)
+		GateKindText(availability.RateLimited) + " " + GateUntilText(until)
 	if !strings.Contains(got, want) {
 		t.Errorf("FormatCandidates =\n%q\nwant it to contain:\n%q", got, want)
 	}

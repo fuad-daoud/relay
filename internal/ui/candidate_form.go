@@ -9,9 +9,9 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -25,7 +25,7 @@ type candidateForm struct {
 	ctx     context.Context
 	actions Actions
 	doc     relevo.ConfigDoc
-	gates   []ledger.Gate // env.Report.Gated at open
+	gates   []availability.Gate // env.Report.Gated at open
 	now     time.Time
 	editing string   // "" = add; else the candidate's current name
 	slots   string   // SERVES text of the edited row ("" when adding)
@@ -179,9 +179,9 @@ func (f candidateForm) suggestions() []string {
 
 // gateFor is the gate on the provider named provider, if any: a Gated entry
 // whose token's provider segment equals it.
-func (f candidateForm) gateFor(provider string) (ledger.Gate, bool) {
+func (f candidateForm) gateFor(provider string) (availability.Gate, bool) {
 	if provider == "" {
-		return ledger.Gate{}, false
+		return availability.Gate{}, false
 	}
 	for _, g := range f.gates {
 		ref, err := candidate.ParseRef(g.Token)
@@ -192,7 +192,7 @@ func (f candidateForm) gateFor(provider string) (ledger.Gate, bool) {
 			return g, true
 		}
 	}
-	return ledger.Gate{}, false
+	return availability.Gate{}, false
 }
 
 // modelPlaceholder is the model field's hint when it is empty (§1).

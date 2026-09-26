@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -20,13 +20,13 @@ import (
 // SpawnFailed gates are ignored: a running builder is not a failed spawn, so
 // a spawn-failure gate recorded against this same token by an earlier switch
 // attempt must not itself trigger another switch.
-func gatedBuilder(rt Runtime, b store.Binding) (ledger.Gate, bool) {
+func gatedBuilder(rt Runtime, b store.Binding) (availability.Gate, bool) {
 	for _, g := range ledgerGates(rt, []string{b.BuilderCandidate}) {
-		if g.Token == b.BuilderCandidate && g.Kind == ledger.RateLimited {
+		if g.Token == b.BuilderCandidate && g.Kind == availability.RateLimited {
 			return g, true
 		}
 	}
-	return ledger.Gate{}, false
+	return availability.Gate{}, false
 }
 
 // roundExclusionGates is one ledger.Gate per token in b.RoundExcluded --
@@ -37,12 +37,12 @@ func gatedBuilder(rt Runtime, b store.Binding) (ledger.Gate, bool) {
 // NOT changed to look at these: it looks only at RateLimited, so an
 // exclusion never triggers a switch by itself -- only the switch's own
 // resolution sees it.
-func roundExclusionGates(b store.Binding) []ledger.Gate {
-	gates := make([]ledger.Gate, 0, len(b.RoundExcluded))
+func roundExclusionGates(b store.Binding) []availability.Gate {
+	gates := make([]availability.Gate, 0, len(b.RoundExcluded))
 	for _, t := range b.RoundExcluded {
-		gates = append(gates, ledger.Gate{
+		gates = append(gates, availability.Gate{
 			Token:   t,
-			Kind:    ledger.ExitedNoReport,
+			Kind:    availability.ExitedNoReport,
 			Note:    "round " + strconv.Itoa(b.Round),
 			Binding: b.Name,
 		})

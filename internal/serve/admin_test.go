@@ -10,10 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -488,8 +487,8 @@ func TestAdminGatesAvailableUnavailable(t *testing.T) {
 	if len(gates) != 1 {
 		t.Fatalf("AdminGates = %v, want one gate", gates)
 	}
-	if gates[0].Kind != ledger.RateLimited {
-		t.Errorf("gate kind = %q, want %q", gates[0].Kind, ledger.RateLimited)
+	if gates[0].Kind != availability.RateLimited {
+		t.Errorf("gate kind = %q, want %q", gates[0].Kind, availability.RateLimited)
 	}
 	out := RenderGates(gates, now)
 	if !strings.Contains(out, "m  rate-limited") {
@@ -541,16 +540,16 @@ func TestAdminAvailableRecordsServerClear(t *testing.T) {
 		t.Errorf("removed = %d, want 1", removed)
 	}
 
-	h, err := history.LoadKV(db.PrefixKV{KV: s.DB(), Prefix: "serve."}, "")
+	h, err := availability.LoadHistory(db.PrefixKV{KV: s.DB(), Prefix: "serve."}, "")
 	if err != nil {
-		t.Fatalf("history.LoadKV: %v", err)
+		t.Fatalf("history.LoadHistory: %v", err)
 	}
 	if len(h.Events) == 0 {
 		t.Fatal("the availability row has no events, want a Cleared event")
 	}
 	ev := h.Events[len(h.Events)-1]
-	if ev.Kind != history.Cleared {
-		t.Errorf("kind = %q, want %q", ev.Kind, history.Cleared)
+	if ev.Kind != availability.Cleared {
+		t.Errorf("kind = %q, want %q", ev.Kind, availability.Cleared)
 	}
 	if ev.Source != relevo.ClearedByServer {
 		t.Errorf("source = %q, want %q", ev.Source, relevo.ClearedByServer)

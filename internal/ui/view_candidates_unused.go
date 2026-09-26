@@ -3,7 +3,7 @@ package ui
 import (
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -64,9 +64,9 @@ func unusedDataLine(g relevo.ProviderGate, sel bool, nameW, reasonW, setByW, cw 
 
 // asGate presents a ProviderGate as the ledger.Gate the candidate detail's
 // gate helpers already take, so the two tables never word a gate differently.
-func asGate(g relevo.ProviderGate) ledger.Gate {
-	return ledger.Gate{
-		Kind:    ledger.RateLimited,
+func asGate(g relevo.ProviderGate) availability.Gate {
+	return availability.Gate{
+		Kind:    availability.RateLimited,
 		Since:   g.Since,
 		Until:   g.Until,
 		Note:    g.Note,

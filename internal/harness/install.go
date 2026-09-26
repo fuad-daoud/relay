@@ -63,6 +63,11 @@ type InstallResult struct {
 	Path    string
 	Outcome InstallOutcome
 	Err     string
+	// NewerShipped reports that the kept difference sits on an older copy: the
+	// manifest holds what relevo last wrote here, and that is not the
+	// definition relevo ships now, so a reset brings a newer one rather than
+	// only undoing the user's edit.
+	NewerShipped bool
 }
 
 var ErrUnknownKind = errors.New("unknown harness kind")
@@ -287,6 +292,10 @@ func installBytes(env InstallEnv, opts InstallOptions, res InstallResult, homeRe
 		}
 		return res, record(manifest, homeRel, docSHA(shipped)), nil
 	default:
+		// The manifest holds what relevo last wrote here. A record that is not
+		// the definition relevo ships now means the user's edit sits on an
+		// older copy, which a reset replaces with the newer one.
+		res.NewerShipped = manifest[homeRel] != "" && manifest[homeRel] != docSHA(shipped)
 		if !opts.Force {
 			res.Outcome = OutcomeKeptDiffers
 			return res, false, nil

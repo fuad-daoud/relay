@@ -4,10 +4,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/latency"
 	"github.com/fuad-daoud/relevo/internal/stats"
 )
 
@@ -32,9 +31,9 @@ func StatsInputs(rt Runtime, since time.Time) (in stats.Inputs, warnings []strin
 
 	// Latency is read exactly as formatCandidates reads it: a failure warns
 	// and leaves the report without ttft values.
-	var lat latency.History
+	var lat availability.LatencyHistory
 	if rt.Latency != nil {
-		loaded, lerr := latency.LoadKV(rt.Latency, LegacyGatesPath(rt.GatesDir, "latency.json"))
+		loaded, lerr := availability.LoadLatency(rt.Latency, LegacyGatesPath(rt.GatesDir, "latency.json"))
 		if lerr != nil {
 			warnings = append(warnings, "could not read latency: "+lerr.Error())
 		} else {
@@ -88,13 +87,13 @@ func StatsInputs(rt Runtime, since time.Time) (in stats.Inputs, warnings []strin
 // unreadable record as an error the caller reports -- the same rule Gates
 // applies to the ledger. It is the moved body of cmd/relevo's loadHistory
 // (cockpit C2b §4.1).
-func LoadHistory(rt Runtime) (history.History, error) {
+func LoadHistory(rt Runtime) (availability.History, error) {
 	if rt.Gates == nil {
-		return history.History{}, nil
+		return availability.History{}, nil
 	}
-	h, err := history.LoadKV(rt.Gates, LegacyGatesPath(rt.GatesDir, "availability.json"))
+	h, err := availability.LoadHistory(rt.Gates, LegacyGatesPath(rt.GatesDir, "availability.json"))
 	if err != nil {
-		return history.History{}, err
+		return availability.History{}, err
 	}
 	return h.Prune(rt.Now()), nil
 }

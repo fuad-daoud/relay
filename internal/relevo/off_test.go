@@ -10,8 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/ledger"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
@@ -107,7 +106,7 @@ func TestAllOffOrGated(t *testing.T) {
 	t.Run("off and gated", func(t *testing.T) {
 		set := candidateSet(t, rolesRuntimeCandidatesJSON)
 		reg := rolesFileRegistry(t, set, policy.Policy{}, offRows())
-		gates := []ledger.Gate{{Token: "claude/test/b", Kind: ledger.RateLimited}}
+		gates := []availability.Gate{{Token: "claude/test/b", Kind: availability.RateLimited}}
 
 		_, err := resolveRole(reg, set, gates, "", "builder")
 		if !errors.Is(err, ErrAllGated) {
@@ -151,7 +150,7 @@ func TestFormatPolicyShowsOff(t *testing.T) {
 		},
 	})
 
-	got := FormatPolicyFor(reg, set, policy.Policy{}, nil, history.History{}, baseTime, time.UTC)
+	got := FormatPolicyFor(reg, set, policy.Policy{}, nil, availability.History{}, baseTime, time.UTC)
 
 	want := "builder  (config roles)\n" +
 		"  1  a  order     <- would pick\n" +
@@ -182,13 +181,13 @@ func TestFormatPolicyHeaderSaysActors(t *testing.T) {
 	rows := map[string]roles.Row{"builder": {Candidates: []string{testClaudeRef}}}
 
 	actors := actorsFileRegistry(t, set, policy.Policy{}, rows)
-	got := FormatPolicyFor(actors, set, policy.Policy{}, nil, history.History{}, baseTime, time.UTC)
+	got := FormatPolicyFor(actors, set, policy.Policy{}, nil, availability.History{}, baseTime, time.UTC)
 	if !strings.Contains(got, "builder  (config actors)") {
 		t.Errorf("actors registry header:\n%s", got)
 	}
 
 	fileMode := rolesFileRegistry(t, set, policy.Policy{}, rows)
-	got = FormatPolicyFor(fileMode, set, policy.Policy{}, nil, history.History{}, baseTime, time.UTC)
+	got = FormatPolicyFor(fileMode, set, policy.Policy{}, nil, availability.History{}, baseTime, time.UTC)
 	if !strings.Contains(got, "builder  (config roles)") {
 		t.Errorf("roles registry header:\n%s", got)
 	}

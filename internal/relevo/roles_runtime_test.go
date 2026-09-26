@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -96,8 +96,8 @@ func TestRolesRuntimeFileModeRanking(t *testing.T) {
 	}
 
 	// Gate the first choice: the walk takes the second, at its own position.
-	gates := []ledger.Gate{{
-		Token: "claude/test/b", Kind: ledger.RateLimited, Until: baseTime.Add(time.Hour),
+	gates := []availability.Gate{{
+		Token: "claude/test/b", Kind: availability.RateLimited, Until: baseTime.Add(time.Hour),
 	}}
 	res, err = resolveRole(reg, set, gates, "", "builder")
 	if err != nil {
@@ -117,9 +117,9 @@ func TestRolesRuntimeFileModeRanking(t *testing.T) {
 	if reg.Serves("builder", candidate.Ref{Harness: "claude", Provider: "test", Model: "c"}) {
 		t.Error("Serves(builder, claude/test/c) = true, want false: the row does not list it")
 	}
-	both := []ledger.Gate{
-		{Token: "claude/test/b", Kind: ledger.RateLimited, Until: baseTime.Add(time.Hour)},
-		{Token: "claude/test/a", Kind: ledger.RateLimited, Until: baseTime.Add(time.Hour)},
+	both := []availability.Gate{
+		{Token: "claude/test/b", Kind: availability.RateLimited, Until: baseTime.Add(time.Hour)},
+		{Token: "claude/test/a", Kind: availability.RateLimited, Until: baseTime.Add(time.Hour)},
 	}
 	_, err = resolveRole(reg, set, both, "", "builder")
 	if !errors.Is(err, ErrAllGated) {

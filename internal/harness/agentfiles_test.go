@@ -25,6 +25,8 @@ func TestAgentFilesStates(t *testing.T) {
 		{"identical file gives up to date", shipped, nil, FileUpToDate, "inherit"},
 		{"manifest-matching old copy gives stale", old, map[string]string{".gemini/config/agents/reviewer.md": docSHA(old)}, FileStale, ""},
 		{"hand-edited file gives your edit, with its model pin read", edited, nil, FileEdited, "haiku"},
+		{"your edit over an older shipped copy gives edit + newer", edited, map[string]string{".gemini/config/agents/reviewer.md": docSHA(old)}, FileEditedNewer, "haiku"},
+		{"your edit over the current shipped copy stays your edit", edited, map[string]string{".gemini/config/agents/reviewer.md": docSHA(shipped)}, FileEdited, "haiku"},
 		{"absent file gives missing", nil, nil, FileMissing, ""},
 	}
 	for _, tc := range tests {

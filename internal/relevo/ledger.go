@@ -9,10 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/history"
-	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -70,29 +69,29 @@ const SpawnFailedCooldown = 10 * time.Minute
 // not reentrant, so a second Lock from the goroutine that already holds it
 // blocks forever rather than erroring. (Its unlocked twin, mutateLedger,
 // went with #302: Available was its last caller.)
-func mutateLedgerLocked(rt Runtime, fn func(ledger.Ledger) ledger.Ledger) error {
+func mutateLedgerLocked(rt Runtime, fn func(availability.Ledger) availability.Ledger) error {
 	if rt.Gates == nil {
 		return ErrNoGates
 	}
-	l, err := ledger.LoadKV(rt.Gates, ledgerLegacyPath(rt))
+	l, err := availability.LoadLedger(rt.Gates, ledgerLegacyPath(rt))
 	if err != nil {
 		return err
 	}
 	l = fn(l.Prune(rt.Now()))
-	return ledger.SaveKV(rt.Gates, l)
+	return availability.SaveLedger(rt.Gates, l)
 }
 
 // appendEntryLocked commits one observation: the ledger entry that gates,
 // then its mirror in the history that remembers (#61 step 7). The caller
 // holds the store lock. A history failure is printed and dropped -- the
 // ledger write is the one that matters, and it already happened.
-func appendEntryLocked(rt Runtime, e ledger.Entry) error {
-	if err := mutateLedgerLocked(rt, func(l ledger.Ledger) ledger.Ledger { return l.Append(e) }); err != nil {
+func appendEntryLocked(rt Runtime, e availability.Entry) error {
+	if err := mutateLedgerLocked(rt, func(l availability.Ledger) availability.Ledger { return l.Append(e) }); err != nil {
 		return err
 	}
-	h, err := history.LoadKV(rt.Gates, availabilityLegacyPath(rt))
+	h, err := availability.LoadHistory(rt.Gates, availabilityLegacyPath(rt))
 	if err == nil {
-		err = history.SaveKV(rt.Gates, h.Prune(rt.Now()).Append(history.FromEntry(e, providerOf)))
+		err = availability.SaveHistory(rt.Gates, h.Prune(rt.Now()).Append(availability.FromEntry(e, providerOf)))
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not record history: %v\n", err)
@@ -112,8 +111,8 @@ func appendEntryLocked(rt Runtime, e ledger.Entry) error {
 // to stderr and dropped instead (spec §4.1).
 func recordSpawnFailureWith(rt Runtime, locked bool, token, binding string, cause error) {
 	now := rt.Now()
-	entry := ledger.Entry{
-		Kind:    ledger.SpawnFailed,
+	entry := availability.Entry{
+		Kind:    availability.SpawnFailed,
 		Subject: token,
 		At:      now,
 		Until:   now.Add(SpawnFailedCooldown),
@@ -164,8 +163,8 @@ func Unavailable(rt Runtime, token string, until time.Time, reason string) (prov
 	ref := c.Ref()
 
 	now := rt.Now()
-	entry := ledger.Entry{
-		Kind:    ledger.RateLimited,
+	entry := availability.Entry{
+		Kind:    availability.RateLimited,
 		Subject: ref.Provider,
 		At:      now,
 		Until:   until,
@@ -199,7 +198,7 @@ func Available(rt Runtime, subject, source string) (provider string, removed int
 	var oldest time.Time
 
 	err = rt.Store.WithLock(func(*store.Tx) error {
-		l, lerr := ledger.LoadKV(rt.Gates, ledgerLegacyPath(rt))
+		l, lerr := availability.LoadLedger(rt.Gates, ledgerLegacyPath(rt))
 		if lerr != nil {
 			return lerr
 		}
@@ -211,7 +210,7 @@ func Available(rt Runtime, subject, source string) (provider string, removed int
 		}
 
 		for _, e := range l.Entries {
-			if e.Kind != ledger.RateLimited || e.Subject != provider {
+			if e.Kind != availability.RateLimited || e.Subject != provider {
 				continue
 			}
 			removed++
@@ -220,22 +219,22 @@ func Available(rt Runtime, subject, source string) (provider string, removed int
 			}
 		}
 
-		if serr := ledger.SaveKV(rt.Gates, l.Clear(ledger.RateLimited, provider)); serr != nil {
+		if serr := availability.SaveLedger(rt.Gates, l.Clear(availability.RateLimited, provider)); serr != nil {
 			return serr
 		}
 
 		if removed > 0 {
-			ev := history.Event{
+			ev := availability.Event{
 				At:       rt.Now(),
-				Kind:     history.Cleared,
+				Kind:     availability.Cleared,
 				Provider: provider,
 				Source:   source,
 				Note:     fmt.Sprintf("cleared %d entries", removed),
 				Since:    oldest,
 			}
-			h, herr := history.LoadKV(rt.Gates, availabilityLegacyPath(rt))
+			h, herr := availability.LoadHistory(rt.Gates, availabilityLegacyPath(rt))
 			if herr == nil {
-				herr = history.SaveKV(rt.Gates, h.Prune(rt.Now()).Append(ev))
+				herr = availability.SaveHistory(rt.Gates, h.Prune(rt.Now()).Append(ev))
 			}
 			if herr != nil {
 				fmt.Fprintf(os.Stderr, "relevo: could not record history: %v\n", herr)
@@ -253,25 +252,25 @@ func Available(rt Runtime, subject, source string) (provider string, removed int
 
 // ledgerGates projects the live ledger onto tokens, whether or not the configured set holds them:
 // a rate limit gates every token of its provider, a spawn failure gates its own token.
-func ledgerGates(rt Runtime, tokens []string) []ledger.Gate {
+func ledgerGates(rt Runtime, tokens []string) []availability.Gate {
 	if rt.Gates == nil {
 		return nil
 	}
 
-	l, err := ledger.LoadKV(rt.Gates, ledgerLegacyPath(rt))
+	l, err := availability.LoadLedger(rt.Gates, ledgerLegacyPath(rt))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not read ledger: %v\n", err)
 		return nil
 	}
 
-	return ledger.Gated(l, tokens, providerOf, rt.Now())
+	return availability.Gated(l, tokens, providerOf, rt.Now())
 }
 
 // Gates is what every reader renders from: the live ledger projected onto
 // the configured candidates. A load error is reported once on stderr and
 // read as an empty ledger -- status, candidates and doctor must not go
 // down over a bookkeeping file (spec §6).
-func Gates(rt Runtime) []ledger.Gate {
+func Gates(rt Runtime) []availability.Gate {
 	if rt.Candidates == nil {
 		return nil
 	}
@@ -300,7 +299,7 @@ func Gates(rt Runtime) []ledger.Gate {
 // the gates of every other role. nil when rt.Roles is nil: no checker
 // configured (every test that does not set one, and every caller before
 // cmd/relevo wires harness.OSRoleChecker()).
-func rolesMissingGates(rt Runtime) []ledger.Gate {
+func rolesMissingGates(rt Runtime) []availability.Gate {
 	if rt.Roles == nil || rt.Candidates == nil {
 		return nil
 	}
@@ -312,7 +311,7 @@ func rolesMissingGates(rt Runtime) []ledger.Gate {
 	// role's definition list is usually the shipped one.
 	cache := map[string][]string{}
 
-	var out []ledger.Gate
+	var out []availability.Gate
 	for _, ref := range rt.Candidates.Refs() {
 		r, err := candidate.ParseRef(ref)
 		if err != nil {
@@ -336,9 +335,9 @@ func rolesMissingGates(rt Runtime) []ledger.Gate {
 			if len(paths) == 0 {
 				continue
 			}
-			out = append(out, ledger.Gate{
+			out = append(out, availability.Gate{
 				Token:  ref,
-				Kind:   ledger.RolesMissing,
+				Kind:   availability.RolesMissing,
 				Role:   role,
 				Since:  rt.Now(),
 				Note:   rolesMissingNote(role, kind, spec.Definitions, paths),
@@ -390,15 +389,15 @@ func definitionIsShipped(kind string, defs []string, path string) bool {
 
 // GateKindText is the human wording for a gate kind in status, candidates
 // and doctor, so the three never drift: "spawn failed", "rate-limited".
-func GateKindText(k ledger.Kind) string {
+func GateKindText(k availability.Kind) string {
 	switch k {
-	case ledger.SpawnFailed:
+	case availability.SpawnFailed:
 		return "spawn failed"
-	case ledger.RateLimited:
+	case availability.RateLimited:
 		return "rate-limited"
-	case ledger.ExitedNoReport:
+	case availability.ExitedNoReport:
 		return "exited without a report"
-	case ledger.RolesMissing:
+	case availability.RolesMissing:
 		return "roles missing"
 	default:
 		return string(k)

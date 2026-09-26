@@ -10,6 +10,13 @@ import (
 // terminal does. Each returns the exact bytes cmd/relevo printed before #15,
 // without a trailing newline; the caller adds one.
 
+// showCommand renders the `relevo show` command that prints one round's
+// artifact, the durable way to name a closed round whose files may be sealed
+// into the database.
+func showCommand(name string, round int, section string) string {
+	return fmt.Sprintf("relevo show %s --round %d --%s", name, round, section)
+}
+
 // brief reduces an error to one line, for a reason or note field where a
 // multi-line git message would break the line's shape.
 func brief(err error) string {

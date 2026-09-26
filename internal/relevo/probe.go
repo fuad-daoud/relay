@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/latency"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
@@ -34,7 +34,7 @@ const (
 // candidate's short name (A1 §4.4), which FormatProbe prints. Only the sample
 // is recorded -- a name is a display alias, and the token stays the identity.
 type ProbeResult struct {
-	latency.Sample
+	availability.Sample
 	Name string
 }
 
@@ -109,23 +109,23 @@ func ProbeCandidate(ctx context.Context, rt Runtime, x LineExec, c candidate.Can
 		}
 	}
 	if !known {
-		return ProbeResult{Sample: latency.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: "no known role"}, Name: c.Name}
+		return ProbeResult{Sample: availability.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: "no known role"}, Name: c.Name}
 	}
 
 	dir, err := os.MkdirTemp("", "relevo-probe-")
 	if err != nil {
-		return ProbeResult{Sample: latency.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText(err.Error())}, Name: c.Name}
+		return ProbeResult{Sample: availability.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText(err.Error())}, Name: c.Name}
 	}
 	defer os.RemoveAll(dir)
 
 	tier, err := probeTier(c.Harness)
 	if err != nil {
-		return ProbeResult{Sample: latency.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText(err.Error())}, Name: c.Name}
+		return ProbeResult{Sample: availability.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText(err.Error())}, Name: c.Name}
 	}
 
 	argv, err := headlessLaunch(c, role, tier, probeBudget, probePrompt, dir, dir)
 	if err != nil {
-		return ProbeResult{Sample: latency.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText(err.Error())}, Name: c.Name}
+		return ProbeResult{Sample: availability.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText(err.Error())}, Name: c.Name}
 	}
 
 	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
@@ -135,7 +135,7 @@ func ProbeCandidate(ctx context.Context, rt Runtime, x LineExec, c candidate.Can
 	// fresh git repo, like a real round's worktree. The git call stays outside
 	// the timed window: neither TTFTMS nor TotalMS includes it.
 	if err := x.Run(pctx, dir, []string{"git", "init", "-q"}, nil); err != nil {
-		return ProbeResult{Sample: latency.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText("git init: " + err.Error())}, Name: c.Name}
+		return ProbeResult{Sample: availability.Sample{At: rt.Now().UTC(), Token: ref, Host: host, Err: probeErrText("git init: " + err.Error())}, Name: c.Name}
 	}
 
 	start := rt.Now()
@@ -162,7 +162,7 @@ func ProbeCandidate(ctx context.Context, rt Runtime, x LineExec, c candidate.Can
 	})
 
 	r := ProbeResult{
-		Sample: latency.Sample{
+		Sample: availability.Sample{
 			At:      start.UTC(),
 			Token:   ref,
 			Host:    host,
@@ -262,11 +262,11 @@ func recordLatency(rt Runtime, r ProbeResult) {
 	}
 
 	err := rt.Store.WithLock(func(*store.Tx) error {
-		h, err := latency.LoadKV(rt.Latency, latencyLegacyPath(rt))
+		h, err := availability.LoadLatency(rt.Latency, latencyLegacyPath(rt))
 		if err != nil {
 			return err
 		}
-		return latency.SaveKV(rt.Latency, h.Prune(rt.Now()).Append(r.Sample))
+		return availability.SaveLatency(rt.Latency, h.Prune(rt.Now()).Append(r.Sample))
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not record latency: %v\n", err)
