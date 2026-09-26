@@ -6,29 +6,28 @@ import (
 )
 
 type formatCase struct {
-	name       string
-	mutate     func(*Binding)
-	wantFormat string // "" means the "format" key must be absent
-	wantRole   string // "" means the "role" key must be absent
-	verify     func(*testing.T, Binding)
+	name      string
+	mutate    func(*Binding)
+	wantActor string // the "actor" fragment the record must carry
+	verify    func(*testing.T, Binding)
 }
 
 func formatCases() []formatCase {
 	return []formatCase{
 		{
-			name:   "a builder binding stays format 1",
-			mutate: func(*Binding) {},
+			name:      "a builder binding names the builder actor",
+			mutate:    func(*Binding) {},
+			wantActor: `"actor":"builder"`,
 			verify: func(t *testing.T, got Binding) {
-				if got.Role != "" {
-					t.Errorf("builder Role = %q, want empty", got.Role)
+				if got.Role != "builder" {
+					t.Errorf("builder Role = %q, want builder", got.Role)
 				}
 			},
 		},
 		{
-			name:       "a custom role is format 2",
-			mutate:     func(b *Binding) { b.Role = "ui-builder" },
-			wantFormat: `"format":2`,
-			wantRole:   `"role":"ui-builder"`,
+			name:      "a custom actor is written as itself",
+			mutate:    func(b *Binding) { b.Role = "ui-builder" },
+			wantActor: `"actor":"ui-builder"`,
 			verify: func(t *testing.T, got Binding) {
 				if got.Role != "ui-builder" {
 					t.Errorf("Role = %q, want ui-builder", got.Role)
@@ -36,30 +35,26 @@ func formatCases() []formatCase {
 			},
 		},
 		{
-			name: "RemoteLive is a poll cache and does not raise the format",
+			name: "RemoteLive is a poll cache and does not change the actor",
 			mutate: func(b *Binding) {
 				b.Builder.Mode = ModeRemote
 				b.Builder.RemoteLive = &LiveFacts{PID: 4242}
 			},
+			wantActor: `"actor":"builder"`,
 			verify: func(t *testing.T, got Binding) {
-				if got.Format != 0 {
-					t.Errorf("loaded Format = %d, want 0, not 3", got.Format)
-				}
 				if got.Builder.RemoteLive == nil || got.Builder.RemoteLive.PID != 4242 {
 					t.Errorf("RemoteLive did not round-trip: %+v", got.Builder.RemoteLive)
 				}
 			},
 		},
 		{
-			name: "StreamStart is a byte offset and does not raise the format",
+			name: "StreamStart is a byte offset and does not change the actor",
 			mutate: func(b *Binding) {
 				b.Builder.Mode = ModeHeadless
 				b.Builder.StreamStart = 1024
 			},
+			wantActor: `"actor":"builder"`,
 			verify: func(t *testing.T, got Binding) {
-				if got.Format != 0 {
-					t.Errorf("loaded Format = %d, want 0, not 4", got.Format)
-				}
 				if got.Builder.StreamStart != 1024 {
 					t.Errorf("StreamStart did not round-trip: %d", got.Builder.StreamStart)
 				}
@@ -68,12 +63,10 @@ func formatCases() []formatCase {
 	}
 }
 
-// TestSaveWritesTheLowestFormatThatHoldsTheRecord pins the format rule: a
-// binding is written at the lowest format that can hold it. A builder binding
-// (Role "") and one carrying only poll caches (RemoteLive, StreamStart) stay
-// format 1, stored as an absent "format" key, so an older relevo can still
-// load them; a custom role is format 2.
-func TestSaveWritesTheLowestFormatThatHoldsTheRecord(t *testing.T) {
+// TestSaveWritesFormat7AndAlwaysNamesTheActor pins the A4 format rule: every
+// record is format 7 (so an older relevo refuses it) and every record names
+// its actor, the empty (builder) one as "builder".
+func TestSaveWritesFormat7AndAlwaysNamesTheActor(t *testing.T) {
 	for _, tc := range formatCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			s := New(t.TempDir())
@@ -83,8 +76,8 @@ func TestSaveWritesTheLowestFormatThatHoldsTheRecord(t *testing.T) {
 				t.Fatalf("Save: %v", err)
 			}
 			raw := bindingRecordJSON(t, s, b.Name)
-			checkBindingKey(t, raw, "format", tc.wantFormat)
-			checkBindingKey(t, raw, "role", tc.wantRole)
+			checkBindingKey(t, raw, "format", `"format":7`)
+			checkBindingKey(t, raw, "actor", tc.wantActor)
 
 			got, err := s.Load(b.Name)
 			if err != nil {

@@ -43,14 +43,14 @@ type BindingStatus struct {
 	PlanRound        int    `json:"plan_round,omitempty"`
 	State            string `json:"state"`
 	Display          string `json:"display"`
-	BuilderCandidate string `json:"builder_candidate"`
+	BuilderCandidate string `json:"candidate"`
 	// BuilderName is that candidate's short name, for display. Empty when the
 	// candidate is no longer configured, in which case the token is shown;
 	// the token always stays the identity.
-	BuilderName string `json:"builder_name,omitempty"`
-	// Role is the binding's stored writer role; empty for builder, so a
-	// builder row's JSON omits the key and is unchanged.
-	Role string `json:"role,omitempty"`
+	BuilderName string `json:"candidate_name,omitempty"`
+	// Role is the actor the runner plays; always present, "builder" when the
+	// binding stores the empty (builder) one.
+	Role string `json:"actor"`
 	// PlannerID and PlannerName name the relevo planner record this binding
 	// belongs to.
 	PlannerID   string `json:"planner_id,omitempty"`
@@ -72,16 +72,16 @@ type BindingStatus struct {
 	// channel claim, or a configured deliverer. A pull route is never live,
 	// because the daemon cannot see whether a background wait is running.
 	PlannerRouteLive bool   `json:"planner_route_live"`
-	BuilderKind      string `json:"builder_kind"`
+	BuilderKind      string `json:"harness"`
 	// BuilderDefinition is the builder's resolved agent definition on this
 	// binding's builder kind, set only when it is custom: a shipped
 	// definition leaves the field empty and omitted, so today's JSON is
 	// unchanged.
-	BuilderDefinition string `json:"builder_definition,omitempty"`
+	BuilderDefinition string `json:"agent_definition,omitempty"`
 	// BuilderDefinitionCustom is true exactly when BuilderDefinition is set,
 	// so a consumer can tell "custom" from "absent" without the string.
-	BuilderDefinitionCustom bool   `json:"builder_definition_custom,omitempty"`
-	BuilderStatus           string `json:"builder_status"`
+	BuilderDefinitionCustom bool   `json:"agent_definition_custom,omitempty"`
+	BuilderStatus           string `json:"runner_status"`
 	// Headless is set for a headless builder: its process state and log.
 	// BuilderStatus is one of idle, working, exited N, exited, unknown. Nil
 	// for a remote builder.

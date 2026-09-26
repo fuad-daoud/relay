@@ -412,8 +412,8 @@ func TestStatusShowsRole(t *testing.T) {
 	if rows["ui-status"].Role != "ui-builder" {
 		t.Errorf("ui-status row Role = %q, want ui-builder", rows["ui-status"].Role)
 	}
-	if rows["plain-status"].Role != "" {
-		t.Errorf("plain-status row Role = %q, want empty", rows["plain-status"].Role)
+	if rows["plain-status"].Role != "builder" {
+		t.Errorf("plain-status row Role = %q, want builder", rows["plain-status"].Role)
 	}
 
 	uiOnly := view.RenderStatus(view.Report{Bindings: []view.BindingStatus{rows["ui-status"]}})
@@ -421,8 +421,8 @@ func TestStatusShowsRole(t *testing.T) {
 		t.Errorf("ui builder line = %q, want `actor ui-builder`", uiOnly)
 	}
 	plainOnly := view.RenderStatus(view.Report{Bindings: []view.BindingStatus{rows["plain-status"]}})
-	if strings.Contains(plainOnly, "actor ui-builder") {
-		t.Errorf("builder builder line = %q, want no actor suffix", plainOnly)
+	if !strings.Contains(plainOnly, "actor builder") {
+		t.Errorf("builder builder line = %q, want `actor builder`", plainOnly)
 	}
 
 	plainJSON, err := json.Marshal(rows["plain-status"])
@@ -432,11 +432,14 @@ func TestStatusShowsRole(t *testing.T) {
 	if strings.Contains(string(plainJSON), `"role"`) {
 		t.Errorf("builder row JSON = %s, want no role key", plainJSON)
 	}
+	if !strings.Contains(string(plainJSON), `"actor":"builder"`) {
+		t.Errorf("builder row JSON = %s, want an actor key of builder", plainJSON)
+	}
 	uiJSON, err := json.Marshal(rows["ui-status"])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(uiJSON), `"role":"ui-builder"`) {
-		t.Errorf("ui row JSON = %s, want a role key", uiJSON)
+	if !strings.Contains(string(uiJSON), `"actor":"ui-builder"`) {
+		t.Errorf("ui row JSON = %s, want an actor key", uiJSON)
 	}
 }

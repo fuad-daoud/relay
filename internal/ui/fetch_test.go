@@ -340,7 +340,7 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	want := "2026-09-08 12:00:00  round 1   to_builder plan      /path/plan1.md started\n" +
+	want := "2026-09-08 12:00:00  round 1   to_runner  plan      /path/plan1.md started\n" +
 		"2026-09-08 12:02:00  round 1   to_planner report    /path/report1.md finished\n"
 
 	cmd := fetchLog(context.Background(), plannerSource{rt}, name, 1)

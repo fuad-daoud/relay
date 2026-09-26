@@ -162,6 +162,11 @@ func (s *Store) prepareSave(b Binding) (Binding, db.Record, error) {
 		return b, db.Record{}, &ErrNewerFormat{Kind: "binding", Name: b.Name, Have: b.Format, Know: BindingFormat}
 	}
 	b.Format = storedFormat(recordFormat(b))
+	// The empty actor is builder, and is stored as the literal "builder" so a
+	// record always names the actor its runner plays.
+	if b.Role == "" {
+		b.Role = "builder"
+	}
 
 	if err := ValidName(b.Name); err != nil {
 		return b, db.Record{}, err

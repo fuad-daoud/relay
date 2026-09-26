@@ -1460,9 +1460,8 @@ ignored, and relevo warns about any that remain.
 
 **Seeing it.** `relevo config` shows the actors block, then the pick per actor
 labelled `(config actors)`, then the candidates; `relevo status --json` has
-`builder_definition` for a custom builder. `relevo status` shows `role <r>` on
-a non-builder binding's builder line, and `status --json` has `role` (the
-stored field keeps that name; A4 renames it).
+`agent_definition` for a custom runner. `relevo status` shows `actor <r>` on
+the runner line, and `status --json` has `actor`.
 
 **Remote builders.** A server resolves actors from its *own* config, not the
 client's.

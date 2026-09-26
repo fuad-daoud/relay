@@ -50,7 +50,7 @@ Date: 2026-09-26. It amends `docs/specs/2026-09-24-cockpit-design.md` §3.7-§3.
 |---|---|
 | `builder` (the Endpoint) | `runner` |
 | `builder_candidate` | `candidate` (the current round's) |
-| `role` ("" = builder) | `runner.actor`, always set; `builder` is written out, not implied by "" |
+| `role` ("" = builder) | `actor`, always set; the empty value is stored as `builder` (amends §2: the record carries a top-level `actor`, like the status document) |
 | `builder_missing_since` | `runner_missing_since` |
 | `consults[].role` | `consults[].actor` |
 | log entry `builder_session` | `runner_session` |
@@ -122,10 +122,9 @@ opencode plugin reads `actor` only.
 - **State:** the DB migration 007 (§3.4) runs on open, as every schema migration does.
 - **Binding records:** they are rewritten from format 6 to 7 on first load. `actor`
   comes from `role`, or `builder`, into `runner.actor`; the renamed keys are moved.
-- **Open rounds:** the rewrite refuses while any round is open. `relevo status` says
-  `migration pending: N rounds open`, and nothing is lost. The record rewrite runs at
-  daemon start and at first CLI open once no round is open. It is recorded as a config
-  revision with source `migration`, message "A4 state rename".
+- **Open rounds:** none: a record is migrated on its next save because decoding
+  accepts the old and the new keys and directions, so the "rounds open" gate the
+  spool-path rename needed (now A5) is not used.
 - **Server:** the same migration runs on the server's own DB and records.
 
 ## 5. Rounds

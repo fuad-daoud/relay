@@ -70,8 +70,8 @@ func TestStatusJSONHasBuilderName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"builder_name":"agy-m"`) {
-		t.Errorf("JSON = %s, want it to contain %q", raw, `"builder_name":"agy-m"`)
+	if !strings.Contains(string(raw), `"candidate_name":"agy-m"`) {
+		t.Errorf("JSON = %s, want it to contain %q", raw, `"candidate_name":"agy-m"`)
 	}
 
 	gone := statusRowForTest(t, rt, store.Binding{
@@ -89,8 +89,8 @@ func TestStatusJSONHasBuilderName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "builder_name") {
-		t.Errorf("JSON = %s, want no builder_name key for a retired token", raw)
+	if strings.Contains(string(raw), "candidate_name") {
+		t.Errorf("JSON = %s, want no candidate_name key for a retired token", raw)
 	}
 	if out := view.RenderStatus(view.Report{Bindings: []view.BindingStatus{gone}}); !strings.Contains(out, "`agy/test/gone`") {
 		t.Errorf("view.RenderStatus =\n%s\nwant it printing the retired token", out)
@@ -105,8 +105,8 @@ func TestStatusJSONHasBuilderName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "builder_name") {
-		t.Errorf("JSON = %s, want no builder_name key with no candidate", raw)
+	if strings.Contains(string(raw), "candidate_name") {
+		t.Errorf("JSON = %s, want no candidate_name key with no candidate", raw)
 	}
 }
 func seedUsageLog(t *testing.T) (Runtime, store.Binding) {

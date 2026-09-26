@@ -22,7 +22,7 @@ const maxLogEntries = 10000
 type Direction string
 
 const (
-	DirToBuilder Direction = "to_builder"
+	DirToBuilder Direction = "to_runner"
 	DirToPlanner Direction = "to_planner"
 
 	// DirToConsult is additive: folding it into DirToBuilder would redefine a
@@ -116,7 +116,36 @@ type LogEntry struct {
 
 	// BuilderSession is nil when the round's stream named none -- never
 	// guessed.
-	BuilderSession *BuilderSession `json:"builder_session,omitempty"`
+	BuilderSession *BuilderSession `json:"runner_session,omitempty"`
+}
+
+// logEntryAlias is LogEntry without its methods, for the ordinary decode.
+type logEntryAlias LogEntry
+
+// UnmarshalJSON reads a log entry written by this relevo or by one before the
+// A4 rename: the old direction value "to_builder" maps to DirToBuilder, and a
+// legacy "builder_session" key maps to BuilderSession. The new "runner_session"
+// key wins when both are present.
+func (e *LogEntry) UnmarshalJSON(raw []byte) error {
+	var alias logEntryAlias
+	if err := json.Unmarshal(raw, &alias); err != nil {
+		return err
+	}
+	out := LogEntry(alias)
+	if out.Direction == "to_builder" {
+		out.Direction = DirToBuilder
+	}
+	if out.BuilderSession == nil {
+		var old struct {
+			BuilderSession *BuilderSession `json:"builder_session"`
+		}
+		if err := json.Unmarshal(raw, &old); err != nil {
+			return err
+		}
+		out.BuilderSession = old.BuilderSession
+	}
+	*e = out
+	return nil
 }
 
 // BuilderSession is the harness session a closed round's report names the

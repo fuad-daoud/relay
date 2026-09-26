@@ -381,8 +381,8 @@ func TestRolesViewsStatusNamesCustomBuilderDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal row: %v", err)
 	}
-	if !strings.Contains(string(raw), `"builder_definition":"my-executor"`) {
-		t.Errorf("JSON = %s, want it to contain %q", raw, `"builder_definition":"my-executor"`)
+	if !strings.Contains(string(raw), `"agent_definition":"my-executor"`) {
+		t.Errorf("JSON = %s, want it to contain %q", raw, `"agent_definition":"my-executor"`)
 	}
 }
 
@@ -402,7 +402,7 @@ func TestRolesViewsStatusOmitsShippedBuilderDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal row: %v", err)
 	}
-	if strings.Contains(string(raw), "builder_definition") {
-		t.Errorf("JSON = %s, want no builder_definition key", raw)
+	if strings.Contains(string(raw), "agent_definition") {
+		t.Errorf("JSON = %s, want no agent_definition key", raw)
 	}
 }
