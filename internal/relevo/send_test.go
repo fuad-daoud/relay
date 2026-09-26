@@ -1082,6 +1082,194 @@ func TestSendBuilderRefusedWhileRoundOpen(t *testing.T) {
 	}
 }
 
+// TestSendRefusedWhileDoneMarkerNotIngested pins that a round whose builder
+// has already written its completion marker, but whose close the daemon has
+// not yet ingested, is refused: the round is over, and restaging its plan
+// would start a second builder the daemon would close on the stale marker.
+func TestSendRefusedWhileDoneMarkerNotIngested(t *testing.T) {
+	rt, fr := switchSetup(t)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
+		t.Fatalf("prime Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	endProcess(t, rt, b)
+
+	touch(t, rt.Store.DonePath("webshop", 1))
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("# report"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+
+	before, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	planPath := rt.Store.PlanPath("webshop", 1)
+	beforePlan, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read staged plan: %v", err)
+	}
+
+	_, err = Send(context.Background(), rt, "webshop", writePlan(t, "# two"), SendOptions{})
+	if err == nil {
+		t.Fatal("Send must be refused while the round's done marker is on disk")
+	}
+	if !errors.Is(err, ErrReportPending) {
+		t.Errorf("err = %v, want it to wrap ErrReportPending", err)
+	}
+	if !strings.Contains(err.Error(), "001-done") {
+		t.Errorf("err = %q, want it to name the 001-done marker", err.Error())
+	}
+
+	after, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("log grew from %d to %d entries; a refusal writes nothing", len(before), len(after))
+	}
+	afterPlan, err := os.ReadFile(planPath)
+	if err != nil || string(afterPlan) != string(beforePlan) {
+		t.Errorf("plan was restaged: got (%q, %v), want %q", string(afterPlan), err, string(beforePlan))
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("a refused send started a process: %d specs", len(fr.specs))
+	}
+}
+
+// TestSendRefusedWhileReportNotIngested is the same refusal for a round whose
+// builder wrote only its report: the report alone proves the builder is done,
+// even though the marker has not appeared yet.
+func TestSendRefusedWhileReportNotIngested(t *testing.T) {
+	rt, fr := switchSetup(t)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
+		t.Fatalf("prime Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	endProcess(t, rt, b)
+
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("# report"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+
+	before, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	planPath := rt.Store.PlanPath("webshop", 1)
+	beforePlan, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read staged plan: %v", err)
+	}
+
+	_, err = Send(context.Background(), rt, "webshop", writePlan(t, "# two"), SendOptions{})
+	if err == nil {
+		t.Fatal("Send must be refused while the round's report is on disk")
+	}
+	if !errors.Is(err, ErrReportPending) {
+		t.Errorf("err = %v, want it to wrap ErrReportPending", err)
+	}
+	if !strings.Contains(err.Error(), "001-report.md") {
+		t.Errorf("err = %q, want it to name 001-report.md", err.Error())
+	}
+
+	after, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("log grew from %d to %d entries; a refusal writes nothing", len(before), len(after))
+	}
+	afterPlan, err := os.ReadFile(planPath)
+	if err != nil || string(afterPlan) != string(beforePlan) {
+		t.Errorf("plan was restaged: got (%q, %v), want %q", string(afterPlan), err, string(beforePlan))
+	}
+	if len(fr.specs) != 1 {
+		t.Errorf("a refused send started a process: %d specs", len(fr.specs))
+	}
+}
+
+// TestSendAfterExitWithoutReportStillResends pins the other side of the rule:
+// a builder that died without writing either file leaves the round re-sendable,
+// exactly as before.
+func TestSendAfterExitWithoutReportStillResends(t *testing.T) {
+	rt, fr := switchSetup(t)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
+		t.Fatalf("prime Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	endProcess(t, rt, b)
+
+	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# two"), SendOptions{})
+	if err != nil {
+		t.Fatalf("Send after an exit without a report: %v", err)
+	}
+	if res.Round != 1 {
+		t.Errorf("Round = %d, want 1 (Send never advances the round)", res.Round)
+	}
+	if len(fr.specs) != 2 {
+		t.Errorf("specs = %d, want a second process started", len(fr.specs))
+	}
+}
+
+// TestSendProceedsOnceRoundClosed pins that the refusal is tied to the current
+// round, not to the files: once the round closes (the daemon ingests the marker
+// and advances), the next round has no marker and the send goes through, staged
+// at the new round's plan path.
+func TestSendProceedsOnceRoundClosed(t *testing.T) {
+	rt, fr := switchSetup(t)
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "# one"), SendOptions{}); err != nil {
+		t.Fatalf("prime Send: %v", err)
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	endProcess(t, rt, b)
+	touch(t, rt.Store.DonePath("webshop", 1))
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("# report"), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+
+	got, closed := closeOnMarkerUnderLock(t, rt, b)
+	if !closed || got.Round != 2 {
+		t.Fatalf("closed=%v round=%d, want a close into round 2", closed, got.Round)
+	}
+	if err := rt.Store.Save(got); err != nil {
+		t.Fatalf("save the closed binding: %v", err)
+	}
+	beforePlan, err := os.ReadFile(rt.Store.PlanPath("webshop", 1))
+	if err != nil {
+		t.Fatalf("read round-1 plan: %v", err)
+	}
+
+	res, err := Send(context.Background(), rt, "webshop", writePlan(t, "# two"), SendOptions{})
+	if err != nil {
+		t.Fatalf("Send after the round closed: %v", err)
+	}
+	if res.Round != 2 {
+		t.Errorf("Round = %d, want 2", res.Round)
+	}
+	if _, err := os.Stat(rt.Store.PlanPath("webshop", 2)); err != nil {
+		t.Errorf("plan not staged at 002-plan.md: %v", err)
+	}
+	afterPlan, err := os.ReadFile(rt.Store.PlanPath("webshop", 1))
+	if err != nil || string(afterPlan) != string(beforePlan) {
+		t.Errorf("round-1 plan changed: got (%q, %v), want %q", string(afterPlan), err, string(beforePlan))
+	}
+	if len(fr.specs) != 2 {
+		t.Errorf("specs = %d, want a second process started", len(fr.specs))
+	}
+}
+
 // TestSendBuilderUnknownTokenWritesNothing pins §5.2 (c): a token that does
 // not resolve is refused with ErrBadBuilder before any write.
 func TestSendBuilderUnknownTokenWritesNothing(t *testing.T) {
