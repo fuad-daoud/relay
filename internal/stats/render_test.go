@@ -1,85 +1,60 @@
 package stats
 
-import (
-	"testing"
-)
+import "testing"
 
-// TestFitKey pins FitKey's padding, right-clipping, and left-clipping (ported from TestRenderKeyFitting, D7.2).
 func TestFitKey(t *testing.T) {
 	t.Parallel()
 
-	if got := FitKey("abc", 5, false); got != "abc  " {
-		t.Errorf("FitKey pad = %q, want %q", got, "abc  ")
+	cases := []struct {
+		name     string
+		s        string
+		width    int
+		clipLeft bool
+		want     string
+	}{
+		{"short key pads", "abc", 5, false, "abc  "},
+		{"long key clips right", "abcdefgh", 5, false, "abcd…"},
+		{"long key clips left for a repo tail", "abcdefgh", 5, true, "…efgh"},
 	}
-	if got := FitKey("abcdefgh", 5, false); got != "abcd…" {
-		t.Errorf("FitKey right clip = %q, want %q", got, "abcd…")
-	}
-	if got := FitKey("abcdefgh", 5, true); got != "…efgh" {
-		t.Errorf("FitKey left clip = %q, want %q", got, "…efgh")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := FitKey(c.s, c.width, c.clipLeft); got != c.want {
+				t.Errorf("FitKey(%q, %d, %v) = %q, want %q", c.s, c.width, c.clipLeft, got, c.want)
+			}
+		})
 	}
 }
 
-// TestShortTokens covers F2's k/M/B table, including the stripped ".0".
-func TestShortTokens(t *testing.T) {
+// TestFormats pins the report's small text formatters.
+func TestFormats(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		n    int64
+		name string
+		got  func() string
 		want string
 	}{
-		{999, "999"},
-		{1500, "1.5k"},
-		{2_000_000, "2M"},
-		{1_195_000_000, "1.2B"},
-		{1_000_000_000, "1B"},
+		{"PctText with no closed round is -", func() string { return PctText(85.4, 0) }, "-"},
+		{"PctText rounds to a whole percent", func() string { return PctText(85.4, 10) }, "85%"},
+		{"TTFTText without a measurement is -", func() string { return TTFTText(ScoreRow{HasTTFT: false}) }, "-"},
+		{"TTFTText renders seconds", func() string { return TTFTText(ScoreRow{HasTTFT: true, TTFTMS: 2500}) }, "2.5s"},
+		{"Duration under an hour is minutes", func() string { return Duration(150_000) }, "2m"},
+		{"Duration at an hour is hMM", func() string { return Duration(3_900_000) }, "1h05m"},
+		{"MonthDay trims a full day", func() string { return MonthDay("2026-09-25") }, "09-25"},
+		{"MonthDay leaves a short string", func() string { return MonthDay("short") }, "short"},
+		{"ShortTokens is plain under a thousand", func() string { return ShortTokens(999) }, "999"},
+		{"ShortTokens scales to k", func() string { return ShortTokens(1500) }, "1.5k"},
+		{"ShortTokens strips a trailing .0", func() string { return ShortTokens(2_000_000) }, "2M"},
+		{"ShortTokens scales to B", func() string { return ShortTokens(1_195_000_000) }, "1.2B"},
+		{"ShortTokens leaves a whole billion bare", func() string { return ShortTokens(1_000_000_000) }, "1B"},
 	}
 	for _, c := range cases {
-		if got := ShortTokens(c.n); got != c.want {
-			t.Errorf("ShortTokens(%d) = %q, want %q", c.n, got, c.want)
-		}
-	}
-}
-
-func TestPctText(t *testing.T) {
-	t.Parallel()
-
-	if got := PctText(85.4, 0); got != "-" {
-		t.Errorf("PctText(closed=0) = %q, want -", got)
-	}
-	if got := PctText(85.4, 10); got != "85%" {
-		t.Errorf("PctText(85.4, 10) = %q, want 85%%", got)
-	}
-}
-
-func TestTTFTText(t *testing.T) {
-	t.Parallel()
-
-	if got := TTFTText(ScoreRow{HasTTFT: false}); got != "-" {
-		t.Errorf("TTFTText(false) = %q, want -", got)
-	}
-	if got := TTFTText(ScoreRow{HasTTFT: true, TTFTMS: 2500}); got != "2.5s" {
-		t.Errorf("TTFTText(2500) = %q, want 2.5s", got)
-	}
-}
-
-func TestDuration(t *testing.T) {
-	t.Parallel()
-
-	if got := Duration(150_000); got != "2m" {
-		t.Errorf("Duration(150000) = %q, want 2m", got)
-	}
-	if got := Duration(3_900_000); got != "1h05m" {
-		t.Errorf("Duration(3900000) = %q, want 1h05m", got)
-	}
-}
-
-func TestMonthDay(t *testing.T) {
-	t.Parallel()
-
-	if got := MonthDay("2026-09-25"); got != "09-25" {
-		t.Errorf("MonthDay(2026-09-25) = %q, want 09-25", got)
-	}
-	if got := MonthDay("short"); got != "short" {
-		t.Errorf("MonthDay(short) = %q, want short", got)
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := c.got(); got != c.want {
+				t.Errorf("%s = %q, want %q", c.name, got, c.want)
+			}
+		})
 	}
 }
