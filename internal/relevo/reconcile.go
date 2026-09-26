@@ -125,6 +125,12 @@ func warnOnce(binding, reason, msg string, args ...any) {
 // same tx rather than locking itself, which is what lets the caller hold one
 // critical section across the whole read-reconcile-write.
 func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (out store.Binding, err error) {
+	return reconcileWith(ctx, rt, tx, b, nil)
+}
+
+// reconcileWith is Reconcile with an optional prefetched remote view: a nil
+// pre makes a remote binding fetch inline, as Reconcile always did.
+func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, pre *remoteFetch) (out store.Binding, err error) {
 	// An unknown State is one a newer relevo wrote (#372 §4.1). Reconciling it
 	// as live would drive a builder the newer relevo is already driving, so
 	// the binding is returned exactly as it is and nothing at all runs: no
@@ -174,7 +180,7 @@ func Reconcile(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (
 	}
 
 	if b.Builder.Remote() {
-		return reconcileRemote(ctx, rt, tx, b)
+		return reconcileRemote(ctx, rt, tx, b, pre)
 	}
 
 	// Every local binding reaching this line is headless: a local builder is

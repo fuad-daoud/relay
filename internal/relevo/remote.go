@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -635,8 +634,8 @@ func writeTempAndRename(dest string, r io.Reader) error {
 const maxMirrorBytes = 16 << 20
 
 func mirrorLog(ctx context.Context, rt Runtime, tx *store.Tx, server, name string, round int) {
-	path := rt.Store.BuilderLogPath(name, round)
 	if legacyLog(rt, name, round) {
+		path := rt.Store.BuilderLogPath(name, round)
 		var local int64
 		if fi, err := os.Stat(path); err == nil {
 			local = fi.Size()
@@ -688,131 +687,28 @@ func mirrorLog(ctx context.Context, rt Runtime, tx *store.Tx, server, name strin
 		return
 	}
 
-	cur, err := rt.Store.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			cur = nil
-		} else {
-			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
-			return
-		}
-	}
-	local := int64(len(cur))
-
-	rc, fr, err := rt.Remote.RoundFileFrom(ctx, server, name, round, "log", local)
-	if err != nil || rc == nil {
-		if err != nil {
-			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
-		}
-		return
-	}
-
-	readBounded := func(r io.Reader) ([]byte, bool) {
-		body, err := io.ReadAll(io.LimitReader(r, maxMirrorBytes+1))
-		if err != nil {
-			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
-			return nil, false
-		}
-		if int64(len(body)) > maxMirrorBytes {
-			slog.Warn("mirror builder log over cap; not stored", "server", server, "name", name, "round", round)
-			return nil, false
-		}
-		return body, true
-	}
-
-	switch {
-	case fr.Honored && fr.From == local && fr.Size >= local:
-		defer rc.Close()
-		body, ok := readBounded(rc)
-		if !ok {
-			return
-		}
-		// The range starts at the byte the local copy already holds, so an
-		// empty body means the log did not grow. Rewriting the row with the
-		// same bytes would put the whole blob back for no change.
-		if len(body) == 0 {
-			return
-		}
-		full := append(cur, body...)
-		if int64(len(full)) > maxMirrorBytes {
-			slog.Warn("mirror builder log over cap; not stored", "server", server, "name", name, "round", round)
-			return
-		}
-		if err := tx.PutRoundFile(name, round, path, full); err != nil {
-			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
-			return
-		}
-	case fr.Honored && fr.Size < local:
-		_ = rc.Close()
-		rc2, _, err := rt.Remote.RoundFileFrom(ctx, server, name, round, "log", 0)
-		if err != nil || rc2 == nil {
-			if err != nil {
-				slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
-			}
-			return
-		}
-		defer rc2.Close()
-		body, ok := readBounded(rc2)
-		if !ok {
-			return
-		}
-		if err := tx.PutRoundFile(name, round, path, body); err != nil {
-			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
-			return
-		}
-	default:
-		defer rc.Close()
-		body, ok := readBounded(rc)
-		if !ok {
-			return
-		}
-		if err := tx.PutRoundFile(name, round, path, body); err != nil {
-			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
-			return
-		}
-	}
+	m, _ := fetchLogMirror(ctx, rt, server, name, round)
+	applyLogMirror(rt, tx, name, round, m)
 }
 
 var mirrorDriftAttempts sync.Map // "name/round" -> struct{}
 
+// mirrorDriftOnce is the inline fetch-then-apply form of the drift mirror,
+// kept for callers that hold their own lock across a one-off observation.
 func mirrorDriftOnce(ctx context.Context, rt Runtime, tx *store.Tx, server, name string, round int) {
-	driftPath := rt.Store.DriftPath(name, round)
-	if _, err := rt.Store.ReadFile(driftPath); err == nil {
-		return
-	}
-	key := fmt.Sprintf("%s/%d", name, round)
-	if _, loaded := mirrorDriftAttempts.LoadOrStore(key, struct{}{}); loaded {
-		return
-	}
-	rc, err := rt.Remote.RoundFile(ctx, server, name, round, "drift")
-	if err != nil || rc == nil {
-		if err != nil {
-			slog.Debug("mirror drift not available", "server", server, "name", name, "round", round, "err", err)
-		}
-		return
-	}
-	defer rc.Close()
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		slog.Warn("mirror drift read failed", "server", server, "name", name, "round", round, "err", err)
-		return
-	}
-	if err := tx.PutRoundFile(name, round, driftPath, data); err != nil {
-		slog.Warn("write drift round file failed", "path", driftPath, "err", err)
-	}
+	applyDrift(rt, tx, name, round, fetchDrift(ctx, rt, server, name, round))
 }
 
-// observeRemote advances b from the server's view: planner refresh, candidate
-// refresh, mirrored log, and (on a newly closed round) catchUp -- everything
-// reconcileRemote used to do, except the final delivery to the planner pane.
-// deliver reports whether the caller should follow up with deliverAndSettle;
-// it is false for every path that already returned on its own in the
-// original function (a running mirror, a fresh halt, an unreachable/cert/
-// other error).
+// applyRemote turns a fetched server view into the binding's new state under
+// the caller's lock. It makes no network call: every value it acts on was read
+// by fetchRemote before the lock was taken. deliver reports whether the caller
+// should follow up with deliverAndSettle; it is false for every path that
+// already returned on its own in the original function (a running mirror, a
+// fresh halt, an unreachable/cert/other error).
 //
-// The split exists for SyncRemote (spec §2.2): a read path must observe the
-// server's state without ever calling deliverAndSettle, because a CLI one-shot
-// has no business claiming a pending payload out from under the daemon.
+// The split exists for SyncRemote: a read path must observe the server's state
+// without ever calling deliverAndSettle, because a CLI one-shot has no business
+// claiming a pending payload out from under the daemon.
 func liveFactsOf(v *remote.LiveView) *store.LiveFacts {
 	if v == nil {
 		return nil
@@ -850,94 +746,110 @@ func liveFactsOf(v *remote.LiveView) *store.LiveFacts {
 	}
 }
 
-func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, bool, error) {
+func applyRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, f remoteFetch) (store.Binding, bool, error) {
 	if rt.Remote == nil {
 		slog.Warn("remote client not configured", "binding", b.Name)
 		return b, false, nil
 	}
-
 	now := rt.Now().UTC()
+	if f.Err != nil {
+		return applyRemoteErr(ctx, rt, tx, b, f.Err, now)
+	}
+	return applyRemoteView(ctx, rt, tx, b, f, now)
+}
+
+// applyRemoteErr classifies a failed fetch exactly as the inline observe did:
+// a revoked key halts at once, every other 401 gets its grace, a 404 or a
+// round unreachable past its budget halts, and anything else only updates the
+// reported status.
+func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, err error, now time.Time) (store.Binding, bool, error) {
 	server := b.Builder.Server
 	name := b.Name
-
-	view, err := rt.Remote.GetBinding(ctx, server, name)
-	if err != nil {
-		var httpErr *client.HTTPError
-		if errors.As(err, &httpErr) {
-			if httpErr.Status == 401 {
-				// A revoked key is permanent: halt at once, as it always did.
-				if httpErr.Body.Code == remote.CodeRevoked {
-					b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: %s", name, server, httpErr.Body.Message))
-					return b, false, err
-				}
-				// Every other 401 -- stale, bad_signature, not_enrolled -- may
-				// clear on its own (#373 §4.6): a reboot's clock skew is the
-				// common case. Show it, warn once, and halt only after the
-				// grace. A CLI one-shot (nil AuthGrace) never halts.
-				first := rt.AuthGrace.Note(name, now)
-				if first.Equal(now) {
-					slog.Warn("transient auth error", "server", server, "binding", name, "code", string(httpErr.Body.Code))
-				}
-				b.Builder.RemoteStatus = "auth: " + string(httpErr.Body.Code)
-				if rt.AuthGrace.Expired(name, now, authGraceLimit) {
-					dur := now.Sub(first).Truncate(time.Second)
-					b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: %s for %s -- check this machine's clock and relevo config server list",
-						name, server, httpErr.Body.Code, dur))
-					return b, false, err
-				}
-				return b, false, nil
-			}
-			if httpErr.Status == 404 {
-				b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: binding removed by the server admin", name, server))
+	var httpErr *client.HTTPError
+	if errors.As(err, &httpErr) {
+		if httpErr.Status == 401 {
+			// A revoked key is permanent: halt at once, as it always did.
+			if httpErr.Body.Code == remote.CodeRevoked {
+				b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: %s", name, server, httpErr.Body.Message))
 				return b, false, err
 			}
-		}
-		if errors.Is(err, client.ErrUnreachable) {
-			if b.RemoteUnreachableSince.IsZero() {
-				b.RemoteUnreachableSince = now
-				slog.Warn(fmt.Sprintf("%s unreachable", server), "server", server, "binding", name)
+			// Every other 401 -- stale, bad_signature, not_enrolled -- may
+			// clear on its own: a reboot's clock skew is the common case.
+			// Show it, warn once, and halt only after the grace. A CLI
+			// one-shot (nil AuthGrace) never halts.
+			first := rt.AuthGrace.Note(name, now)
+			if first.Equal(now) {
+				slog.Warn("transient auth error", "server", server, "binding", name, "code", string(httpErr.Body.Code))
 			}
-			b.Builder.RemoteStatus = "unreachable"
-
-			entries, rerr := tx.ReadLog(name)
-			roundOpen := rerr == nil &&
-				HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
-				!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport)
-
-			dur := now.Sub(b.RemoteUnreachableSince).Truncate(time.Second)
-			if roundOpen && now.Sub(b.RemoteUnreachableSince) > roundBudget(b)+unreachableGrace {
-				b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s unreachable for %s; round %d may still be running there",
-					name, server, dur, b.Round))
+			b.Builder.RemoteStatus = "auth: " + string(httpErr.Body.Code)
+			if rt.AuthGrace.Expired(name, now, authGraceLimit) {
+				dur := now.Sub(first).Truncate(time.Second)
+				b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: %s for %s -- check this machine's clock and relevo config server list",
+					name, server, httpErr.Body.Code, dur))
 				return b, false, err
 			}
 			return b, false, nil
 		}
-		if errors.Is(err, client.ErrCertChanged) {
-			if b.Builder.RemoteStatus != "cert" {
-				slog.Warn("server certificate changed", "server", server, "binding", name)
-			}
-			b.Builder.RemoteStatus = "cert"
-			return b, false, nil
+		if httpErr.Status == 404 {
+			b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s: binding removed by the server admin", name, server))
+			return b, false, err
 		}
-		slog.Warn("remote get binding failed", "server", server, "binding", name, "err", err)
+	}
+	if errors.Is(err, client.ErrUnreachable) {
+		if b.RemoteUnreachableSince.IsZero() {
+			b.RemoteUnreachableSince = now
+			slog.Warn(fmt.Sprintf("%s unreachable", server), "server", server, "binding", name)
+		}
+		b.Builder.RemoteStatus = "unreachable"
+
+		entries, rerr := tx.ReadLog(name)
+		roundOpen := rerr == nil &&
+			HasEntry(entries, b.Round, store.DirToBuilder, store.KindPlan) &&
+			!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport)
+
+		dur := now.Sub(b.RemoteUnreachableSince).Truncate(time.Second)
+		if roundOpen && now.Sub(b.RemoteUnreachableSince) > roundBudget(b)+unreachableGrace {
+			b, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s unreachable for %s; round %d may still be running there",
+				name, server, dur, b.Round))
+			return b, false, err
+		}
 		return b, false, nil
 	}
+	if errors.Is(err, client.ErrCertChanged) {
+		if b.Builder.RemoteStatus != "cert" {
+			slog.Warn("server certificate changed", "server", server, "binding", name)
+		}
+		b.Builder.RemoteStatus = "cert"
+		return b, false, nil
+	}
+	slog.Warn("remote get binding failed", "server", server, "binding", name, "err", err)
+	return b, false, nil
+}
+
+// applyRemoteView applies a successful fetch: it refreshes the candidate and
+// the state-dependent facts, then either mirrors the running round or hands a
+// closed one to catchUp. deliver reports whether a payload waits for
+// deliverAndSettle.
+func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, f remoteFetch, now time.Time) (store.Binding, bool, error) {
+	server := b.Builder.Server
+	name := b.Name
+	view := f.View
 
 	// A poll that got through means any transient auth error is over, so the
-	// next one starts its own grace (#373 §4.6).
+	// next one starts its own grace.
 	rt.AuthGrace.Clear(name)
 
 	b.RemoteUnreachableSince = time.Time{}
 	b.Builder.RemoteStatus = string(view.RoundState)
 	// RemoteQueue and RemoteLive are set only in their respective cases below;
-	// every other state clears them, including a round-closed catchUp (#285).
+	// every other state clears them.
 	b.Builder.RemoteQueue = nil
 	b.Builder.RemoteLive = nil
 
-	// A server-side switch (#100): the candidate that actually ran differs
-	// from what this binding last recorded. Refresh the token and the
-	// harness kind, and log it the same way a local mid-round switch does,
-	// so usage and status name the builder that actually ran.
+	// A server-side switch: the candidate that actually ran differs from what
+	// this binding last recorded. Refresh the token and the harness kind, and
+	// log it the same way a local mid-round switch does, so usage and status
+	// name the builder that actually ran.
 	if view.Candidate != "" && view.Candidate != b.BuilderCandidate {
 		prev := b.BuilderCandidate
 		b.BuilderCandidate = view.Candidate
@@ -957,10 +869,9 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	switch view.RoundState {
 	case remote.RoundQueued:
-		// A queued round (#285) has no process and no clocks: it behaves
-		// like RoundRunning minus the stall copy -- no halt, no catch-up,
-		// and any stall stamp from an earlier running round no longer
-		// applies (the process is gone).
+		// A queued round has no process and no clocks: it behaves like
+		// RoundRunning minus the stall copy -- no halt, no catch-up, and any
+		// stall stamp from an earlier running round no longer applies.
 		b.StalledSince = time.Time{}
 		if view.Queue != nil {
 			b.Builder.RemoteQueue = &store.QueueFacts{
@@ -976,11 +887,15 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	case remote.RoundRunning:
 		// The server is the only place that can see the builder's stream; a
 		// running round carries its stall stamp across so the client shows
-		// the same "stalled <age>" (#252).
+		// the same "stalled <age>".
 		b.StalledSince = view.StalledSince
 		b.Builder.RemoteLive = liveFactsOf(view.Live)
-		mirrorLog(ctx, rt, tx, server, name, b.Round)
-		mirrorDriftOnce(ctx, rt, tx, server, name, b.Round)
+		if f.Legacy {
+			mirrorLog(ctx, rt, tx, server, name, b.Round)
+		} else {
+			applyLogMirror(rt, tx, name, b.Round, f.Log)
+		}
+		applyDrift(rt, tx, name, b.Round, f.Drift)
 		return b, false, nil
 
 	case remote.RoundNeedsYou:
@@ -1000,8 +915,8 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 			b.State = store.StateActive
 		}
 		// A lost reply to /ack leaves the server Idle with this round closed
-		// while the client never recorded the report (#373 §4.5). A repeat ack
-		// is idempotent on the server, so catching up again is safe.
+		// while the client never recorded the report. A repeat ack is
+		// idempotent on the server, so catching up again is safe.
 		entries, rerr := tx.ReadLog(name)
 		if rerr == nil && view.ClosedRound >= b.Round &&
 			!HasEntry(entries, b.Round, store.DirToPlanner, store.KindReport) {
@@ -1015,11 +930,34 @@ func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 }
 
+// observeRemote fetches for b and applies the result inline, under whatever
+// lock the caller already holds. The daemon and SyncRemote fetch before their
+// lock and apply through applyRemote; this stays for the one-off stop path.
+func observeRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, bool, error) {
+	return applyRemote(ctx, rt, tx, b, fetchRemote(ctx, rt, b))
+}
+
 // reconcileRemote is the daemon tick's entry point for a remote binding: it
-// observes the server's state and, unless observeRemote already returned
-// (a halt, a running mirror, an error), delivers any pending payload.
-func reconcileRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
-	next, deliver, err := observeRemote(ctx, rt, tx, b)
+// applies the prefetched server view and, unless the apply already returned
+// (a halt, a running mirror, an error), delivers any pending payload. A nil
+// pre is the inline path: fetch and apply under the caller's lock.
+func reconcileRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, pre *remoteFetch) (store.Binding, error) {
+	var (
+		next    store.Binding
+		deliver bool
+		err     error
+	)
+	switch {
+	case pre == nil:
+		next, deliver, err = observeRemote(ctx, rt, tx, b)
+	case !pre.matches(b):
+		// The binding changed while the fetch ran unlocked, so the snapshot
+		// is stale: change nothing and let the next tick fetch afresh.
+		slog.Debug("remote fetch discarded: binding changed", "binding", b.Name)
+		return b, nil
+	default:
+		next, deliver, err = applyRemote(ctx, rt, tx, b, *pre)
+	}
 	if err != nil || !deliver {
 		return next, err
 	}
@@ -1058,6 +996,7 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 			continue
 		}
 		name := b.Name
+		f := fetchRemote(ctx, rt, b)
 		err := rt.Store.WithLock(func(tx *store.Tx) error {
 			fresh, err := tx.Load(name)
 			if errors.Is(err, store.ErrNotFound) {
@@ -1066,7 +1005,10 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 			if err != nil {
 				return err
 			}
-			next, _, err := observeRemote(ctx, rt, tx, fresh)
+			if !f.matches(fresh) {
+				return nil
+			}
+			next, _, err := applyRemote(ctx, rt, tx, fresh, f)
 			if err != nil {
 				return err
 			}
