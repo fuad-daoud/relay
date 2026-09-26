@@ -219,7 +219,11 @@ func cmdServeStatus(args []string) error {
 	}
 	defer func() { _ = d.Close() }()
 
-	srv, err := serve.New(serveAdminConfig(root, d))
+	cfg, err := serveAdminConfigWithPolicy(root, d)
+	if err != nil {
+		return err
+	}
+	srv, err := serve.New(cfg)
 	if err != nil {
 		return err
 	}

@@ -2,7 +2,7 @@
   "builders": {
     "running": 0,
     "queued": 0,
-    "cap": "<CAP>",
+    "cap": 7,
     "scopes": false
   },
   "last_contact": null,
