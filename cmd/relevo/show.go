@@ -17,7 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-const showUsage = `usage: relevo show <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript|--gate|--findings ID] [--json]
+const showUsage = `usage: relevo show <name> [--round N] [--plan|--report|--diff|--drift|--log|--transcript|--gate|--findings ID|--summary|--artifacts|--artifact REL] [--json]
        relevo show <name> --diff|--drift [--stat] [--anchors]
        relevo show <name> --log [--follow] [--after N]
        relevo show <name> --owner <label|id> [--log] [--state DIR]`
@@ -34,24 +34,38 @@ func flagGiven(fs *flag.FlagSet, name string) bool {
 	return given
 }
 
+// showSectionArgs is showSectionFlags' input: which section flags were given.
+// It is a struct rather than a parameter list because the count has outgrown
+// a readable argument list.
+type showSectionArgs struct {
+	plan, report, diff, drift bool
+	log, transcript, gate     bool
+	summary, artifacts        bool
+	findingsID                string
+	artifactRel               string
+}
+
 // showSectionFlags counts how many section flags are set and resolves the
 // one section they name, defaulting to plan when none is given. It is a
 // pure function so a cmd/relevo test can pin "more than one is a usage
 // error" without executing the subcommand. findingsID is `--findings`'s
-// value: a non-empty id names the findings section.
-func showSectionFlags(plan, report, diff, drift, log, transcript, gate bool, findingsID string) (relevo.ShowSection, error) {
+// value: a non-empty id names the findings section. A non-empty artifactRel
+// is `--artifact`'s rel and names the artifacts section, as --artifacts does.
+func showSectionFlags(a showSectionArgs) (relevo.ShowSection, error) {
 	sections := []struct {
 		on      bool
 		section relevo.ShowSection
 	}{
-		{plan, relevo.ShowPlan},
-		{report, relevo.ShowReport},
-		{diff, relevo.ShowDiff},
-		{drift, relevo.ShowDrift},
-		{log, relevo.ShowLog},
-		{transcript, relevo.ShowTranscript},
-		{gate, relevo.ShowGate},
-		{findingsID != "", relevo.ShowFindings},
+		{a.plan, relevo.ShowPlan},
+		{a.report, relevo.ShowReport},
+		{a.diff, relevo.ShowDiff},
+		{a.drift, relevo.ShowDrift},
+		{a.log, relevo.ShowLog},
+		{a.transcript, relevo.ShowTranscript},
+		{a.gate, relevo.ShowGate},
+		{a.findingsID != "", relevo.ShowFindings},
+		{a.summary, relevo.ShowSummary},
+		{a.artifacts || a.artifactRel != "", relevo.ShowArtifacts},
 	}
 	var chosen relevo.ShowSection
 	n := 0
@@ -67,7 +81,7 @@ func showSectionFlags(plan, report, diff, drift, log, transcript, gate bool, fin
 	case 1:
 		return chosen, nil
 	default:
-		return "", fmt.Errorf("only one of --plan, --report, --diff, --drift, --log, --transcript, --gate, --findings may be given")
+		return "", fmt.Errorf("only one of --plan, --report, --diff, --drift, --log, --transcript, --gate, --findings, --summary, --artifacts may be given")
 	}
 }
 
@@ -86,6 +100,9 @@ func cmdShow(args []string) error {
 	logSection := fs.Bool("log", false, "show the round's log entries")
 	transcript := fs.Bool("transcript", false, "show the round's builder transcript")
 	gateSection := fs.Bool("gate", false, "show the round's gate log")
+	summary := fs.Bool("summary", false, "show the round's summary.md")
+	artifacts := fs.Bool("artifacts", false, "show the round's artifact files")
+	artifact := fs.String("artifact", "", "show one artifact's bytes, raw: --artifact <rel>")
 	findings := fs.String("findings", "", "show a consult's findings: --findings <id>")
 	stat := fs.Bool("stat", false, "with --diff/--drift: print the summary line instead of the patch body")
 	anchors := fs.Bool("anchors", false, "with --diff/--drift: prefix each hunk and line with its path:line")
@@ -115,7 +132,12 @@ func cmdShow(args []string) error {
 		return exitCodeErr{code: 2}
 	}
 
-	section, serr := showSectionFlags(*plan, *report, *diff, *drift, *logSection, *transcript, *gateSection, *findings)
+	section, serr := showSectionFlags(showSectionArgs{
+		plan: *plan, report: *report, diff: *diff, drift: *drift,
+		log: *logSection, transcript: *transcript, gate: *gateSection,
+		summary: *summary, artifacts: *artifacts,
+		findingsID: *findings, artifactRel: *artifact,
+	})
 	if serr != nil {
 		// An --owner invocation is the moved serve show body, so its section
 		// conflict keeps that route's prefix and usage line (§4.1).
@@ -164,7 +186,7 @@ func cmdShow(args []string) error {
 		if section == relevo.ShowLog && *round == 0 {
 			return serveLog(*owner, *state, name, *round, *after, *asJSON, *follow)
 		}
-		return serveShow(*owner, *state, name, *round, section, *asJSON)
+		return serveShow(*owner, *state, name, *round, section, *asJSON, *artifact)
 	}
 
 	rt, err := newRuntime()
@@ -183,7 +205,7 @@ func cmdShow(args []string) error {
 		return printLog(rt, name, *round, *after, *asJSON, *follow, true)
 	}
 
-	opts := relevo.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON, FindingsID: *findings}
+	opts := relevo.ShowOptions{Name: name, Round: *round, Section: section, JSON: *asJSON, FindingsID: *findings, ArtifactRel: *artifact}
 	return printShow(rt, opts, true, true, "")
 }
 
@@ -250,8 +272,26 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 	}
 	fmt.Fprintln(os.Stderr, header)
 
+	if opts.ArtifactRel != "" {
+		// --artifact: the file's bytes, raw, with nothing added. An unlisted
+		// rel is an error Show already returned.
+		if _, err := os.Stdout.Write([]byte(res.Text)); err != nil {
+			return err
+		}
+		stampViewed()
+		return nil
+	}
+
 	if res.Missing {
 		fmt.Printf("no %s for round %d\n", res.Section, res.Round)
+		stampViewed()
+		return nil
+	}
+
+	if res.Section == relevo.ShowArtifacts {
+		for _, f := range res.Artifacts {
+			fmt.Println(relevo.ArtifactLine(f))
+		}
 		stampViewed()
 		return nil
 	}

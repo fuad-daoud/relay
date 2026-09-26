@@ -259,6 +259,9 @@ func validateThresholds(path string, p Policy) error {
 	if p.MaxSwitches != nil && *p.MaxSwitches < 0 {
 		return fmt.Errorf("%s: max_switches: must be >= 0, got %d: %w", path, *p.MaxSwitches, ErrBadPolicy)
 	}
+	if p.ArtifactMaxMB != nil && *p.ArtifactMaxMB < 0 {
+		return fmt.Errorf("%s: artifact_max_mb: must be >= 0, got %d: %w", path, *p.ArtifactMaxMB, ErrBadPolicy)
+	}
 	if p.LimitGateDefaultMS != nil && *p.LimitGateDefaultMS <= 0 {
 		return fmt.Errorf("%s: limit_gate_default_ms: must be > 0, got %d: %w", path, *p.LimitGateDefaultMS, ErrBadPolicy)
 	}

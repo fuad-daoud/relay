@@ -1096,3 +1096,40 @@ func TestLoadAcceptsNameOrder(t *testing.T) {
 		t.Errorf("Load(A/b) err = %v, want ErrBadPolicy", err)
 	}
 }
+
+// TestArtifactMaxMBValidates pins the artifact size cap's policy rule: a
+// negative artifact_max_mb is refused, and unset or 0 both mean the 25 MB
+// default (ArtifactMaxBytes).
+func TestArtifactMaxMBValidates(t *testing.T) {
+	t.Parallel()
+
+	if _, err := load(t, `{"artifact_max_mb":-1}`); !errors.Is(err, ErrBadPolicy) {
+		t.Errorf("negative artifact_max_mb err = %v, want ErrBadPolicy", err)
+	}
+	if _, err := load(t, `{"artifact_max_mb":-1}`); err == nil || !strings.Contains(err.Error(), "artifact_max_mb") {
+		t.Errorf("negative artifact_max_mb err = %v, want it to name artifact_max_mb", err)
+	}
+
+	cases := []struct {
+		name string
+		body string
+		want int64
+	}{
+		{"unset falls back to the default", `{}`, DefaultArtifactMaxMB << 20},
+		{"0 falls back to the default", `{"artifact_max_mb":0}`, DefaultArtifactMaxMB << 20},
+		{"1 is 1 MB", `{"artifact_max_mb":1}`, 1 << 20},
+		{"explicit 25", `{"artifact_max_mb":25}`, 25 << 20},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p, err := load(t, tc.body)
+			if err != nil {
+				t.Fatalf("load(%s): %v", tc.body, err)
+			}
+			if got := p.ArtifactMaxBytes(); got != tc.want {
+				t.Errorf("ArtifactMaxBytes(%s) = %d, want %d", tc.body, got, tc.want)
+			}
+		})
+	}
+}

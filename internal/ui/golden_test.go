@@ -1265,7 +1265,7 @@ func TestGoldenViews(t *testing.T) {
 			name: "settings-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})
-				return candDown(t, m, 3) // gate.default
+				return candDown(t, m, 4) // gate.default
 			},
 		},
 		{
@@ -1278,7 +1278,7 @@ func TestGoldenViews(t *testing.T) {
 			name: "settings-check-form-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})
-				m = candDown(t, m, 3) // gate.default
+				m = candDown(t, m, 4) // gate.default
 				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 			},
 		},
@@ -1286,7 +1286,7 @@ func TestGoldenViews(t *testing.T) {
 			name: "settings-scope-form-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})
-				m = candDown(t, m, 13) // serve.scope
+				m = candDown(t, m, 14) // serve.scope
 				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 			},
 		},
@@ -1294,7 +1294,7 @@ func TestGoldenViews(t *testing.T) {
 			name: "settings-classify-form-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})
-				m = candDown(t, m, 15) // classify
+				m = candDown(t, m, 16) // classify
 				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 			},
 		},
@@ -1314,7 +1314,7 @@ func TestGoldenViews(t *testing.T) {
 			name: "settings-webhooks-empty-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})
-				m = candDown(t, m, 16) // notify.webhooks
+				m = candDown(t, m, 17) // notify.webhooks
 				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 			},
 		},
@@ -1322,7 +1322,7 @@ func TestGoldenViews(t *testing.T) {
 			name: "settings-webhooks-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: webhooksDocFrom(t, webhooksFixtureJSON)})
-				m = candDown(t, m, 16) // notify.webhooks
+				m = candDown(t, m, 17) // notify.webhooks
 				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 				return candDown(t, m, 1) // the cursor on the second hook
 			},
@@ -1331,7 +1331,7 @@ func TestGoldenViews(t *testing.T) {
 			name: "settings-webhook-add-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				m := goldenSettingsModel(t, 132, 34, &fakeActions{doc: settingsFixtureDoc(t)})
-				m = candDown(t, m, 16) // notify.webhooks
+				m = candDown(t, m, 17) // notify.webhooks
 				m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 				return candKeys(t, m, key('a'))
 			},

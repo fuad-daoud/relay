@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/ingest"
+	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -201,7 +202,7 @@ func TestSealPassEmptiesADoneDirOnly(t *testing.T) {
 			}
 
 			if err := st.WithLock(func(tx *store.Tx) error {
-				sealRounds(st, tx, b)
+				sealRounds(st, tx, b, policy.DefaultArtifactMaxMB*(1<<20))
 				return nil
 			}); err != nil {
 				t.Fatalf("sealRounds: %v", err)

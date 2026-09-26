@@ -19,6 +19,9 @@ type Policy struct {
 	// MaxSwitches caps builder replacements within one round before the
 	// binding goes NEEDS YOU; nil is DefaultMaxSwitches, 0 disables it.
 	MaxSwitches *int `json:"max_switches,omitempty"`
+	// ArtifactMaxMB caps a round's artifact directory; nil and 0 mean
+	// DefaultArtifactMaxMB, and a negative value is refused.
+	ArtifactMaxMB *int `json:"artifact_max_mb,omitempty"`
 	// LimitGateDefaultMS is how long a matched limit gates the provider when
 	// no reset time parses; nil is DefaultLimitGate.
 	LimitGateDefaultMS *int `json:"limit_gate_default_ms,omitempty"`
@@ -159,6 +162,10 @@ const DefaultMaxTier = harness.TierEdit
 // DefaultMaxSwitches covers a gated pick plus a failed spawn; a third in one round is a pattern a human should see.
 const DefaultMaxSwitches = 2
 
+// DefaultArtifactMaxMB is the artifact directory cap when
+// policy.artifact_max_mb is unset or 0: 25 MB.
+const DefaultArtifactMaxMB = 25
+
 const DefaultLimitGate = time.Hour
 
 // DefaultStallAfter is long enough that a thinking builder is never
@@ -184,6 +191,16 @@ func (p Policy) SwitchLimit() int {
 		return DefaultMaxSwitches
 	}
 	return *p.MaxSwitches
+}
+
+// ArtifactMaxBytes returns the artifact directory cap in bytes: the
+// configured artifact_max_mb, or DefaultArtifactMaxMB when it is unset or 0.
+func (p Policy) ArtifactMaxBytes() int64 {
+	mb := DefaultArtifactMaxMB
+	if p.ArtifactMaxMB != nil && *p.ArtifactMaxMB > 0 {
+		mb = *p.ArtifactMaxMB
+	}
+	return int64(mb) * (1 << 20)
 }
 
 func (p Policy) LimitGateDefault() time.Duration {
