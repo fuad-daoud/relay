@@ -3,19 +3,14 @@ package harness
 import "strings"
 
 // frontmatterModel returns the value of a `model:` key in the leading `---`
-// fenced block, or "" when there is none.
-//
-// Deliberately shallow: this reports a fact about an installed file for a
-// human to read, so a malformed file yields "" rather than an error. An
-// absent model pin is not a fault, and a parse failure must never mask the
-// fact that the file exists.
+// fenced block, or "". It is deliberately shallow: a malformed file yields ""
+// rather than an error, and a parse failure must never mask that the file exists.
 func frontmatterModel(raw []byte) string {
 	lines := strings.Split(string(raw), "\n")
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
 		return ""
 	}
-	// Locate the closing fence first: a `model:` line inside frontmatter
-	// that never terminates is not a pin.
+	// A `model:` line inside frontmatter that never terminates is not a pin.
 	end := -1
 	for i, line := range lines[1:] {
 		if strings.TrimSpace(line) == "---" {
@@ -24,7 +19,7 @@ func frontmatterModel(raw []byte) string {
 		}
 	}
 	if end == -1 {
-		return "" // unterminated frontmatter
+		return ""
 	}
 	for _, line := range lines[1 : end+1] {
 		rest, ok := strings.CutPrefix(line, "model:")
@@ -33,13 +28,11 @@ func frontmatterModel(raw []byte) string {
 		}
 		return strings.TrimSpace(rest)
 	}
-	return "" // frontmatter ended with no model key
+	return ""
 }
 
-// PinnedModel returns the model pin recorded in an installed role
-// definition's raw bytes, dispatching on the kind's shipped format: a TOML
-// profile's top-level `model` key, or a Markdown definition's frontmatter
-// `model:` key.
+// PinnedModel returns the model pin in an installed definition's raw bytes,
+// dispatching on the kind's shipped format: TOML or Markdown frontmatter.
 func PinnedModel(kind string, raw []byte) string {
 	if h, ok := Lookup(kind); ok && h.DocExt == "toml" {
 		return tomlTopLevelModel(raw)
@@ -47,12 +40,10 @@ func PinnedModel(kind string, raw []byte) string {
 	return frontmatterModel(raw)
 }
 
-// tomlTopLevelModel returns the value of a top-level `model = "..."` key,
-// or "" when there is none. The first `[table]` header ends the top level,
-// so a model key inside a table (e.g. [agents.researcher]) is not a pin
-// for the profile itself. `model_reasoning_effort` must not match: after
-// trimming the "model" prefix, the remainder starts with "_reasoning_effort",
-// which does not begin with "=" once trimmed, so the line is skipped.
+// tomlTopLevelModel returns the value of a top-level `model = "..."` key, or
+// "". The first `[table]` header ends the top level, so a model key inside a
+// table is not a pin; `model_reasoning_effort` does not match because after
+// "model" the remainder does not begin with "=".
 func tomlTopLevelModel(raw []byte) string {
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
