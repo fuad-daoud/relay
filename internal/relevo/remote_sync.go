@@ -413,8 +413,8 @@ func reconcileRemote(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 // settleCatchUp finishes a catch-up after the lock was released: the ack, then
 // the report under a fresh lock, guarded against a binding that moved on.
 // reconcile is true for the daemon's tick, which also delivers the queued
-// payload and emits the mutation events a single-pass reconcile used to emit;
-// the read verbs collect without either.
+// payload and emits the tick's mutation events; the read verbs collect
+// without either.
 func settleCatchUp(ctx context.Context, rt Runtime, a *catchUpAck, reconcile bool) error {
 	if err := ackCatchUp(ctx, rt, a); err != nil {
 		return nil
