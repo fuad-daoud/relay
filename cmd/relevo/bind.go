@@ -287,12 +287,6 @@ func runBind(f bindFlags) error {
 		fmt.Fprintln(os.Stderr, n)
 	}
 	notePick(rt, roleName, res)
-	// Spawn path only: an adopted pane or resumed binding has no fresh name
-	// relevo chose, so the note would warn about a name the human did not pick
-	// here.
-	if !adopted {
-		noteConsultRolesTooLong(rt.RoleRegistry(), b.Name)
-	}
 	warnWaitingOnYou(rt, b.Name)
 	return nil
 }
@@ -390,7 +384,6 @@ func runAdd(f bindFlags) error {
 		fmt.Printf("  tree %s\n", res.Binding.CWD)
 	}
 	fmt.Printf("  relevo send --name %s --file <plan.md>\n", res.Binding.Name)
-	noteConsultRolesTooLong(rt.RoleRegistry(), res.Binding.Name)
 	warnWaitingOnYou(rt, res.Binding.Name)
 
 	return nil

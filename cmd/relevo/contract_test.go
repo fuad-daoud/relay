@@ -696,7 +696,6 @@ func c12Sources(t *testing.T) []string {
 func c12FlagSets() map[string]func(*flag.FlagSet) {
 	return map[string]func(*flag.FlagSet){
 		"bind": func(fs *flag.FlagSet) { bindFlagSet(fs) },
-		"ask":  func(fs *flag.FlagSet) { askFlagSet(fs) },
 	}
 }
 

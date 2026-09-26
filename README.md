@@ -297,10 +297,6 @@ label follows the planner's name in `relevo status` and `relevo doctor`.
     prompt    relevo: round 5 · to builder "api-auth" · from the planner (not the human)
               Your working tree is: /home/me/.worktrees/api-auth
   ```
-- `relevo ask [NAME|--name N] --actor R (--file PATH | -q "<question>") [--candidate T] [--planner P]` —
-  spawn a one-shot consult beside the binding and queue its findings like a
-  report; `--round N` resumes the builder that built a closed round instead,
-  which fixes the actor and the candidate. See [Consults](#consults-asking-a-reviewer).
 - `relevo show NAME --diff [--round R] [--stat] [--drift] [--anchors]` — print a round's
   captured patch to stdout, or its diffstat summary with `--stat`. Pass `--drift`
   to inspect between-rounds drift instead of the round's diff; `--drift` composes
@@ -804,8 +800,8 @@ file (`NNN-builder.jsonl`) alongside the report, diff and log, so a remote
 round's failure carries its detail to the client.
 
 What is refused: `--cwd` cannot be combined with `--server` (a remote binding
-is always created fresh, never bound to an existing directory); `relevo ask`
-("consults are local-only"); and `relevo bind --resume --rebind` (or
+is always created fresh, never bound to an existing directory); and
+`relevo bind --resume --rebind` (or
 `--candidate`) against a remote binding ("cannot change a remote
 builder; unbind and re-create" -- a binding's mode is fixed at creation, the same
 rule a headless binding follows). `relevo done` and `relevo unbind` tell the
@@ -1182,7 +1178,7 @@ with `relevo config edit`. The array is:
 - `harness` — a kind relevo knows: `agy`, `claude`, `opencode`, `codex`. Required.
 - `provider` — who enforces the quota; free text. Required.
 - `model` — passed to the harness as-is. Required.
-- `tree` — `binding` (the default) or `none` (which `relevo ask` refuses today).
+- `tree` — `binding` (the default) or `none`.
 - `extra_args` — appended verbatim after what relevo renders.
 - `tier` — default permission tier for this candidate: `harness`, `read`, `edit`, `yolo`. Optional; defaults to the actor's tier, else `harness`.
 - `denial_patterns` — regexes that replace the harness default denial patterns for this candidate when detecting permission-blocked exits. Optional.
@@ -1236,9 +1232,9 @@ With `--candidate` omitted, relevo decides, by one rule:
 
 When every candidate serving the actor is gated or `off`, relevo refuses and
 says why each one is; an explicit `--candidate` still bypasses that. The same
-rule applies to `relevo bind --worktree` and `relevo ask --candidate`.
+rule applies to `relevo bind --worktree`.
 
-Every choice is written down. `bind` and `ask` print one
+Every choice is written down. `bind` and `send` print one
 line saying what was picked and why, and the same line lands in the
 binding's log as a `pick` entry, so `relevo show --log` shows it later:
 
@@ -1424,9 +1420,11 @@ shape: `builder` must run a writer agent, `reviewer` and `researcher` a reader.
 An unknown agent, a reader with `check`, or a builtin actor with the wrong
 shape is refused when the config loads.
 
-- A new **reader** actor runs with `relevo ask --actor <name>`; a new
-  **writer** actor runs as a binding's actor: `relevo bind --worktree --actor
-  <name>` or `relevo bind --actor <name>`. Every round of that binding runs it.
+- A new **reader** actor runs as a binding's actor too: `relevo bind
+  --worktree --actor <name>` or `relevo bind --actor <name>`, then `relevo
+  send` hands it a plan. Its round writes `NNN-<actor>/summary.md` and any
+  files it produced. A new **writer** actor runs a round the same way. Every
+  round of that binding runs it.
 
 With `relevo bind --worktree --server S --actor <r>`, the server resolves `<r>`
 against **its own** actors section, and your local sections do not travel. A
@@ -1498,7 +1496,7 @@ its own.
 Where it shows: `relevo status` gains a `candidates` block only while
 something is gated; `relevo config` marks gated rows `unavailable:`;
 `relevo doctor` warns per gated candidate with the command that clears it.
-`bind`/`ask` with an explicit token print a `note:` on
+`bind`/`send` with an explicit token print a `note:` on
 stderr when the candidate is gated and **proceed** -- you named it. With
 the token omitted they skip gated candidates and refuse when nothing
 ungated serves the actor.
@@ -1600,7 +1598,7 @@ When starting an agent, relevo resolves the permission tier through a precedence
 
 The result is then capped by the policy's `max_tier`.
 
-For consults (`relevo ask`), tier resolves from the candidate's `tier`, the actor's `tier`, or `harness`. Consults accept no `--tier` flag, and a consult requesting `yolo` requires `max_tier: "yolo"` in the policy section since `ask` has no `--allow-yolo` flag.
+For the verify reviewer, tier resolves from the policy section's `tier.reviewer` when set, else the candidate's `tier`, else `harness` -- and then capped by `max_tier`. The reviewer accepts no `--tier` flag, and a reviewer requesting `yolo` requires `max_tier: "yolo"` in the policy section since `send --verify` has no `--allow-yolo` flag.
 
 ### Per-round tiers
 
@@ -1678,8 +1676,7 @@ in the JSON that `relevo show --log --json` and `relevo show --json` print: the 
 session that built the closed round, so a report read two rounds later can
 still name the session that wrote it. It is the session the round's stream
 announced in its first event. It is absent when the harness named none -- relevo
-never guesses. The one-line form appends ` session=<kind>:<id8>`, and it is what
-`ask --round` resumes.
+never guesses. The one-line form appends ` session=<kind>:<id8>`.
 
 ### Verify
 
@@ -1689,9 +1686,9 @@ own output, relevo runs a read-only **reviewer** over the finished round and
 records its verdict. `--no-verify` overrides the policy default for one send;
 the two flags are exclusive.
 
-The reviewer is an ordinary consult (`relevo ask --actor reviewer`) with two
-differences. It runs **headless**, so its findings are its final message rather
-than a file, and it runs in a **throwaway worktree**: relevo creates a detached
+The reviewer is a headless, one-shot consult started at round close. Its
+findings are its final message rather than a file, and it runs in a **throwaway
+worktree**: relevo creates a detached
 worktree at the builder's HEAD under
 `~/.local/state/relevo/.worktrees/.verify/<name>-<NNN>`, launches the reviewer
 there, and removes the tree once the consult reaches any terminal state. That
@@ -1760,38 +1757,43 @@ stand, and relevo never writes or removes `NNN-done`. A passing gate or a human
 Headless bindings are the intended case -- the server runs the same reconcile,
 so a remote headless binding gets repair rounds too.
 
-## Consults: asking a reviewer
+## Reader actors
 
-A **consult** is a one-shot agent spawned beside a binding to answer one
-question. Unlike a builder, it is not persistent, does not advance the round,
-and does not count against the one-writer-per-tree rule: it is a separate
-record on the binding, not a binding of its own.
+A **reader** actor is a binding, exactly as a writer is, but its round reads
+and reports: relevo runs one headless process, it never edits the shared tree,
+and its output lands in the round's artifact directory. That output is
+`NNN-<actor>/summary.md` -- the reader's final message -- plus any files it
+produced.
 
 The planner runs, from its own session:
 
 ```
-relevo ask --actor reviewer --file q.md webshop
+relevo bind --actor reviewer --name webshop
+relevo send --name webshop --file q.md
 ```
 
-relevo passes the question in the consult's prompt and keeps a copy with the
-round. A question over 64 KiB is staged as `NNN-<id>-ask.md` for the consult
-to read instead. A consult is a one-shot process:
-relevo starts the harness in its print form, and the consult's **final message**
-becomes the findings. relevo records them as `NNN-<id>-findings.md` in its
-database, and queues them to the planner like any other report. When you ask,
-`relevo ask` prints the `relevo show <name> --round N --findings <id>` command that
-shows them. The same form resumes a closed round's builder session and runs
-a verifier at round close. The process is the only thing relevo can observe: it is killed at the
-consult timeout (10m), and a process that exits without a final message is
-reported silent with its exit code and the stream to read. The resolved tier
-still gates the pick: at `read`, claude and agy
-can run (claude `--permission-mode plan`, agy `--mode plan`), while opencode
-and codex cannot honour `read` and are refused.
+relevo stages `q.md` as the round's plan and runs the reader headless; its
+**final message** becomes the round's report at `NNN-<actor>/summary.md` and is
+queued to the planner like any report. `relevo show <name> --summary` prints
+the summary, `relevo show <name> --artifacts` lists the round's other files,
+and the cockpit's artifacts tab shows both.
 
-While consults are running, `relevo status` appends ` +Nc` to the binding's row
-— only when non-zero, so a healthy binding looks no different. A finished
-consult's record is dropped once its findings have been queued. Terminal
-consults are not work in flight, so the count does not include them.
+A bound reader round is the only way to get a reader's answer: the old
+one-shot `relevo ask` consult is gone. `relevo show <name> --findings <id>`
+still reads the findings of a consult recorded before that removal, and it is
+how a verify reviewer's findings are read.
+
+The process is the only thing relevo can observe: relevo kills one that
+outlives its deadline, and a process that exits without a final message is
+reported with its exit code and the stream to read. The resolved tier still
+gates the pick: at `read`, claude and agy can run (claude `--permission-mode
+plan`, agy `--mode plan`), while opencode and codex cannot honour `read` and
+are refused.
+
+While a verify reviewer is running, `relevo status` appends ` +Nc` to the
+binding's row — only when non-zero, so a healthy binding looks no different. A
+finished reviewer's record is dropped once its findings have been queued.
+Terminal consults are not work in flight, so the count does not include them.
 
 `relevo config agents` writes the reviewer definition with the other
 agents; to install just this one:
@@ -1819,20 +1821,21 @@ hands back a file path.
 
 ### Planner actors
 
-A planner actor can write a plan as a consult, so a human reviews it before
-the builder starts:
+A planner actor is a reader binding too: bind it, send it the task, and read
+its plan back from the round's summary.
 
 ```
-relevo ask --name b --actor lite-planner -q "plan: <task>"   # or --file q.md
-relevo show b --findings <id> > plan.md                      # review / edit
-relevo send --name b --file plan.md
+relevo bind --actor lite-planner --name plan-x
+relevo send --name plan-x --file task.md
+relevo show plan-x --summary                                  # or the cockpit's artifacts tab
+relevo send --name <builder> --file <the summary path>
 ```
 
-The plan is the consult's findings. `relevo show` prints the header to stderr
-and the section's text to stdout, so the redirect gives a clean plan file to
-review and edit. Reviewing is a human (or planner-session) step: relevo sends
-nothing automatically, and `relevo send` is what hands the reviewed file to
-the builder.
+The plan is the reader round's summary, `NNN-lite-planner/summary.md`. Review
+it with `relevo show plan-x --summary` (or the cockpit's artifacts tab), then
+hand that summary path to a builder with `relevo send --name <builder> --file
+<the summary path>`. Reviewing is a human (or planner-session) step: relevo
+sends nothing automatically.
 
 ### Round usage
 
@@ -1934,19 +1937,19 @@ is nothing to count after the fact. They stay where they are visible, on
 `switches` counts the rounds that changed builder mid-round, attributes each to
 the provider it left with a reason (`rate-limited`, `exited`, `gated`, `remote`
 or `other`), and says how many of the rounds that was. `gate` counts pass, fail,
-timeout and error over the rounds that ran a gate. `consults` counts asks per
-actor (`session` for `ask --round`) with the findings' models beside them, plus
-the verifies that were skipped.
+timeout and error over the rounds that ran a gate. `consults` counts consults
+per actor with the findings' models beside them, plus the verifies that were
+skipped.
 
 `blocked` comes from the gate history in the database, which keeps 30 days: rate-limit and
 spawn-failure events in that window, and the gates a human cleared with
 `relevo gate --clear`. Only a gate cleared by hand has a recorded length -- an
 expired gate keeps no expiry time, so it counts as an event with no duration.
 
-### Consult candidates
+### Reviewer candidates
 
-`relevo ask --actor reviewer` resolves the reviewer actor and picks from its
-`candidates` list, by the same rule as `--candidate`.
+The verify reviewer resolves the reviewer actor and picks from its `candidates`
+list, by the same rule as `--candidate`.
 
 In the actors section:
 
@@ -1954,50 +1957,14 @@ In the actors section:
 "reviewer": { "agent": "reviewer", "candidates": ["opus"] }
 ```
 
-```bash
-relevo ask --actor reviewer --candidate claude/anthropic/opus --file q.md webshop
-```
-
-Until the reviewer actor lists a candidate, `ask` fails with
+Until the reviewer actor lists a candidate, the verify consult fails with
 `no configured candidate serves actor "reviewer"`.
-
-### Asking a past round's builder
-
-A closed round's report names the harness session that built it, so you can ask
-that session what it did and why without reopening the round:
-
-```
-relevo ask --round 1 -q "why did you stop at the second migration?" webshop
-```
-
-`--round N` looks the session up on round N's report entry and resumes it as a
-headless consult with the harness's own resume form — claude `--resume`, agy
-`--conversation`, opencode `run --session … --fork`. The answer is the
-process's final message, which relevo records as the usual
-`NNN-<id>-findings.md` and queues to the planner exactly as any consult's
-findings are. `--actor` and `--candidate` are ignored (with a note on stderr if
-you passed one): resuming a session fixes both. The question comes from
-`--file` or `-q`, and exactly one of them is required.
-
-Round N must be closed. Resuming the open round's builder would put two writers
-in one session, so `--round` refuses the current round and says which; a round
-whose report names no session — built before relevo recorded sessions, or by a
-harness that printed none — is refused too, because relevo will not guess which
-session to resume.
-
-Resuming mutates the session on claude and agy: the resumed turn is appended to
-it. That is why relevo reaches for this only once the round has closed, and why
-the prompt tells the builder to change nothing and run no writing tool — but it
-is the session's own history that changes, not the tree. opencode has no
-read-only flag, so its round consult runs at `harness` tier and its `--fork`
-leaves the original session untouched: the resumed turn lands in a copy. codex
-has no verified resume form, and `relevo ask --round` refuses it by name.
 
 ## The planner: architect
 
 relevo ships one more definition it never launches: `architect`, the planner's
 persona. The planner is the session you drive -- the one you run `relevo bind`
-and `relevo ask` from -- and relevo does not pick its harness or start it. What
+and `relevo send` from -- and relevo does not pick its harness or start it. What
 relevo provides is the definition, so the same architect runs on any kind:
 
 ```
@@ -2035,7 +2002,7 @@ and nothing more; the claude and opencode copies leave `model:` unset so the
 launch line's flag decides.
 
 `architect` is not a relevo actor: it is absent from the actors section, so
-`relevo ask --actor architect` is refused, and
+`relevo bind --actor architect` is refused, and
 `relevo doctor` does not check for it -- doctor reports only the definitions
 some candidate would load, and no candidate loads the planner.
 

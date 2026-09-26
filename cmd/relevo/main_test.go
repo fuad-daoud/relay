@@ -211,17 +211,22 @@ func TestSendDryRunRequiresFile(t *testing.T) {
 	}
 }
 
-// TestAskRoundNeedsAQuestion pins that `relevo ask --round` without a question
-// is refused before a runtime is built: a round ask takes --file or -q, and a
-// CI runner with no harness must fail on the missing flag, not on the
-// environment.
-func TestAskRoundNeedsAQuestion(t *testing.T) {
-	err := run([]string{"ask", "--round", "1", "x"})
-	if err == nil {
-		t.Fatal("relevo ask --round without a question must be rejected")
+// TestAskIsGone pins the removed verb's stub: `relevo ask` writes one line on
+// stderr naming the replacement workflow and exits 2. It dispatches through run
+// -- parsing and printing only, so nothing is spawned and no runtime is built.
+func TestAskIsGone(t *testing.T) {
+	initRoot(t)
+
+	_, stderr, err := captureOutput(t, func() error {
+		return run([]string{"ask", "--actor", "reviewer", "--file", "q.md"})
+	})
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != 2 {
+		t.Fatalf("relevo ask: run = %v, want exit code 2", err)
 	}
-	if !strings.Contains(err.Error(), "--file or -q") {
-		t.Errorf("error must point at --file or -q, got %q", err)
+	want := "relevo ask is gone: bind a reader actor (relevo bind --actor reviewer) and send it a plan"
+	if !strings.Contains(string(stderr), want) {
+		t.Errorf("stderr = %q, want it to contain %q", stderr, want)
 	}
 }
 
@@ -1025,7 +1030,6 @@ func TestBindRejectsTabFlag(t *testing.T) {
 		{"bind", "--tab"},
 		{"bind", "--worktree", "--name", "x", "--tab"},
 		{"bind", "--branch", "b", "--name", "y", "--tab"},
-		{"ask", "--actor", "reviewer", "--file", "q.md", "--new-tab"},
 	} {
 		err := run(args)
 		if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
@@ -1066,18 +1070,6 @@ func TestBindFlagsHaveActorNotRole(t *testing.T) {
 	}
 	if fs.Lookup("role") != nil {
 		t.Error("bind still defines --role; it must be removed, not aliased")
-	}
-}
-
-// TestAskFlagsHaveActorNotRole is TestBindFlagsHaveActorNotRole for ask.
-func TestAskFlagsHaveActorNotRole(t *testing.T) {
-	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
-	askFlagSet(fs)
-	if fs.Lookup("actor") == nil {
-		t.Error("ask does not define --actor")
-	}
-	if fs.Lookup("role") != nil {
-		t.Error("ask still defines --role; it must be removed, not aliased")
 	}
 }
 

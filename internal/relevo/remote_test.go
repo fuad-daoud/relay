@@ -5276,28 +5276,6 @@ func TestResumeRemoteRefusesRebind(t *testing.T) {
 	}
 }
 
-func TestAskRefusesRemote(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Ask", func(t *testing.T) {
-		rt, _ := seedForAsk(t)
-		b := remoteBinding("zen")
-		b.Name = "remote-ask"
-		b.CWD = "/other-tree-remote"
-		if err := rt.Store.Save(b); err != nil {
-			t.Fatal(err)
-		}
-		q := writeQuestion(t, "Review something.")
-
-		_, err := Ask(context.Background(), rt, AskOptions{
-			Role: "reviewer", File: q, Name: "remote-ask", PlannerID: testPlannerName,
-		})
-		if err == nil || !strings.Contains(err.Error(), "consults are local-only") {
-			t.Fatalf("Ask err = %v, want the consults-are-local-only refusal", err)
-		}
-	})
-}
-
 // remoteBuilderRT is the client runtime for the `send --candidate` remote tests
 // (#318): an active remote binding on zen with a current candidate, a fake git
 // whose branch resolves, and a fake transport.

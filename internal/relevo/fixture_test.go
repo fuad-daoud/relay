@@ -207,3 +207,14 @@ func gateOnLimitSetup(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 	}
 	return rt, b
 }
+
+// containsAdjacentPair reports whether args contains a, b as consecutive
+// elements, in that order.
+func containsAdjacentPair(args []string, a, b string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == a && args[i+1] == b {
+			return true
+		}
+	}
+	return false
+}

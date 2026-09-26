@@ -74,3 +74,75 @@ func TestVerifyConsultScope(t *testing.T) {
 		t.Errorf("Scope.AllowedCPUs = %q, want the whole pool 0-3: verify starts after the core is released", spec.Scope.AllowedCPUs)
 	}
 }
+
+// TestVerifyStillRunsTheReviewer pins that `send --verify` survives the
+// removal of `relevo ask`: closing a verify round still starts the reviewer
+// through consult.StartVerify, and that reviewer's final message is reconciled
+// into the round's findings like any consult's. Deleting StartVerify's call
+// site in the close path fails this test.
+func TestVerifyStillRunsTheReviewer(t *testing.T) {
+	t.Parallel()
+
+	rt, fr, _, closed := startVerifyRound(t)
+
+	// The close started the reviewer in its throwaway worktree.
+	if len(fr.handles) != 1 {
+		t.Fatalf("verify processes = %d, want 1: the close must start the reviewer", len(fr.handles))
+	}
+	var c *store.Consult
+	for i := range closed.Consults {
+		if closed.Consults[i].Role == consult.VerifyRole {
+			c = &closed.Consults[i]
+		}
+	}
+	if c == nil {
+		t.Fatalf("no %q consult on the binding: %+v", consult.VerifyRole, closed.Consults)
+	}
+	if c.State != store.ConsultRunning {
+		t.Fatalf("verify consult state = %q, want running", c.State)
+	}
+
+	// Its final message is reconciled into the round's findings.
+	leaveVerifyStream(t, rt, fr, "the reviewer's findings")
+	tickConsults(t, rt)
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var findings *store.LogEntry
+	for i := range entries {
+		if entries[i].Kind == store.KindFindings {
+			findings = &entries[i]
+		}
+	}
+	if findings == nil {
+		t.Fatalf("no findings entry queued: %+v", entries)
+	}
+	body, err := rt.Store.ReadFile(findings.Path)
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	if !strings.Contains(string(body), "the reviewer's findings") {
+		t.Errorf("findings = %q, want the reviewer's final message", body)
+	}
+}
+
+// TestVerifyConsultStderrSharesTheStream is the surviving consult path's
+// version of the removed ask tests: a consult's stderr goes into its stream
+// file, and no separate -consult.log is written.
+func TestVerifyConsultStderrSharesTheStream(t *testing.T) {
+	t.Parallel()
+
+	_, fr, _, _ := startVerifyRound(t)
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %d, want 1", len(fr.specs))
+	}
+	spec := fr.specs[0]
+	if spec.LogPath != spec.StreamPath {
+		t.Errorf("LogPath = %q, StreamPath = %q; want the stderr on the stream file", spec.LogPath, spec.StreamPath)
+	}
+	if !strings.HasSuffix(spec.LogPath, "-consult.jsonl") {
+		t.Errorf("LogPath = %q, want it to end in -consult.jsonl", spec.LogPath)
+	}
+}

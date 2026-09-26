@@ -224,30 +224,6 @@ func TestRolesViewsFormatCandidatesLatencyForFileMode(t *testing.T) {
 	}
 }
 
-// TestRolesViewsConsultRolesTooLongFor pins §3.3: the note reads the registry,
-// so a reader role only roles.json knows is reported, while the legacy wrapper
-// keeps reporting only the built-in consult roles.
-func TestRolesViewsConsultRolesTooLongFor(t *testing.T) {
-	t.Parallel()
-
-	const newReader = "abcdefghijklmnopqrstuvwxyz0123" // 30 characters
-	set := candidateSet(t, testCandidatesJSON)
-	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
-		newReader: {Shape: ptr("reader")},
-	})
-
-	got := ConsultRolesTooLongFor(reg, "ab")
-	want := []string{newReader}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ConsultRolesTooLongFor = %v, want %v", got, want)
-	}
-
-	legacy, _ := roles.Build(nil, set, policy.Policy{})
-	if a, b := ConsultRolesTooLong("ab"), ConsultRolesTooLongFor(legacy, "ab"); !reflect.DeepEqual(a, b) || len(a) != 0 {
-		t.Errorf("ConsultRolesTooLong(\"ab\") = %v, want the legacy registry's empty result (got %v)", a, b)
-	}
-}
-
 // TestRolesViewsLegacyRoleFieldWarnings pins §3.1's LegacyRoleFieldWarnings:
 // file mode names each legacy field still set, in order, and legacy mode says
 // nothing -- without roles.json those fields are the source, not stale copies.
