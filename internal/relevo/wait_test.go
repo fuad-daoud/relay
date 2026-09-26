@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -78,7 +79,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("marked report with Outcome: halted is WaitHalted (5)", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: OutcomeHalted},
+			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: reporttail.OutcomeHalted},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitHalted, Line: "/x/001-report.md", Done: true}
@@ -90,7 +91,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("unmarked with Outcome: blocked is WaitHalted (5)", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Note: "unmarked", Outcome: OutcomeBlocked},
+			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Note: "unmarked", Outcome: reporttail.OutcomeBlocked},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitHalted, Line: "/x/001-report.md", Done: true}
@@ -102,7 +103,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("marked done is WaitClosed (0)", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: OutcomeDone},
+			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: reporttail.OutcomeDone},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
@@ -114,7 +115,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("marked unstructured is WaitClosed (0)", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: OutcomeUnstructured},
+			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: reporttail.OutcomeUnstructured},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
@@ -126,7 +127,7 @@ func TestWaitOutcome(t *testing.T) {
 	t.Run("deferred is WaitClosed (0)", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
-			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: OutcomeDeferred},
+			{Round: 1, Direction: store.DirToPlanner, Kind: store.KindReport, Path: "/x/001-report.md", Outcome: reporttail.OutcomeDeferred},
 		}
 		got := WaitOutcome(b, entries, 1, noQuestion)
 		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}

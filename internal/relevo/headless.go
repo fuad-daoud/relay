@@ -17,6 +17,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -974,7 +975,7 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		if rec != nil {
 			gateLogPath = rec.LogPath
 		}
-		next, err = startVerifyConsult(ctx, rt, tx, next, closedRound, verifyDiffCommand(base, next.RoundClosedTree), gateLogPath)
+		next, err = consult.StartVerify(ctx, consultDeps(rt), tx, next, closedRound, consult.VerifyDiffCommand(base, next.RoundClosedTree), gateLogPath)
 		if err != nil {
 			return next, true, false, err
 		}

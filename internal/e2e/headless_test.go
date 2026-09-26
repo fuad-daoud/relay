@@ -310,7 +310,7 @@ func writeFakeHarness(t *testing.T) string {
 
 // fakeReportBody is the body the fake harness writes to the report path: the
 // sentence the channel assertion looks for, plus a well-formed relevo tail so
-// the round closes on a marked report (relevo.ParseReportTail).
+// the round closes on a marked report (reporttail.Parse).
 const fakeReportBody = "# Round Report\n\n" +
 	fakeReportText + "\n\n" +
 	"```relevo\n" +

@@ -3,7 +3,6 @@ package relevo
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -268,8 +268,8 @@ func TestAskRefusesTheBuilderRole(t *testing.T) {
 		Role: "builder", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
 
-	if !errors.Is(err, ErrNotAConsultRole) {
-		t.Fatalf("want ErrNotAConsultRole, got %v", err)
+	if !errors.Is(err, consult.ErrNotAConsultRole) {
+		t.Fatalf("want consult.ErrNotAConsultRole, got %v", err)
 	}
 	b, err := rt.Store.Load("webshop")
 	if err != nil {
@@ -407,8 +407,8 @@ func TestAskRefusesAtTheConsultCap(t *testing.T) {
 	_, err = Ask(context.Background(), rt, AskOptions{
 		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
-	if !errors.Is(err, ErrConsultCap) {
-		t.Fatalf("want ErrConsultCap, got %v", err)
+	if !errors.Is(err, consult.ErrConsultCap) {
+		t.Fatalf("want consult.ErrConsultCap, got %v", err)
 	}
 }
 
@@ -431,8 +431,8 @@ func TestAskCountsAReservationAgainstTheCap(t *testing.T) {
 	_, err = Ask(context.Background(), rt, AskOptions{
 		Role: "reviewer", File: q, Name: "webshop", PlannerID: testPlannerName,
 	})
-	if !errors.Is(err, ErrConsultCap) {
-		t.Fatalf("want ErrConsultCap, got %v", err)
+	if !errors.Is(err, consult.ErrConsultCap) {
+		t.Fatalf("want consult.ErrConsultCap, got %v", err)
 	}
 }
 
@@ -1363,56 +1363,7 @@ func TestConsultStderrSharesTheStream(t *testing.T) {
 	}
 }
 
-// ── the question goes in the prompt (N1-N4) ────────────────────────────
-
-// TestInlinePrompt pins the pure decision (§4.3): a question that fits is
-// delimited and inline, one byte too large is not, and askInlineBlock trims
-// exactly one trailing newline.
-//
-// Mutation check (run and report): `<` for `<=` fails on the exact-size case;
-// an unconditional true fails the over-the-limit case.
-func TestInlinePrompt(t *testing.T) {
-	t.Parallel()
-
-	render := func(ref string) string { return fmt.Sprintf(consultHeadlessPrompt, ref) }
-	const question = "Why did round 1 change the schema?"
-
-	prompt, ok := inlinePrompt(render, []byte(question))
-	if !ok {
-		t.Fatalf("inlinePrompt(%q) = not ok, want ok", question)
-	}
-	if !strings.Contains(prompt, question) {
-		t.Errorf("prompt does not contain the question:\n%s", prompt)
-	}
-	for _, want := range []string{"-----BEGIN QUESTION-----", "-----END QUESTION-----"} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("prompt does not contain %q:\n%s", want, prompt)
-		}
-	}
-	if strings.Contains(prompt, "Read:") {
-		t.Errorf("prompt contains a Read: reference:\n%s", prompt)
-	}
-
-	// A question sized so the whole prompt is exactly inlineAskMax bytes
-	// inlines; one byte more does not.
-	fits := []byte(strings.Repeat("x", inlineAskMax-len(prompt)+len(question)))
-	p, ok := inlinePrompt(render, fits)
-	if !ok || len(p) != inlineAskMax {
-		t.Errorf("prompt of %d bytes = (%d, %v), want (%d, true)", inlineAskMax, len(p), ok, inlineAskMax)
-	}
-	over := append(append([]byte(nil), fits...), 'x')
-	if p, ok := inlinePrompt(render, over); ok {
-		t.Errorf("prompt of %d bytes = (%d, true), want not ok", len(p), len(p))
-	}
-
-	// Exactly one trailing newline is trimmed.
-	if a, b := askInlineBlock([]byte("hi\n")), askInlineBlock([]byte("hi")); a != b {
-		t.Errorf("askInlineBlock kept or dropped more than one newline:\n%q\n%q", a, b)
-	}
-	if got := askInlineBlock([]byte("hi\n\n")); !strings.HasSuffix(got, "\n\n-----END QUESTION-----") {
-		t.Errorf("askInlineBlock(hi\\n\\n) = %q, want the extra newline kept", got)
-	}
-}
+// ── the question goes in the prompt (N2-N4) ────────────────────────────
 
 // TestAskInlinesASmallQuestion (N2): a small question is carried by the started
 // argv, is not a file on disk, comes back from round_file, and the ask entry
@@ -1472,7 +1423,7 @@ func TestAskInlinesASmallQuestion(t *testing.T) {
 	}
 }
 
-// TestAskFallsBackToAFileOverTheLimit (N3): a question over inlineAskMax falls
+// TestAskFallsBackToAFileOverTheLimit (N3): a question over consult.InlineAskMax falls
 // back to today's staged file and Read: prompt.
 //
 // Mutation check (run and report): an inlinePrompt that always returns true
@@ -1483,7 +1434,7 @@ func TestAskFallsBackToAFileOverTheLimit(t *testing.T) {
 	fr := newFakeRunner()
 	rt, _ := seedForAsk(t)
 	rt.Runner = fr
-	question := strings.Repeat("x", inlineAskMax+1)
+	question := strings.Repeat("x", consult.InlineAskMax+1)
 
 	res, err := Ask(context.Background(), rt, AskOptions{
 		Role: "reviewer", File: writeQuestion(t, question), Name: "webshop", PlannerID: testPlannerName,
@@ -1552,7 +1503,7 @@ func TestAskRoundInlinesTheQuestion(t *testing.T) {
 	rt2, _ := seedForAsk(t)
 	rt2.Runner = fr2
 	seedRoundReport(t, rt2, 1, &store.BuilderSession{Kind: "claude", ID: "sess-1"})
-	big := strings.Repeat("x", inlineAskMax+1)
+	big := strings.Repeat("x", consult.InlineAskMax+1)
 	res2, err := Ask(context.Background(), rt2, AskOptions{Round: 1, Question: big, Name: "webshop"})
 	if err != nil {
 		t.Fatalf("Ask --round over the limit: %v", err)

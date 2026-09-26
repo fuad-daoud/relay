@@ -133,7 +133,7 @@ type BindingView struct {
 	Halt          string     `json:"halt,omitempty"`
 	ResultCommit  string     `json:"result_commit,omitempty"`
 	DirtyCommit   string     `json:"dirty_commit,omitempty"`
-	ReportOutcome string     `json:"report_outcome,omitempty"` // relevo.ReportTail.Status or "unstructured"
+	ReportOutcome string     `json:"report_outcome,omitempty"` // reporttail.Tail.Status or "unstructured"
 	// Stopped is how the closed round (ClosedRound) was stopped: "killed"
 	// or "dequeued". It is "" when that round closed any other way, on a
 	// pre-stop server, or when ClosedRound is 0.

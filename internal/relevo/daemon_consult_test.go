@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -62,7 +63,7 @@ func TestTickPersistsAnExpiredReservation(t *testing.T) {
 	t.Parallel()
 
 	rt, clock := seedSpawning(t)
-	clock.Advance(consultSpawnTimeout + time.Second)
+	clock.Advance(consult.SpawnTimeout + time.Second)
 
 	d := NewDaemon(rt, time.Second)
 	for i := 0; i < 2; i++ {

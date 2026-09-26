@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -188,7 +189,7 @@ func waiting(b BindingStatus) string {
 		if b.LastPayload.Note != "" {
 			base = fmt.Sprintf("report in (%s)", b.LastPayload.Note)
 		}
-		if b.LastPayload.Outcome != "" && b.LastPayload.Outcome != OutcomeDone {
+		if b.LastPayload.Outcome != "" && b.LastPayload.Outcome != reporttail.OutcomeDone {
 			base += " · " + b.LastPayload.Outcome
 		}
 	}
@@ -216,7 +217,7 @@ func rowStatus(b BindingStatus, needsYou, reportIn bool) (status, tone string) {
 			if b.LastPayload.Note != "" {
 				status += " · " + b.LastPayload.Note
 			}
-			if b.LastPayload.Outcome != "" && b.LastPayload.Outcome != OutcomeDone {
+			if b.LastPayload.Outcome != "" && b.LastPayload.Outcome != reporttail.OutcomeDone {
 				status += " · " + b.LastPayload.Outcome
 			}
 			return status, "report"
