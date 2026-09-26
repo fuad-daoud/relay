@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -213,7 +214,7 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 				// outcome only. A delivery failure never changes the exit
 				// code (§6); the CLI prints DeliverErr to stderr.
 				if waitDeliverable(r.Code) && !opts.Peek {
-					text, found, derr := pullPendingThrough(ctx, rt, n, "wait", rounds[n])
+					text, found, derr := delivery.PullPendingThrough(ctx, rt.Store, n, "wait", rounds[n])
 					if derr != nil {
 						r.DeliverErr = derr
 					} else if found {

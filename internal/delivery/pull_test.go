@@ -1,4 +1,4 @@
-package relevo
+package delivery
 
 import (
 	"context"
@@ -11,20 +11,19 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // TestPullPendingReturnsAndMarksDelivered: pullPending hands back the oldest
 // pending payload and confirms it with the route it was given -- the helper
-// `relevo wait` calls with route "wait" (P4a round 2 §4.1).
+// `relevo wait` calls with route "wait".
 func TestPullPendingReturnsAndMarksDelivered(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
-	payload, found, err := pullPending(context.Background(), rt, "webshop", "wait")
+	payload, found, err := pullPending(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil {
 		t.Fatalf("pullPending: %v", err)
 	}
@@ -42,11 +41,11 @@ func TestPullPendingWithNothingPending(t *testing.T) {
 
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
-	if _, _, err := pullPending(context.Background(), rt, "webshop", "wait"); err != nil {
+	if _, _, err := pullPending(context.Background(), rt.Store, "webshop", "wait"); err != nil {
 		t.Fatalf("first pullPending: %v", err)
 	}
 
-	payload, found, err := pullPending(context.Background(), rt, "webshop", "wait")
+	payload, found, err := pullPending(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil {
 		t.Fatalf("second pullPending: %v", err)
 	}
@@ -56,14 +55,14 @@ func TestPullPendingWithNothingPending(t *testing.T) {
 }
 
 // TestPullPendingMarksDeliveredRoute: pullPending marks the entry delivered
-// with the route the caller passed -- "wait" from Wait (§4.1).
+// with the route the caller passed -- "wait" from Wait.
 func TestPullPendingMarksDeliveredRoute(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
-	if _, _, err := pullPending(context.Background(), rt, "webshop", "wait"); err != nil {
+	if _, _, err := pullPending(context.Background(), rt.Store, "webshop", "wait"); err != nil {
 		t.Fatalf("pullPending: %v", err)
 	}
 
@@ -89,7 +88,7 @@ func TestPullPendingMarksDeliveredRoute(t *testing.T) {
 // appends the entry directly rather than through Queue: Queue prepends the
 // origin line to Payload (deliver.go's WithOrigin), and these tests need the
 // stored Payload to be exactly "round 1 report".
-func seedPendingReport(t *testing.T, rt Runtime, name, path string, kind store.Kind) store.Binding {
+func seedPendingReport(t *testing.T, rt Deps, name, path string, kind store.Kind) store.Binding {
 	t.Helper()
 	b := store.Binding{
 		Name:      name,
@@ -127,7 +126,7 @@ func TestPullPendingPrintsReportText(t *testing.T) {
 	}
 	seedPendingReport(t, rt, "webshop", path, store.KindReport)
 
-	text, found, err := pullPending(context.Background(), rt, "webshop", "wait")
+	text, found, err := pullPending(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil {
 		t.Fatalf("pullPending: %v", err)
 	}
@@ -151,21 +150,20 @@ func TestPullPendingPrintsReportText(t *testing.T) {
 	}
 }
 
-// TestPullPendingCapsReportText: a report larger than delivery.MaxPushBytes is cut back
-// to the cap and names the `relevo show` command that prints the full text
-// (§4.2).
+// TestPullPendingCapsReportText: a report larger than MaxPushBytes is cut back
+// to the cap and names the `relevo show` command that prints the full text.
 func TestPullPendingCapsReportText(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
 	path := filepath.Join(t.TempDir(), "001-report.md")
-	// Exactly delivery.MaxPushBytes + 4096 bytes of newline-terminated lines.
-	if err := os.WriteFile(path, []byte(strings.Repeat("x\n", (delivery.MaxPushBytes+4096)/2)), 0o644); err != nil {
+	// Exactly MaxPushBytes + 4096 bytes of newline-terminated lines.
+	if err := os.WriteFile(path, []byte(strings.Repeat("x\n", (MaxPushBytes+4096)/2)), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
 	seedPendingReport(t, rt, "webshop", path, store.KindReport)
 
-	text, found, err := pullPending(context.Background(), rt, "webshop", "wait")
+	text, found, err := pullPending(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil {
 		t.Fatalf("pullPending: %v", err)
 	}
@@ -173,12 +171,12 @@ func TestPullPendingCapsReportText(t *testing.T) {
 		t.Fatal("pullPending found nothing, want the queued report")
 	}
 
-	want := fmt.Sprintf("[truncated at %d KiB -- full text: relevo show webshop --round 1 --report]", delivery.MaxPushBytes/1024)
+	want := fmt.Sprintf("[truncated at %d KiB -- full text: relevo show webshop --round 1 --report]", MaxPushBytes/1024)
 	if !strings.Contains(text, want) {
 		t.Errorf("pullPending text does not carry the truncation tail %q:\n%s", want, text)
 	}
-	if len(text) >= delivery.MaxPushBytes+len("round 1 report")+200 {
-		t.Errorf("len(text) = %d, want less than %d", len(text), delivery.MaxPushBytes+len("round 1 report")+200)
+	if len(text) >= MaxPushBytes+len("round 1 report")+200 {
+		t.Errorf("len(text) = %d, want less than %d", len(text), MaxPushBytes+len("round 1 report")+200)
 	}
 }
 
@@ -192,7 +190,7 @@ func TestPullPendingUnreadableReportFallsBackToPayload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing-report.md")
 	seedPendingReport(t, rt, "webshop", path, store.KindReport)
 
-	text, found, err := pullPending(context.Background(), rt, "webshop", "wait")
+	text, found, err := pullPending(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil {
 		t.Fatalf("pullPending: %v", err)
 	}
@@ -213,7 +211,7 @@ func TestPullPendingUnreadableReportFallsBackToPayload(t *testing.T) {
 	}
 }
 
-// TestRetryBusy pins retryBusy's contract (#433): a busy error is retried with
+// TestRetryBusy pins retryBusy's contract: a busy error is retried with
 // the delays it was given, a non-busy error is not retried, and a cancelled
 // context stops before the next sleep. The sleep function is injected, so no
 // test really sleeps.
@@ -221,7 +219,6 @@ func TestRetryBusy(t *testing.T) {
 	t.Parallel()
 
 	busy := fmt.Errorf("tx begin: %w", db.ErrBusy)
-
 	t.Run("busy twice then nil retries with the delays", func(t *testing.T) {
 		calls := 0
 		var slept []time.Duration
@@ -242,7 +239,6 @@ func TestRetryBusy(t *testing.T) {
 			t.Errorf("slept = %v, want [250ms 1s]", slept)
 		}
 	})
-
 	t.Run("always busy returns an error that wraps db.ErrBusy", func(t *testing.T) {
 		calls := 0
 		err := retryBusy(context.Background(), busyRetryDelays, func(time.Duration) {}, func() error {
@@ -256,7 +252,6 @@ func TestRetryBusy(t *testing.T) {
 			t.Errorf("err = %v, want it to wrap db.ErrBusy", err)
 		}
 	})
-
 	t.Run("a non-busy error returns at once", func(t *testing.T) {
 		calls := 0
 		sentinel := errors.New("boom")
@@ -271,11 +266,9 @@ func TestRetryBusy(t *testing.T) {
 			t.Errorf("fn called %d times, want 1", calls)
 		}
 	})
-
 	t.Run("a cancelled context stops before the first sleep", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-
 		calls := 0
 		slept := false
 		err := retryBusy(ctx, busyRetryDelays, func(time.Duration) { slept = true }, func() error {
@@ -297,7 +290,7 @@ func TestRetryBusy(t *testing.T) {
 // seedPendingRounds saves an active binding and one unconfirmed planner-bound
 // report per round and path, in the order given: seedPendingReport generalized
 // from one round to several, each entry's payload naming its round.
-func seedPendingRounds(t *testing.T, rt Runtime, name string, rounds []int, paths []string) store.Binding {
+func seedPendingRounds(t *testing.T, rt Deps, name string, rounds []int, paths []string) store.Binding {
 	t.Helper()
 	if len(rounds) != len(paths) {
 		t.Fatalf("seedPendingRounds: %d rounds for %d paths", len(rounds), len(paths))
@@ -331,8 +324,8 @@ func seedPendingRounds(t *testing.T, rt Runtime, name string, rounds []int, path
 }
 
 // TestPullPendingThroughDeliversEarlierAndWaited: with rounds 1 and 2 both
-// pending, pullPendingThrough returns round 1's text under a header naming its
-// round, then round 2's text last, and confirms both with route "wait" (#433).
+// pending, PullPendingThrough returns round 1's text under a header naming its
+// round, then round 2's text last, and confirms both with route "wait".
 func TestPullPendingThroughDeliversEarlierAndWaited(t *testing.T) {
 	t.Parallel()
 
@@ -348,7 +341,7 @@ func TestPullPendingThroughDeliversEarlierAndWaited(t *testing.T) {
 	}
 	seedPendingRounds(t, rt, "webshop", []int{1, 2}, []string{r1, r2})
 
-	text, found, err := pullPendingThrough(context.Background(), rt, "webshop", "wait", 2)
+	text, found, err := PullPendingThrough(context.Background(), rt.Store, "webshop", "wait", 2)
 	if err != nil {
 		t.Fatalf("pullPendingThrough: %v", err)
 	}
@@ -385,8 +378,8 @@ func TestPullPendingThroughDeliversEarlierAndWaited(t *testing.T) {
 }
 
 // TestPullPendingThroughSingleIsUnchanged: with only one pending report,
-// pullPendingThrough returns exactly what pullPending returns for the same
-// fixture -- a single delivery is untouched by the through-round path (#433).
+// PullPendingThrough returns exactly what pullPending returns for the same
+// fixture -- a single delivery is untouched by the through-round path.
 func TestPullPendingThroughSingleIsUnchanged(t *testing.T) {
 	t.Parallel()
 
@@ -402,15 +395,15 @@ func TestPullPendingThroughSingleIsUnchanged(t *testing.T) {
 	pullRT := routeRuntime(t)
 	seedPendingRounds(t, pullRT, "webshop", []int{2}, []string{path})
 
-	through, found, err := pullPendingThrough(context.Background(), throughRT, "webshop", "wait", 2)
+	through, found, err := PullPendingThrough(context.Background(), throughRT.Store, "webshop", "wait", 2)
 	if err != nil {
 		t.Fatalf("pullPendingThrough: %v", err)
 	}
 	if !found {
-		t.Fatal("pullPendingThrough found nothing, want the single pending report")
+		t.Fatal("PullPendingThrough found nothing, want the single pending report")
 	}
 
-	pulled, found, err := pullPending(context.Background(), pullRT, "webshop", "wait")
+	pulled, found, err := pullPending(context.Background(), pullRT.Store, "webshop", "wait")
 	if err != nil {
 		t.Fatalf("pullPending: %v", err)
 	}

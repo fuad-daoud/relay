@@ -8,7 +8,7 @@ github.com/fuad-daoud/relevo/internal/chatlabel 91.6
 github.com/fuad-daoud/relevo/internal/classify 86.8
 github.com/fuad-daoud/relevo/internal/config 81.1
 github.com/fuad-daoud/relevo/internal/db 76.9
-github.com/fuad-daoud/relevo/internal/delivery 85.6
+github.com/fuad-daoud/relevo/internal/delivery 85.8
 github.com/fuad-daoud/relevo/internal/doctor 87.0
 github.com/fuad-daoud/relevo/internal/git 83.0
 github.com/fuad-daoud/relevo/internal/harness 89.6
@@ -25,7 +25,7 @@ github.com/fuad-daoud/relevo/internal/planner 83.6
 github.com/fuad-daoud/relevo/internal/policy 96.7
 github.com/fuad-daoud/relevo/internal/proc 86.6
 github.com/fuad-daoud/relevo/internal/release 88.4
-github.com/fuad-daoud/relevo/internal/relevo 86.9
+github.com/fuad-daoud/relevo/internal/relevo 86.6
 github.com/fuad-daoud/relevo/internal/remote 86.7
 github.com/fuad-daoud/relevo/internal/remote/client 68.3
 github.com/fuad-daoud/relevo/internal/roles 92.1

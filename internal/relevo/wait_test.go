@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -628,7 +629,7 @@ func TestWaitDeliversTheWaitedRoundAfterAFailedOne(t *testing.T) {
 		t.Errorf("a following pullPending must find nothing (still pending=%v err=%v)", still, err)
 	}
 
-	payload, found, err := pullPending(context.Background(), rt, "webshop", "wait")
+	payload, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "wait")
 	if err != nil {
 		t.Fatalf("pullPending: %v", err)
 	}
