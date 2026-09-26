@@ -122,3 +122,63 @@ an auth refusal from not-found by status and body alone, stop and report.
 
 Report: goldens written (file -> contract ID), anything not pinned and why, the
 three mutation checks.
+
+## Round 2
+
+# Cleanup P0b (round 2) -- make the `serve status --json` golden machine-independent
+
+Round 2 of `cl-golden-wire`. Round 1 (commit `148b30a`) added the wire and
+`serve status --json` goldens. **Test-only round: no production code changes.**
+
+### 0. Rules
+
+- If a step is impossible as written, or the code contradicts this plan, stop
+  and report -- do not improvise, and do not change production code.
+- Only `cmd/relevo/serve_contract_test.go` and
+  `cmd/relevo/testdata/contract/serve-status.golden` may change (plus the plan
+  copy in step 4).
+- Comments: *why* only; no issue numbers, no `§`, no history.
+- `cmd/relevo` tests must not spawn a harness or reach the network.
+
+### 1. The defect
+
+`cmd/relevo/testdata/contract/serve-status.golden` records `"builders": {"cap": 3, ...}`.
+That cap is not a fixture value: with no policy, `policy.MaxBuildersOrDefault()`
+(`internal/policy/policy.go:377-385`) returns `max(1, runtime.NumCPU()-1)`.
+The golden passed only because the machine that wrote it has 4 CPUs; it fails
+on a laptop with 8 and on a 3-CPU CI runner.
+
+### 2. The fix
+
+Make the test's serve state carry an explicit `serve.max_builders` in its
+policy, so the cap is a fixture value, and keep the golden's `"cap": 3`.
+
+- Read how `cmdServeStatus` (`cmd/relevo/serve.go:~720`) builds its config:
+  `adminRoot(fs)` -> `serveAdminConfig(root, d)` -> `serve.New(...)`, and where
+  that path loads the policy (`pol.MaxBuildersOrDefault()` at `serve.go:~485`
+  is the `serve run` path; find the equivalent on the admin path).
+- Write the policy the admin path reads, with `serve.max_builders: 3`, in the
+  test's temp state or config before calling `run`. Use the same mechanism the
+  existing serve tests use to give a server a policy (grep `max_builders` and
+  `MaxBuilders` in `cmd/relevo/*_test.go` and `internal/serve/*_test.go`).
+- If the admin path offers no way to set the cap from a fixture without a
+  production change, fall back to normalising: in `wireNormalize`, replace the
+  `"cap": <n>` value with `"cap": "<CAP>"` and regenerate the golden. Say which
+  route you took.
+
+### 3. Verification
+
+- `go test ./cmd/relevo -run ServeContract -count=2` passes without `-update-wire`.
+- Prove machine independence: run it once with the CPU count forced low and
+  once high -- `GOMAXPROCS` does not change `runtime.NumCPU`, so use
+  `taskset -c 0 go test ./cmd/relevo -run ServeContract -count=1` (1 CPU) and a
+  plain run; both must pass. If `taskset` is unavailable, say so.
+- `make check` passes.
+
+### 4. Steps
+
+1. Implement §2. 2. Verify §3. 3. `git diff --stat HEAD~1` is only §0's files.
+4. Append a "Round 2" section to `docs/plans/2026-09-26-cleanup-p0b-golden-wire.md`
+   containing this plan, and commit everything in one commit.
+
+Report: the route taken (fixture policy or normalisation), the two runs from §3.

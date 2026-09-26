@@ -20,6 +20,9 @@ var updateWire = flag.Bool("update-wire", false, "update wire golden files")
 func wireNormalize(b []byte) []byte {
 	cwdRE := regexp.MustCompile(`"cwd":\s*"[^"]*"`)
 	b = cwdRE.ReplaceAll(b, []byte(`"cwd": "/tmp/test-state/api"`))
+	// Builders cap falls back to runtime.NumCPU() without an explicit policy.
+	capRE := regexp.MustCompile(`"cap":\s*\d+`)
+	b = capRE.ReplaceAll(b, []byte(`"cap": "<CAP>"`))
 	return b
 }
 
