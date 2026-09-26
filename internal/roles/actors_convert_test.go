@@ -1,4 +1,4 @@
-package actors
+package roles
 
 import (
 	"errors"
@@ -10,7 +10,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
-	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
 // readerSource is a minimal valid agentsrc single source named my-reader.
@@ -49,19 +48,19 @@ func TestToRolesFileShipped(t *testing.T) {
 		},
 	}
 
-	f, warnings, err := ToRolesFile(map[string]AgentEntry{}, actors)
+	f, warnings, err := FromActors(map[string]AgentEntry{}, actors)
 	if err != nil {
-		t.Fatalf("ToRolesFile: %v", err)
+		t.Fatalf("FromActors: %v", err)
 	}
 	if len(warnings) != 0 {
 		t.Errorf("warnings = %v, want none", warnings)
 	}
 
-	got, err := roles.Build(f, set, policy.Policy{})
+	got, err := Build(f, set, policy.Policy{})
 	if err != nil {
-		t.Fatalf("roles.Build: %v", err)
+		t.Fatalf("Build: %v", err)
 	}
-	want, err := roles.Build(&roles.File{Rows: map[string]roles.Row{
+	want, err := Build(&File{Rows: map[string]Row{
 		"builder": {
 			Candidates: []string{"claude/test/a", "claude/test/b"},
 			Off:        []string{"claude/test/b"},
@@ -69,7 +68,7 @@ func TestToRolesFileShipped(t *testing.T) {
 		},
 	}}, set, policy.Policy{})
 	if err != nil {
-		t.Fatalf("roles.Build(want): %v", err)
+		t.Fatalf("Build(want): %v", err)
 	}
 
 	for _, h := range harness.All() {
@@ -99,17 +98,17 @@ func TestToRolesFileShipped(t *testing.T) {
 func TestToRolesFileCustomAndNative(t *testing.T) {
 	agents := map[string]AgentEntry{
 		"my-reader": {Source: readerSource},
-		"my-exec":   {Shape: "writer", Native: map[string]roles.DefRow{"claude": {Agent: "my-exec", Requires: []string{"my-scout"}}}},
-		"unused":    {Shape: "reader", Native: map[string]roles.DefRow{"claude": {Agent: "unused"}}},
+		"my-exec":   {Shape: "writer", Native: map[string]DefRow{"claude": {Agent: "my-exec", Requires: []string{"my-scout"}}}},
+		"unused":    {Shape: "reader", Native: map[string]DefRow{"claude": {Agent: "unused"}}},
 	}
 	actors := map[string]Actor{
 		"designer": {Agent: "my-reader", Candidates: []Entry{{Candidate: "claude/test/a"}}},
 		"helper":   {Agent: "my-exec", Candidates: []Entry{{Candidate: "claude/test/a"}}},
 	}
 
-	f, warnings, err := ToRolesFile(agents, actors)
+	f, warnings, err := FromActors(agents, actors)
 	if err != nil {
-		t.Fatalf("ToRolesFile: %v", err)
+		t.Fatalf("FromActors: %v", err)
 	}
 
 	// The source agent: shape from the source, a definition for each rendered
@@ -122,9 +121,9 @@ func TestToRolesFileCustomAndNative(t *testing.T) {
 	if designer.Shape == nil || *designer.Shape != "reader" {
 		t.Errorf("designer.shape = %v, want reader", designer.Shape)
 	}
-	wantDefs := make(map[string]roles.DefRow)
+	wantDefs := make(map[string]DefRow)
 	for _, kind := range agentsrc.RenderedKinds(src) {
-		wantDefs[kind] = roles.DefRow{Agent: "my-reader", Requires: []string{"my-scout"}}
+		wantDefs[kind] = DefRow{Agent: "my-reader", Requires: []string{"my-scout"}}
 	}
 	if !reflect.DeepEqual(designer.Definitions, wantDefs) {
 		t.Errorf("designer.definitions = %+v, want %+v", designer.Definitions, wantDefs)
@@ -135,7 +134,7 @@ func TestToRolesFileCustomAndNative(t *testing.T) {
 	if helper.Shape == nil || *helper.Shape != "writer" {
 		t.Errorf("helper.shape = %v, want writer", helper.Shape)
 	}
-	wantNative := map[string]roles.DefRow{"claude": {Agent: "my-exec", Requires: []string{"my-scout"}}}
+	wantNative := map[string]DefRow{"claude": {Agent: "my-exec", Requires: []string{"my-scout"}}}
 	if !reflect.DeepEqual(helper.Definitions, wantNative) {
 		t.Errorf("helper.definitions = %+v, want %+v", helper.Definitions, wantNative)
 	}
@@ -147,7 +146,7 @@ func TestToRolesFileCustomAndNative(t *testing.T) {
 
 // TestToRolesFileErrors pins §4.1's errors: an unknown agent, check on a
 // reader, and a builtin actor name whose agent has the wrong shape. Every one
-// wraps roles.ErrBadRoles.
+// wraps ErrBadRoles.
 func TestToRolesFileErrors(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -163,7 +162,7 @@ func TestToRolesFileErrors(t *testing.T) {
 		{
 			name:          "check on a reader",
 			agents:        map[string]AgentEntry{"my-reader": {Source: readerSource}},
-			actors:        map[string]Actor{"designer": {Agent: "my-reader", Check: boolPtr(true)}},
+			actors:        map[string]Actor{"designer": {Agent: "my-reader", Check: actorBoolPtr(true)}},
 			wantSubstring: "actor designer: check is only for a writer agent",
 		},
 		{
@@ -175,12 +174,12 @@ func TestToRolesFileErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _, err := ToRolesFile(tt.agents, tt.actors)
+			_, _, err := FromActors(tt.agents, tt.actors)
 			if err == nil {
-				t.Fatalf("ToRolesFile = nil error, want one containing %q", tt.wantSubstring)
+				t.Fatalf("FromActors = nil error, want one containing %q", tt.wantSubstring)
 			}
-			if !errors.Is(err, roles.ErrBadRoles) {
-				t.Errorf("err = %v, want it to wrap roles.ErrBadRoles", err)
+			if !errors.Is(err, ErrBadRoles) {
+				t.Errorf("err = %v, want it to wrap ErrBadRoles", err)
 			}
 			if !strings.Contains(err.Error(), tt.wantSubstring) {
 				t.Errorf("err = %q, want substring %q", err.Error(), tt.wantSubstring)
@@ -201,9 +200,9 @@ func TestToRolesFileOffPinsTheCandidateList(t *testing.T) {
 			},
 		},
 	}
-	f, _, err := ToRolesFile(nil, actors)
+	f, _, err := FromActors(nil, actors)
 	if err != nil {
-		t.Fatalf("ToRolesFile: %v", err)
+		t.Fatalf("FromActors: %v", err)
 	}
 	row := f.Rows["builder"]
 	if !reflect.DeepEqual(row.Candidates, []string{"a", "b"}) {
@@ -214,5 +213,5 @@ func TestToRolesFileOffPinsTheCandidateList(t *testing.T) {
 	}
 }
 
-// boolPtr returns a pointer to b, for an Actor's optional check.
-func boolPtr(b bool) *bool { return &b }
+// actorBoolPtr returns a pointer to b, for an Actor's optional check.
+func actorBoolPtr(b bool) *bool { return &b }

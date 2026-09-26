@@ -46,12 +46,6 @@ cmd/relevo/update.go
 cmd/relevo/wait.go
 cmd/relevo/wire.go
 dist/dist.go
-internal/actors/actors.go
-internal/actors/actors_test.go
-internal/actors/convert.go
-internal/actors/convert_test.go
-internal/actors/shipped.go
-internal/actors/shipped_test.go
 internal/e2e/fakes_test.go
 internal/e2e/headless_test.go
 internal/e2e/remote_test.go
@@ -225,6 +219,12 @@ internal/relevo/writer_role_test.go
 internal/remote/bundle_test.go
 internal/remote/proto.go
 internal/remote/proto_test.go
+internal/roles/actors.go
+internal/roles/actors_convert.go
+internal/roles/actors_convert_test.go
+internal/roles/actors_shipped.go
+internal/roles/actors_shipped_test.go
+internal/roles/actors_test.go
 internal/roles/file.go
 internal/roles/file_test.go
 internal/roles/init.go

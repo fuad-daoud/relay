@@ -13,12 +13,12 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/history"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
@@ -737,7 +737,7 @@ func agentFileFixtures(t *testing.T) map[string][]harness.AgentFile {
 		"plan-executor": {"agy": "inherit"},
 	}
 	files := make(map[string][]harness.AgentFile)
-	for _, s := range actors.ShippedAgents() {
+	for _, s := range roles.ShippedAgents() {
 		for _, h := range harness.All() {
 			rel, ok := harness.DefinitionPath(h.Kind, s.Name)
 			if !ok {

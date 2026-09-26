@@ -1,8 +1,8 @@
-// Package actors parses the cockpit's agents and actors config sections and
-// converts them into today's roles.File, so every consumer of
-// *roles.Registry keeps working unchanged (cockpit spec §3.2, §3.3; A2 round
+// Package roles parses the cockpit's agents and actors config sections and
+// converts them into today's File, so every consumer of
+// *Registry keeps working unchanged (cockpit spec §3.2, §3.3; A2 round
 // 1). Round 1 is additive: nothing is removed and nothing is migrated.
-package actors
+package roles
 
 import (
 	"encoding/json"
@@ -14,11 +14,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
 // ErrBadActors reports an agents or actors section that does not parse or
-// validate. ToRolesFile errors wrap roles.ErrBadRoles instead, so config.Load
+// validate. FromActors errors wrap ErrBadRoles instead, so config.Load
 // handles them exactly as it treats a bad roles file.
 var ErrBadActors = errors.New("bad actors")
 
@@ -41,7 +40,7 @@ type AgentEntry struct {
 	// Native (its data does not carry one) and forbidden with Source.
 	Shape string `json:"shape,omitempty"`
 	// Native maps a harness kind to an existing harness-native agent.
-	Native map[string]roles.DefRow `json:"native,omitempty"`
+	Native map[string]DefRow `json:"native,omitempty"`
 }
 
 // Actor is one entry of the `actors` section: a named agent plus candidates in
@@ -183,7 +182,7 @@ func ParseActors(body []byte) (map[string]Actor, []string, error) {
 }
 
 // validateActor applies §3.2's rules to one actors entry. The agent's shape is
-// not known here, so the reader/check rule lives in ToRolesFile.
+// not known here, so the reader/check rule lives in FromActors.
 func validateActor(name string, a Actor) error {
 	if !actorNamePattern.MatchString(name) {
 		return fmt.Errorf("actors: %s: bad actor name: %w", name, ErrBadActors)

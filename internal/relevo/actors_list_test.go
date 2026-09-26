@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
@@ -22,11 +21,11 @@ func TestActorsRegistryIsFileMode(t *testing.T) {
 
 	set := candidateSet(t, `[{"harness":"claude","provider":"test","model":"a"}]`)
 
-	rf, _, err := actors.ToRolesFile(nil, map[string]actors.Actor{
-		"builder": {Agent: "plan-executor", Candidates: []actors.Entry{{Candidate: "a"}}},
+	rf, _, err := roles.FromActors(nil, map[string]roles.Actor{
+		"builder": {Agent: "plan-executor", Candidates: []roles.Entry{{Candidate: "a"}}},
 	})
 	if err != nil {
-		t.Fatalf("actors.ToRolesFile: %v", err)
+		t.Fatalf("roles.FromActors: %v", err)
 	}
 	reg, err := roles.Build(rf, set, policy.Policy{})
 	if err != nil {
@@ -85,17 +84,17 @@ func TestFormatActors(t *testing.T) {
 	  {"harness":"claude","provider":"test","model":"c"}
 	]`)
 
-	actorsSection := map[string]actors.Actor{
+	actorsSection := map[string]roles.Actor{
 		"builder": {
 			Agent:      "plan-executor",
-			Candidates: []actors.Entry{{Candidate: "a"}, {Candidate: "c", Off: true}},
+			Candidates: []roles.Entry{{Candidate: "a"}, {Candidate: "c", Off: true}},
 			Tier:       "yolo",
 			Check:      ptr(true),
 		},
-		"reviewer": {Agent: "reviewer", Candidates: []actors.Entry{{Candidate: "b"}}, Tier: "yolo"},
-		"designer": {Agent: "ui-designer", Candidates: []actors.Entry{{Candidate: "a"}}},
+		"reviewer": {Agent: "reviewer", Candidates: []roles.Entry{{Candidate: "b"}}, Tier: "yolo"},
+		"designer": {Agent: "ui-designer", Candidates: []roles.Entry{{Candidate: "a"}}},
 	}
-	agentsSection := map[string]actors.AgentEntry{
+	agentsSection := map[string]roles.AgentEntry{
 		"ui-designer": {Source: uiDesignerSource},
 		"my-exec": {
 			Shape:  "writer",
@@ -103,9 +102,9 @@ func TestFormatActors(t *testing.T) {
 		},
 	}
 
-	rf, _, err := actors.ToRolesFile(agentsSection, actorsSection)
+	rf, _, err := roles.FromActors(agentsSection, actorsSection)
 	if err != nil {
-		t.Fatalf("actors.ToRolesFile: %v", err)
+		t.Fatalf("roles.FromActors: %v", err)
 	}
 	reg, err := roles.Build(rf, set, policy.Policy{MaxTier: "yolo"})
 	if err != nil {

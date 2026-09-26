@@ -1,4 +1,4 @@
-package actors
+package roles
 
 import "github.com/fuad-daoud/relevo/internal/agentsrc"
 

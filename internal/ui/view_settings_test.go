@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
 // settingsFixtureJSON is 3a's real policy: the store's raw policy body this
@@ -38,7 +38,7 @@ func settingsFixtureDoc(t *testing.T) relevo.ConfigDoc {
 func settingsFixtureDocNoTiers(t *testing.T) relevo.ConfigDoc {
 	t.Helper()
 	doc := settingsFixtureDoc(t)
-	cleared := make(map[string]actors.Actor, len(doc.Actors))
+	cleared := make(map[string]roles.Actor, len(doc.Actors))
 	for name, a := range doc.Actors {
 		a.Tier = ""
 		cleared[name] = a

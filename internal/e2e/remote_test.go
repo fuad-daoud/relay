@@ -165,8 +165,8 @@ func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Ke
 		t.Fatalf("remote.Generate: %v", err)
 	}
 
-	servers := client.Servers{
-		"zen": client.ServerEntry{
+	servers := remote.Servers{
+		"zen": remote.ServerEntry{
 			URL:         url,
 			Fingerprint: fingerprint,
 		},

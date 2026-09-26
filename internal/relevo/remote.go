@@ -1090,7 +1090,7 @@ type ServerProbe struct {
 // the line to hand the admin); ErrCertChanged is "cert changed";
 // ErrUnreachable is "unreachable" (Detail is the failure cause); anything
 // else is "error" (Detail is the error text).
-func ProbeServers(ctx context.Context, rt Runtime, servers map[string]client.ServerEntry, enrollLine string) []ServerProbe {
+func ProbeServers(ctx context.Context, rt Runtime, servers map[string]remote.ServerEntry, enrollLine string) []ServerProbe {
 	names := make([]string, 0, len(servers))
 	for n := range servers {
 		names = append(names, n)

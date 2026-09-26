@@ -10,10 +10,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/ledger"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
 // candDocMsg is one ConfigDoc load's reply (§4).
@@ -60,7 +60,7 @@ func candDocCmd(env Env) tea.Cmd {
 
 // actorOrder walks the actors the pick order uses (§4): builder, reviewer,
 // researcher, then any other actor by name.
-func actorOrder(acts map[string]actors.Actor) []string {
+func actorOrder(acts map[string]roles.Actor) []string {
 	var out []string
 	for _, name := range []string{"builder", "reviewer", "researcher"} {
 		if _, ok := acts[name]; ok {

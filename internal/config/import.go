@@ -14,7 +14,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -274,9 +273,9 @@ func LoadFiles(configDir string) (Loaded, error) {
 		return Loaded{}, err
 	}
 
-	L.Servers = client.Servers{}
+	L.Servers = remote.Servers{}
 	if raw, err := os.ReadFile(filepath.Join(configDir, FileName(Servers))); err == nil {
-		L.Servers, err = client.ParseServers(raw)
+		L.Servers, err = remote.ParseServers(raw)
 		if err != nil {
 			return Loaded{}, err
 		}

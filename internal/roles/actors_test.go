@@ -1,4 +1,4 @@
-package actors
+package roles
 
 import (
 	"encoding/json"
@@ -6,8 +6,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
 // validSource is a minimal valid agentsrc single source named my-exec.
@@ -239,7 +237,7 @@ func quote(s string) string {
 // space indent, trailing newline.
 func TestEncodeAgentsSortedKeys(t *testing.T) {
 	out, err := EncodeAgents(map[string]AgentEntry{
-		"zed": {Shape: "reader", Native: map[string]roles.DefRow{"claude": {Agent: "zed"}}},
+		"zed": {Shape: "reader", Native: map[string]DefRow{"claude": {Agent: "zed"}}},
 		"abc": {Source: validSource},
 	})
 	if err != nil {

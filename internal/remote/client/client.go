@@ -46,7 +46,7 @@ func (e *HTTPError) Error() string {
 }
 
 type Client struct {
-	servers Servers
+	servers remote.Servers
 	key     remote.Keypair
 	now     func() time.Time
 
@@ -54,7 +54,7 @@ type Client struct {
 	httpClients map[string]*http.Client
 }
 
-func New(servers Servers, key remote.Keypair, now func() time.Time) *Client {
+func New(servers remote.Servers, key remote.Keypair, now func() time.Time) *Client {
 	if now == nil {
 		now = time.Now
 	}
@@ -71,7 +71,7 @@ func fingerprintOf(der []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func (c *Client) getHTTPClient(entry ServerEntry) *http.Client {
+func (c *Client) getHTTPClient(entry remote.ServerEntry) *http.Client {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -86,7 +86,7 @@ func (c *Client) getHTTPClient(entry ServerEntry) *http.Client {
 
 // tlsConfigFor pins a fingerprint by verifying the presented leaf itself, so
 // no CA is needed; the pin replaces chain verification.
-func tlsConfigFor(entry ServerEntry) *tls.Config {
+func tlsConfigFor(entry remote.ServerEntry) *tls.Config {
 	switch {
 	case entry.Insecure:
 		return &tls.Config{InsecureSkipVerify: true}
@@ -144,7 +144,7 @@ func (c *Client) doRequest(ctx context.Context, server, method, pathWithQuery st
 	return resp, nil
 }
 
-func (c *Client) newRequest(ctx context.Context, entry ServerEntry, method, pathWithQuery string, body io.Reader, contentLength int64, bodySHA []byte, contentType string) (*http.Request, error) {
+func (c *Client) newRequest(ctx context.Context, entry remote.ServerEntry, method, pathWithQuery string, body io.Reader, contentLength int64, bodySHA []byte, contentType string) (*http.Request, error) {
 	fullURL := strings.TrimRight(entry.URL, "/") + pathWithQuery
 	u, err := url.Parse(fullURL)
 	if err != nil {

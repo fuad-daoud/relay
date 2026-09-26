@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
 // This file is the cockpit's audit seam: a stored revision's changes in human
@@ -356,8 +356,8 @@ func CheckDoc(doc config.Doc) error {
 // decodes the stored ones.
 func configDocOf(doc config.Doc) (ConfigDoc, error) {
 	d := ConfigDoc{
-		Actors: map[string]actors.Actor{},
-		Agents: map[string]actors.AgentEntry{},
+		Actors: map[string]roles.Actor{},
+		Agents: map[string]roles.AgentEntry{},
 	}
 
 	if body, ok := doc[config.Candidates]; ok {
@@ -366,14 +366,14 @@ func configDocOf(doc config.Doc) (ConfigDoc, error) {
 		}
 	}
 	if body, ok := doc[config.Actors]; ok {
-		a, _, err := actors.ParseActors(body)
+		a, _, err := roles.ParseActors(body)
 		if err != nil {
 			return ConfigDoc{}, err
 		}
 		d.Actors = a
 	}
 	if body, ok := doc[config.Agents]; ok {
-		a, _, err := actors.ParseAgents(body)
+		a, _, err := roles.ParseAgents(body)
 		if err != nil {
 			return ConfigDoc{}, err
 		}

@@ -10,10 +10,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
 // agentsMsg is one ':agents' load's reply (§4): the doc, and each agent's
@@ -88,7 +88,7 @@ func agentsCmd(env Env) tea.Cmd {
 // agentNames is every agent with a row (§3): the shipped table in order, then
 // the doc's custom agents by name.
 func agentNames(doc relevo.ConfigDoc) []string {
-	shipped := actors.ShippedAgents()
+	shipped := roles.ShippedAgents()
 	names := make([]string, 0, len(shipped)+len(doc.Agents))
 	for _, s := range shipped {
 		names = append(names, s.Name)
@@ -109,7 +109,7 @@ func agentRows(doc relevo.ConfigDoc, files map[string][]harness.AgentFile) []age
 	out := make([]agentRow, 0, len(names))
 	for _, name := range names {
 		r := agentRow{name: name, usedBy: use[name]}
-		if s, ok := actors.Shipped(name); ok {
+		if s, ok := roles.Shipped(name); ok {
 			r.shape, r.source, r.files = string(s.Shape), "shipped", files[name]
 		} else {
 			r.shape, r.source = agentShapeOf(doc, name), "custom"
@@ -136,7 +136,7 @@ func agentUse(doc relevo.ConfigDoc) map[string][]string {
 	for _, actor := range actorOrder(doc.Actors) {
 		agent := doc.Actors[actor].Agent
 		add(agent, actor)
-		if s, ok := actors.Shipped(agent); ok {
+		if s, ok := roles.Shipped(agent); ok {
 			for _, req := range s.Requires {
 				add(req, actor)
 			}
@@ -343,7 +343,7 @@ func customAgentRows(doc relevo.ConfigDoc, name string) []agentFileRow {
 }
 
 // nativeAgentKinds is a custom native agent's kinds, in harness.All() order.
-func nativeAgentKinds(e actors.AgentEntry) []string {
+func nativeAgentKinds(e roles.AgentEntry) []string {
 	var out []string
 	for _, h := range harness.All() {
 		if _, ok := e.Native[h.Kind]; ok {

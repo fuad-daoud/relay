@@ -9,12 +9,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -84,14 +82,14 @@ type Loaded struct {
 	RolesFile  *roles.File
 	Registry   *roles.Registry
 	Prices     usage.Prices
-	Servers    client.Servers
+	Servers    remote.Servers
 	Hooks      HooksMap
 	ClientKey  []byte
 	Typesafe   string
 	Warnings   []string
 	Version    int64
-	Agents     map[string]actors.AgentEntry
-	Actors     map[string]actors.Actor
+	Agents     map[string]roles.AgentEntry
+	Actors     map[string]roles.Actor
 }
 
 // Store reads and writes the config sections and secrets of one database.
@@ -207,12 +205,12 @@ func (s *Store) loadRoles(L *Loaded) (bool, error) {
 	return true, nil
 }
 
-func (s *Store) loadAgents(L *Loaded) (map[string]actors.AgentEntry, error) {
+func (s *Store) loadAgents(L *Loaded) (map[string]roles.AgentEntry, error) {
 	body, ok, err := s.db.ConfigGet(string(Agents))
 	if err != nil || !ok {
 		return nil, err
 	}
-	a, warnings, err := actors.ParseAgents(body)
+	a, warnings, err := roles.ParseAgents(body)
 	if err != nil {
 		return nil, err
 	}
@@ -223,19 +221,19 @@ func (s *Store) loadAgents(L *Loaded) (map[string]actors.AgentEntry, error) {
 
 // loadActors parses the actors section and, when present, rebuilds the roles
 // file from it: actors win and the pre-actors keys stop being read.
-func (s *Store) loadActors(L *Loaded, agents map[string]actors.AgentEntry, rolesPresent bool, candBody []byte, candOK bool, polBody []byte, polOK bool) error {
+func (s *Store) loadActors(L *Loaded, agents map[string]roles.AgentEntry, rolesPresent bool, candBody []byte, candOK bool, polBody []byte, polOK bool) error {
 	body, ok, err := s.db.ConfigGet(string(Actors))
 	if err != nil || !ok {
 		return err
 	}
-	a, warnings, err := actors.ParseActors(body)
+	a, warnings, err := roles.ParseActors(body)
 	if err != nil {
 		return err
 	}
 	L.Actors = a
 	L.Warnings = append(L.Warnings, warnings...)
 
-	rf, warnings, err := actors.ToRolesFile(agents, a)
+	rf, warnings, err := roles.FromActors(agents, a)
 	if err != nil {
 		return err
 	}
@@ -271,10 +269,10 @@ func (s *Store) loadServers(L *Loaded) error {
 		return err
 	}
 	if !ok {
-		L.Servers = client.Servers{}
+		L.Servers = remote.Servers{}
 		return nil
 	}
-	srv, err := client.ParseServers(body)
+	srv, err := remote.ParseServers(body)
 	if err != nil {
 		return err
 	}
@@ -345,16 +343,16 @@ func Validate(sec Section, body []byte) ([]string, error) {
 		_, warnings, err := roles.Parse(FileName(sec), body)
 		return warnings, err
 	case Agents:
-		_, warnings, err := actors.ParseAgents(body)
+		_, warnings, err := roles.ParseAgents(body)
 		return warnings, err
 	case Actors:
-		_, warnings, err := actors.ParseActors(body)
+		_, warnings, err := roles.ParseActors(body)
 		return warnings, err
 	case Prices:
 		_, err := usage.ParsePrices(body)
 		return nil, err
 	case Servers:
-		_, err := client.ParseServers(body)
+		_, err := remote.ParseServers(body)
 		return nil, err
 	case Hooks:
 		var h HooksMap

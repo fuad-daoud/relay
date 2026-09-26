@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/actors"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
@@ -51,7 +50,7 @@ func agentFixtureView(t *testing.T, fa *fakeActions, name string) agentView {
 func agentDocCustom(t *testing.T, name, shape string, native map[string]roles.DefRow) relevo.ConfigDoc {
 	t.Helper()
 	doc := candFixtureDoc(t)
-	doc.Agents[name] = actors.AgentEntry{Shape: shape, Native: native}
+	doc.Agents[name] = roles.AgentEntry{Shape: shape, Native: native}
 	return doc
 }
 
@@ -190,7 +189,7 @@ func TestAgentsDeleteCustomAgentConfirms(t *testing.T) {
 // a notice (§4, §5).
 func TestAgentsDeleteUsedCustomAgentNotices(t *testing.T) {
 	doc := agentDocCustom(t, "scout", "reader", map[string]roles.DefRow{"opencode": {Agent: "scout"}})
-	doc.Actors["tinkerer"] = actors.Actor{Agent: "scout"}
+	doc.Actors["tinkerer"] = roles.Actor{Agent: "scout"}
 	fa := &fakeActions{doc: doc}
 	v := agentsFixtureList(t, fa)
 	v.cur = agentRowIndex(t, v.rows(), "scout")

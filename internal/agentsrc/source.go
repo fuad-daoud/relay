@@ -235,7 +235,7 @@ func (s Source) Validate() error {
 }
 
 // RenderedKinds is the kind list a source renders to: its own kinds, or every
-// known kind when Kinds is empty. Exported for internal/actors.
+// known kind when Kinds is empty. Exported for internal/roles.
 func RenderedKinds(s Source) []string {
 	if len(s.Kinds) > 0 {
 		return s.Kinds
