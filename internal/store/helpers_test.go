@@ -39,6 +39,29 @@ func bindingRecordJSON(t *testing.T, s *Store, name string) []byte {
 	return []byte(rec.JSON)
 }
 
+// holdStateLock takes the store's state lock and keeps it held until the
+// returned release runs, so a caller can prove a read does not wait on it.
+func holdStateLock(t *testing.T, s *Store) (release func()) {
+	t.Helper()
+	holding := make(chan struct{})
+	unblock := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- s.WithLock(func(tx *Tx) error {
+			close(holding)
+			<-unblock
+			return nil
+		})
+	}()
+	<-holding
+	return func() {
+		close(unblock)
+		if err := <-holderDone; err != nil {
+			t.Errorf("WithLock holder: %v", err)
+		}
+	}
+}
+
 // bindingEvents returns the stored binding_event rows for name, so a test can
 // assert on entry_json.
 func bindingEvents(t *testing.T, s *Store, name string) []db.RecordEvent {

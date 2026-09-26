@@ -102,3 +102,48 @@ coverage before and after.
 binding shape is guarded by `TestBindingShapeMatchesFormat` and
 `testdata/binding-shape.golden`: those must not change. `store.Binding.Edges`
 and `type Edge` are a deliberate shim for old records -- keep them.
+
+## Round 2
+
+# Cleanup P3 (round 2) -- rebase the `internal/store` cleanup onto #541 and #520
+
+Round 2 of `cl-p3-store`. Round 1 (commit `cafac42 (rebased once as 6d4e3f77)`, base `5eb39a8`) finished
+`internal/store`: non-test 4,058 -> 3,499 lines, comments 1,247 -> 616;
+tests 4,202 -> 3,735. Meanwhile `main` gained #541, "fix(store): reads skip the state lock when nothing needs importing; cap the WAL
+" (commit `df619f43`), and #520 (commit `ac743896`, the cockpit audit view), which changed `internal/store/store.go`, `internal/store/log.go` and their tests. The round-1 commit no longer applies.
+
+## Rules
+
+- **Run every command in the foreground and wait for it**; never background a
+  command or end your turn before the report and done marker exist.
+- **#541 and #520's behaviour wins.** Read `git show df619f43` and `git show ac743896 -- internal/store` first. Every line of logic
+  it added or changed survives exactly; only its comments may be brought to the
+  standard (why-only, no issue numbers -- #541 and #520 added at least one: see
+  `internal/store/store_test.go` around line 353).
+- Same scope, freezes and targets as round 1: only `internal/store/`,
+  `.golangci.yml` (the store rule), the two allow-lists (store entries), the plan copy.
+  `internal/store/testdata/binding-shape.golden` untouched; `Binding.Edges` and `type Edge` stay.
+  Exported API unchanged. Targets, measured against `ac743896` (today's `main`, which includes #541 and #520): non-test lines no
+  higher, non-test comment lines at most half, tests likewise.
+- golangci-lint v2.14.0 must actually run (`golangci-lint version`); a
+  `make check` that prints "skipping lint" does not count.
+- If a step is impossible as written, stop and report.
+
+## Steps
+
+1. `git rebase origin/main` (fetch first). Resolve every conflict in
+   `internal/store` by keeping #541 and #520's logic and round 1's cleanup of everything
+   else; resolve `.golangci.yml` / allow-list conflicts by taking `main`'s
+   version and removing only store's entries.
+2. Bring any comment #541 and #520 added to the standard.
+3. `golangci-lint run ./...` 0 issues; `sh scripts/check-comments.sh` and
+   `sh scripts/check-filesize.sh` ok; `go test ./internal/store/... -count=1` passes,
+   including #541 and #520's tests.
+4. Re-measure against `df619f43`; every target holds.
+5. `make check` (foreground) passes.
+6. Append a "Round 2" section with this plan to
+   `docs/plans/2026-09-26-cleanup-p3-store.md`; the branch ends as the rebased
+   round-1 commit plus one round-2 commit. Do not push.
+
+Report: how each conflict was resolved, #541 and #520's logic lines confirmed intact
+(`git diff df619f43^ df619f43 -- internal/store` and `git diff ac743896^ ac743896 -- internal/store` vs the result), and the numbers.

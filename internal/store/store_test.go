@@ -350,10 +350,8 @@ func TestWithLockSerializesLoadModifySave(t *testing.T) {
 	}
 }
 
-// TestReadsDoNotWaitForTheStateLock pins the reader-facing half of fix #513:
-// while another goroutine holds the state lock, Load, List, ReadLog and
-// FindByCWD each return without waiting on it. Mutation: make read always call
-// WithLock and every check here times out.
+// TestReadsDoNotWaitForTheStateLock pins that a read does not wait on the
+// state lock another goroutine holds.
 func TestReadsDoNotWaitForTheStateLock(t *testing.T) {
 	s := New(t.TempDir())
 	b := newBinding("frozen", "/repo")
@@ -365,18 +363,8 @@ func TestReadsDoNotWaitForTheStateLock(t *testing.T) {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	holding := make(chan struct{})
-	release := make(chan struct{})
-	var once sync.Once
-	holderDone := make(chan error, 1)
-	go func() {
-		holderDone <- s.WithLock(func(tx *Tx) error {
-			once.Do(func() { close(holding) })
-			<-release
-			return nil
-		})
-	}()
-	<-holding
+	release := holdStateLock(t, s)
+	defer release()
 
 	// Each read is bounded by a goroutine and a timeout rather than the lock's
 	// own 90s bound, so a regression fails fast instead of hanging the suite.
@@ -433,18 +421,10 @@ func TestReadsDoNotWaitForTheStateLock(t *testing.T) {
 		}
 		return nil
 	})
-
-	close(release)
-	if err := <-holderDone; err != nil {
-		t.Fatalf("WithLock holder: %v", err)
-	}
 }
 
-// TestReadImportsLegacyFileUnderTheLock pins that the unlocked read is
-// conditional: a legacy bind.json still means an import, and an import writes,
-// so the read waits for the state lock and then adopts the file. Mutation:
-// make legacyPresent always return false and the Load returns while the lock
-// is held; make the import disappear and the file and record checks fail.
+// TestReadImportsLegacyFileUnderTheLock pins that a legacy bind.json still
+// takes the state lock and is imported.
 func TestReadImportsLegacyFileUnderTheLock(t *testing.T) {
 	s := New(t.TempDir())
 	dir := s.Dir("old")
@@ -457,18 +437,7 @@ func TestReadImportsLegacyFileUnderTheLock(t *testing.T) {
 		t.Fatalf("write bind.json: %v", err)
 	}
 
-	holding := make(chan struct{})
-	release := make(chan struct{})
-	var once sync.Once
-	holderDone := make(chan error, 1)
-	go func() {
-		holderDone <- s.WithLock(func(tx *Tx) error {
-			once.Do(func() { close(holding) })
-			<-release
-			return nil
-		})
-	}()
-	<-holding
+	release := holdStateLock(t, s)
 
 	loaded := make(chan error, 1)
 	go func() {
@@ -490,10 +459,7 @@ func TestReadImportsLegacyFileUnderTheLock(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 
-	close(release)
-	if err := <-holderDone; err != nil {
-		t.Fatalf("WithLock holder: %v", err)
-	}
+	release()
 	if err := <-loaded; err != nil {
 		t.Fatalf("Load after release: %v", err)
 	}

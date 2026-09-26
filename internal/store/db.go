@@ -283,11 +283,9 @@ func warnNewerFormatOnce(name string, err error) {
 	slog.Warn("leaving a binding written by a newer relevo alone", "binding", name, "err", err)
 }
 
-// legacyPresent reports whether any of binding name's files that importPresent
-// adopts -- bind.json, log.jsonl or the .viewed sidecar -- exists. A read path
-// uses it to decide whether it must take the lock: a legacy file means an
-// import, and an import writes. A stat error other than not-exist is returned
-// rather than treated as absent, so a failing root never skips an import.
+// legacyPresent reports whether name has any file importPresent adopts. A
+// non-not-exist stat error is returned, not treated as absent, so a failing
+// root never skips an import, which writes.
 func (s *Store) legacyPresent(name string) (bool, error) {
 	for _, path := range []string{s.bindingPath(name), s.logPath(name), s.ViewedPath(name)} {
 		if _, err := os.Stat(path); err == nil {
@@ -299,11 +297,9 @@ func (s *Store) legacyPresent(name string) (bool, error) {
 	return false, nil
 }
 
-// anyLegacyPresent reports whether any binding directory under the root holds
-// a legacy file importAll would adopt, so a whole-root read knows whether it
-// must take the lock. A missing root has nothing to import. It checks all
-// three files rather than only bind.json, which makes it a superset of what
-// importAll acts on: that can only make a read take the lock more often, never
+// anyLegacyPresent applies legacyPresent to every binding directory under the
+// root, so a whole-root read knows whether an importAll needs the lock. It
+// covers a superset of importAll's files, so it can only lock too often, never
 // skip an import.
 func (s *Store) anyLegacyPresent() (bool, error) {
 	entries, err := os.ReadDir(s.root)
